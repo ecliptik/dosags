@@ -1,0 +1,657 @@
+From dcdf2a1629132e98cdba8de37715fadafcc70691 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sat, 12 Sep 2026 18:53:36 -0700
+Subject: [PATCH 53/54] [AGS] Wire type-5 MIDI clips into midi_sched + the OPL3
+ sink (Sound milestone S4)
+
+sound.cpp's load_sound_clip() now sniffs the real SMF header magic
+("MThd") on every clip small enough to load whole -- a Standard MIDI File
+is always tiny, so it is always on that branch, never the streamed one --
+same convention S1's own RIFF/VOC PCM loader already established (a
+v361_objnames-era game's fileName/fileType pairing is not reliable,
+PLAN.md's own research). A real MIDI clip now routes to the new
+audio_core_slot_init_midi() instead of the PCM audio_core_slot_init(),
+and forces soundType=MUS_MIDI regardless of what ext_hint said, since
+SoundClip::posms_to_pos()/pos_to_posms() branch on it.
+
+audio_core_slot_init_midi() writes the clip's raw SMF bytes to a fixed
+scratch DOS path (DOSMIDI.TMP, binary fopen) -- midi_sched_open() reads a
+file, not a memory buffer, and AGS's music channel is a single reserved
+slot (SCHAN_MUSIC), so only one MIDI clip is ever live at a time; a fixed
+filename is sufficient. Unlike the PCM overloads, this never fails to
+init a slot: even a chip-less/backend-less session gets a real AudioPlayer
+whose Init() reports PlayStateError honestly, matching the existing
+"AudioClip.Play: unable to load sound file" precedent a missing PCM
+decoder already produces.
+
+AudioPlayer gains a second, MIDI-mode constructor (PLAN.md's own framing:
+"the music channel's AudioPlayer becomes a thin adapter") driving a
+midi_sched + opl3_sink pair instead of SDLDecoder/OpenAlSource -- every
+method (Poll/Play/Pause/Stop/Seek/Get*/Set*) branches on _isMidi
+internally, so SoundClip (soundclip.cpp) needed zero changes: it only
+ever calls these same methods via audio_core_get_player(slot). MIDI has
+no PCM bytes to decode (OPL3 output is direct hardware register writes,
+never an SDL3 stream), so forcing it through the PCM-shaped
+SDLDecoder/OpenAlSource interface was never the right shape here.
+
+Notable design points, not just mechanical translation:
+- A dedicated MidiNowMs() (uclock()-based, same epoch every other
+  DOS-PORT timestamp in this engine uses) minus an accumulated pause
+  offset gives Pause()->Play() a continuous, pause-aware clock --
+  midi_sched_start() only knows how to arm from the song start, not
+  resume from an arbitrary position, so without this a pause would make
+  the schedule jump forward by however long the game was paused.
+- Stop() has no shared-layer "silence everything, keep the chip open"
+  entry point available (opl3_sink.h only exposes per-note NOTE_OFF via a
+  real MIDI event, or a full close() that unconditionally KEY-OFFs all 18
+  voices) -- reuses close()/reopen to guarantee a stopped clip never
+  leaves a note physically hanging, at the cost of a redundant chip
+  re-detect on the next Play().
+- GetFrequency/GetDurationMs/GetPositionMs return 0 for MIDI (matching
+  soundType==MUS_MIDI's pre-existing "TODO: reimplement" precedent in
+  posms_to_pos/pos_to_posms) and Seek() is a no-op, per PLAN.md's own
+  decision ("seek/position 0, upstream-equivalent") -- deliberately not
+  adopting midi_sched_position_ms() for a real value here even though it
+  exists, to match that decision rather than second-guess it.
+- SetVolume/SetPanning/SetSpeed are tracked-but-unapplied/no-op for MIDI
+  (opl3_sink.c's own sink_control_change() does not implement CC7/
+  expression at this scope) -- same "tracked but never applied" precedent
+  OpenAlSource::SetSpeed() already established for the PCM path's own
+  un-implemented resampling.
+- midi_sched_tick() loops the song from the start at end-of-song
+  unconditionally (its own documented behavior) -- a MIDI AudioPlayer
+  never reaches PlayStateFinished on its own, matching how background
+  music is actually used; only an explicit Stop() ends playback.
+
+Verified under DOSBox-X (oplmode=opl3, a scratch conf copy -- this hub's
+own shared confs default oplmode=none and were not touched): AGS Quest's
+full 18-phase + optional-dialog sequence stays ok, all 3 screenshots stay
+byte-identical to the existing baseline, PCM underruns=0 (matching S1/S2,
+zero regression), audio_vital_status reads
+"midi=opl3,events=29" -- real dispatch through the actual OPL3 register
+I/O path, not just a parse-only witness. Also verified clean under the
+stock oplmode=none conf (no chip): "midi=none,events=0", exit_code=0, all
+phases/screenshots still pass -- the fail-closed path is not a regression
+risk for every port/environment that has no OPL3 hardware.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/media/audio/audio_core.cpp  |  35 +++++
+ Engine/media/audio/audio_core.h    |  10 ++
+ Engine/media/audio/audioplayer.cpp | 221 +++++++++++++++++++++++++++++
+ Engine/media/audio/audioplayer.h   |  97 +++++++++++--
+ Engine/media/audio/sound.cpp       |  26 +++-
+ 5 files changed, 375 insertions(+), 14 deletions(-)
+
+diff --git a/Engine/media/audio/audio_core.cpp b/Engine/media/audio/audio_core.cpp
+index 7140a6b92..c7bc2504a 100644
+--- a/Engine/media/audio/audio_core.cpp
++++ b/Engine/media/audio/audio_core.cpp
+@@ -13,6 +13,7 @@
+ //=============================================================================
+ #include "media/audio/audio_core.h"
+ #include <math.h>
++#include <cstdio>
+ #include <condition_variable>
+ #include <mutex>
+ #include <stdexcept>
+@@ -128,6 +129,40 @@ int audio_core_slot_init(std::unique_ptr<Stream> in, const String &extension_hin
+     return audio_core_slot_init(std::move(decoder));
+ }
+ 
++// DOS-PORT (Sound milestone, S4): scratch DOS path a MIDI clip's raw SMF
++// bytes are written to before AudioPlayer's MIDI constructor calls
++// midi_sched_open() on it -- shared/audio's midi_sched_open() reads a file
++// path, not an in-memory buffer (see audioplayer.h's own header note), and
++// the music channel is AGS's single reserved SCHAN_MUSIC slot, so only one
++// MIDI clip is ever live at a time -- a single fixed 8.3 filename is
++// sufficient, no per-clip uniqueness needed. Binary write per this hub's
++// own hard DJGPP constraint (fopen mode, CRLF translation would corrupt
++// the SMF bytes).
++static const char *DOS_MIDI_SCRATCH_PATH = "DOSMIDI.TMP";
++
++int audio_core_slot_init_midi(std::shared_ptr<std::vector<uint8_t>> &data, bool repeat)
++{
++    FILE *fp = fopen(DOS_MIDI_SCRATCH_PATH, "wb");
++    if (!fp)
++    {
++        Debug::Printf(kDbgMsg_Error, "audio_core_slot_init_midi: could not open %s for write", DOS_MIDI_SCRATCH_PATH);
++        return -1;
++    }
++    const size_t written = data ? fwrite(data->data(), 1, data->size(), fp) : 0u;
++    fclose(fp);
++    if (!data || written != data->size())
++    {
++        Debug::Printf(kDbgMsg_Error, "audio_core_slot_init_midi: short write to %s", DOS_MIDI_SCRATCH_PATH);
++        return -1;
++    }
++
++    auto handle = avail_slot_id();
++    std::lock_guard<std::mutex> lk(g_acore.mixer_mutex_m);
++    g_acore.slots_[handle] = std::make_unique<AudioPlayer>(handle, String(DOS_MIDI_SCRATCH_PATH), repeat);
++    g_acore.mixer_cv.notify_all();
++    return handle;
++}
++
+ AudioPlayerLock audio_core_get_player(int slot_handle)
+ {
+     std::unique_lock<std::mutex> ulk(g_acore.mixer_mutex_m);
+diff --git a/Engine/media/audio/audio_core.h b/Engine/media/audio/audio_core.h
+index 5ff55e327..938b3a5d4 100644
+--- a/Engine/media/audio/audio_core.h
++++ b/Engine/media/audio/audio_core.h
+@@ -87,6 +87,16 @@ void audio_core_set_master_volume(float newvol);
+ int audio_core_slot_init(std::shared_ptr<std::vector<uint8_t>> &data, const AGS::Common::String &extension_hint, bool repeat);
+ // Initializes playback streaming
+ int audio_core_slot_init(std::unique_ptr<AGS::Common::Stream> in, const AGS::Common::String &extension_hint, bool repeat);
++// DOS-PORT (Sound milestone, S4): initializes a MIDI (type-5) clip on a
++// free slot. `data` is the clip's raw SMF bytes (already read into memory
++// by sound.cpp -- MIDI files are always small enough to load whole, never
++// worth the streaming path). Unlike the two overloads above, this never
++// fails to init a slot: even a chip-less/backend-less session gets a real
++// AudioPlayer whose Init() reports PlayStateError honestly (matching the
++// "AudioClip.Play: unable to load sound file" precedent a missing PCM
++// decoder already produces) rather than load_sound_clip() itself refusing
++// to construct a SoundClip for a type it now recognizes.
++int audio_core_slot_init_midi(std::shared_ptr<std::vector<uint8_t>> &data, bool repeat);
+ // Returns a AudioPlayer from the given slot, wrapped in a auto-locking struct.
+ AGS::Engine::AudioPlayerLock audio_core_get_player(int slot_handle);
+ // Stop and release the audio player at the given slot
+diff --git a/Engine/media/audio/audioplayer.cpp b/Engine/media/audio/audioplayer.cpp
+index 33117d1cf..50bef5982 100644
+--- a/Engine/media/audio/audioplayer.cpp
++++ b/Engine/media/audio/audioplayer.cpp
+@@ -12,8 +12,19 @@
+ //
+ //=============================================================================
+ #include "media/audio/audioplayer.h"
++#include <cstdio>
++#include <time.h> // uclock(), UCLOCKS_PER_SEC -- DOS-PORT (S4) MIDI wall clock
+ #include "util/memory_compat.h"
+ 
++// DOS-PORT (S4): declared at GLOBAL scope deliberately, matching where
++// Engine/main/main.cpp actually defines it (also global scope, no
++// namespace) -- a block-scope `extern` declared FROM INSIDE namespace
++// AGS::Engine below mangles as AGS::Engine::dos_port_engine_start_uclock
++// (confirmed the hard way: a real link failure), not the global symbol
++// every other DOS-PORT uclock() consumer (ac/event.cpp, ac/room.cpp,
++// ac/sys_events.cpp -- none of them inside a namespace) already resolves.
++extern uclock_t dos_port_engine_start_uclock;
++
+ namespace AGS
+ {
+ namespace Engine
+@@ -26,8 +37,47 @@ AudioPlayer::AudioPlayer(int handle, std::unique_ptr<SDLDecoder> decoder)
+         _decoder->GetFormat(), _decoder->GetChannels(), _decoder->GetFreq());
+ }
+ 
++// DOS-PORT (Sound milestone, S4): MIDI-mode constructor -- see audioplayer.h.
++AudioPlayer::AudioPlayer(int handle, const AGS::Common::String &midi_path, bool repeat)
++    : handle_(handle), _isMidi(true), _midiRepeat(repeat), _midiPath(midi_path)
++{
++    _midiSched = midi_sched_open(_midiPath.GetCStr());
++    _midiSink = dos_midi_backend_open(&_midiBackendKind);
++    if (_midiSched && _midiSink)
++    {
++        midi_sched_sink sink;
++        opl3_sink_bind(_midiSink, &sink);
++        // Best-effort GM bank, staged alongside the exe -- same convention
++        // shared/tests/probes/opl3midi.c already established. Missing file
++        // or a bad header just keeps the sink's built-in 8-patch fallback
++        // (opl3_sink_load_bank()'s own documented contract); not fatal.
++        opl3_sink_load_bank(_midiSink, "OPL3BANK.DAT", nullptr);
++        midi_sched_set_sink(_midiSched, &sink);
++    }
++}
++
++AudioPlayer::~AudioPlayer()
++{
++    if (!_isMidi)
++        return;
++    if (_midiSched) midi_sched_close(_midiSched);
++    if (_midiSink)  opl3_sink_close(_midiSink);
++}
++
++uint64_t AudioPlayer::MidiNowMsRaw()
++{
++    // Same uclock()-based wall clock + engine-start epoch every other
++    // DOS-PORT timestamp in this engine uses (ac/event.cpp, ac/room.cpp,
++    // ac/sys_events.cpp) -- uclock() is PIT-based on this DJGPP target,
++    // already confirmed safe (not RDTSC) by patch 0042. The extern itself
++    // is declared at file (global) scope above -- see that comment.
++    return (uint64_t)((uclock() - dos_port_engine_start_uclock) * 1000 / UCLOCKS_PER_SEC);
++}
++
+ void AudioPlayer::Init()
+ {
++    if (_isMidi) { MidiInit(); return; }
++
+     bool success;
+     if (_decoder->IsValid()) // if already opened, then just seek to start
+         success = _decoder->Seek(_onLoadPositionMs) == _onLoadPositionMs;
+@@ -39,8 +89,18 @@ void AudioPlayer::Init()
+         _source->Play();
+ }
+ 
++void AudioPlayer::MidiInit()
++{
++    bool success = (_midiSched != nullptr) && (_midiSink != nullptr);
++    if (success)
++        midi_sched_start(_midiSched, MidiNowMs());
++    _playState = success ? _onLoadPlayState : PlayStateError;
++}
++
+ void AudioPlayer::Poll()
+ {
++    if (_isMidi) { MidiPoll(); return; }
++
+     if (_playState == PlaybackState::PlayStateInitial)
+         Init();
+     if (_playState != PlayStatePlaying)
+@@ -65,8 +125,33 @@ void AudioPlayer::Poll()
+     }
+ }
+ 
++void AudioPlayer::MidiPoll()
++{
++    if (_playState == PlaybackState::PlayStateInitial)
++        Init();
++    if (_playState != PlayStatePlaying)
++        return;
++    if (!_midiSched || !_midiSink)
++        return;
++
++    midi_sched_tick(_midiSched, MidiNowMs());
++
++    const uint64_t total = midi_sched_dispatched(_midiSched);
++    if (total > _midiLastDispatched)
++    {
++        dos_midi_backend_add_dispatched(total - _midiLastDispatched);
++        _midiLastDispatched = total;
++    }
++    // midi_sched_tick() loops the song from the start at end-of-song, its
++    // own unconditional documented behavior -- this player never reaches
++    // PlayStateFinished on its own; only an explicit Stop() ends playback,
++    // matching how background music is actually used in a real game.
++}
++
+ void AudioPlayer::Play()
+ {
++    if (_isMidi) { MidiPlay(); return; }
++
+     switch (_playState)
+     {
+     case PlayStateInitial:
+@@ -84,8 +169,54 @@ void AudioPlayer::Play()
+     }
+ }
+ 
++void AudioPlayer::MidiPlay()
++{
++    switch (_playState)
++    {
++    case PlayStateInitial:
++        _onLoadPlayState = PlayStatePlaying;
++        break;
++    case PlayStateStopped:
++        // MidiStop() closed the sink to guarantee real silence (see its
++        // own comment) -- reopen + rebind before restarting the song.
++        if (!_midiSink)
++        {
++            _midiSink = dos_midi_backend_open(&_midiBackendKind);
++            if (_midiSink && _midiSched)
++            {
++                midi_sched_sink sink;
++                opl3_sink_bind(_midiSink, &sink);
++                opl3_sink_load_bank(_midiSink, "OPL3BANK.DAT", nullptr);
++                midi_sched_set_sink(_midiSched, &sink);
++            }
++        }
++        if (_midiSched && _midiSink)
++            midi_sched_start(_midiSched, MidiNowMs());
++        _playState = (_midiSched && _midiSink) ? PlayStatePlaying : PlayStateError;
++        break;
++    case PlayStatePaused:
++        // Fold the just-ended pause into the running offset so MidiNowMs()
++        // keeps reporting a continuous, pause-aware clock -- midi_sched_
++        // start() only knows how to arm from the song start, not resume
++        // from an arbitrary position, so this offset is what makes Pause()
++        // -> Play() hold position instead of jumping the schedule forward
++        // by however long the game was paused.
++        if (_midiPauseStartedMs != 0)
++        {
++            _midiPauseOffsetMs += MidiNowMsRaw() - _midiPauseStartedMs;
++            _midiPauseStartedMs = 0;
++        }
++        _playState = PlayStatePlaying;
++        break;
++    default:
++        break;
++    }
++}
++
+ void AudioPlayer::Pause()
+ {
++    if (_isMidi) { MidiPause(); return; }
++
+     switch (_playState)
+     {
+     case PlayStateInitial:
+@@ -100,8 +231,26 @@ void AudioPlayer::Pause()
+     }
+ }
+ 
++void AudioPlayer::MidiPause()
++{
++    switch (_playState)
++    {
++    case PlayStateInitial:
++        _onLoadPlayState = PlayStatePaused;
++        break;
++    case PlayStatePlaying:
++        _playState = PlayStatePaused;
++        _midiPauseStartedMs = MidiNowMsRaw();
++        break;
++    default:
++        break;
++    }
++}
++
+ void AudioPlayer::Stop()
+ {
++    if (_isMidi) { MidiStop(); return; }
++
+     switch (_playState)
+     {
+     case PlayStateInitial:
+@@ -118,8 +267,44 @@ void AudioPlayer::Stop()
+     }
+ }
+ 
++void AudioPlayer::MidiStop()
++{
++    switch (_playState)
++    {
++    case PlayStateInitial:
++        _onLoadPlayState = PlayStateStopped;
++        break;
++    case PlayStatePlaying:
++    case PlayStatePaused:
++        _playState = PlayStateStopped;
++        // opl3_sink has no partial "silence everything, keep the chip
++        // open" entry point -- only per-note NOTE_OFF via a real MIDI
++        // event, or a full close() that unconditionally KEY-OFFs all 18
++        // voices (opl3_sink.h's own documented contract). Reusing close()
++        // is the only way, with today's shared/ surface, to guarantee a
++        // Stop() doesn't leave a note physically hanging; MidiPlay()
++        // reopens and rebinds on the next Stopped -> Playing transition.
++        if (_midiSink)
++        {
++            opl3_sink_close(_midiSink);
++            _midiSink = nullptr;
++        }
++        _midiPauseOffsetMs = 0;
++        _midiPauseStartedMs = 0;
++        break;
++    default:
++        break;
++    }
++}
++
+ void AudioPlayer::Seek(float pos_ms)
+ {
++    if (_isMidi)
++        return; // DOS-PORT (S4): no-op -- "seek/position 0, upstream-
++                 // equivalent" (PLAN.md's Sound milestone Architecture
++                 // section); upstream itself never implemented MIDI seek
++                 // either (soundclip.cpp's own pos_to_posms() TODO).
++
+     switch (_playState)
+     {
+     case PlayStateInitial:
+@@ -141,5 +326,41 @@ void AudioPlayer::Seek(float pos_ms)
+     }
+ }
+ 
++float AudioPlayer::GetFrequency() const
++{
++    if (_isMidi) return 0.0f; // DOS-PORT (S4): see header comment
++    return static_cast<float>(_decoder->GetFreq());
++}
++
++float AudioPlayer::GetDurationMs() const
++{
++    if (_isMidi) return 0.0f; // DOS-PORT (S4): see header comment
++    return _decoder->GetDurationMs();
++}
++
++float AudioPlayer::GetPositionMs() const
++{
++    if (_isMidi) return 0.0f; // DOS-PORT (S4): see header comment
++    return _source->GetPositionMs();
++}
++
++void AudioPlayer::SetPanning(float panning)
++{
++    if (_isMidi) return; // DOS-PORT (S4): no-op, see header comment
++    _source->SetPanning(panning);
++}
++
++void AudioPlayer::SetSpeed(float speed)
++{
++    if (_isMidi) return; // DOS-PORT (S4): no-op, see header comment
++    _source->SetSpeed(speed);
++}
++
++void AudioPlayer::SetVolume(float volume)
++{
++    if (_isMidi) return; // DOS-PORT (S4): tracked-but-unapplied, see header comment
++    _source->SetVolume(volume);
++}
++
+ } // namespace Engine
+ } // namespace AGS
+diff --git a/Engine/media/audio/audioplayer.h b/Engine/media/audio/audioplayer.h
+index 2bd84591c..6a8bfcb7a 100644
+--- a/Engine/media/audio/audioplayer.h
++++ b/Engine/media/audio/audioplayer.h
+@@ -20,13 +20,29 @@
+ // implementations, and also substitute default implementations
+ // (e.g. with plugins).
+ //
++// DOS-PORT (Sound milestone, S4): a second, MIDI-mode constructor below
++// makes this same class drive a shared/audio midi_sched + opl3_sink pair
++// instead of a SDLDecoder/OpenAlSource pair -- PLAN.md's own Architecture
++// section calls this "the music channel's AudioPlayer becomes a thin
++// adapter". SoundClip (soundclip.cpp) only ever calls the methods already
++// declared below via audio_core_get_player(slot), so it needed NO changes
++// at all -- every method here branches internally on _isMidi instead.
++// MIDI has no PCM bytes to decode (OPL3 output is direct hardware register
++// writes, never an SDL3 audio stream), so trying to force it through
++// SDLDecoder/OpenAlSource's PCM-shaped interface (PutData/GetFormat/...)
++// would mean software-synthesizing FM into a byte stream just to satisfy
++// an interface built for byte streams -- not this port's architecture.
++//
+ //=============================================================================
+ #ifndef __AGS_EE_MEDIA__AUDIOPLAYER_H
+ #define __AGS_EE_MEDIA__AUDIOPLAYER_H
++#include <cstdint>
+ #include <memory>
+ #include "media/audio/audiodefines.h" // PlaybackState etc
+ #include "media/audio/sdldecoder.h"
+ #include "media/audio/openalsource.h"
++#include "platform/dos/dos_midi_backend.h"
++#include "util/string.h"
+ 
+ namespace AGS
+ {
+@@ -37,26 +53,52 @@ class AudioPlayer
+ {
+ public:
+     AudioPlayer(int handle, std::unique_ptr<SDLDecoder> decoder);
++    // DOS-PORT (Sound milestone, S4): MIDI-mode constructor. midi_path is a
++    // real DOS file path (8.3) the caller has already written the clip's
++    // SMF bytes to -- midi_sched_open() reads a file, not a memory buffer,
++    // and shared/audio is not this patch's to extend with a buffer-based
++    // open (see dos_midi_backend.h's own header note). repeat mirrors the
++    // PCM constructor's own semantics but is honored differently: OPL3
++    // playback restarts from the song start on Stop()->Play() the same as
++    // PCM, but midi_sched itself ALSO auto-loops at end-of-song (its own
++    // documented behavior, unconditional) -- so in practice a MIDI clip
++    // loops regardless of `repeat`, matching how background music is
++    // actually used and not worth suppressing for the non-repeat case.
++    AudioPlayer(int handle, const AGS::Common::String &midi_path, bool repeat);
++    ~AudioPlayer();
+ 
+     // Gets current playback state
+     PlaybackState GetPlayState() const { return _playState; }
+     // Gets current playback state, *excluding* temporary states such as Initial
+     // FIXME: rework this! -- a quick hack to let external user know the future player state on init stage
+     PlaybackState GetPlayStateNormal() const { return _playState == PlayStateInitial ? _onLoadPlayState : _playState; }
+-    // Gets frequency (sample rate)
+-    float GetFrequency() const { return static_cast<float>(_decoder->GetFreq()); }
+-    // Gets duration, in ms
+-    float GetDurationMs() const { return _decoder->GetDurationMs(); }
+-    // Gets playback position, in ms
+-    float GetPositionMs() const { return _source->GetPositionMs(); }
++    // Gets frequency (sample rate). DOS-PORT (S4): meaningless for MIDI --
++    // returns 0, same "honestly report it doesn't work" precedent
++    // SoundClip::posms_to_pos()'s pre-existing MUS_MIDI case already set.
++    float GetFrequency() const;
++    // Gets duration, in ms. DOS-PORT (S4): 0 for MIDI -- midi_sched.h
++    // exposes no total-song-duration query, only elapsed position.
++    float GetDurationMs() const;
++    // Gets playback position, in ms. DOS-PORT (S4): 0 for MIDI by design
++    // decision (PLAN.md's Sound milestone Architecture section: "seek/
++    // position 0, upstream-equivalent") even though midi_sched_position_ms()
++    // could supply a real value -- not adopted here to match that decision.
++    float GetPositionMs() const;
+ 
+-    // Sets the sound panning (-1.0f to 1.0)
+-    void SetPanning(float panning) { _source->SetPanning(panning); }
++    // Sets the sound panning (-1.0f to 1.0). DOS-PORT (S4): no-op for MIDI
++    // -- the OPL3 sink has no panning concept (mono FM synthesis).
++    void SetPanning(float panning);
+     // Sets the playback speed (fraction of normal);
+-    // NOTE: the speed is implemented through resampling
+-    void SetSpeed(float speed) { _source->SetSpeed(speed); }
+-    // Sets the playback volume (gain)
+-    void SetVolume(float volume) { _source->SetVolume(volume); }
++    // NOTE: the speed is implemented through resampling.
++    // DOS-PORT (S4): no-op for MIDI -- no real-time tempo scaling exists.
++    void SetSpeed(float speed);
++    // Sets the playback volume (gain). DOS-PORT (S4): tracked but NOT
++    // applied for MIDI -- opl3_sink.c's sink_control_change() does not
++    // implement CC7/expression/master-volume at this scope (see
++    // shared/audio/opl3_sink.c's own comment), same "tracked but never
++    // applied" precedent OpenAlSource::SetSpeed() already established for
++    // the PCM path's own un-implemented resampling.
++    void SetVolume(float volume);
+ 
+     // Update state, transfer data from decoder to player if possible
+     void Poll();
+@@ -73,6 +115,22 @@ private:
+     // Opens decoder and sets up playback state
+     void Init();
+ 
++    // DOS-PORT (Sound milestone, S4): MIDI-mode internals. _midiNowMs()
++    // returns the current wall-clock ms (uclock()-based, same epoch every
++    // other DOS-PORT timestamp in this engine uses) minus accumulated
++    // pause time, so a Pause()/Play() cycle holds the schedule's position
++    // instead of jumping forward by however long the game was paused --
++    // midi_sched_start() only knows how to arm from the song start, not
++    // resume from an arbitrary position, so this offset is the only way to
++    // give it a continuous, pause-aware clock without touching shared/.
++    static uint64_t MidiNowMsRaw();
++    uint64_t MidiNowMs() const { return MidiNowMsRaw() - _midiPauseOffsetMs; }
++    void MidiInit();
++    void MidiPoll();
++    void MidiPlay();
++    void MidiPause();
++    void MidiStop();
++
+     const int handle_ = -1; // for diagnostic purposes only
+     std::unique_ptr<SDLDecoder> _decoder;
+     std::unique_ptr<OpenAlSource> _source;
+@@ -80,6 +138,21 @@ private:
+     PlaybackState _onLoadPlayState = PlayStatePaused;
+     float _onLoadPositionMs = 0.0f;
+     SoundBufferPtr _bufferPending{};
++
++    // DOS-PORT (Sound milestone, S4): set only by the MIDI-mode
++    // constructor; every other member below it is unused unless this is
++    // true. Kept in the same object rather than a subclass so
++    // audio_core's slots_ map (std::unordered_map<int, unique_ptr
++    // <AudioPlayer>>) and SoundClip's slot-handle contract need no change.
++    bool _isMidi = false;
++    bool _midiRepeat = false;
++    AGS::Common::String _midiPath;
++    midi_sched *_midiSched = nullptr;
++    opl3_sink *_midiSink = nullptr;
++    DosMidiBackendKind _midiBackendKind = DOS_MIDI_BACKEND_NONE;
++    uint64_t _midiPauseOffsetMs = 0;   // total ms spent paused so far
++    uint64_t _midiPauseStartedMs = 0;  // MidiNowMsRaw() at the last Pause()
++    uint64_t _midiLastDispatched = 0;  // midi_sched_dispatched() as of the last MidiPoll()
+ };
+ 
+ } // namespace Engine
+diff --git a/Engine/media/audio/sound.cpp b/Engine/media/audio/sound.cpp
+index 92751fcbd..c63bc3648 100644
+--- a/Engine/media/audio/sound.cpp
++++ b/Engine/media/audio/sound.cpp
+@@ -12,6 +12,7 @@
+ //
+ //=============================================================================
+ #include "media/audio/sound.h"
++#include <cstring>
+ #include <list>
+ #include <unordered_map>
+ #include "ac/game.h"
+@@ -122,6 +123,7 @@ std::unique_ptr<SoundClip> load_sound_clip(const AssetPath &apath, const char *e
+     const auto ext_hint = asset_ext.IsEmpty() ? String(extension_hint) : asset_ext;
+ 
+     int slot{};
++    bool is_midi = false;
+     // If sound data was cached, or asset's size is small enough to load at once,
+     // then load/use it and update the cache if necessary
+     if (sounddata || asset_size <= MaxLoadAtOnce)
+@@ -132,7 +134,20 @@ std::unique_ptr<SoundClip> load_sound_clip(const AssetPath &apath, const char *e
+             s_in->Read(sounddata->data(), asset_size);
+             SndCache.Put(apath.Name, sounddata);
+         }
+-        slot = audio_core_slot_init(sounddata, ext_hint, loop);
++        // DOS-PORT (Sound milestone, S4): sniff the real SMF header magic
++        // ("MThd") rather than trust ext_hint/fileType, same convention
++        // S1's own RIFF/VOC PCM loader already established (a v361_
++        // objnames-era game's fileName/fileType pairing is not reliable --
++        // PLAN.md's own research). A Standard MIDI File is always tiny, so
++        // it is always on this "load whole" branch, never the streamed
++        // one below -- type-5 clips never need an audio_core_slot_init_
++        // midi(Stream) overload, which sound.cpp doesn't (and won't) have.
++        static const unsigned char k_smf_magic[4] = { 'M', 'T', 'h', 'd' };
++        is_midi = sounddata->size() >= sizeof(k_smf_magic) &&
++            std::memcmp(sounddata->data(), k_smf_magic, sizeof(k_smf_magic)) == 0;
++        slot = is_midi
++            ? audio_core_slot_init_midi(sounddata, loop)
++            : audio_core_slot_init(sounddata, ext_hint, loop);
+     }
+     // Otherwise, if asset's size is too large, start streaming
+     else
+@@ -142,6 +157,13 @@ std::unique_ptr<SoundClip> load_sound_clip(const AssetPath &apath, const char *e
+ 
+     if (slot < 0) { return nullptr; }
+ 
+-    const auto sound_type = GetLegacySoundTypeFromExt(ext_hint.GetCStr());
++    // DOS-PORT (S4): force MUS_MIDI when the header sniff found real SMF
++    // bytes, rather than trust GetLegacySoundTypeFromExt(ext_hint) -- the
++    // whole point of sniffing instead of trusting ext_hint/fileType is
++    // that they can disagree with the real content (see the comment
++    // above); SoundClip::posms_to_pos()/pos_to_posms() branch on soundType,
++    // so getting this wrong would route position handling into the wrong
++    // (default, PCM-shaped) case for a clip this function KNOWS is MIDI.
++    const auto sound_type = is_midi ? MUS_MIDI : GetLegacySoundTypeFromExt(ext_hint.GetCStr());
+     return std::unique_ptr<SoundClip>(new SoundClip(slot, sound_type, loop));
+ }
+-- 
+2.47.3
+

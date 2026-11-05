@@ -1,0 +1,570 @@
+From b74f82b74f047c3c9ad9fb605862527752c58954 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 16 Sep 2026 09:57:21 -0700
+Subject: [PATCH] DOS-PORT: patch 0078 -- structured startup-phase timing
+ report
+
+WHY: this session's own real-hardware step-2 investigation scavenged a
+single isolated log line (DOS-PORT room_transition t_ms=38960) and a
+one-off Debug::Printf (6.37s single-view precache) by hand from raw
+STDOUT.TXT to build a load-time hypothesis. That does not scale across
+rig rounds and cannot be parsed automatically. This patch turns those
+into one grep-able, RUNMANIFEST-style structured block plus an
+aggregate precache summary, following the exact source-read discipline
+this hub's own rules require (every phase boundary below was found by
+reading initialize_engine()'s and load_game_file()'s own call order,
+not guessed).
+
+WHAT: a new DosPortStartupTiming struct (Engine/main/
+dos_port_startup_timing.h), one shared instance (main.cpp), populated
+by uclock()-ms brackets placed at the real phase boundaries:
+
+- subsystem_init: engine_init_fonts()..engine_init_debug()
+  (main/engine.cpp)
+- gamedata_asset_load: load_game_file()'s own
+  OpenMainGameFileFromDefaultAsset+ReadGameData..TryLoadGameScripts
+  span (main/game_file.cpp) -- CLIB/asset index + game data parse
+- script_vm_init: load_game_file()'s own InitGameState() call, which is
+  where create_game_scripts() (script/script.cpp) actually instantiates
+  the compiled script modules/global script/dialog script into the VM
+- gfxmode_init: engine_try_set_gfxmode_any() (main/engine.cpp) -- a
+  real, distinct cost found reading source, not in the milestone's
+  originally-named phase list but a real step worth its own field
+- sprite_index_init: engine_init_sprites() (main/engine.cpp)
+- sprite_precache: just the cursor/player-view precache_view() span
+  inside engine_init_game_settings() (main/engine.cpp), not that whole
+  (larger, mostly unrelated) function
+- first_room_load: the true first room, whichever of two real call
+  paths reaches it first -- game_start.cpp's own direct load_new_room()
+  call (the actual first-ever room, confirmed live: Trilby's Notes'
+  STDOUT.TXT shows "Loading room 1" with no preceding "Room change
+  requested to room 1", proving new_room() is NOT called for the first
+  room) or, for a later in-game transition that happens to be the first
+  one instrumented, new_room()'s own entry (ac/room.cpp). This is a
+  real, previously-unverified gap in patch 0042's own commit message
+  ("For room 1 ... this same pair doubles as the boot-to-first-frame
+  load-time metric") -- that claim was never actually true for the
+  literal first room; only the AfterFadein "ready" side (event.cpp)
+  fired for it. Fixed as part of this patch since it shares the exact
+  same instrumentation point.
+
+precache_view()'s own already-computed per-call cost (ac/game.cpp) is
+folded into a running aggregate (call count, frame count, slowest 3 by
+total ms) instead of only being printed once and discarded.
+
+The full block is emitted once, at the first room's own AfterFadein
+"ready" event (ac/event.cpp) -- the same "first interactive frame"
+point patch 0042 already established, not a new one:
+
+  [DOS-PORT-STARTUP-BEGIN]
+  schema_version=1
+  subsystem_init_ms=<n>
+  gamedata_asset_load_ms=<n>
+  script_vm_init_ms=<n>
+  gfxmode_init_ms=<n>
+  sprite_index_init_ms=<n>
+  sprite_precache_ms=<n>
+  sprite_precache_view_count=<n>
+  sprite_precache_frame_count=<n>
+  sprite_precache_slowestN_view=<n> sprite_precache_slowestN_ms=<n>  (x3)
+  first_room_load_ms=<n>
+  total_to_first_frame_ms=<n>
+  [DOS-PORT-STARTUP-END]
+
+Honesty note: the named phases do NOT sum to total_to_first_frame_ms --
+confirmed on a real DOSBox-X run (Trilby's Notes: phases sum ~3.1s,
+total 4.45s). The ~1.3s gap is real, unaccounted-for time in engine
+steps this patch deliberately did not instrument (backend init, disk
+space/font checks, rotation settings, window setup,
+engine_prepare_to_start_game()) -- named here rather than silently
+absorbed into a neighboring phase, so a future round knows there is
+still a real gap to close, not a complete accounting.
+
+Also bridges DOSAGS_FLIP_INSTR=1 (this port's own DOSAGS_* naming, main.cpp)
+to SDL_HINT_DOS_FLIP_INSTR (patch 0035, vendor/SDL's own per-flip timing
+instrumentation, previously reachable only via the raw SDL env var name)
+via a plain setenv() -- patch 0035's own read is a bare getenv(), not
+through SDL_SetHint()'s registry, so this needed no SDL-side change.
+Off by default, same as the flag it bridges to (a real per-flip cost
+once enabled, per patch 0035's own comment).
+
+VALIDATED on DOSBox-X against three real games spanning all three
+depths and non-1 starting rooms (Trilby's Notes room 1, Maniac Mansion
+Deluxe room 50, Shards of God room 0): all three phases sum sanely,
+first_room_load_ms is non-negative for all three (confirming the
+load_new_room() fix), and Shards' own sprite_precache_frame_count=68
+matches the pre-existing Debug::Printf's own "68 frames" from the same
+call, a real, independent cross-check. DOSAGS_FLIP_INSTR=1 confirmed to
+activate patch 0035's own SDLDBG.LOG output (uwfb-stat/flip-instr-
+counters lines) on a real run; confirmed OFF (zero such lines) when
+unset. port_game.py validate's existing gate re-run clean (pass=true,
+no regression) against trilbysnotes sound_off.
+
+NOT exercised on real hardware this round -- DOSBox-X timings above are
+mechanism confirmation only, per this hub's own dosbox_not_perf_proxy
+rule; real numbers are a separate, later step for the operator to
+schedule rig time against.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hnodGZ6cg8CWuFXEDTsUq
+---
+ Engine/ac/event.cpp                   | 33 +++++++++++++
+ Engine/ac/game.cpp                    | 33 +++++++++++++
+ Engine/ac/room.cpp                    | 30 ++++++++++++
+ Engine/main/dos_port_startup_timing.h | 70 +++++++++++++++++++++++++++
+ Engine/main/engine.cpp                | 57 +++++++++++++++++++++-
+ Engine/main/game_file.cpp             | 26 ++++++++++
+ Engine/main/main.cpp                  | 23 +++++++++
+ 7 files changed, 271 insertions(+), 1 deletion(-)
+ create mode 100644 Engine/main/dos_port_startup_timing.h
+
+diff --git a/Engine/ac/event.cpp b/Engine/ac/event.cpp
+index 22ea0f14a..f1d2145ef 100644
+--- a/Engine/ac/event.cpp
++++ b/Engine/ac/event.cpp
+@@ -15,6 +15,7 @@
+ #include "event.h"
+ #ifdef __DJGPP__
+ #include <time.h> // uclock(), UCLOCKS_PER_SEC -- DOS-PORT room-transition timestamps
++#include "main/dos_port_startup_timing.h" // DosPortStartupTiming, patch 0078
+ #endif
+ #include "ac/common.h"
+ #include "ac/draw.h"
+@@ -241,6 +242,38 @@ void process_event(const AGSEvent *evp)
+                     extern uclock_t dos_port_engine_start_uclock;
+                     long t_ms = (long)((uclock() - dos_port_engine_start_uclock) * 1000 / UCLOCKS_PER_SEC);
+                     debug_script_log("DOS-PORT room_transition t_ms=%ld event=ready room=%d", t_ms, displayed_room);
++
++                    // DOS-PORT patch 0078: this is also "first interactive
++                    // frame" for the startup-timing report -- emit it here,
++                    // once, the first time this event fires. Reusing this
++                    // exact point (not inventing a new one) keeps
++                    // "first-room-ready" meaning one thing across both the
++                    // original room_transition instrumentation and this
++                    // report.
++                    DosPortStartupTiming &st = dos_port_startup_timing;
++                    if (!st.reported)
++                    {
++                        st.reported = true;
++                        if (st.first_room_load_start_ms >= 0)
++                            st.first_room_load_ms = t_ms - st.first_room_load_start_ms;
++
++                        debug_script_log("[DOS-PORT-STARTUP-BEGIN]");
++                        debug_script_log("schema_version=1");
++                        debug_script_log("subsystem_init_ms=%ld", st.subsystem_init_ms);
++                        debug_script_log("gamedata_asset_load_ms=%ld", st.gamedata_asset_load_ms);
++                        debug_script_log("script_vm_init_ms=%ld", st.script_vm_init_ms);
++                        debug_script_log("gfxmode_init_ms=%ld", st.gfxmode_init_ms);
++                        debug_script_log("sprite_index_init_ms=%ld", st.sprite_index_init_ms);
++                        debug_script_log("sprite_precache_ms=%ld", st.sprite_precache_ms);
++                        debug_script_log("sprite_precache_view_count=%d", st.precache_view_count);
++                        debug_script_log("sprite_precache_frame_count=%d", st.precache_frame_count);
++                        for (int i = 0; i < 3; ++i)
++                            debug_script_log("sprite_precache_slowest%d_view=%d sprite_precache_slowest%d_ms=%ld",
++                                i + 1, st.precache_slowest[i].view, i + 1, st.precache_slowest[i].ms);
++                        debug_script_log("first_room_load_ms=%ld", st.first_room_load_ms);
++                        debug_script_log("total_to_first_frame_ms=%ld", t_ms);
++                        debug_script_log("[DOS-PORT-STARTUP-END]");
++                    }
+                 }
+ #endif
+                 run_on_event(kScriptEvent_RoomAfterFadein, displayed_room);
+diff --git a/Engine/ac/game.cpp b/Engine/ac/game.cpp
+index 0169e83bc..b71f51d3e 100644
+--- a/Engine/ac/game.cpp
++++ b/Engine/ac/game.cpp
+@@ -13,6 +13,9 @@
+ //=============================================================================
+ #include "ac/game.h"
+ #include <stdio.h>
++#ifdef __DJGPP__
++#include "main/dos_port_startup_timing.h" // DosPortStartupTiming, patch 0078
++#endif
+ #include "ac/common.h"
+ #include "ac/view.h"
+ #include "ac/audiochannel.h"
+@@ -1941,6 +1944,36 @@ void precache_view(int view, int first_loop, int last_loop, bool with_sounds)
+         dur_sp_load / total_frames, dur_tx_make / total_frames, total_sounds, dur_sound_load);
+     Debug::Printf("\tSprite cache: %zu -> %zu KB, texture cache: %zu -> %zu KB",
+         spcache_before / 1024u, spcache_after / 1024u, txcache_before / 1024u, txcache_after / 1024u);
++
++#ifdef __DJGPP__
++    // DOS-PORT patch 0078: fold this call's own already-computed cost
++    // into the startup report's running aggregate (call count, frame
++    // count, total ms, slowest-3-by-total-ms) -- every field this
++    // function already prints above, just accumulated instead of only
++    // printed once and discarded. Every call during the game's lifetime
++    // contributes (not just the startup-time ones); the startup report
++    // only reads this struct once, at first-room-ready, so later
++    // in-game precache_view() calls (e.g. Game.PrecacheView from script)
++    // simply do not affect a report that already printed.
++    {
++        const long call_ms = (long)(dur_sp_load + dur_tx_make + dur_sound_load);
++        DosPortStartupTiming &t = dos_port_startup_timing;
++        t.precache_view_count++;
++        t.precache_frame_count += total_frames;
++        // Insertion into the fixed-size slowest-3 array, descending by ms.
++        for (int i = 0; i < 3; ++i)
++        {
++            if (call_ms > t.precache_slowest[i].ms)
++            {
++                for (int j = 2; j > i; --j)
++                    t.precache_slowest[j] = t.precache_slowest[j - 1];
++                t.precache_slowest[i].view = view;
++                t.precache_slowest[i].ms = call_ms;
++                break;
++            }
++        }
++    }
++#endif
+ }
+ 
+ bool load_game_font(int at_index, const FontInfo &finfo, GameDataVersion data_ver)
+diff --git a/Engine/ac/room.cpp b/Engine/ac/room.cpp
+index 619ef90ba..da77c65de 100644
+--- a/Engine/ac/room.cpp
++++ b/Engine/ac/room.cpp
+@@ -15,6 +15,7 @@
+ #include <ctype.h> // for toupper
+ #ifdef __DJGPP__
+ #include <time.h> // uclock(), UCLOCKS_PER_SEC -- DOS-PORT room-transition timestamps
++#include "main/dos_port_startup_timing.h" // DosPortStartupTiming, patch 0078
+ #endif
+ 
+ #include "platform/platform.h"
+@@ -571,6 +572,27 @@ HError LoadRoom(const String &filename, RoomStruct *room, AssetManager *mgr, boo
+ void load_new_room(int newnum, CharacterInfo *forchar)
+ {
+     debug_script_log("Loading room %d", newnum);
++#ifdef __DJGPP__
++    // DOS-PORT patch 0078: the TRUE first-room-load entry point -- the
++    // very first room is set via game_start.cpp's own direct
++    // load_new_room() call, which never goes through new_room() at all
++    // (there is nothing to "leave" on the first room, so that wrapper's
++    // own BeforeFadeout/RoomLeave logic does not apply and is skipped by
++    // design). Confirmed live, not assumed from patch 0042's own commit
++    // message: Trilby's Notes' own captured STDOUT.TXT shows "Loading
++    // room 1" with no preceding "Room change requested to room 1" line
++    // (new_room()'s own unconditional log), proving this path is taken
++    // for room 1 specifically. Same guard as the one in new_room() --
++    // whichever of the two call paths reaches a room first sets this
++    // once; a later in-game room change calling new_room() (which also
++    // calls this function) leaves it alone.
++    if (dos_port_startup_timing.first_room_load_start_ms < 0)
++    {
++        extern uclock_t dos_port_engine_start_uclock;
++        dos_port_startup_timing.first_room_load_start_ms =
++            (long)((uclock() - dos_port_engine_start_uclock) * 1000 / UCLOCKS_PER_SEC);
++    }
++#endif
+ 
+     String room_filename;
+     done_as_error = false;
+@@ -1031,6 +1053,14 @@ void new_room(int newnum,CharacterInfo*forchar) {
+         extern uclock_t dos_port_engine_start_uclock;
+         long t_ms = (long)((uclock() - dos_port_engine_start_uclock) * 1000 / UCLOCKS_PER_SEC);
+         debug_script_log("DOS-PORT room_transition t_ms=%ld event=start room=%d", t_ms, newnum);
++        // DOS-PORT patch 0078: the very first room transition of the run
++        // doubles as "room_file_load" for the startup-timing report (same
++        // reasoning patch 0042's own commit message already gives for
++        // room 1 doubling as the boot-to-first-frame metric) -- stash the
++        // start side here; event.cpp's AfterFadein handler below computes
++        // the duration and emits the full report once this has a value.
++        if (dos_port_startup_timing.first_room_load_start_ms < 0)
++            dos_port_startup_timing.first_room_load_start_ms = t_ms;
+     }
+ #endif
+ 
+diff --git a/Engine/main/dos_port_startup_timing.h b/Engine/main/dos_port_startup_timing.h
+new file mode 100644
+index 000000000..6a0e99f5d
+--- /dev/null
++++ b/Engine/main/dos_port_startup_timing.h
+@@ -0,0 +1,70 @@
++//=============================================================================
++//
++// Adventure Game Studio (AGS)
++//
++// Copyright (C) 1999-2011 Chris Jones and 2011-2026 various contributors
++// The full list of copyright holders can be found in the Copyright.txt
++// file, which is part of this source code distribution.
++//
++// The AGS source code is provided under the Artistic License 2.0.
++// A copy of this license can be found in the file License.txt and at
++// https://opensource.org/license/artistic-2-0/
++//
++//=============================================================================
++//
++// DOS-PORT patch 0078: startup-phase timing, from process start to the
++// first interactive frame. Real phase boundaries read from source
++// (initialize_engine()'s own call order, main/engine.cpp; load_game_file(),
++// main/game_file.cpp), not guessed -- see that patch's own commit message
++// for the exact source citations.
++//
++// Each *_ms field is -1 ("not yet measured") until its own bracket closes;
++// the report at first-room-ready (ac/event.cpp) only prints fields that
++// are actually >= 0, so a field whose own instrumentation point was never
++// reached (shouldn't happen on the normal boot path, but a game that
++// fails partway through init might) never prints a fabricated number.
++//
++// One shared struct instance (main.cpp), not a dozen loose scalar
++// globals, so the report line can iterate/validate every field together
++// and the slowest-N precache array has somewhere sane to live.
++//
++//=============================================================================
++#ifndef __AGS_EE_MAIN__DOS_PORT_STARTUP_TIMING_H
++#define __AGS_EE_MAIN__DOS_PORT_STARTUP_TIMING_H
++
++#ifdef __DJGPP__
++
++// Caller must already have <time.h> included for uclock_t/uclock()/
++// UCLOCKS_PER_SEC -- not included here to avoid pulling it into every
++// translation unit that only wants the struct declaration.
++extern uclock_t dos_port_engine_start_uclock; // main.cpp
++
++static inline long dos_port_uclock_ms_since_start()
++{
++    return (long)((uclock() - dos_port_engine_start_uclock) * 1000 / UCLOCKS_PER_SEC);
++}
++
++struct DosPortStartupTiming
++{
++    long subsystem_init_ms = -1;      // engine_init_fonts..engine_init_debug
++    long gamedata_asset_load_ms = -1; // game_file.cpp: OpenMainGameFileFromDefaultAsset+ReadGameData..UpdateGameData/TryLoadGameScripts
++    long script_vm_init_ms = -1;      // game_file.cpp: InitGameState() (create_game_scripts() is inside it)
++    long gfxmode_init_ms = -1;        // engine_try_set_gfxmode_any()
++    long sprite_index_init_ms = -1;   // engine_init_sprites()
++    long sprite_precache_ms = -1;     // engine_init_game_settings()'s precache_view() calls, aggregate
++    int  precache_view_count = 0;
++    int  precache_frame_count = 0;
++    // Slowest 3 precache_view() calls by their own total ms (view id, ms),
++    // insertion-sorted descending in ac/game.cpp. -1/-1 means "no Nth call".
++    struct { int view = -1; long ms = -1; } precache_slowest[3];
++    long first_room_load_start_ms = -1;    // room.cpp load_new_room()'s own t_ms, first call only (temp holding value)
++    long first_room_load_ms = -1;          // room.cpp load_new_room() start .. event.cpp AfterFadein ready (final)
++    bool reported = false;            // report emitted once, at the first room-ready event
++};
++
++// Defined in main.cpp, alongside dos_port_engine_start_time/_uclock.
++extern DosPortStartupTiming dos_port_startup_timing;
++
++#endif // __DJGPP__
++
++#endif // __AGS_EE_MAIN__DOS_PORT_STARTUP_TIMING_H
+diff --git a/Engine/main/engine.cpp b/Engine/main/engine.cpp
+index f08bf7076..fe227ae54 100644
+--- a/Engine/main/engine.cpp
++++ b/Engine/main/engine.cpp
+@@ -22,6 +22,10 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <stdexcept>
++#ifdef __DJGPP__
++#include <time.h> // uclock(), UCLOCKS_PER_SEC -- DOS-PORT patch 0078 startup-phase timing
++#include "main/dos_port_startup_timing.h" // DosPortStartupTiming
++#endif
+ #if AGS_PLATFORM_OS_WINDOWS
+ #include <process.h>  // _spawnl
+ #endif
+@@ -714,7 +718,17 @@ void engine_init_game_settings()
+             palette[ee]=game.defpal[ee];
+     }
+ 
+-    for (ee = 0; ee < game.numcursors; ee++) 
++#ifdef __DJGPP__
++    // DOS-PORT patch 0078: "sprite_precache" phase -- brackets just this
++    // cursor/player-view precache span, not the whole (larger, mostly
++    // unrelated) engine_init_game_settings(), so the field measures only
++    // what its name says. Per-call aggregate counters (view/frame counts,
++    // slowest N) are accumulated inside precache_view() itself
++    // (ac/game.cpp), since that is where the real per-view cost is
++    // already computed.
++    const long dos_port_t_precache_start = dos_port_uclock_ms_since_start();
++#endif
++    for (ee = 0; ee < game.numcursors; ee++)
+     {
+         // The cursor graphics are assigned to mousecurs[] and so cannot
+         // be removed from memory
+@@ -731,6 +745,10 @@ void engine_init_game_settings()
+     // may as well preload the character gfx
+     if (playerchar->view >= 0)
+         precache_view(playerchar->view, 0, Character_GetDiagonalWalking(playerchar) ? 8 : 4);
++#ifdef __DJGPP__
++    dos_port_startup_timing.sprite_precache_ms =
++        dos_port_uclock_ms_since_start() - dos_port_t_precache_start;
++#endif
+ 
+     set_our_eip(-6);
+ 
+@@ -1346,6 +1364,15 @@ int initialize_engine(const ConfigTree &startup_opts)
+ 
+     set_our_eip(-194);
+ 
++#ifdef __DJGPP__
++    // DOS-PORT patch 0078: "subsystem_init" phase -- fonts/keyboard/mouse/
++    // audio/debug, the run of engine_init_*() calls between game-data
++    // location and game-data load. Bracketed as one phase (none of the
++    // five is individually interesting enough on its own to be a
++    // separate report field), matching source order exactly.
++    const long dos_port_t_subsystem_init_start = dos_port_uclock_ms_since_start();
++#endif
++
+     engine_init_fonts();
+ 
+     set_our_eip(-195);
+@@ -1364,6 +1391,11 @@ int initialize_engine(const ConfigTree &startup_opts)
+ 
+     engine_init_debug();
+ 
++#ifdef __DJGPP__
++    dos_port_startup_timing.subsystem_init_ms =
++        dos_port_uclock_ms_since_start() - dos_port_t_subsystem_init_start;
++#endif
++
+     set_our_eip(-10);
+ 
+     engine_init_exit_handler();
+@@ -1392,9 +1424,21 @@ int initialize_engine(const ConfigTree &startup_opts)
+ 
+     engine_adjust_for_rotation_settings();
+ 
++#ifdef __DJGPP__
++    // DOS-PORT patch 0078: "gfxmode_init" phase -- the VESA/mode-set call,
++    // a real distinct cost (found reading source, not in this milestone's
++    // originally-named phase list, but a real step between game-data load
++    // and sprite work that deserves its own field rather than being
++    // silently folded into a neighbor).
++    const long dos_port_t_gfxmode_start = dos_port_uclock_ms_since_start();
++#endif
+     // Attempt to initialize graphics mode
+     if (!engine_try_set_gfxmode_any(usetup.Display))
+         return EXIT_ERROR;
++#ifdef __DJGPP__
++    dos_port_startup_timing.gfxmode_init_ms =
++        dos_port_uclock_ms_since_start() - dos_port_t_gfxmode_start;
++#endif
+ 
+     // Configure game window after renderer was initialized
+     engine_setup_window();
+@@ -1404,7 +1448,18 @@ int initialize_engine(const ConfigTree &startup_opts)
+     sys_window_show_cursor(false); // hide the system cursor
+ 
+     show_preload();
++#ifdef __DJGPP__
++    // DOS-PORT patch 0078: "sprite_index_init" phase -- the sprite SET's
++    // own index/metadata load (engine_init_sprites()), distinct from the
++    // per-view pixel precache that follows later in
++    // engine_init_game_settings() (sprite_precache_ms).
++    const long dos_port_t_sprindex_start = dos_port_uclock_ms_since_start();
++#endif
+     HError err = engine_init_sprites();
++#ifdef __DJGPP__
++    dos_port_startup_timing.sprite_index_init_ms =
++        dos_port_uclock_ms_since_start() - dos_port_t_sprindex_start;
++#endif
+     if (!err)
+     {
+         platform->DisplayAlert("Could not load sprite set file:\n%s", err->FullMessage().GetCStr());
+diff --git a/Engine/main/game_file.cpp b/Engine/main/game_file.cpp
+index e58db51c0..207f77e4a 100644
+--- a/Engine/main/game_file.cpp
++++ b/Engine/main/game_file.cpp
+@@ -17,6 +17,10 @@
+ //
+ 
+ #include "main/game_file.h"
++#ifdef __DJGPP__
++#include <time.h> // uclock(), UCLOCKS_PER_SEC -- DOS-PORT patch 0078 startup-phase timing
++#include "main/dos_port_startup_timing.h" // DosPortStartupTiming
++#endif
+ #include "ac/common.h"
+ #include "ac/character.h"
+ #include "ac/dialogtopic.h"
+@@ -178,6 +182,14 @@ void TryLoadGameScripts(LoadedGameEntities &ents)
+ 
+ HError load_game_file()
+ {
++#ifdef __DJGPP__
++    // DOS-PORT patch 0078: "gamedata_asset_load" phase -- from this
++    // function's own entry (opening the main game data file/CLIB index)
++    // through TryLoadGameScripts() just below, i.e. everything in this
++    // function except InitGameState() (script_vm_init_ms, bracketed
++    // separately around that one call further down).
++    const long dos_port_t_asset_load_start = dos_port_uclock_ms_since_start();
++#endif
+     MainGameSource src;
+     LoadedGameEntities ents(game);
+     HError err = (HError)OpenMainGameFileFromDefaultAsset(src, AssetMgr.get());
+@@ -222,7 +234,21 @@ HError load_game_file()
+     // we do this separately after UpdateGameData, because this involves scanning enviroment.
+     ScanOldStyleAudio(AssetMgr.get(), ents.Game, ents.Views, src.DataVersion);
+     TryLoadGameScripts(ents);
++#ifdef __DJGPP__
++    dos_port_startup_timing.gamedata_asset_load_ms =
++        dos_port_uclock_ms_since_start() - dos_port_t_asset_load_start;
++    // DOS-PORT patch 0078: "script_vm_init" phase -- InitGameState() is
++    // where create_game_scripts() (script/script.cpp) actually
++    // instantiates the compiled script modules/global script/dialog
++    // script into the VM; everything before it in this function is data
++    // loading, not script-VM work.
++    const long dos_port_t_scriptvm_start = dos_port_uclock_ms_since_start();
++#endif
+     err = (HError)InitGameState(ents, src.DataVersion);
++#ifdef __DJGPP__
++    dos_port_startup_timing.script_vm_init_ms =
++        dos_port_uclock_ms_since_start() - dos_port_t_scriptvm_start;
++#endif
+     if (!err)
+         return err;
+ 
+diff --git a/Engine/main/main.cpp b/Engine/main/main.cpp
+index 89fc5cd2b..d28fba2fa 100644
+--- a/Engine/main/main.cpp
++++ b/Engine/main/main.cpp
+@@ -42,6 +42,8 @@
+ 
+ #ifdef __DJGPP__
+ #include <time.h> // time_t, time() -- RUNMANIFEST start-time anchor
++#include <stdlib.h> // getenv(), setenv() -- DOSAGS_FLIP_INSTR bridge, patch 0078
++#include "main/dos_port_startup_timing.h" // DosPortStartupTiming, patch 0078
+ #endif
+ 
+ #if AGS_PLATFORM_OS_WINDOWS
+@@ -75,6 +77,10 @@ time_t dos_port_engine_start_time = 0;
+ // uclock() is DJGPP's own PIT-driven clock (UCLOCKS_PER_SEC=1193180),
+ // unrelated to the real-time clock dos_port_engine_start_time reads.
+ uclock_t dos_port_engine_start_uclock = 0;
++
++// DOS-PORT patch 0078: definition of the shared instance the struct's own
++// header (dos_port_startup_timing.h) declares extern.
++DosPortStartupTiming dos_port_startup_timing;
+ #endif
+ 
+ 
+@@ -97,6 +103,23 @@ void main_init(int argc, char*argv[])
+ #ifdef __DJGPP__
+     dos_port_engine_start_time = time(nullptr);
+     dos_port_engine_start_uclock = uclock();
++    // DOS-PORT patch 0078: DOSAGS_FLIP_INSTR=1 is this port's own naming
++    // convention (DOSAGS_*, matching DOSAGS_FORCE_COLOR_DEPTH/
++    // DOSAGS_FIXED_TIMESTEP) for what the shared SDL3-DOS backend itself
++    // calls SDL_HINT_DOS_FLIP_INSTR (patch 0035,
++    // vendor/SDL/src/video/dos/SDL_dosframebuffer.c) -- read as a bare
++    // getenv() there, not through the SDL_SetHint() registry, so bridging
++    // it here with setenv() is sufficient and needs no SDL-side change.
++    // Read once, here, before anything else can call getenv() on it
++    // (DOSVESA_UpdateWindowFramebuffer caches its own copy on ITS first
++    // call, so this must run before the first Present()). Off by
++    // default, same as the flag it bridges to -- it has a real per-flip
++    // cost (patch 0035's own comment), so an operator must ask for it.
++    {
++        const char *want_flip_instr = getenv("DOSAGS_FLIP_INSTR");
++        if (want_flip_instr && want_flip_instr[0] == '1' && want_flip_instr[1] == 0)
++            setenv("SDL_HINT_DOS_FLIP_INSTR", "1", 1);
++    }
+ #endif
+ 
+     set_our_eip(-999);
+-- 
+2.47.3
+

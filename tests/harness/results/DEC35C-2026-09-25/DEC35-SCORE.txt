@@ -1,0 +1,13 @@
+DEC35C sha=29f89b6ed84f dirty=0 PlayAmbientSound=298@35242 M1=248 M2=106/1499ms M2F=105 M3=492 M4=None
+DEC35R sha=39e868922fb2 dirty=0 PlayAmbientSound=262@35597 M1=211 M2=107/1297ms M2F=106 M3=455 M4=None
+DEC35F sha=2fa6ab52f25f dirty=0 PlayAmbientSound=263@35641 M1=211 M2=1/12ms M2F=0 M3=456 M4={'hits': '106', 'misses': '4', 'evictions': '0', 'uncacheable': '0', 'lapsed': '0', 'entries': '4', 'bytes': '312374', 'peak_bytes': '312374', 'cap_kb': '2048', 'verify': '0', 'verify_mismatches': '0'}
+DEC35V sha=2fa6ab52f25f dirty=0 PlayAmbientSound=262@35556 M1=211 M2=107/1293ms M2F=106 M3=456 M4={'hits': '106', 'misses': '4', 'evictions': '0', 'uncacheable': '0', 'lapsed': '0', 'entries': '4', 'bytes': '312374', 'peak_bytes': '312374', 'cap_kb': '2048', 'verify': '106', 'verify_mismatches': '0'}
+PASS  C reproduces 9b.2: M1 248 in 223..273, M2 106 >= 90
+FAIL  R: M1 211 <= 45% of C's 248 (112)
+PASS  R: M2 107 >= 90 brackets, mean 12.1 ms < C's 14.1 ms
+PASS  F: M1 211 within +/-10% of R's 211
+PASS  F: M2F 0 == 0
+PASS  F: pcmcache hits 106 >= 90, evictions 0 == 0, bytes 312374 <= cap 2048 KB
+PASS  F vs C: M3 shorter by 36 >= 30 (80% of M1's drop)
+PASS  V: verify_mismatches 0 == 0 with verify 106 >= 90
+VERDICT DEC35 FAIL

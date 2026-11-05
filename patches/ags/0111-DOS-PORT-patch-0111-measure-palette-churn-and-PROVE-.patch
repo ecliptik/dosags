@@ -1,0 +1,114 @@
+From 7b549d8cce87c6026e30c73abf674b1f1b92368f Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 18 Sep 2026 13:08:58 -0700
+Subject: [PATCH] DOS-PORT: patch 0111 -- measure palette churn, and PROVE
+ table byte-identity
+
+Two measurement-only instruments for the proposed light-table fix. No
+behaviour change: the table is still rebuilt unconditionally.
+
+1. Palette churn. create_light_table() is 1351 ms on HW-486-66 and runs
+   on every room load. The fix is "rebuild only when the palette actually
+   changed", which is worth nothing on a game that sets a per-room
+   palette -- so count it rather than assume. Logs an FNV-1a hash of the
+   palette each table is built from, whether it matches the previous
+   build, and a running total.
+
+   Note this sizes the BENEFIT per game; it does not gate whether the
+   change is safe. The replacement check is a 768-byte memcmp against
+   65,280 palette scans, so the fix is nearly free even for a game that
+   legitimately rebuilds on every room.
+
+2. Byte-identity, opt-in via DOSAGS_LIGHTTABLE_VERIFY=1. The correctness
+   argument for the fix is that on an unchanged palette the rebuilt table
+   is byte-identical, so skipping the rebuild preserves observable state.
+   That was an argument, not a measurement. This builds the table a
+   second time into a scratch COLOR_MAP and memcmps all 65,536 entries
+   against the live one, so the claim is settled before any ABBA rather
+   than after. Doubles the cost, hence opt-in and emulator-only.
+---
+ Engine/ac/region.cpp | 61 ++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 61 insertions(+)
+
+diff --git a/Engine/ac/region.cpp b/Engine/ac/region.cpp
+index a65e545a1..4f05c836a 100644
+--- a/Engine/ac/region.cpp
++++ b/Engine/ac/region.cpp
+@@ -23,6 +23,9 @@
+ #include "ac/dynobj/scriptdrawingsurface.h"
+ #include "game/roomstruct.h"
+ #include "script/runtimescriptvalue.h"
++#ifdef __DJGPP__
++#include "debug/debug_log.h"   // patch 0111: debug_script_log() for the palette-change counter
++#endif
+ 
+ using namespace AGS::Common;
+ 
+@@ -132,6 +135,64 @@ void generate_light_table()
+ {
+     if (game.color_depth == 1 && color_map == nullptr)
+     {
++#ifdef __DJGPP__
++        // DOS-PORT patch 0111: MEASUREMENT ONLY -- does the palette
++        // actually stay the same across room transitions?
++        //
++        // create_light_table() is 1351 ms on HW-486-66 (patch 0109's
++        // brackets) and runs on EVERY room load, because room.cpp nulls
++        // color_map immediately before calling this. The proposed fix is
++        // to rebuild only when the palette really changed -- which is
++        // worth exactly nothing on a game that sets a per-room palette.
++        // So count it before predicting anything: log a hash of the
++        // palette this table is being built from, and whether it differs
++        // from the previous build. No behaviour change; the table is
++        // still rebuilt unconditionally here.
++        {
++            static unsigned long dp_prev_hash = 0;
++            static bool dp_have_prev = false;
++            static long dp_builds = 0, dp_same = 0;
++            unsigned long h = 2166136261UL;
++            for (int i = 0; i < 256; i++)
++            {
++                const unsigned char comps[3] = {
++                    (unsigned char)palette[i].r,
++                    (unsigned char)palette[i].g,
++                    (unsigned char)palette[i].b };
++                for (int c = 0; c < 3; c++)
++                { h ^= comps[c]; h *= 16777619UL; }
++            }
++            dp_builds++;
++            const bool same = dp_have_prev && (h == dp_prev_hash);
++            if (same) dp_same++;
++            debug_script_log("DOSAGS_LIGHTTABLE build=%ld pal_hash=%08lx same_as_prev=%d cumulative_same=%ld",
++                             dp_builds, h, same ? 1 : 0, dp_same);
++            dp_prev_hash = h;
++            dp_have_prev = true;
++        }
++#endif
++#ifdef __DJGPP__
++        // patch 0111 gate, opt-in (DOSAGS_LIGHTTABLE_VERIFY=1): the whole
++        // correctness argument for the proposed fix is "on an unchanged
++        // palette the rebuilt table is byte-identical, so skipping the
++        // rebuild preserves observable state". That is an argument, not a
++        // measurement, until the two tables are actually compared. Build
++        // it a second time into a scratch COLOR_MAP and memcmp all 65,536
++        // entries. Doubles the cost, hence opt-in and emulator-only.
++        if (getenv("DOSAGS_LIGHTTABLE_VERIFY") != nullptr)
++        {
++            static COLOR_MAP dp_verify_tbl;
++            static bool dp_verify_have = false;
++            create_light_table(&dp_verify_tbl, palette, 0, 0, 0, nullptr);
++            if (dp_verify_have)
++            {
++                const int diff = memcmp(&dp_verify_tbl, &maincoltable, sizeof(COLOR_MAP));
++                debug_script_log("DOSAGS_LIGHTTABLE_VERIFY rebuilt_vs_previous memcmp=%d bytes=%u",
++                                 diff, (unsigned)sizeof(COLOR_MAP));
++            }
++            dp_verify_have = true;
++        }
++#endif
+         create_light_table(&maincoltable, palette, 0, 0, 0, nullptr);
+         color_map = &maincoltable;
+     }
+-- 
+2.47.3
+

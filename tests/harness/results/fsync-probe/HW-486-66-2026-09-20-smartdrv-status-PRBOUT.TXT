@@ -1,0 +1,79 @@
+fsprobe: sweep path = FSSWEEP.TMP
+fsprobe: default drive = C:, interrogating the default drive
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14582 volume_bytes=2014511104 free_bytes=477822976
+fsprobe: GEOMETRY MATCHES THE CF VOLUME (32768-byte clusters, 61478 total) -- this is C:, NOT a different device.
+
+===== PRE: SMARTDRV /S =====
+Microsoft SMARTDrive Disk Cache version 5.0
+Copyright 1991,1993 Microsoft Corp.
+
+Room for    512 elements of   8,192 bytes each
+There have been    357 cache hits
+    and    72 cache misses
+
+Cache size:  4,194,304 bytes
+Cache size while running Windows:  1,048,576 bytes
+
+            Disk Caching Status
+drive   read cache   write cache   buffering
+--------------------------------------------
+  B:       yes           no           no
+  C:       yes           no           no
+Write behind data will be committed before command prompt returns.
+
+
+For help, type "Smartdrv /?".
+===== PRE rc=1 =====
+
+===== PRE: SMARTDRV /? =====
+
+Installs and configures the SMARTDrive disk-caching utility.
+
+SMARTDRV [/X] [[drive[+|-]]...] [/U] [/C | /R] [/F | /N] [/L] [/V | /Q | /S]
+         [InitCacheSize [WinCacheSize]] [/E:ElementSize] [/B:BufferSize]
+
+/X              Disables write-behind caching for all drives.
+drive           Sets caching options on specific drive(s). The specified
+                drive(s) will have write-caching disabled unless you add +.
++               Enables write-behind caching for the specified drive.
+-               Disables all caching for the specified drive.
+/U              Do not load CD-ROM caching module.
+/C              Writes all information currently in write-cache to hard disk. 
+/R              Clears the cache and restarts SMARTDrive.
+/F              Writes cached data before command prompt returns (default).
+/N              Doesn't write cached data before command prompt returns.
+/L              Prevents SMARTDrive from loading itself into upper memory.
+/V              Displays SMARTDrive status messages when loading.
+/Q              Does not display status information.
+/S              Displays additional information about SMARTDrive's status.
+InitCacheSize   Specifies XMS memory (KB) for the cache.
+WinCacheSize    Specifies XMS memory (KB) for the cache with Windows.
+/E:ElementSize  Specifies how many bytes of information to move at one time.
+/B:BufferSize   Specifies the size of the read-ahead buffer.
+===== PRE rc=1 =====
+fsprobe: 200 iterations per arm, line length 128 bytes
+fsprobe: UCLOCKS_PER_SEC=1193180
+fsprobe: arm order = none
+fsprobe: arms SKIPPED -- the sweep's fsync'd bytes are then
+fsprobe: the only bytes forced to the device in this run.
+
+raw     n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+flush   n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+sync    n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+reopen  n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+
+fsprobe: fsync cost per call = mean_us(sync) - mean_us(flush) = 0.0 us
+fsprobe: 240 such calls in a gate run = 0.0 ms
+
+fsprobe: sweep -- 800-byte records to 4096 bytes, spikes >= 20000 us
+fsprobe: at this record size, byte 6400 is record 8 and byte 58400 is record 73; record 8 is byte 6400 and record 73 is byte 58400
+  FIRST rec=1     end_off=800     us=13448    cum_ms=13.4  (first cluster + directory entry)
+fsprobe: sweep done -- 6 records, 4800 device bytes, 0 spikes, worst 13448 us at off=800
+fsprobe: sweep elapsed 64.0 ms by uclock, 48.2 ms summed per-record; quiet records n=6 mean_us=8039.0
+fsprobe: volume after sweep:
+fsprobe: default drive = C:, interrogating the default drive
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14582 volume_bytes=2014511104 free_bytes=477822976
+fsprobe: GEOMETRY MATCHES THE CF VOLUME (32768-byte clusters, 61478 total) -- this is C:, NOT a different device.
+fsprobe: done

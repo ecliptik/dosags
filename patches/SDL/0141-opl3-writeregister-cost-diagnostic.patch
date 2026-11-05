@@ -1,0 +1,153 @@
+From b316248ed448256551ac5848e5a0aea71f446b42 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 14 Sep 2026 10:14:45 -0700
+Subject: [PATCH] dos: patch 0141 -- temporary SDL_DOSOpl3WriteRegister
+ per-call cost diagnostic (S7)
+
+WHY: dosags patches/ags/0059's AUDIOPRB.LOG (real-hardware, HW-486-66,
+tests/games/trilbysnotes/results/S7-audioprb-fix-realhw-2026-09-14.md)
+found the slot Poll() loop (MIDI scheduling) costs ~10x DOSBox-X's own
+measurement on real hardware, with a max in the same range as the SB
+ring-service pump's own cost -- something DOSBox-X's OPL3 emulation does
+not reproduce. HW-486-66's sound device is a PicoGUS in OPL3 mode (an
+RP2040-firmware ISA-bus emulation, not discrete YMF262 silicon), and
+SDL_DOSOpl3WriteRegister()'s inter-write delay loop ("6 dummy status
+reads x2, ~1us each -- bullet-proof") is a datasheet-derived estimate
+for real YMF262 timing, never independently measured against this
+card. This exact file already has one confirmed precedent of a similar
+naive per-inportb timing assumption being wrong enough to matter on
+real hardware (SDL_DOSMpu401WaitDRR / SDL/0093's DRR-poll hazard, a real
+ISA IOCHRDY wait-state). Per this hub's own "instrument the thing that
+produces the unexplained quantity, not its neighbors" rule, this
+measures this function's own cost directly -- one layer further down
+than 0059's own slot-loop measurement.
+
+WHAT: brackets SDL_DOSOpl3WriteRegister() with uclock()-based
+microsecond timestamps, accumulates in-memory (no I/O in this function),
+and exposes a snapshot-and-reset accessor,
+SDL_DOSOpl3RegWriteDiagSnapshot(), for a caller to poll and fold into
+its own already-open log handle -- same idiom as 0059 and the retired
+SDL/0136. dosags patches/ags/0062 is the consumer.
+
+Temporary -- to be reverted once this investigation concludes, same
+convention as 0136 itself.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ src/core/dos/SDL_dos_audio_synth.c | 61 ++++++++++++++++++++++++++++++
+ src/core/dos/SDL_dos_audio_synth.h | 14 +++++++
+ 2 files changed, 75 insertions(+)
+
+diff --git a/src/core/dos/SDL_dos_audio_synth.c b/src/core/dos/SDL_dos_audio_synth.c
+index 0a6893e9b..47c5b668a 100644
+--- a/src/core/dos/SDL_dos_audio_synth.c
++++ b/src/core/dos/SDL_dos_audio_synth.c
+@@ -973,12 +973,65 @@ bool SDL_DOSOpl3Detect(void)
+     return (s1 == 0x00 && s2 == 0xC0);
+ }
+ 
++/* TEMPORARY DIAGNOSTIC (dosags S7): this function's own per-call cost.
++   dosags patches/ags/0059's AUDIOPRB.LOG (real-hardware, HW-486-66 --
++   this rig's sound device is a PicoGUS in OPL3 mode, an RP2040-firmware
++   ISA-bus emulation, not discrete YMF262 silicon; see
++   tests/games/trilbysnotes/results/S7-audioprb-fix-realhw-2026-09-14.md)
++   measured the slot Poll() loop this function sits inside (MIDI
++   scheduling via midi_sched_tick(), which calls this function once per
++   register touched) at ~10x DOSBox-X's own measurement of the same
++   loop, with a real-hardware max in the same range as the SB ring-
++   service pump's own cost -- something DOSBox-X's OPL3/timing emulation
++   does not reproduce at all.
++
++   The "6 dummy status reads x2, ~1us each" comment below has never been
++   independently measured on this rig's actual card -- it is a datasheet-
++   derived estimate ("well past the requirement, bullet-proof"), carried
++   over unchanged from a real YMF262 chip's documented timing, not this
++   card's. This exact file already has one confirmed precedent of a
++   similarly naive per-inportb timing assumption being wrong enough to
++   matter on real hardware: the MPU-401 DRR-poll hazard above
++   (SDL_DOSMpu401WaitDRR's own comment, SDL/0093) found a real ISA
++   IOCHRDY bus wait-state can make a status-port inportb() cost far more
++   than assumed -- there, enough to hard-stall the CPU outright. This
++   diagnostic checks whether a milder version of the same mistake
++   (underestimating cost, not stalling) explains slots_us: per this
++   hub's own "instrument the thing that produces the unexplained
++   quantity, not its neighbors" rule, applied one layer further down
++   than 0059's own measurement went.
++
++   In-memory accumulate only (no I/O in this function -- same idiom as
++   0059 and the retired SDL/0136); the caller (dosags patches/ags/0062)
++   snapshots + resets this once per its own diagnostic window and folds
++   the numbers into its own already-open log handle. Temporary -- revert
++   once the investigation concludes. */
++static Uint32 s_opl3_regwrite_calls = 0;
++static Uint64 s_opl3_regwrite_sum_us = 0;
++static Uint64 s_opl3_regwrite_min_us = ~(Uint64)0;
++static Uint64 s_opl3_regwrite_max_us = 0;
++
++void SDL_DOSOpl3RegWriteDiagSnapshot(
++    Uint32 *out_calls, Uint32 *out_min_us, Uint32 *out_mean_us, Uint32 *out_max_us)
++{
++    if (out_calls)  *out_calls  = s_opl3_regwrite_calls;
++    if (out_min_us) *out_min_us = (Uint32)((s_opl3_regwrite_calls > 0) ? s_opl3_regwrite_min_us : 0);
++    if (out_mean_us) *out_mean_us = (Uint32)((s_opl3_regwrite_calls > 0) ? (s_opl3_regwrite_sum_us / s_opl3_regwrite_calls) : 0);
++    if (out_max_us) *out_max_us = (Uint32)s_opl3_regwrite_max_us;
++
++    s_opl3_regwrite_calls = 0;
++    s_opl3_regwrite_sum_us = 0;
++    s_opl3_regwrite_min_us = ~(Uint64)0;
++    s_opl3_regwrite_max_us = 0;
++}
++
+ void SDL_DOSOpl3WriteRegister(uint16_t reg, uint8_t value)
+ {
+     /* Bank routing: registers 0x000-0x0FF -> primary bank (0x388/0x389);
+        0x100-0x1FF -> secondary bank (0x38A/0x38B). */
+     const Uint16 addr_port = (reg < 0x100) ? 0x388 : 0x38A;
+     const Uint16 data_port = (reg < 0x100) ? 0x389 : 0x38B;
++    const uclock_t t0 = uclock(); /* TEMPORARY DIAGNOSTIC, see above */
+ 
+     outportb(addr_port, (Uint8)(reg & 0xFF));
+     /* Inter-write delay: canonical Adlib 6 dummy status reads.
+@@ -993,6 +1046,14 @@ void SDL_DOSOpl3WriteRegister(uint16_t reg, uint8_t value)
+     for (int i = 0; i < 6; i++) {
+         (void)inportb(0x388);
+     }
++
++    { /* TEMPORARY DIAGNOSTIC, see above */
++        const Uint64 call_us = (Uint64)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
++        s_opl3_regwrite_calls++;
++        s_opl3_regwrite_sum_us += call_us;
++        if (call_us < s_opl3_regwrite_min_us) s_opl3_regwrite_min_us = call_us;
++        if (call_us > s_opl3_regwrite_max_us) s_opl3_regwrite_max_us = call_us;
++    }
+ }
+ 
+ void SDL_DOSOpl3WriteRegisterBlock(
+diff --git a/src/core/dos/SDL_dos_audio_synth.h b/src/core/dos/SDL_dos_audio_synth.h
+index 577a62fc6..e4f19fb28 100644
+--- a/src/core/dos/SDL_dos_audio_synth.h
++++ b/src/core/dos/SDL_dos_audio_synth.h
+@@ -188,6 +188,20 @@ extern void SDL_DOSOpl3VoiceNoteOn(int voice_id, uint16_t freq, uint8_t block);
+ // Convenience hot-path: silences a voice (clears key-on bit at 0xB0+ch).
+ extern void SDL_DOSOpl3VoiceNoteOff(int voice_id);
+ 
++// TEMPORARY DIAGNOSTIC (dosags S7): SDL_DOSOpl3WriteRegister()'s own
++// per-call cost (including its inter-write dummy-read delay), split out
++// from whatever the caller measures around the whole slot-scheduling
++// loop it sits inside -- see SDL_DOSOpl3WriteRegister()'s own comment
++// for why. Returns the current in-memory window's call count and
++// min/mean/max microseconds, THEN RESETS the window -- call once per
++// caller-defined window (a caller polling more often than it flushes
++// just gets more, smaller windows; nothing breaks). All-zero output
++// when no calls happened since the last snapshot. Temporary -- revert
++// once the investigation concludes, same convention as the retired
++// SDL/0136.
++extern void SDL_DOSOpl3RegWriteDiagSnapshot(
++    uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us);
++
+ /* ------------------------------------------------------------------------
+  * DOSKUTSU patch (SDL/0110, Campaign 2 AdLib): OPL2 (AdLib) chip helpers.
+  *
+-- 
+2.47.3
+

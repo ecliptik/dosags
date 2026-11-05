@@ -1,0 +1,344 @@
+From f9a5237e0288c5389019ec4b9ec77c61a2a86354 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 14 Sep 2026 15:57:47 -0700
+Subject: [PATCH] dos: patch 0144 -- OpenDevice bisection diagnostic (S7)
+
+WHY: S7's investigation has ruled out eight hypotheses (poll cost,
+poll multiplier, regwrite cost, yield-switch volume, DMA-cycle-stealing,
+audio-thread existence, IRQ7/LPT1 sharing, the whole per-interrupt-
+servicing-cost family) for the ~9.7x-11.8x uniform per-UpdateGameOnce()
+tax that appears whenever the SB16/PicoGUS device is open on HW-486-66,
+regardless of DMA activity, thread existence, or interrupt fire count.
+What's left: a one-time OpenDevice side effect, not an ongoing cost.
+
+WHAT: SDL_HINT_DOS_AUDIO_OPEN_STOP_AT=1|2|3|4 makes OpenDevice return
+successfully at one of four points along its own real hardware-bring-up
+sequence -- before the DMA controller is touched (1), after it's
+programmed+unmasked but before DOS_HookInterrupt (2), after the IRQ
+vector is hooked but before any DSP command (3), or after the DSP
+speaker-enable (0xD1) but before autoinit playback actually starts (4)
+-- so a real-hardware A/B can bisect exactly which piece of the
+sequence the tax first appears at. DMA never actually engages in any of
+the four phases (the autoinit-start command never runs), so this is
+purely about setup-time state, not transfer activity.
+
+Also relocates the ring/staging-buffer allocation (chunk_size/ring_size/
+ring_buffer/staging_buffer, isr_* mirrors, SDL/0107 priming, SDL/0108
+witness) earlier in OpenDevice, before phase 1's stop point -- verified
+it depends only on hidden->dma_channel/dma_buffer/dma_buflen/is_16bit
+and device->spec.* (all already set), and nothing between its old and
+new position depends on it either. Needed because audio_core_entry_
+poll()'s existing per-tick SDL_DOSAudioPump() call keeps running
+regardless of where OpenDevice stopped; without this move, phases 1-2
+would leave GetDeviceBuf()/PlayDevice() operating on a NULL ring buffer,
+a real crash risk. ISR memory-locking (DOS_LockCode/DOS_LockData/
+DOS_LockVariable) deliberately stays at its original later position --
+phases 1-2 stop before reaching it, which is safe because the IRQ is
+never hooked in those phases either, so no interrupt context ever
+touches that memory.
+
+Verified DOS_UnhookInterrupt() (SDL_dos.c) already no-ops safely on a
+never-hooked (calloc-zeroed) hook structure before relying on it for
+phases 1-2's teardown -- read the implementation, not assumed.
+
+Strict-integer match ("1".."4"). Default OFF preserves current
+behavior bit-identical. Diagnostic only -- expect total silence in
+every phase.
+
+Temporary -- to be reverted once this investigation concludes.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ src/audio/dos/SDL_dosaudio_sb.c | 241 +++++++++++++++++++++++++-------
+ 1 file changed, 187 insertions(+), 54 deletions(-)
+
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index 0f09c5ff8..0d9a8e0d1 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -822,6 +822,49 @@ volatile bool g_dos_audio_force_dsp_pause = false;
+    when the hint is exactly "1". */
+ static bool g_dos_audio_no_bg_thread = false;
+ 
++/* DOS-PORT patch 0144: OpenDevice bisection diagnostic (S7).
++   S7-irq7-lpt1-hypothesis-refuted-2026-09-14.md: what's now common to
++   every collapsed real-hardware arm (thread present/absent, DMA active/
++   halted, IRQ firing 0 to ~2000 times) and absent only when the device
++   is fully closed is that OpenDevice ran at all -- some ONE-TIME side
++   effect established during OpenDevice, not any ongoing servicing or
++   interrupt-frequency cost (already independently disproven: Arm B/Arm D
++   show the same tax at 0 vs ~2000 real IRQ fires). This diagnostic lets
++   OpenDevice stop early at one of four points along its own real
++   hardware-bring-up sequence, so a real-hardware A/B can find exactly
++   which piece of that sequence the tax first appears at:
++
++     SDL_HINT_DOS_AUDIO_OPEN_STOP_AT=1 -- stop right after the DMA buffer
++       is allocated + silenced, BEFORE the 8237 DMA controller is touched
++       at all, before DOS_HookInterrupt, before any DSP command beyond
++       the unconditional ResetSoundBlasterDSP() every open already does.
++     =2 -- stop right after the 8237 DMA controller channel is
++       programmed (mode set) AND unmasked, still before DOS_HookInterrupt
++       and before any DSP command.
++     =3 -- stop right after DOS_HookInterrupt (IRQ vector installed, PIC
++       line unmasked), still before any DSP command.
++     =4 -- stop right after WriteSoundBlasterDSP(0xD1) (speaker enabled)
++       and its completion wait, still before the DSP is ever told to
++       actually start autoinit playback (0x1C/8-bit or 0xB6/16-bit) --
++       so DMA never actually engages in ANY of these four phases; the
++       question is purely about setup-time state, not transfer activity.
++
++   Each stop point returns true (a normal, successful SDL open) so the
++   engine proceeds exactly as it would with real audio -- ring/mixer
++   registered, audio_core_entry_poll() runs every tick exactly like a
++   real device, just silently. Safe to tear down at any of the four
++   points: CloseDevice's own DOS_UnhookInterrupt already no-ops on a
++   never-hooked (calloc-zeroed, hook->fn == NULL) structure
++   (SDL_dos.c's own `if (!hook || !hook->fn) return;`), the DMA-channel
++   mask-at-close is an idempotent port write regardless of prior arm
++   state, and hidden->dma_buffer/ring_buffer/staging_buffer are each
++   already NULL-guarded there -- verified by reading CloseDevice in full
++   before adding this, not assumed. Strict-integer match ("1".."4";
++   anything else, including unset, is the normal full open). Default
++   OFF preserves current behavior bit-identical. Diagnostic only --
++   expect total silence in every phase (DMA truly never starts). */
++static int g_dos_audio_open_stop_at = 0;
++
+ // ISR-visible ring buffer state (all memory-locked).
+ static volatile int isr_ring_read = 0;
+ static volatile int isr_ring_write = 0;
+@@ -2055,6 +2098,23 @@ static bool DOSSOUNDBLASTER_OpenDevice(SDL_AudioDevice *device)
+ {
+     const bool is_sb16 = soundblaster_is_sb16;
+ 
++    /* DOS-PORT patch 0144: resolve the OpenDevice-bisection stop phase.
++       See g_dos_audio_open_stop_at's own declaration comment for the
++       full rationale. Strict-integer match against "1".."4"; anything
++       else (unset, "0", malformed) leaves it 0 (normal full open). */
++    {
++        const char *e = SDL_getenv("SDL_HINT_DOS_AUDIO_OPEN_STOP_AT");
++        g_dos_audio_open_stop_at = 0;
++        if (e && e[0] >= '1' && e[0] <= '4' && e[1] == 0) {
++            g_dos_audio_open_stop_at = e[0] - '0';
++            dos_port_dbg_log("audio: SDL_HINT_DOS_AUDIO_OPEN_STOP_AT=%d -- "
++                             "OpenDevice will stop early at phase %d; "
++                             "diagnostic only, expect total silence "
++                             "(DMA never actually starts in any phase)",
++                             g_dos_audio_open_stop_at, g_dos_audio_open_stop_at);
++        }
++    }
++
+     /* DOSKUTSU patch (Phase 11 patch 0067): capture the device pointer
+        so the engine-callable SDL_DOSAudioPump() (declared in
+        SDL3/SDL_dosaudio_pump.h) knows which device to iterate. Cleared
+@@ -2793,60 +2853,32 @@ static bool DOSSOUNDBLASTER_OpenDevice(SDL_AudioDevice *device)
+     // silence the DMA buffer to start
+     SDL_memset(hidden->dma_buffer, soundblaster_silence_value, hidden->dma_buflen);
+ 
+-    // set up DMA controller.
+-    const Uint32 physical = DOS_LinearToPhysical(hidden->dma_buffer);
+-    const Uint8 physical_page = (physical >> 16) & 0xFF;
+-
+-    if (is_sb16) {
+-        // High DMA (16-bit, channels 5-7): ports in 0xC0-0xDF range, counts in words.
+-        const int dma_words = (hidden->dma_buflen / 2) - 1;
+-        outportb(0xD4, 0x04 | hidden->dma_channel);                                           // mask the DMA channel
+-        outportb(0xD6, 0x58 | (hidden->dma_channel - 4));                                     // mode: single, read, auto-init
+-        static const int high_page_ports[] = { 0, 0, 0, 0, 0, 0x8B, 0x89, 0x8A };             // DMA page register ports for channels 5-7
+-        outportb(high_page_ports[hidden->dma_channel], physical_page);                        // page to transfer
+-        outportb(0xD8, 0x00);                                                                 // clear the flip-flop
+-        outportb(0xC0 + (hidden->dma_channel - 4) * 4, (Uint8)((physical >> 1) & 0xFF));      // offset low (word address)
+-        outportb(0xC0 + (hidden->dma_channel - 4) * 4, (Uint8)((physical >> 9) & 0xFF));      // offset high
+-        outportb(0xD8, 0x00);                                                                 // clear the flip-flop
+-        outportb(0xC0 + (hidden->dma_channel - 4) * 4 + 2, (Uint8)(dma_words & 0xFF));        // count low
+-        outportb(0xC0 + (hidden->dma_channel - 4) * 4 + 2, (Uint8)((dma_words >> 8) & 0xFF)); // count high
+-        outportb(0xD4, hidden->dma_channel & ~4);                                             // unmask the DMA channel
+-    } else {
+-        // Low DMA (8-bit, channels 0-3): ports in 0x00-0x0F range, counts in bytes.
+-        static const int page_ports[] = { 0x87, 0x83, 0x81, 0x82 }; // DMA page register ports for channels 0-3 (yes, they're out of order — that's how the IBM PC DMA controller works)
+-        const int dma_bytes = hidden->dma_buflen - 1;
+-        outportb(0x0A, 0x04 | hidden->dma_channel);                              // mask the DMA channel
+-        outportb(0x0B, 0x58 | hidden->dma_channel);                              // mode: single, read, auto-init
+-        outportb(page_ports[hidden->dma_channel], physical_page);                // page to transfer
+-        outportb(0x0C, 0x00);                                                    // clear the flip-flop
+-        outportb(hidden->dma_channel * 2, (Uint8)(physical & 0xFF));             // offset low (byte address)
+-        outportb(hidden->dma_channel * 2, (Uint8)((physical >> 8) & 0xFF));      // offset high
+-        outportb(0x0C, 0x00);                                                    // clear the flip-flop
+-        outportb(hidden->dma_channel * 2 + 1, (Uint8)(dma_bytes & 0xFF));        // count low
+-        outportb(hidden->dma_channel * 2 + 1, (Uint8)((dma_bytes >> 8) & 0xFF)); // count high
+-        outportb(0x0A, hidden->dma_channel);                                     // unmask the DMA channel (just the channel number, no bit 2)
+-    }
+-
+-    // Cache the IRQ ack port so the ISR doesn't chase pointers.
+-    isr_irq_ack_port = is_sb16 ? (soundblaster_base_port + 0x0F) : (soundblaster_base_port + 0x0E);
+-
+-    /* DOSKUTSU patch (SDL/0106): OpenDevice DMA-path diagnostic. Records the
+-       path actually committed (chosen path, programmed DMA channel + page/
+-       offset/count register family, resolved sample format + channels + rate,
+-       IRQ + ack-port), so the PicoGUS-SB iter log shows exactly what the DMA
+-       controller was programmed with. The DSP command sequence is logged
+-       separately in each start branch below (SDL/0106). Always-on (read-only
+-       snapshot at open; no killswitch). */
+-    dos_port_dbg_log("audio: SDL/0106 OpenDevice DMA programmed: path=%s "
+-                     "dma_ch=%d (%s) dma_buflen=%d fmt=0x%X ch=%d freq=%d Hz "
+-                     "irq=%d ack_port=0x%X silence=0x%02X",
+-                     is_sb16 ? "16-bit-high-DMA" : "8-bit-low-DMA",
+-                     hidden->dma_channel,
+-                     is_sb16 ? "high/word ports 0xC0-0xDF" : "low/byte ports 0x00-0x0F",
+-                     (int)hidden->dma_buflen,
+-                     (unsigned)device->spec.format, device->spec.channels,
+-                     device->spec.freq, soundblaster_irq,
+-                     (unsigned)isr_irq_ack_port, soundblaster_silence_value);
++    /* DOS-PORT patch 0144: the ring-buffer setup block below (chunk_size/
++       ring_size/ring_buffer/staging_buffer allocation, isr_* mirror
++       assignment, SDL/0107 8-bit silence priming, SDL/0108 format
++       witness) is RELOCATED here from its original position (after DMA
++       controller setup, before the ISR memory-locking section) so that
++       ALL FOUR phase-1..4 bisection stop points below have a fully
++       valid, allocated ring/staging buffer -- otherwise
++       audio_core_entry_poll()'s already-existing per-tick
++       SDL_DOSAudioPump() call (unaffected by this diagnostic; the
++       engine has no idea OpenDevice stopped early) would call
++       GetDeviceBuf()/PlayDevice() against a NULL hidden->ring_buffer /
++       zero hidden->chunk_size, a real crash risk -- checked and fixed
++       before touching real hardware, not assumed safe. Nothing in this
++       block depends on DMA-controller register state or the IRQ hook
++       (only on hidden->dma_channel/dma_buffer/dma_buflen/is_16bit and
++       device->spec.*, all already set above), and nothing in the DMA-
++       controller-programming section below depends on ring-buffer
++       state either -- verified by reading both sides before moving.
++       ISR memory-LOCKING (DOS_LockCode/DOS_LockData/DOS_LockVariable)
++       deliberately stays at its ORIGINAL later position (still before
++       DOS_HookInterrupt, unchanged): phases 1-2 stop before reaching
++       it, leaving the ring genuinely unlocked, which is fine because
++       the IRQ is never hooked in those phases either -- no interrupt
++       context ever touches this memory, so DPMI's normal (non-locked)
++       paging is safe. Phases 3-4 and the full normal open still reach
++       the locking code exactly as before. */
+ 
+     // Set up the IRQ-driven ring buffer.
+     hidden->chunk_size = device->buffer_size; // one DMA half-buffer
+@@ -2941,6 +2973,83 @@ static bool DOSSOUNDBLASTER_OpenDevice(SDL_AudioDevice *device)
+                                         "U8 centered on 0x80 (SDL/0108 fix)");
+     }
+ 
++    /* DOS-PORT patch 0144, phase 1: stop before the 8237 DMA controller
++       is touched at all -- before DOS_HookInterrupt, before any DSP
++       command beyond the unconditional ResetSoundBlasterDSP() above.
++       Ring/staging buffer are now already valid (relocated above), so
++       audio_core_entry_poll()'s per-tick pump call has something safe
++       to operate on even at this earliest phase. */
++    if (g_dos_audio_open_stop_at == 1) {
++        g_dos_sb_device_open = true;
++        return true;
++    }
++
++    // set up DMA controller.
++    const Uint32 physical = DOS_LinearToPhysical(hidden->dma_buffer);
++    const Uint8 physical_page = (physical >> 16) & 0xFF;
++
++    if (is_sb16) {
++        // High DMA (16-bit, channels 5-7): ports in 0xC0-0xDF range, counts in words.
++        const int dma_words = (hidden->dma_buflen / 2) - 1;
++        outportb(0xD4, 0x04 | hidden->dma_channel);                                           // mask the DMA channel
++        outportb(0xD6, 0x58 | (hidden->dma_channel - 4));                                     // mode: single, read, auto-init
++        static const int high_page_ports[] = { 0, 0, 0, 0, 0, 0x8B, 0x89, 0x8A };             // DMA page register ports for channels 5-7
++        outportb(high_page_ports[hidden->dma_channel], physical_page);                        // page to transfer
++        outportb(0xD8, 0x00);                                                                 // clear the flip-flop
++        outportb(0xC0 + (hidden->dma_channel - 4) * 4, (Uint8)((physical >> 1) & 0xFF));      // offset low (word address)
++        outportb(0xC0 + (hidden->dma_channel - 4) * 4, (Uint8)((physical >> 9) & 0xFF));      // offset high
++        outportb(0xD8, 0x00);                                                                 // clear the flip-flop
++        outportb(0xC0 + (hidden->dma_channel - 4) * 4 + 2, (Uint8)(dma_words & 0xFF));        // count low
++        outportb(0xC0 + (hidden->dma_channel - 4) * 4 + 2, (Uint8)((dma_words >> 8) & 0xFF)); // count high
++        outportb(0xD4, hidden->dma_channel & ~4);                                             // unmask the DMA channel
++    } else {
++        // Low DMA (8-bit, channels 0-3): ports in 0x00-0x0F range, counts in bytes.
++        static const int page_ports[] = { 0x87, 0x83, 0x81, 0x82 }; // DMA page register ports for channels 0-3 (yes, they're out of order — that's how the IBM PC DMA controller works)
++        const int dma_bytes = hidden->dma_buflen - 1;
++        outportb(0x0A, 0x04 | hidden->dma_channel);                              // mask the DMA channel
++        outportb(0x0B, 0x58 | hidden->dma_channel);                              // mode: single, read, auto-init
++        outportb(page_ports[hidden->dma_channel], physical_page);                // page to transfer
++        outportb(0x0C, 0x00);                                                    // clear the flip-flop
++        outportb(hidden->dma_channel * 2, (Uint8)(physical & 0xFF));             // offset low (byte address)
++        outportb(hidden->dma_channel * 2, (Uint8)((physical >> 8) & 0xFF));      // offset high
++        outportb(0x0C, 0x00);                                                    // clear the flip-flop
++        outportb(hidden->dma_channel * 2 + 1, (Uint8)(dma_bytes & 0xFF));        // count low
++        outportb(hidden->dma_channel * 2 + 1, (Uint8)((dma_bytes >> 8) & 0xFF)); // count high
++        outportb(0x0A, hidden->dma_channel);                                     // unmask the DMA channel (just the channel number, no bit 2)
++    }
++
++    /* DOS-PORT patch 0144, phase 2: stop right after the 8237 DMA
++       controller channel is programmed (mode set) and unmasked, still
++       before DOS_HookInterrupt and before any DSP command. The DMA
++       controller will never actually transfer anything (nothing ever
++       asserts DREQ -- the DSP is never told to start), so masking it
++       again at CloseDevice is a safe, idempotent port write regardless. */
++    if (g_dos_audio_open_stop_at == 2) {
++        g_dos_sb_device_open = true;
++        return true;
++    }
++
++    // Cache the IRQ ack port so the ISR doesn't chase pointers.
++    isr_irq_ack_port = is_sb16 ? (soundblaster_base_port + 0x0F) : (soundblaster_base_port + 0x0E);
++
++    /* DOSKUTSU patch (SDL/0106): OpenDevice DMA-path diagnostic. Records the
++       path actually committed (chosen path, programmed DMA channel + page/
++       offset/count register family, resolved sample format + channels + rate,
++       IRQ + ack-port), so the PicoGUS-SB iter log shows exactly what the DMA
++       controller was programmed with. The DSP command sequence is logged
++       separately in each start branch below (SDL/0106). Always-on (read-only
++       snapshot at open; no killswitch). */
++    dos_port_dbg_log("audio: SDL/0106 OpenDevice DMA programmed: path=%s "
++                     "dma_ch=%d (%s) dma_buflen=%d fmt=0x%X ch=%d freq=%d Hz "
++                     "irq=%d ack_port=0x%X silence=0x%02X",
++                     is_sb16 ? "16-bit-high-DMA" : "8-bit-low-DMA",
++                     hidden->dma_channel,
++                     is_sb16 ? "high/word ports 0xC0-0xDF" : "low/byte ports 0x00-0x0F",
++                     (int)hidden->dma_buflen,
++                     (unsigned)device->spec.format, device->spec.channels,
++                     device->spec.freq, soundblaster_irq,
++                     (unsigned)isr_irq_ack_port, soundblaster_silence_value);
++
+     // Lock all ISR code and data to prevent page faults during interrupts.
+     DOS_LockCode(SoundBlasterIRQHandler, SoundBlasterIRQHandler_End);
+     DOS_LockCode(RingCopyOut, RingCopyOut_End);
+@@ -3034,6 +3143,19 @@ static bool DOSSOUNDBLASTER_OpenDevice(SDL_AudioDevice *device)
+ 
+     DOS_HookInterrupt(soundblaster_irq, SoundBlasterIRQHandler, &hidden->interrupt_hook);
+ 
++    /* DOS-PORT patch 0144, phase 3: stop right after the IRQ vector is
++       installed and the PIC line unmasked, still before any DSP
++       command. IRQ will never actually fire (DMA is armed but the DSP
++       is never told to start), so this exercises "interrupt line
++       hooked and unmasked, otherwise idle" in isolation. Safe to tear
++       down: CloseDevice's DOS_UnhookInterrupt() call will actually
++       have real state to unhook this time (hook->fn is now set), the
++       normal, already-exercised path. */
++    if (g_dos_audio_open_stop_at == 3) {
++        g_dos_sb_device_open = true;
++        return true;
++    }
++
+     WriteSoundBlasterDSP(0xD1); // turn on the speaker
+     // The speaker-on command takes up to 112 ms to complete on real hardware.
+     // Poll the DSP write status port (bit 7 clears when the DSP is ready);
+@@ -3046,6 +3168,17 @@ static bool DOSSOUNDBLASTER_OpenDevice(SDL_AudioDevice *device)
+         }
+     }
+ 
++    /* DOS-PORT patch 0144, phase 4: stop right after the DSP speaker-
++       enable (0xD1) completes, still before the DSP is ever told to
++       actually start autoinit playback (0x1C 8-bit / 0xB6 16-bit) --
++       so DMA never engages in ANY of these four phases, this one
++       included. This is the furthest point before the DSP's own
++       playback state machine actually engages. */
++    if (g_dos_audio_open_stop_at == 4) {
++        g_dos_sb_device_open = true;
++        return true;
++    }
++
+     if (is_sb16) {
+         // SB16 (DSP >= 4): set output sample rate directly
+         WriteSoundBlasterDSP(0x41); // set output sampling rate
+-- 
+2.47.3
+

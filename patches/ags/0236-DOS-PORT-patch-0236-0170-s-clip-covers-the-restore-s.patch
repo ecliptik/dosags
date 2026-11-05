@@ -1,0 +1,59 @@
+From 2fddefaa76ccf848b453775baffc193e31356657 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <services.claude@accounts.ecliptik.com>
+Date: Fri, 25 Sep 2026 11:35:59 -0700
+Subject: [PATCH] DOS-PORT: patch 0236 -- 0170's clip covers the restore's
+ carried spans (the cause of stage 2's divergence)
+
+Why: 0170 stage 2 clips an unchanged, skipped sprite's composite to the
+dirty bbox. With DOSAGS_GUI_CLIP=1 it changed the rendered output, for a
+cause never understood, so it has shipped off. The cause: the clip reads the
+dirty set during the composite, but this frame's restore also repainted
+last frame's post-restore marks (0193's carry), which reach the dirty set
+only at the present (dos_port_dirty_merge_carry), after the composite. The
+clip could therefore miss a span the restore had just repainted, and leave
+the skipped entry out of it; the buffer is built incrementally, so the hole
+stayed (dosags LAB-S32.md 23.4).
+
+What: the clip rect is the bbox of the dirty set and the carry boxes (read,
+not merged -- 0193's present is unchanged); a full carry means no clip.
+Confirmed in DOSBox-X: the current clip diverges wherever it engages (BENCH
+25/6/6 differing freeze pairs, AGS Quest 11/16 on a phase-matched pair);
+with this change CLIP=1 is byte-identical to CLIP=0 on every BENCH row and
+on AGS Quest under gate-aq-fixed (4/4 pairs, 16/16) -- LAB-S32.md 23.9-23.11.
+Still behind DOSAGS_GUI_CLIP (default off); the default is decided after
+the 486 cell. Slot 0235 stays reserved for the lab-only record.
+---
+ Engine/gfx/ali3dsw.cpp | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index c7b2d280b..7120006d8 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -890,11 +890,22 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+             dos_port_tick_timing.rb_gui_full_px += _garea;
+         }
+     }
++    // DOS-PORT patch 0236: the clip must also cover what THIS frame's restore repainted from last frame's
++    // post-restore marks (0193's carry). Those reach the dirty set only at the present
++    // (dos_port_dirty_merge_carry), after this composite, so a clip read without them can miss a restored
++    // span and leave the skipped entry out of it for good -- the cause of 0170 stage 2's divergence (dosags
++    // LAB-S32.md 23.4-23.11). Read the carry here; do not merge it. Only reachable with DOSAGS_GUI_CLIP=1.
+     if (sprite.dos_clip_dirty && _dp_same_space &&
+-        dos_port_dirty.valid && !dos_port_dirty.is_full)
++        dos_port_dirty.valid && !dos_port_dirty.is_full && !dos_port_dirty.carry_full)
+     {
+         Rect d(dos_port_dirty.x1, dos_port_dirty.y1,
+                dos_port_dirty.x2, dos_port_dirty.y2);
++        for (int _ci = 0; _ci < dos_port_dirty.carry_nbox; ++_ci)   // patch 0236
++        {
++            const DosPortDirtyBox &_cb = dos_port_dirty.carry_box[_ci];
++            d = Rect(std::min(d.Left, _cb.x1), std::min(d.Top, _cb.y1),
++                     std::max(d.Right, _cb.x2), std::max(d.Bottom, _cb.y2));
++        }
+         Rect cur = surface->GetClip();
+         Rect isect = IntersectRects(cur, d);
+         if (!isect.IsEmpty())
+-- 
+2.47.3
+

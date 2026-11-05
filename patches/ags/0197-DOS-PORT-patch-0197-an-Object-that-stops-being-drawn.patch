@@ -1,0 +1,168 @@
+From e622baaa8a5334d2811d932b7a02faac0e593c88 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 22 Sep 2026 09:29:27 -0700
+Subject: [PATCH] DOS-PORT: patch 0197 -- an Object that stops being drawn
+ flushes its old rect
+
+WHY: found root-causing the duplicate-character defect seen on real hardware during 5 Days a
+Stranger's room-3 opening animation (PLAN.md, S2F2/DUPCHAR2). ObjectOff() (global_object.cpp) sets
+objs[obn].on = OBJ_STATE_DISABLED and logs it -- and calls no invalidation function of any kind
+(compare SetObjectBaseline three functions above it, which does call mark_object_changed()).
+prepare_objects_for_drawing()'s per-frame draw-decision loop (draw.cpp) has a bare 'continue' on
+disabled or off-screen, no before/after comparison. This is exactly patch 0191's own description of
+the pre-fix GUI defect (GUIMain::SetVisible marks nothing) -- the same gap, never built for Objects.
+Confirmed not Object-specific: prepare_characters_for_drawing() has the identical structural gap and
+character.cpp has zero invalidate-family calls -- a general engine gap that nothing in this whole
+campaign had exercised before, since ordinary walking only moves an object/character while it stays
+drawn (already correctly invalidated every frame via put_sprite_list_on_screen()'s own
+invalidate_sprite() call), never toggles it off entirely mid-scene.
+
+WHAT: a per-object 'last drawn rect' record (DosPortObjPrev), reset on room load (alongside the
+existing objcache reset in clear_drawobj_cache(), since object IDs are room-local). In
+prepare_objects_for_drawing(), when an object that was recorded as drawn last frame is about to be
+skipped this frame, its recorded rect is flushed (invalidate_rect(..., true), the room-sprite
+convention confirmed at put_sprite_list_on_screen()'s own in_room=true call) before the skip.
+Placed inside prepare_objects_for_drawing() itself, which already runs before this tick's own
+restore within construct_room_view() (prepare_room_sprites() -> prepare_objects_for_drawing() at
+line ~3075, draw_room_background() -- the restore -- at line ~3132) -- so the mark lands as a
+pre-restore mark for THIS frame, no GUI-style 'late flush' fallback needed (Objects have no
+later-in-the-frame state-change window between this decision point and the restore the way GUI
+script code did). Re-enabling an object needs no symmetric handling -- once drawn again it goes
+through the normal invalidate_sprite() path, already correct.
+
+New counters (objflush) confirm the mechanism engages exactly where predicted: a debug build
+directly showed 'DOS-PORT objflush idx=0 n=1' firing at the same tick 'Object 0 turned off' is
+logged, on 5 Days a Stranger's own room-3 cutscene.
+
+NOT fixed here, same gap, a future patch if needed: Characters (prepare_characters_for_drawing()).
+
+Standing DOSBox-X correctness gate (gate-alias.sh, every row): 13 of 14 clean, 0 regressions. The
+one failing row (shards-alias-512x384) is the pre-existing, already-documented, decoupled tick-100
+title-screen content defect (PLAN.md), unrelated to this patch -- unchanged by it, not caused by it.
+
+Real-hardware validation: not yet run at commit time (queued next, DUPCHAR3, same conditions as
+DUPCHAR2's confirmed 2-for-2 hit rate, only the binary changes).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/ac/draw.cpp   | 60 +++++++++++++++++++++++++++++++++++++++++---
+ Engine/main/quit.cpp | 11 ++++++++
+ 2 files changed, 67 insertions(+), 4 deletions(-)
+
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index 99fd271a2..d4618d237 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -443,6 +443,24 @@ long dos_port_gui_flush_n = 0;            // old rects invalidated ahead of the
+ long dos_port_gui_flush_late_n = 0;       // ... found only when the GUI was drawn, a frame late
+ long dos_port_gui_flush_tally[64] = {0};  // which GUI, and why: not drawn / picture properties / content flag
+ long dos_port_gui_flush_hidden_n = 0, dos_port_gui_flush_props_n = 0, dos_port_gui_flush_flag_n = 0;
++// DOS-PORT patch 0197: the same gap as the pre-0191 GUI bug, for room Objects. ObjectOff() (and
++// the off-screen case in prepare_objects_for_drawing() itself) marks nothing -- ObjectOff() calls
++// no invalidation function at all (compare SetObjectBaseline three functions above it in
++// global_object.cpp, which does call mark_object_changed()), and prepare_objects_for_drawing()'s
++// per-frame skip is a bare `continue`, no before/after comparison. Unlike the GUI fix, Objects need
++// no "late flush" fallback: prepare_objects_for_drawing() is the only place per tick that decides
++// whether an object is drawn, and it runs before this tick's own restore (construct_room_view()
++// calls prepare_room_sprites() -> prepare_objects_for_drawing() at line ~3075, then
++// draw_room_background() -- the restore -- at line ~3132), so a mark made here lands as a
++// pre-restore mark for THIS frame, not a frame late.
++struct DosPortObjPrev
++{
++    bool valid = false;                    // was this object drawn last frame
++    int rx = 0, ry = 0, rw = 0, rh = 0;    // the rect it covered: what invalidate_sprite() would have marked
++};
++static DosPortObjPrev dos_port_obj_prev[MAX_ROOM_OBJECTS];
++long dos_port_obj_flush_n = 0;             // old rects invalidated ahead of the restore
++long dos_port_obj_flush_tally[MAX_ROOM_OBJECTS] = {0};  // which object
+ #endif
+ // GUI render targets, for rendering all controls on same texture buffer
+ std::vector<IDriverDependantBitmap*> gui_render_tex;
+@@ -919,6 +937,13 @@ void clear_drawobj_cache(bool keep_sprite_callbacks)
+     {
+         objcache[i] = ObjectCache();
+     }
++#ifdef __DJGPP__
++    // patch 0197: object IDs are room-local -- without this, object 0 in a freshly loaded room
++    // would inherit a "valid" flush record (and rect) left over from object 0 in the PREVIOUS
++    // room, and could flush a rect that means nothing in the new room's own coordinate space.
++    for (int i = 0; i < MAX_ROOM_OBJECTS; ++i)
++        dos_port_obj_prev[i] = DosPortObjPrev();
++#endif
+     // room overlays cache
+     overcache.clear();
+ 
+@@ -2258,10 +2283,27 @@ void prepare_objects_for_drawing()
+     for (uint32_t objid = 0; objid < croom->numobj; ++objid)
+     {
+         const RoomObject &obj = objs[objid];
+-        if (obj.on != OBJ_STATE_ENABLED)
+-            continue; // disabled
+-        if ((obj.x >= thisroom.Width) || (obj.y < 1))
+-            continue; // offscreen
++        const bool _dos_port_on = (obj.on == OBJ_STATE_ENABLED) &&
++            !((obj.x >= thisroom.Width) || (obj.y < 1));
++        if (!_dos_port_on)
++        {
++#ifdef __DJGPP__
++            // patch 0197: this object was drawn last frame and is not now (disabled or moved
++            // off-screen) -- nothing else marks this transition (see the comment at
++            // DosPortObjPrev above), so flush its old rect here, before this tick's own restore.
++            if (objid < MAX_ROOM_OBJECTS && dos_port_obj_prev[objid].valid)
++            {
++                DosPortObjPrev &p = dos_port_obj_prev[objid];
++                dos_port_dirty_source = kDirtySrc_RoomSprite;
++                invalidate_rect(p.rx, p.ry, p.rx + p.rw, p.ry + p.rh, true);
++                dos_port_dirty_source = kDirtySrc_Other;
++                p.valid = false;
++                dos_port_obj_flush_tally[objid]++;
++                dos_port_obj_flush_n++;
++            }
++#endif
++            continue; // disabled or offscreen
++        }
+ 
+         eip_guinum = objid;
+         const ObjectCache &objsav = objcache[objid];
+@@ -2280,6 +2322,16 @@ void prepare_objects_for_drawing()
+             (obj.flags & OBJF_NOWALKBEHINDS) == 0, obj.transparent, hw_accel);
+         // Finally, add the texture to the draw list
+         add_to_sprite_list(actsp.Ddb, atx, aty, usebasel, actsp.DrawIndex);
++#ifdef __DJGPP__
++        // patch 0197: record what was just drawn, so a future frame that stops drawing this
++        // object can flush this exact rect.
++        if (objid < MAX_ROOM_OBJECTS && actsp.Ddb)
++        {
++            DosPortObjPrev &p = dos_port_obj_prev[objid];
++            p.valid = true; p.rx = atx; p.ry = aty;
++            p.rw = actsp.Ddb->GetWidth(); p.rh = actsp.Ddb->GetHeight();
++        }
++#endif
+     }
+ }
+ 
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 17faf89b7..f0024c6b9 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -698,6 +698,17 @@ void quit(const char *quitmsg)
+                     for (int _g = 0; _g < 64; ++_g)
+                         if (dos_port_gui_flush_tally[_g])
+                             Debug::Printf("DOS-PORT guiflush idx=%d n=%ld", _g, dos_port_gui_flush_tally[_g]);
++                    // patch 0197: same mechanism as guiflush, for room Objects -- see draw.cpp's
++                    // own comment at DosPortObjPrev for why this exists.
++                    extern long dos_port_obj_flush_n;
++                    extern long dos_port_obj_flush_tally[MAX_ROOM_OBJECTS];
++                    if (dos_port_obj_flush_n)
++                    {
++                        Debug::Printf("DOS-PORT objflush n=%ld", dos_port_obj_flush_n);
++                        for (int _o = 0; _o < MAX_ROOM_OBJECTS; ++_o)
++                            if (dos_port_obj_flush_tally[_o])
++                                Debug::Printf("DOS-PORT objflush idx=%d n=%ld", _o, dos_port_obj_flush_tally[_o]);
++                    }
+                     extern long dos_port_big_gui_opaque, dos_port_big_gui_masked;  // 0176
+                     Debug::Printf("DOS-PORT bigguiopaque opaque=%ld masked=%ld",
+                         dos_port_big_gui_opaque, dos_port_big_gui_masked);
+-- 
+2.47.3
+

@@ -1,0 +1,63 @@
+From 9e8267867e115eddc2b9e5401cdd1c936b501eb1 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 15:41:16 -0700
+Subject: [PATCH 4/4] [AGS] cc_instance.cpp: fix local int/int32_t mismatch,
+ new divergence site
+
+Another new call-site instance of the established DJGPP int32_t-vs-int
+divergence category (patches 0013/0018/0019/0024's own category, not a
+new mechanism): ccInstance::CallScriptFunction() declared two local
+stack variables `int start_at, export_args;`, then passed them by
+reference to FindExportedFunction(const String&, int32_t&, int32_t&) --
+DJGPP's int32_t is `long int`, a distinct type from `int` even though
+both are 4 bytes here, so an int lvalue cannot bind to an int32_t&
+parameter at all (unlike the pointer-shaped instances of this same
+category, a reference binding has no reinterpret_cast escape hatch
+worth using here). Fixed by declaring the locals as int32_t directly,
+matching FindExportedFunction's own already-correct signature -- the
+callee was right, the caller's locals were wrong.
+
+This single change also fixes a second, related error at the same call
+site's own next line: `numargs = std::min(numargs, export_args);` failed
+the same single-template-parameter deduction mismatch already seen in
+patch 0024's room.cpp fix (numargs is the function's own int32_t
+parameter; export_args was the mismatched int local) -- once
+export_args is int32_t, both arguments deduce to the same real type and
+std::min resolves without any further change needed.
+
+Checked every other use of start_at/export_args in this function for a
+lingering int-specific dependency before landing: export_args feeds a
+cc_error() printf-style call with %d (a pre-existing latent width
+mismatch on this platform independent of this patch -- int32_t is long
+int here, %d expects int -- but compiles without even a -Wformat
+warning in practice and is not part of this patch's scope); start_at
+feeds Run(int32_t curpc) directly, now an exact type match rather than
+an implicit int->int32_t conversion.
+
+Verified: cc_instance.cpp.obj compiles clean, zero errors, zero
+warnings (including no new format-string warnings from the cc_error
+call). Full cmake --build ... -- -k (keep-going) re-run: no new errors
+from this file, and no other error anywhere in the entire build except
+the two already-documented, deliberately-deferred items -- the
+ali3dsw.cpp window-surface rewrite and the remaining small rename-only
+sites (debug.cpp, graphics_mode.cpp, agsplatformdriver.cpp).
+---
+ Engine/script/cc_instance.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Engine/script/cc_instance.cpp b/Engine/script/cc_instance.cpp
+index dae84de91..3e88d7e29 100644
+--- a/Engine/script/cc_instance.cpp
++++ b/Engine/script/cc_instance.cpp
+@@ -394,7 +394,7 @@ ccInstError ccInstance::CallScriptFunction(const String &funcname, int32_t numar
+         return kInstErr_Busy;
+     }
+ 
+-    int start_at, export_args;
++    int32_t start_at, export_args;
+     if (!FindExportedFunction(funcname, start_at, export_args))
+     {
+         cc_error("function '%s' not found", funcname.GetCStr());
+-- 
+2.47.3
+

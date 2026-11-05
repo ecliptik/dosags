@@ -1,0 +1,150 @@
+From b522767b2d1d425647c781fa19c04ac7a025f59d Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 17:43:20 -0700
+Subject: [PATCH 211/212] DOS-PORT: patch 0211 -- legacy pathfinder: reuse the
+ walkable-mask analysis while the mask is unchanged
+
+is_route_possible() copies the walkable mask and makes two full passes over
+it (the second column-major) to measure each area's average path width and
+normalise every walkable pixel to 1, before the flood fill from the source.
+Those passes depend only on the mask's pixels and MaxGranularity, yet ran on
+every call: twice per walk request whose target is not itself walkable (the
+nearest-walkable retry calls it again on the same mask), and again for every
+later request while nothing on the mask had moved. On DOSBox-X at fixed
+40000 cycles they were 44 ms per call, 88 ms of each 98-231 ms request
+replaying the 13 walk requests 5 Days a Stranger made on the 486 (dosags
+RT2a), where those requests stall the game 250-370 ms.
+
+The analysis is now kept with a copy of the mask it was made from; a call on
+a byte-identical mask (same size, same MaxGranularity) restores
+walk_area_granularity[] and the normalised mask from it and goes straight to
+the flood fill, which is split out unchanged. Same inputs, same outputs: the
+routes are unchanged (witness: route hashes, 339 requests). The cache costs
+two copies of the mask (2 x 64 KB at 320x200) and a compare per call, done a
+32-bit word at a time because DJGPP's memcmp is a byte loop (~13 ms per
+64 KB compare at fixed 40000 cycles). It is freed with the route finder.
+---
+ Engine/ac/route_finder_impl_legacy.cpp | 79 ++++++++++++++++++++++++++
+ 1 file changed, 79 insertions(+)
+
+diff --git a/Engine/ac/route_finder_impl_legacy.cpp b/Engine/ac/route_finder_impl_legacy.cpp
+index ce7b7e8b1..92b0da982 100644
+--- a/Engine/ac/route_finder_impl_legacy.cpp
++++ b/Engine/ac/route_finder_impl_legacy.cpp
+@@ -49,6 +49,9 @@ static int waspossible = 1;
+ static int suggestx;
+ static int suggesty;
+ static short **beenhere = nullptr;
++// DOS-PORT patch 0211: is_route_possible's cached mask analysis (see there)
++static Bitmap *rp_cache_src = nullptr;   // the mask the cached analysis was made from
++static Bitmap *rp_cache_norm = nullptr;  // that mask with every walkable pixel set to 1
+ 
+ LegacyRouteFinder::LegacyRouteFinder()
+ {
+@@ -66,6 +69,10 @@ LegacyRouteFinder::~LegacyRouteFinder()
+     {
+         free(pathbacky);
+     }
++    delete rp_cache_src; // DOS-PORT patch 0211
++    rp_cache_src = nullptr;
++    delete rp_cache_norm;
++    rp_cache_norm = nullptr;
+     if (beenhere != nullptr) 
+     {
+         if (beenhere[0] != nullptr) 
+@@ -156,6 +163,48 @@ int find_nearest_walkable_area(Bitmap *tempw, int fromX, int fromY, int toX, int
+ }
+ 
+ static int walk_area_granularity[MAX_WALK_AREAS];
++
++// DOS-PORT patch 0211: is_route_possible's analysis of the walkable mask -- two full passes over it
++// (the second column-major) that measure each area's average width and normalise every walkable
++// pixel to 1 -- depends only on the mask's own pixels and MaxGranularity, yet ran on every call:
++// twice per walk request whose target is not walkable (the nearest-walkable retry), and again for
++// every request while the mask had not changed. On DOSBox-X at fixed 40000 cycles that was 44 ms
++// per call, 88 ms of a 98-231 ms request (dosags RT2a); on the 486 the walk stalls are 250-370 ms.
++// The result is kept with a copy of the mask it came from; a call on a byte-identical mask (same
++// size, same MaxGranularity) reuses it, so the outputs -- walk_area_granularity[] and the
++// normalised copy the flood fill starts from -- are the same values the passes would produce.
++static int rp_cache_gran[MAX_WALK_AREAS];
++static int rp_cache_maxgran = -1;
++static int is_route_possible_flood(Bitmap *tempw, int fromx, int fromy, int tox, int toy, const LegacyRouteFinder::PathfinderConfig &pfc);
++
++static bool rp_cache_matches(const Bitmap *wallscreen, int maxgran)
++{
++  if (!rp_cache_src || rp_cache_maxgran != maxgran ||
++      rp_cache_src->GetWidth() != wallscreen->GetWidth() || rp_cache_src->GetHeight() != wallscreen->GetHeight())
++    return false;
++  // Compared a 32-bit word at a time: DJGPP's memcmp is a byte loop (8 instructions a byte), which
++  // made this test cost ~13 ms per call at fixed 40000 cycles for a 320x200 mask.
++  const int w = wallscreen->GetWidth();
++  for (int y = 0; y < wallscreen->GetHeight(); y++)
++  {
++    const uint8_t *a = rp_cache_src->GetScanLine(y);
++    const uint8_t *b = wallscreen->GetScanLine(y);
++    int x = 0;
++    for (; x + 4 <= w; x += 4)
++    {
++      uint32_t wa, wb;
++      memcpy(&wa, a + x, 4);
++      memcpy(&wb, b + x, 4);
++      if (wa != wb)
++        return false;
++    }
++    for (; x < w; x++)
++      if (a[x] != b[x])
++        return false;
++  }
++  return true;
++}
++
+ static int is_route_possible(const Bitmap *wallscreen, int fromx, int fromy, int tox, int toy, const LegacyRouteFinder::PathfinderConfig &pfc)
+ {
+   suggestx = -1;
+@@ -167,6 +216,15 @@ static int is_route_possible(const Bitmap *wallscreen, int fromx, int fromy, int
+   if (wallscreen->GetPixel(fromx, fromy) < 1)
+     return 0;
+ 
++  if (rp_cache_matches(wallscreen, pfc.MaxGranularity))
++  {
++    Bitmap *tempw = BitmapHelper::CreateBitmapCopy(rp_cache_norm, 8);
++    if (tempw == nullptr)
++      quit("no memory for route calculation");
++    memcpy(walk_area_granularity, rp_cache_gran, sizeof(walk_area_granularity));
++    return is_route_possible_flood(tempw, fromx, fromy, tox, toy, pfc);
++  }
++
+   Bitmap *tempw = BitmapHelper::CreateBitmapCopy(wallscreen, 8);
+   if (tempw == nullptr)
+     quit("no memory for route calculation");
+@@ -237,6 +295,27 @@ static int is_route_possible(const Bitmap *wallscreen, int fromx, int fromy, int
+   }
+   walk_area_granularity[0] = pfc.MaxGranularity;
+ 
++  // DOS-PORT patch 0211: keep the analysis for the next call on the same mask
++  delete rp_cache_src;
++  delete rp_cache_norm;
++  rp_cache_src = BitmapHelper::CreateBitmapCopy(wallscreen, 8);
++  rp_cache_norm = BitmapHelper::CreateBitmapCopy(tempw, 8);
++  if (rp_cache_src == nullptr || rp_cache_norm == nullptr)
++  {
++    delete rp_cache_src; rp_cache_src = nullptr;
++    delete rp_cache_norm; rp_cache_norm = nullptr;
++  }
++  memcpy(rp_cache_gran, walk_area_granularity, sizeof(rp_cache_gran));
++  rp_cache_maxgran = pfc.MaxGranularity;
++
++  return is_route_possible_flood(tempw, fromx, fromy, tox, toy, pfc);
++}
++
++// The part of is_route_possible that depends on the endpoints: flood from the source over the
++// normalised mask (`tempw`, owned and deleted here) and, if the target is not reached, suggest the
++// nearest walkable pixel to it. Split out unchanged by DOS-PORT patch 0211.
++static int is_route_possible_flood(Bitmap *tempw, int fromx, int fromy, int tox, int toy, const LegacyRouteFinder::PathfinderConfig &pfc)
++{
+   tempw->FloodFill(fromx, fromy, 232);
+   if (tempw->GetPixel(tox, toy) != 232) 
+   {
+-- 
+2.47.3
+

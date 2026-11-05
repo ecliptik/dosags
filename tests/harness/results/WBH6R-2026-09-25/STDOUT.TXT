@@ -1,0 +1,978 @@
+Adventure Game Studio v3.6 Interpreter
+Copyright (c) 1999-2011 Chris Jones and 2011-2026 others
+Engine version 3.6.3.13, 32-bit LE
+
+Initializing backend libs
+SDL Version: 3.5.0
+DOS-PORT: SDL_DOS_ALLOW_DIRECT_FRAMEBUFFER=1 (from environment)
+DOS-PORT: SDL_DOS_PREFER_LFB=1 (port default)
+Initializing game data
+Using provided game data path: 5DAYS.AGS
+Opened game data file: ac2game.dta
+Game data version: 22
+Compiled with: 2.55
+Startup directory: ./
+Data directory: ./
+Setting up game configuration
+User data directory: C:\DOSAGS
+Game : (room:-10) SetSaveGameDirectory: failed to create all subdirectories: ./C:\DOSAGS
+Was not able to init voice pack 'speech.vox': file not found or of unknown format.
+Registered asset libraries:
+- LIB:	c:/dosags/5DAYS.AGS
+	Filters: ,audio
+- DIR:	c:/dosags/
+	Filters: ,audio,voice
+Initializing TTF renderer
+Initializing mouse: number of buttons reported is 3
+Initializing audio
+DosMidiBackend: WaveBlaster/MPU-401 cold-init succeeded (ran before the PCM device opened, as required)
+DOSAudioMixer: opened 11025 Hz mono S16, 8 voices
+DOS audio device opened: pcm=sb@11025m16,voices=8,underruns=0,drains=0,pcm_irqs=0,silent_irqs=0,overwrites=0,ring_max_ms=0/743,skipped_silent=0,idle_pauses=0,underflow_pads=0,partial_pulls=0;midi=none,events=0,midi_tick=poll,late_max_ms=0,late_hist=0/0/0/0/0/0,late50=0,burst=0@0,clk=0/-1s
+AudioCore: DOS mixer status: pcm=sb@11025m16,voices=8,underruns=0,drains=0,pcm_irqs=0,silent_irqs=0,overwrites=0,ring_max_ms=0/743,skipped_silent=0,idle_pauses=0,underflow_pads=0,partial_pulls=0;midi=none,events=0,midi_tick=poll,late_max_ms=0,late_hist=0/0/0/0/0/0,late50=0,burst=0@0,clk=0/-1s
+Sound cache set: 2048 KB
+Install exit handler
+Load game data
+Game title: '5 Days A Stranger'
+Game uid (old format): `1050154255`
+Game guid: ''
+Game GUI version: 104
+Loaded font 0: agsfnt0.wfn, req size: 0; nominal h: 9, real h: 9, vextent: 0,8, aabb: 0,0 - 8,8
+Loaded font 1: agsfnt1.wfn, req size: 0; nominal h: 9, real h: 10, vextent: 0,9, aabb: 0,0 - 17,9
+Loaded font 2: agsfnt2.wfn, req size: 0; nominal h: 9, real h: 10, vextent: 0,9, aabb: 0,0 - 17,9
+Set game text language: 
+Set locale: 
+Initializing resolution settings
+Game native resolution: 320 x 240 (16 bit) letterbox-by-design
+Mouse cursor graphic area: (0,0)-(319,239) (320x240)
+Created global script
+Checking for disk space
+Device display resolution: 640 x 480
+Graphic settings: driver: OGL, windowed: no, screen size: 0 x 0, game scale: proportional
+Graphic settings: refresh rate (optional): 0, vsync: 0
+Requested graphics driver 'OGL' not found, will try existing drivers instead
+Using graphics factory: Software
+Created graphics driver: SDL 2D Software renderer
+Supported gfx modes for display 0 (16-bit): 
+	1024x768;800x600;640x480;512x384;
+Attempt to find nearest supported resolution for screen size 640 x 480 (16-bit) fullscreen, on display 0
+Attempt to switch gfx mode to 640 x 480 (16-bit) fullscreen, on display 0
+Window surface pixel format: SDL_PIXELFORMAT_RGB565
+Graphics driver set: SDL 2D Software renderer
+Graphics mode set: 640 x 480 (16-bit) fullscreen desktop, on display 0
+Graphics mode set: refresh rate (optional): 0, vsync: 0
+Render frame set, render dest (0, 0, 639, 479 : 640 x 480)
+Requested gfx filter: StdScale
+Graphics filter set: 'StdScale', filter dest (0, 0, 639, 479 : 640 x 480)
+Using gfx filter: StdScale
+Mouse speed control: enabled, unit: 1.000000, user value: 1.000000
+Touch-to-mouse motion mode: absolute
+Mouse cursor graphic area: (0,0)-(639,479) (640x480)
+Multitasking mode set: 0
+Setting up window
+Multitasking mode set: 0
+Initialize sprites
+Sprite file info: compression: none, storage flags: 0x00000000, total sprites: 2062
+Sprite cache set: 4096 KB
+Initialize game settings
+Game text encoding: ASCII, text language: not set
+Precache view 8 (loops 0-4) with 29 frames, total = 40 ms, average file->mem = 1 ms, bm->tx = 0 ms,
+		loaded 0 sounds = 0 ms
+	Sprite cache: 42 -> 86 KB, texture cache: 0 -> 0 KB
+Runtime behavior switches:
+	smooth_walk = 0
+	gui_text_direction = 0
+	dialog_opt_text_alignment = 0
+Prepare to start game
+Game : (room:-10) Cursor mode set to 0
+Engine initialization complete
+Starting game
+Game : (room:-10) Cursor mode set to 0
+Game : (room:-10) Playing music 0
+DosMidiBackend: WaveBlaster/MPU-401 backend active
+Game : (room:-10) [(unknown section):12] ScriptGame: attempt to write in readonly variable at offset 240, value 2
+Game : (room:-10) [(unknown section):13] ScriptGame: attempt to write in readonly variable at offset 232, value 6
+Game : (room:-10) Transition-out in room -10 (DOS-PORT 0106: placeholder, animation skipped)
+Game : (room:-10) Loading room 1
+Game : (room:-10) DOSAGS_XT t_ms=429 phase=load_begin room=1
+Mouse cursor graphic area: (0,40)-(639,439) (640x400)
+Game : (room:1) Mouse bounds constrained to (0,0)-(319,199)
+Game : (room:1) Cursor mode set to 1
+Initialize legacy path finder library
+Game : (room:1) Now in room 1
+Game : (room:1) DOSAGS_XT t_ms=896 phase=load_end room=1
+DOS-PORT fixed-timestep: ENABLED (logic decoupled from render)
+Game : (room:1) Transition-in in room 1
+Game : (room:1) DOSAGS_XT t_ms=904 phase=fadein_begin room=1
+DosMidiBackend: MIDI tick rtc (writes planned ahead, released by the SB IRQ, one MPU byte per RTC tick)
+Game : (room:1) DOSAGS_XT t_ms=3537 phase=fadein_end room=1
+DOS-PORT stallwhat tick=1 self_ms=2663 children_ms=0 script_us=0 events_us=2635236 scene_us=0 rb_us=410 present_us=295185
+DOS-PORT skipframe owed=105 prev_us total=2663612 present=295185 rb=410 scene=0 script=0 events=2635236 sprite_px=0 present_px=3993600 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=8 prev_us total=220697 present=23435 rb=269 scene=1776 script=0 events=40 sprite_px=176 present_px=307200 sprites=1 maxspr=11x16
+DOS-PORT skipframe owed=8 prev_us total=231681 present=22952 rb=269 scene=1836 script=0 events=37 sprite_px=176 present_px=307200 sprites=1 maxspr=11x16
+DOS-PORT skipframe owed=5 prev_us total=231732 present=22306 rb=977 scene=2187 script=0 events=41 sprite_px=1961 present_px=307200 sprites=2 maxspr=119x15
+DOS-PORT skipframe owed=5 prev_us total=221763 present=22304 rb=976 scene=2192 script=0 events=40 sprite_px=1961 present_px=307200 sprites=2 maxspr=119x15
+DOS-PORT skipframe owed=5 prev_us total=231981 present=22152 rb=982 scene=2200 script=0 events=40 sprite_px=1961 present_px=307200 sprites=2 maxspr=119x15
+DOS-PORT skipframe owed=6 prev_us total=162999 present=22171 rb=2167 scene=2405 script=0 events=7 sprite_px=5024 present_px=307200 sprites=2 maxspr=202x24
+DOS-PORT skipframe owed=8 prev_us total=222290 present=22159 rb=2165 scene=2593 script=0 events=41 sprite_px=5024 present_px=307200 sprites=2 maxspr=202x24
+DOS-PORT skipframe owed=8 prev_us total=233299 present=22571 rb=2167 scene=2589 script=0 events=38 sprite_px=5024 present_px=307200 sprites=2 maxspr=202x24
+DOS-PORT skipframe owed=9 prev_us total=233869 present=22397 rb=2168 scene=2594 script=0 events=39 sprite_px=5024 present_px=307200 sprites=2 maxspr=202x24
+DOS-PORT skipframe owed=8 prev_us total=234281 present=22550 rb=2165 scene=2911 script=0 events=42 sprite_px=5024 present_px=307200 sprites=2 maxspr=202x24
+DOS-PORT skipframe owed=8 prev_us total=224109 present=22307 rb=2158 scene=2598 script=0 events=40 sprite_px=5024 present_px=307200 sprites=2 maxspr=202x24
+DOS-PORT skipframe owed=8 prev_us total=235143 present=22162 rb=2164 scene=2583 script=0 events=40 sprite_px=5024 present_px=307200 sprites=2 maxspr=202x24
+DOS-PORT skipframe owed=8 prev_us total=232563 present=22322 rb=2163 scene=2593 script=0 events=42 sprite_px=5024 present_px=307200 sprites=2 maxspr=202x24
+DOS-PORT skipframe owed=8 prev_us total=234083 present=22858 rb=2158 scene=2597 script=0 events=45 sprite_px=5024 present_px=307200 sprites=2 maxspr=202x24
+DOS-PORT skipframe owed=5 prev_us total=232172 present=22372 rb=2117 scene=2623 script=0 events=41 sprite_px=5216 present_px=307200 sprites=2 maxspr=210x24
+DOS-PORT skipframe owed=5 prev_us total=233563 present=22376 rb=1960 scene=2847 script=0 events=40 sprite_px=5216 present_px=307200 sprites=2 maxspr=210x24
+DOS-PORT skipframe owed=5 prev_us total=233508 present=22397 rb=1968 scene=2613 script=0 events=43 sprite_px=5216 present_px=307200 sprites=2 maxspr=210x24
+DOS-PORT skipframe owed=5 prev_us total=220475 present=22180 rb=1960 scene=2628 script=0 events=40 sprite_px=5216 present_px=307200 sprites=2 maxspr=210x24
+DOS-PORT skipframe owed=5 prev_us total=233322 present=22319 rb=1968 scene=2614 script=0 events=38 sprite_px=5216 present_px=307200 sprites=2 maxspr=210x24
+DOS-PORT skipframe owed=5 prev_us total=233303 present=22313 rb=1967 scene=2614 script=0 events=38 sprite_px=5216 present_px=307200 sprites=2 maxspr=210x24
+DOS-PORT skipframe owed=5 prev_us total=234015 present=22838 rb=1968 scene=2625 script=0 events=41 sprite_px=5216 present_px=307200 sprites=2 maxspr=210x24
+DOS-PORT skipframe owed=8 prev_us total=233318 present=23923 rb=1190 scene=2272 script=0 events=40 sprite_px=2621 present_px=307200 sprites=2 maxspr=163x15
+DOS-PORT skipframe owed=8 prev_us total=231079 present=22378 rb=1187 scene=2262 script=0 events=39 sprite_px=2621 present_px=307200 sprites=2 maxspr=163x15
+DOS-PORT skipframe owed=8 prev_us total=232441 present=22162 rb=1190 scene=2263 script=0 events=41 sprite_px=2621 present_px=307200 sprites=2 maxspr=163x15
+DOS-PORT skipframe owed=9 prev_us total=232487 present=22164 rb=1345 scene=2334 script=0 events=41 sprite_px=3041 present_px=307200 sprites=2 maxspr=191x15
+DOS-PORT skipframe owed=8 prev_us total=232248 present=22301 rb=1335 scene=2318 script=0 events=40 sprite_px=3041 present_px=307200 sprites=2 maxspr=191x15
+DOS-PORT skipframe owed=8 prev_us total=229785 present=22312 rb=1337 scene=2322 script=0 events=38 sprite_px=3041 present_px=307200 sprites=2 maxspr=191x15
+DOS-PORT skipframe owed=8 prev_us total=220845 present=22172 rb=1341 scene=2334 script=0 events=39 sprite_px=3041 present_px=307200 sprites=2 maxspr=191x15
+DOS-PORT skipframe owed=8 prev_us total=232188 present=22158 rb=1331 scene=2314 script=0 events=40 sprite_px=3041 present_px=307200 sprites=2 maxspr=191x15
+DOS-PORT skipframe owed=9 prev_us total=234409 present=23124 rb=1817 scene=2528 script=0 events=39 sprite_px=4496 present_px=307200 sprites=2 maxspr=180x24
+DOS-PORT skipframe owed=8 prev_us total=232111 present=22375 rb=1815 scene=2527 script=0 events=39 sprite_px=4496 present_px=307200 sprites=2 maxspr=180x24
+DOS-PORT skipframe owed=8 prev_us total=221023 present=22545 rb=1813 scene=2519 script=0 events=42 sprite_px=4496 present_px=307200 sprites=2 maxspr=180x24
+DOS-PORT skipframe owed=8 prev_us total=233643 present=22162 rb=1815 scene=2523 script=0 events=40 sprite_px=4496 present_px=307200 sprites=2 maxspr=180x24
+DOS-PORT skipframe owed=8 prev_us total=234000 present=22161 rb=1820 scene=2533 script=0 events=40 sprite_px=4496 present_px=307200 sprites=2 maxspr=180x24
+DOS-PORT skipframe owed=8 prev_us total=235046 present=22739 rb=1816 scene=2673 script=0 events=38 sprite_px=4496 present_px=307200 sprites=2 maxspr=180x24
+DOS-PORT skipframe owed=8 prev_us total=231830 present=22588 rb=1811 scene=2525 script=0 events=39 sprite_px=4496 present_px=307200 sprites=2 maxspr=180x24
+DOS-PORT skipframe owed=5 prev_us total=233462 present=22761 rb=2055 scene=2584 script=0 events=42 sprite_px=4976 present_px=307200 sprites=2 maxspr=200x24
+DOS-PORT skipframe owed=5 prev_us total=233277 present=22296 rb=2049 scene=2559 script=0 events=40 sprite_px=4976 present_px=307200 sprites=2 maxspr=200x24
+DOS-PORT skipframe owed=5 prev_us total=222840 present=22319 rb=2056 scene=2570 script=0 events=40 sprite_px=4976 present_px=307200 sprites=2 maxspr=200x24
+DOS-PORT skipframe owed=5 prev_us total=232443 present=22533 rb=2055 scene=2575 script=0 events=40 sprite_px=4976 present_px=307200 sprites=2 maxspr=200x24
+DOS-PORT skipframe owed=5 prev_us total=234445 present=22688 rb=2394 scene=2558 script=0 events=39 sprite_px=4976 present_px=307200 sprites=2 maxspr=200x24
+DOS-PORT skipframe owed=5 prev_us total=233897 present=22855 rb=2048 scene=2566 script=0 events=38 sprite_px=4976 present_px=307200 sprites=2 maxspr=200x24
+DOS-PORT skipframe owed=5 prev_us total=234100 present=22315 rb=2047 scene=2576 script=0 events=41 sprite_px=4976 present_px=307200 sprites=2 maxspr=200x24
+DOS-PORT skipframe owed=5 prev_us total=233238 present=22299 rb=2058 scene=2559 script=0 events=42 sprite_px=4976 present_px=307200 sprites=2 maxspr=200x24
+Game : (room:1) [(unknown section):14] Room change requested to room 2
+Game : (room:1) Room change requested to room 2
+Game : (room:1) DOS-PORT room_transition t_ms=64027 event=start room=2
+Game : (room:1) Transition-out in room 1
+Game : (room:1) DOSAGS_XT t_ms=44225 phase=fadeout_begin room=1
+Game : (room:1) DOSAGS_XT fade_steps=13
+Game : (room:1) Unloading room 1
+Game : (room:-10) Loading room 2
+Game : (room:-10) DOSAGS_XT t_ms=46832 phase=load_begin room=2
+Mouse cursor graphic area: (0,40)-(639,439) (640x400)
+Game : (room:2) Mouse bounds constrained to (0,0)-(319,199)
+Game : (room:2) Now in room 2
+Game : (room:2) DOSAGS_XT t_ms=47285 phase=load_end room=2
+DOS-PORT stallwhat tick=2 self_ms=3335 children_ms=40394 script_us=40646318 events_us=43720723 scene_us=453926 rb_us=301533 present_us=4192543
+Game : (room:2) Transition-in in room 2
+Game : (room:2) DOSAGS_XT t_ms=47306 phase=fadein_begin room=2
+Game : (room:2) DOSAGS_XT t_ms=49908 phase=fadein_end room=2
+DOS-PORT stallwhat tick=1053 self_ms=2620 children_ms=0 script_us=0 events_us=2604714 scene_us=0 rb_us=402 present_us=291842
+Game : (room:2) DOS-PORT room_transition t_ms=69734 event=ready room=2
+Game : (room:2) [DOS-PORT-STARTUP-BEGIN]
+Game : (room:2) schema_version=1
+Game : (room:2) subsystem_init_ms=83
+Game : (room:2) gamedata_asset_load_ms=13508
+Game : (room:2) script_vm_init_ms=1829
+Game : (room:2) gfxmode_init_ms=520
+Game : (room:2) sprite_index_init_ms=1296
+Game : (room:2) sprite_precache_ms=87
+Game : (room:2) sprite_precache_view_count=1
+Game : (room:2) sprite_precache_frame_count=29
+Game : (room:2) sprite_precache_slowest1_view=8 sprite_precache_slowest1_ms=40
+Game : (room:2) sprite_precache_slowest2_view=-1 sprite_precache_slowest2_ms=-1
+Game : (room:2) sprite_precache_slowest3_view=-1 sprite_precache_slowest3_ms=-1
+Game : (room:2) first_room_load_ms=49497
+Game : (room:2) preloop_game_start_script_ms=5
+Game : (room:2) preloop_restart_point_ms=422
+Game : (room:2) preloop_placeholder_fade_ms=1
+Game : (room:2) preloop_room_load_ms=468
+Game : (room:2) preloop_first_room_init_ms=0
+Game : (room:2) preloop_skipmissed_ms=0
+Game : (room:2) preloop_start_game_ms=897
+Game : (room:2) restart_diskcheck_ms=0
+Game : (room:2) restart_screenshot_ms=0
+Game : (room:2) restart_savegame_ms=420
+Game : (room:2) restart_total_ms=422
+Game : (room:2) roomload_loadroom_ms=323
+Game : (room:2) roomload_bgprep_ms=13
+Game : (room:2) roomload_maskprep_ms=58
+Game : (room:2) roomload_objsetup_ms=2
+Game : (room:2) roomload_script_ms=2
+Game : (room:2) roomload_lighttable_ms=0
+Game : (room:2) roomload_drawdata_ms=0
+Game : (room:2) roomload_total_ms=452
+Game : (room:2) total_to_first_frame_ms=69734
+Game : (room:2) [DOS-PORT-STARTUP-END]
+DOS-PORT skipframe owed=228 prev_us total=46395943 present=583988 rb=778 scene=0 script=40646318 events=46318445 sprite_px=0 present_px=7987200 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=5 prev_us total=234096 present=22160 rb=2679 scene=2829 script=0 events=38 sprite_px=6809 present_px=307200 sprites=2 maxspr=201x33
+DOS-PORT skipframe owed=5 prev_us total=232882 present=22170 rb=2673 scene=2816 script=0 events=40 sprite_px=6809 present_px=307200 sprites=2 maxspr=201x33
+DOS-PORT skipframe owed=5 prev_us total=234359 present=22584 rb=2679 scene=3231 script=0 events=40 sprite_px=6809 present_px=307200 sprites=2 maxspr=201x33
+DOS-PORT skipframe owed=5 prev_us total=222814 present=22387 rb=2681 scene=2830 script=0 events=41 sprite_px=6809 present_px=307200 sprites=2 maxspr=201x33
+DOS-PORT skipframe owed=5 prev_us total=237381 present=22300 rb=2684 scene=2816 script=0 events=39 sprite_px=6809 present_px=307200 sprites=2 maxspr=201x33
+DOS-PORT skipframe owed=5 prev_us total=235170 present=22996 rb=2674 scene=2813 script=0 events=39 sprite_px=6809 present_px=307200 sprites=2 maxspr=201x33
+DOS-PORT skipframe owed=5 prev_us total=235064 present=22324 rb=2677 scene=2828 script=0 events=102 sprite_px=6809 present_px=307200 sprites=2 maxspr=201x33
+DOS-PORT skipframe owed=5 prev_us total=235552 present=22630 rb=2835 scene=3080 script=0 events=41 sprite_px=6809 present_px=307200 sprites=2 maxspr=201x33
+DOS-PORT skipframe owed=5 prev_us total=235976 present=22172 rb=2680 scene=2966 script=0 events=41 sprite_px=6809 present_px=307200 sprites=2 maxspr=201x33
+DOS-PORT skipframe owed=6 prev_us total=233731 present=22166 rb=270 scene=2628 script=0 events=42 sprite_px=176 present_px=307200 sprites=1 maxspr=11x16
+DOS-PORT skipframe owed=8 prev_us total=226968 present=22302 rb=3474 scene=3113 script=0 events=39 sprite_px=8828 present_px=307200 sprites=2 maxspr=206x42
+DOS-PORT skipframe owed=9 prev_us total=238249 present=22643 rb=3640 scene=3602 script=0 events=40 sprite_px=8828 present_px=307200 sprites=2 maxspr=206x42
+DOS-PORT skipframe owed=9 prev_us total=236244 present=22169 rb=3475 scene=3116 script=0 events=38 sprite_px=8828 present_px=307200 sprites=2 maxspr=206x42
+DOS-PORT skipframe owed=9 prev_us total=236916 present=23120 rb=3479 scene=3113 script=0 events=40 sprite_px=8828 present_px=307200 sprites=2 maxspr=206x42
+DOS-PORT skipframe owed=8 prev_us total=225450 present=23260 rb=3475 scene=3126 script=0 events=40 sprite_px=8828 present_px=307200 sprites=2 maxspr=206x42
+DOS-PORT skipframe owed=9 prev_us total=236177 present=22921 rb=3470 scene=3117 script=0 events=42 sprite_px=8828 present_px=307200 sprites=2 maxspr=206x42
+DOS-PORT skipframe owed=9 prev_us total=235784 present=22737 rb=3475 scene=3116 script=0 events=43 sprite_px=8828 present_px=307200 sprites=2 maxspr=206x42
+DOS-PORT skipframe owed=9 prev_us total=235860 present=22286 rb=3475 scene=3126 script=0 events=38 sprite_px=8828 present_px=307200 sprites=2 maxspr=206x42
+DOS-PORT skipframe owed=9 prev_us total=235849 present=22642 rb=3620 scene=3114 script=0 events=43 sprite_px=8828 present_px=307200 sprites=2 maxspr=206x42
+DOS-PORT skipframe owed=9 prev_us total=235747 present=22166 rb=3481 scene=3119 script=0 events=39 sprite_px=8828 present_px=307200 sprites=2 maxspr=206x42
+DOS-PORT skipframe owed=9 prev_us total=234722 present=22582 rb=3478 scene=3133 script=0 events=40 sprite_px=8828 present_px=307200 sprites=2 maxspr=206x42
+DOS-PORT skipframe owed=8 prev_us total=226312 present=22903 rb=3475 scene=3495 script=0 events=44 sprite_px=8828 present_px=307200 sprites=2 maxspr=206x42
+DOS-PORT skipframe owed=9 prev_us total=236478 present=22371 rb=3471 scene=3442 script=0 events=40 sprite_px=8828 present_px=307200 sprites=2 maxspr=206x42
+DOS-PORT skipframe owed=9 prev_us total=237888 present=22165 rb=3470 scene=3132 script=0 events=40 sprite_px=8828 present_px=307200 sprites=2 maxspr=206x42
+DOS-PORT skipframe owed=9 prev_us total=232659 present=22532 rb=272 scene=3083 script=0 events=40 sprite_px=176 present_px=307200 sprites=1 maxspr=11x16
+DOS-PORT skipframe owed=8 prev_us total=225208 present=22167 rb=2900 scene=2857 script=0 events=39 sprite_px=7106 present_px=307200 sprites=2 maxspr=210x33
+DOS-PORT skipframe owed=9 prev_us total=237257 present=22533 rb=2968 scene=3343 script=0 events=42 sprite_px=7106 present_px=307200 sprites=2 maxspr=210x33
+DOS-PORT skipframe owed=9 prev_us total=236611 present=22310 rb=2905 scene=2860 script=0 events=330 sprite_px=7106 present_px=307200 sprites=2 maxspr=210x33
+DOS-PORT skipframe owed=9 prev_us total=236592 present=22324 rb=2900 scene=2857 script=0 events=43 sprite_px=7106 present_px=307200 sprites=2 maxspr=210x33
+DOS-PORT skipframe owed=9 prev_us total=235884 present=23401 rb=3045 scene=2869 script=0 events=42 sprite_px=7106 present_px=307200 sprites=2 maxspr=210x33
+DOS-PORT skipframe owed=8 prev_us total=233298 present=22164 rb=3049 scene=2858 script=0 events=43 sprite_px=7106 present_px=307200 sprites=2 maxspr=210x33
+DOS-PORT skipframe owed=8 prev_us total=234022 present=22163 rb=3050 scene=2855 script=0 events=39 sprite_px=7106 present_px=307200 sprites=2 maxspr=210x33
+DOS-PORT skipframe owed=8 prev_us total=224396 present=23196 rb=2898 scene=3271 script=0 events=326 sprite_px=7106 present_px=307200 sprites=2 maxspr=210x33
+DOS-PORT skipframe owed=8 prev_us total=233491 present=22170 rb=2904 scene=2855 script=0 events=40 sprite_px=7106 present_px=307200 sprites=2 maxspr=210x33
+DOS-PORT skipframe owed=9 prev_us total=235714 present=22577 rb=2909 scene=2858 script=0 events=39 sprite_px=7106 present_px=307200 sprites=2 maxspr=210x33
+DOS-PORT skipframe owed=9 prev_us total=236391 present=22806 rb=2899 scene=2868 script=0 events=40 sprite_px=7106 present_px=307200 sprites=2 maxspr=210x33
+DOS-PORT skipframe owed=8 prev_us total=221571 present=22301 rb=1591 scene=2441 script=0 events=42 sprite_px=3920 present_px=307200 sprites=2 maxspr=156x24
+DOS-PORT skipframe owed=8 prev_us total=232815 present=22289 rb=1589 scene=2441 script=0 events=42 sprite_px=3920 present_px=307200 sprites=2 maxspr=156x24
+DOS-PORT skipframe owed=8 prev_us total=233264 present=22173 rb=1591 scene=2455 script=0 events=43 sprite_px=3920 present_px=307200 sprites=2 maxspr=156x24
+DOS-PORT skipframe owed=8 prev_us total=233505 present=22392 rb=1969 scene=2443 script=0 events=38 sprite_px=3920 present_px=307200 sprites=2 maxspr=156x24
+DOS-PORT skipframe owed=8 prev_us total=231657 present=22823 rb=1589 scene=2443 script=0 events=39 sprite_px=3920 present_px=307200 sprites=2 maxspr=156x24
+Game : (room:2) [(unknown section):9] Object 0 set to view 13
+Game : (room:2) [(unknown section):10] Object 0 turned on
+Game : (room:2) [(unknown section):11] Obj 0 start anim view 13 loop 0, speed 3, repeat 0, frame 0
+DOS-PORT skipframe owed=6 prev_us total=184170 present=22311 rb=998 scene=3499 script=0 events=32 sprite_px=1996 present_px=307200 sprites=2 maxspr=35x52
+DOS-PORT skipframe owed=8 prev_us total=233420 present=23185 rb=1016 scene=2433 script=0 events=40 sprite_px=1996 present_px=307200 sprites=2 maxspr=35x52
+DOS-PORT skipframe owed=8 prev_us total=223093 present=22164 rb=1022 scene=3772 script=0 events=39 sprite_px=1996 present_px=307200 sprites=2 maxspr=35x52
+DOS-PORT skipframe owed=9 prev_us total=232727 present=22515 rb=1051 scene=2490 script=0 events=37 sprite_px=1996 present_px=307200 sprites=2 maxspr=35x52
+DOS-PORT skipframe owed=8 prev_us total=232153 present=22501 rb=1041 scene=3793 script=0 events=40 sprite_px=1996 present_px=307200 sprites=2 maxspr=35x52
+DOS-PORT skipframe owed=9 prev_us total=233659 present=23053 rb=1056 scene=2461 script=0 events=41 sprite_px=1996 present_px=307200 sprites=2 maxspr=35x52
+DOS-PORT skipframe owed=8 prev_us total=233321 present=22293 rb=1053 scene=2465 script=0 events=39 sprite_px=1996 present_px=307200 sprites=2 maxspr=35x52
+DOS-PORT skipframe owed=8 prev_us total=233426 present=22787 rb=1052 scene=2472 script=0 events=42 sprite_px=1996 present_px=307200 sprites=2 maxspr=35x52
+DOS-PORT skipframe owed=8 prev_us total=233210 present=22381 rb=1055 scene=2692 script=0 events=37 sprite_px=1996 present_px=307200 sprites=2 maxspr=35x52
+DOS-PORT skipframe owed=5 prev_us total=224454 present=22389 rb=3236 scene=3656 script=0 events=40 sprite_px=6772 present_px=307200 sprites=3 maxspr=199x24
+DOS-PORT skipframe owed=5 prev_us total=235929 present=22317 rb=2888 scene=3265 script=0 events=39 sprite_px=6772 present_px=307200 sprites=3 maxspr=199x24
+DOS-PORT skipframe owed=5 prev_us total=234943 present=22312 rb=2888 scene=3268 script=0 events=40 sprite_px=6772 present_px=307200 sprites=3 maxspr=199x24
+DOS-PORT skipframe owed=5 prev_us total=235467 present=22947 rb=2889 scene=3267 script=0 events=44 sprite_px=6772 present_px=307200 sprites=3 maxspr=199x24
+DOS-PORT skipframe owed=5 prev_us total=234176 present=22301 rb=2883 scene=3264 script=0 events=42 sprite_px=6772 present_px=307200 sprites=3 maxspr=199x24
+DOS-PORT skipframe owed=5 prev_us total=234324 present=22550 rb=2893 scene=3267 script=0 events=43 sprite_px=6772 present_px=307200 sprites=3 maxspr=199x24
+DOS-PORT skipframe owed=5 prev_us total=236935 present=22636 rb=2894 scene=3729 script=0 events=41 sprite_px=6772 present_px=307200 sprites=3 maxspr=199x24
+DOS-PORT skipframe owed=5 prev_us total=223843 present=22165 rb=2891 scene=3263 script=0 events=40 sprite_px=6772 present_px=307200 sprites=3 maxspr=199x24
+DOS-PORT skipframe owed=8 prev_us total=234471 present=22163 rb=1050 scene=3115 script=0 events=41 sprite_px=1996 present_px=307200 sprites=2 maxspr=35x52
+DOS-PORT skipframe owed=8 prev_us total=231973 present=22155 rb=1049 scene=2639 script=0 events=41 sprite_px=1996 present_px=307200 sprites=2 maxspr=35x52
+Game : (room:2) [(unknown section):15] PlayMusic 0 but already playing
+Game : (room:2) [(unknown section):16] Object 1 turned on
+DOS-PORT skipframe owed=4 prev_us total=31787 present=0 rb=0 scene=0 script=0 events=15 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=5 prev_us total=238394 present=22506 rb=4037 scene=3766 script=0 events=38 sprite_px=9880 present_px=307200 sprites=3 maxspr=146x54
+Game : (room:2) [(unknown section):19] Object 2 turned on
+Game : (room:2) [(unknown section):20] Object 3 turned on
+Game : (room:2) [(unknown section):21] Object 4 turned on
+Game : (room:2) [(unknown section):23] GUI 0 turned off
+Game : (room:2) [(unknown section):24] Cursor mode set to 6
+DOS-PORT stallwhat tick=1054 self_ms=505 children_ms=57486 script_us=57947254 events_us=57998231 scene_us=777726 rb_us=641547 present_us=5530156
+DOS-PORT skipframe owed=9 prev_us total=245792 present=22304 rb=4395 scene=4257 script=3381 events=7204 sprite_px=11481 present_px=307200 sprites=6 maxspr=146x54
+DOS-PORT skipframe owed=9 prev_us total=245159 present=22321 rb=4407 scene=4257 script=3444 events=7284 sprite_px=11481 present_px=307200 sprites=6 maxspr=146x54
+DOS-PORT skipframe owed=9 prev_us total=247073 present=22776 rb=4395 scene=4521 script=3433 events=7271 sprite_px=11481 present_px=307200 sprites=6 maxspr=146x54
+DOS-PORT skipframe owed=9 prev_us total=245606 present=23190 rb=4405 scene=4255 script=3386 events=7203 sprite_px=11481 present_px=307200 sprites=6 maxspr=146x54
+DOS-PORT skipframe owed=9 prev_us total=246514 present=22167 rb=4405 scene=4423 script=3473 events=7542 sprite_px=11481 present_px=307200 sprites=6 maxspr=146x54
+DOS-PORT skipframe owed=9 prev_us total=235549 present=22160 rb=4400 scene=4265 script=3433 events=7282 sprite_px=11481 present_px=307200 sprites=6 maxspr=146x54
+DOS-PORT skipframe owed=9 prev_us total=246988 present=22357 rb=4404 scene=4250 script=3380 events=7205 sprite_px=11481 present_px=307200 sprites=6 maxspr=146x54
+DOS-PORT skipframe owed=9 prev_us total=249391 present=22301 rb=4406 scene=4257 script=3685 events=7945 sprite_px=11481 present_px=307200 sprites=6 maxspr=146x54
+DOS-PORT skipframe owed=9 prev_us total=244858 present=22300 rb=4395 scene=4265 script=3706 events=7546 sprite_px=11481 present_px=307200 sprites=6 maxspr=146x54
+DOS-PORT rbstruct calls=500 batches=3262 clears=0 clear_px=0 sprites=1097 sprite_px=2703619 clipped=0 flagged=0 noflag=1097 notvs=0 novalid=0 isfull=0 guimiss=0 guihit=0 hitpx=0 fullpx=0 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT skipframe owed=9 prev_us total=239337 present=22159 rb=7675 scene=4211 script=3452 events=7283 sprite_px=11481 present_px=307200 sprites=6 maxspr=146x54
+DOS-PORT dirtypresent narrow=0 full=500 px_narrow=0 px_full=153600000 nocam=0 rej scaled=500 noscene=0 latched=0 norects=0 pal=0 clip=0 multi=0 px_multi=0 px_multi_bbox=0 boxes=0 out=0 whole=0 rowfr=0 px_bands=0 bands=0 mg0=0/0 mg2k=0/0 mg5k5=0/0 mg12k=0/0
+DOS-PORT skipframe owed=9 prev_us total=245829 present=22298 rb=4392 scene=4214 script=3440 events=7285 sprite_px=11481 present_px=307200 sprites=6 maxspr=146x54
+DOS-PORT skipframe owed=9 prev_us total=249519 present=22724 rb=4757 scene=4210 script=3613 events=7888 sprite_px=11481 present_px=307200 sprites=6 maxspr=146x54
+DOS-PORT skipframe owed=9 prev_us total=246961 present=22700 rb=4406 scene=4626 script=3380 events=7208 sprite_px=11481 present_px=307200 sprites=6 maxspr=146x54
+DOS-PORT skipframe owed=9 prev_us total=243894 present=22302 rb=4399 scene=4257 script=3446 events=7281 sprite_px=11481 present_px=307200 sprites=6 maxspr=146x54
+DOS-PORT skipframe owed=9 prev_us total=248024 present=22956 rb=4775 scene=4268 script=3435 events=7271 sprite_px=11481 present_px=307200 sprites=6 maxspr=146x54
+DOS-PORT skipframe owed=9 prev_us total=247102 present=22561 rb=4398 scene=4250 script=3374 events=7208 sprite_px=11481 present_px=307200 sprites=6 maxspr=146x54
+DOS-PORT skipframe owed=9 prev_us total=236279 present=22146 rb=4396 scene=4437 script=3522 events=7635 sprite_px=11481 present_px=307200 sprites=6 maxspr=146x54
+DOS-PORT skipframe owed=9 prev_us total=248004 present=22385 rb=4746 scene=5009 script=3443 events=7322 sprite_px=11481 present_px=307200 sprites=6 maxspr=146x54
+DOS-PORT skipframe owed=9 prev_us total=248009 present=22161 rb=4405 scene=4400 script=3454 events=7266 sprite_px=11481 present_px=307200 sprites=6 maxspr=146x54
+Game : (room:2) [(unknown section):39] Screen transition changed
+Game : (room:2) [(unknown section):40] Room change requested to room 99
+Game : (room:2) Room change requested to room 99
+Game : (room:2) DOS-PORT room_transition t_ms=146664 event=start room=99
+Game : (room:2) Transition-out in room 2
+Game : (room:2) DOSAGS_XT t_ms=126860 phase=fadeout_begin room=2
+Game : (room:2) DOSAGS_XT fade_steps=13
+Game : (room:2) Unloading room 2
+Game : (room:-10) Loading room 99
+Game : (room:-10) DOSAGS_XT t_ms=126869 phase=load_begin room=99
+Mouse cursor graphic area: (0,40)-(639,439) (640x400)
+Game : (room:99) Mouse bounds constrained to (0,0)-(319,199)
+Game : (room:99) Now in room 99
+Game : (room:99) DOSAGS_XT t_ms=127248 phase=load_end room=99
+DOS-PORT stallwhat tick=2994 self_ms=415 children_ms=0 script_us=6171 events_us=400487 scene_us=0 rb_us=0 present_us=0
+Game : (room:99) [(unknown section):60] Object 0 turned on
+Game : (room:99) [(unknown section):61] Playing sound 18 on channel 3
+Game : (room:99) Transition-in in room 99
+Game : (room:99) DOSAGS_XT t_ms=127421 phase=fadein_begin room=99
+Game : (room:99) DOSAGS_XT t_ms=127424 phase=fadein_end room=99
+Game : (room:99) DOS-PORT room_transition t_ms=147242 event=ready room=99
+DOS-PORT bgstruct calls=500 whole=6 px=3608923 slow_px=0
+DOS-PORT skipframe owed=5 prev_us total=188496 present=22299 rb=440 scene=19458 script=0 events=39 sprite_px=463 present_px=307200 sprites=2 maxspr=41x7
+DOS-PORT skipframe owed=5 prev_us total=227414 present=22169 rb=444 scene=2102 script=0 events=43 sprite_px=463 present_px=307200 sprites=2 maxspr=41x7
+DOS-PORT skipframe owed=5 prev_us total=229735 present=22304 rb=442 scene=2101 script=0 events=41 sprite_px=463 present_px=307200 sprites=2 maxspr=41x7
+DOS-PORT skipframe owed=5 prev_us total=230968 present=22145 rb=442 scene=2101 script=0 events=37 sprite_px=463 present_px=307200 sprites=2 maxspr=41x7
+Game : (room:99) [(unknown section):21] Room change requested to room 3
+Game : (room:99) Room change requested to room 3
+Game : (room:99) DOS-PORT room_transition t_ms=150916 event=start room=3
+Game : (room:99) Transition-out in room 99
+Game : (room:99) DOSAGS_XT t_ms=131114 phase=fadeout_begin room=99
+Game : (room:99) DOSAGS_XT fade_steps=0
+Game : (room:99) Unloading room 99
+Game : (room:-10) Loading room 3
+Game : (room:-10) DOSAGS_XT t_ms=131122 phase=load_begin room=3
+Mouse cursor graphic area: (0,40)-(639,439) (640x400)
+Game : (room:3) Mouse bounds constrained to (0,0)-(319,199)
+Game : (room:3) Now in room 3
+Game : (room:3) DOSAGS_XT t_ms=131494 phase=load_end room=3
+DOS-PORT stallwhat tick=2996 self_ms=425 children_ms=3651 script_us=3670370 events_us=4061017 scene_us=50997 rb_us=7073 present_us=355628
+Game : (room:3) Transition-in in room 3
+Game : (room:3) DOSAGS_XT t_ms=131520 phase=fadein_begin room=3
+Game : (room:3) DOSAGS_XT t_ms=131522 phase=fadein_end room=3
+Game : (room:3) [(unknown section):9] Screen transition changed
+Game : (room:3) [(unknown section):10] Object 0 set to view 14
+Game : (room:3) [(unknown section):11] Obj 0 start anim view 14 loop 0, speed 3, repeat 0, frame 0
+DOS-PORT skipframe owed=15 prev_us total=4149264 present=0 rb=0 scene=0 script=3670747 events=4064406 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=5 prev_us total=234118 present=22382 rb=973 scene=4215 script=0 events=42 sprite_px=1950 present_px=307200 sprites=3 maxspr=17x62
+DOS-PORT skipframe owed=5 prev_us total=233943 present=22372 rb=968 scene=4212 script=0 events=41 sprite_px=1950 present_px=307200 sprites=3 maxspr=17x62
+DOS-PORT skipframe owed=5 prev_us total=234170 present=22138 rb=1309 scene=5947 script=0 events=39 sprite_px=3150 present_px=307200 sprites=3 maxspr=32x60
+DOS-PORT skipframe owed=5 prev_us total=233113 present=22160 rb=1361 scene=4338 script=0 events=38 sprite_px=3330 present_px=307200 sprites=3 maxspr=35x60
+DOS-PORT skipframe owed=5 prev_us total=238665 present=22140 rb=1359 scene=9129 script=0 events=38 sprite_px=3330 present_px=307200 sprites=3 maxspr=35x60
+DOS-PORT skipframe owed=5 prev_us total=232838 present=22368 rb=1363 scene=4332 script=0 events=38 sprite_px=3330 present_px=307200 sprites=3 maxspr=35x60
+DOS-PORT skipframe owed=5 prev_us total=222080 present=22365 rb=1360 scene=4336 script=0 events=39 sprite_px=3330 present_px=307200 sprites=3 maxspr=35x60
+DOS-PORT skipframe owed=5 prev_us total=235832 present=22159 rb=1364 scene=4503 script=0 events=44 sprite_px=3330 present_px=307200 sprites=3 maxspr=35x60
+DOS-PORT skipframe owed=5 prev_us total=232200 present=22153 rb=1360 scene=4348 script=0 events=41 sprite_px=3330 present_px=307200 sprites=3 maxspr=35x60
+DOS-PORT skipframe owed=5 prev_us total=235482 present=22369 rb=1359 scene=4581 script=0 events=38 sprite_px=3330 present_px=307200 sprites=3 maxspr=35x60
+Game : (room:3) [(unknown section):13] Obj 0 start anim view 14 loop 1, speed 3, repeat 0, frame 0
+DOS-PORT skipframe owed=5 prev_us total=228275 present=22367 rb=1379 scene=9580 script=0 events=40 sprite_px=3330 present_px=307200 sprites=3 maxspr=35x60
+DOS-PORT skipframe owed=5 prev_us total=190379 present=22877 rb=1515 scene=9369 script=0 events=39 sprite_px=3400 present_px=307200 sprites=3 maxspr=35x62
+DOS-PORT skipframe owed=5 prev_us total=239038 present=22515 rb=1481 scene=9502 script=0 events=42 sprite_px=3338 present_px=307200 sprites=3 maxspr=34x62
+DOS-PORT skipframe owed=5 prev_us total=233245 present=22528 rb=1315 scene=4331 script=0 events=39 sprite_px=3028 present_px=307200 sprites=3 maxspr=29x62
+Game : (room:3) [(unknown section):15] Object 0 turned off
+Game : (room:3) [(unknown section):15] Object 0 stop moving
+DOS-PORT skipframe owed=8 prev_us total=216841 present=22516 rb=892 scene=3413 script=0 events=31 sprite_px=1230 present_px=307200 sprites=2 maxspr=17x62
+Game : (room:3) [(unknown section):19] cTrb: Face location 71,150
+Game : (room:3) [(unknown section):21] cTrb: Face location 40,126
+DOS-PORT skipframe owed=8 prev_us total=229695 present=22524 rb=719 scene=2751 script=0 events=40 sprite_px=858 present_px=307200 sprites=2 maxspr=11x62
+Game : (room:3) [(unknown section):23] cTrb: Face location 71,150
+DOS-PORT skipframe owed=4 prev_us total=57361 present=0 rb=0 scene=0 script=0 events=26 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=5 prev_us total=234649 present=22531 rb=2396 scene=3483 script=0 events=41 sprite_px=4446 present_px=307200 sprites=3 maxspr=134x24
+DOS-PORT skipframe owed=5 prev_us total=233750 present=22530 rb=2138 scene=3814 script=0 events=39 sprite_px=4446 present_px=307200 sprites=3 maxspr=134x24
+DOS-PORT skipframe owed=5 prev_us total=233274 present=22383 rb=2137 scene=3500 script=0 events=39 sprite_px=4446 present_px=307200 sprites=3 maxspr=134x24
+DOS-PORT skipframe owed=5 prev_us total=221558 present=22172 rb=2141 scene=3482 script=0 events=38 sprite_px=4446 present_px=307200 sprites=3 maxspr=134x24
+DOS-PORT skipframe owed=5 prev_us total=234192 present=22537 rb=2136 scene=3810 script=0 events=41 sprite_px=4446 present_px=307200 sprites=3 maxspr=134x24
+Game : (room:3) [(unknown section):27] GUI 0 turned on
+Game : (room:3) [(unknown section):28] Cursor mode set to 0
+Game : (room:3) DOS-PORT room_transition t_ms=171568 event=ready room=3
+DOS-PORT skipframe owed=5 prev_us total=241794 present=22309 rb=2211 scene=2892 script=3511 events=7249 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) [(unknown section):33] Playing sound 9 on channel 3
+DOS-PORT silentirq tick=3659 room=3 irqs=1 since_room=563
+DOS-PORT skipframe owed=5 prev_us total=346944 present=22160 rb=2205 scene=2920 script=149673 events=153545 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=186084 present=22398 rb=2213 scene=2917 script=3454 events=7213 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=182506 present=22289 rb=2213 scene=2910 script=3379 events=7155 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=182146 present=22390 rb=2210 scene=2915 script=3380 events=7516 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181697 present=22393 rb=2220 scene=2917 script=3704 events=7413 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239422 present=22397 rb=2215 scene=2895 script=3489 events=7262 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=227411 present=22318 rb=2209 scene=2912 script=3722 events=7645 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239610 present=22309 rb=2211 scene=2909 script=3480 events=7541 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239867 present=22167 rb=2208 scene=2898 script=3483 events=7267 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241817 present=22155 rb=2210 scene=2912 script=3469 events=7542 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=226541 present=22369 rb=2210 scene=2910 script=3475 events=7294 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241607 present=22304 rb=2214 scene=2898 script=3738 events=7523 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242488 present=22388 rb=2368 scene=2911 script=3469 events=7386 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240674 present=22456 rb=2432 scene=2908 script=3630 events=7454 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242893 present=22392 rb=2216 scene=3133 script=3479 events=7266 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242899 present=22309 rb=2210 scene=2911 script=3703 events=7616 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240250 present=22155 rb=2208 scene=2909 script=3480 events=7549 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230199 present=22305 rb=2215 scene=2893 script=3482 events=7258 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243112 present=22308 rb=2207 scene=2906 script=3709 events=7637 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239764 present=22155 rb=2209 scene=2909 script=3477 events=7294 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241320 present=22305 rb=2215 scene=2891 script=3483 events=7256 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) [(unknown section):35] Playing sound 10 on channel 3
+DOS-PORT stallwhat tick=4157 self_ms=314 children_ms=0 script_us=299094 events_us=299726 scene_us=0 rb_us=0 present_us=0
+DOS-PORT silentirq tick=4160 room=3 irqs=1 since_room=1064
+DOS-PORT skipframe owed=5 prev_us total=187043 present=22310 rb=2212 scene=2918 script=3390 events=7590 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=185308 present=22393 rb=2210 scene=2908 script=3384 events=7239 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181796 present=22533 rb=2210 scene=2898 script=3388 events=7219 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181927 present=22402 rb=2487 scene=3082 script=3395 events=7317 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181970 present=22545 rb=2205 scene=2907 script=3383 events=7239 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181846 present=22150 rb=2210 scene=2898 script=3395 events=7223 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181932 present=22320 rb=2210 scene=2917 script=3387 events=7308 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181679 present=22152 rb=2209 scene=2906 script=3393 events=7242 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=182074 present=22307 rb=2217 scene=2896 script=3401 events=7224 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181836 present=22379 rb=2214 scene=2913 script=3398 events=7321 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181357 present=22393 rb=2209 scene=2906 script=3549 events=7408 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181556 present=22546 rb=2210 scene=2901 script=3387 events=7387 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=188657 present=22319 rb=2213 scene=2906 script=3724 events=7548 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242742 present=22539 rb=2469 scene=2903 script=3481 events=7209 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241468 present=22383 rb=2208 scene=3052 script=3464 events=7203 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242274 present=22315 rb=2221 scene=2904 script=3468 events=7280 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242456 present=22372 rb=2453 scene=2894 script=3641 events=7375 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241307 present=22158 rb=2213 scene=2891 script=3474 events=7493 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242792 present=22173 rb=2215 scene=2902 script=3467 events=7286 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=228981 present=22176 rb=2213 scene=2902 script=3482 events=7212 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=245035 present=22303 rb=2207 scene=2889 script=3466 events=7206 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) [(unknown section):35] Playing sound 10 on channel 3
+DOS-PORT silentirq tick=4659 room=3 irqs=1 since_room=1563
+DOS-PORT skipframe owed=5 prev_us total=188749 present=22395 rb=2209 scene=2875 script=3475 events=7295 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=185386 present=22541 rb=2210 scene=2879 script=3464 events=7208 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181891 present=22155 rb=2211 scene=3030 script=3469 events=7229 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=182360 present=22534 rb=2205 scene=2878 script=3477 events=7564 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181867 present=22548 rb=2214 scene=2882 script=3465 events=7219 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=190889 present=22412 rb=2217 scene=2872 script=3463 events=7232 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=182500 present=22551 rb=2207 scene=2873 script=3471 events=7301 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181732 present=22390 rb=2212 scene=3133 script=3464 events=7211 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181509 present=22393 rb=2452 scene=2872 script=3471 events=7232 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=182321 present=22312 rb=2215 scene=2876 script=3743 events=7573 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181413 present=22155 rb=2365 scene=2880 script=3464 events=7219 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181530 present=22153 rb=2207 scene=2871 script=3464 events=7383 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=189155 present=22314 rb=2221 scene=2878 script=3460 events=7253 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=238705 present=22162 rb=2204 scene=2893 script=3452 events=7431 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240528 present=22537 rb=2205 scene=2880 script=3472 events=7191 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240806 present=22359 rb=2218 scene=3034 script=3456 events=7264 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239240 present=22523 rb=2210 scene=2893 script=3452 events=7179 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=244070 present=22156 rb=2214 scene=2875 script=3705 events=7424 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241465 present=22291 rb=2209 scene=2879 script=3451 events=7260 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230107 present=22137 rb=2207 scene=2892 script=3460 events=7187 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241457 present=22158 rb=2209 scene=2876 script=3466 events=7182 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) [(unknown section):31] Playing sound 3 on channel 3
+DOS-PORT skipframe owed=5 prev_us total=185028 present=22170 rb=2215 scene=2918 script=3384 events=7285 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=211078 present=22294 rb=2224 scene=2916 script=3476 events=7623 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=228837 present=22357 rb=2218 scene=2904 script=3477 events=7197 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239802 present=22368 rb=2219 scene=2898 script=3468 events=7308 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243041 present=22367 rb=2218 scene=2901 script=3641 events=7626 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242424 present=22372 rb=2456 scene=2894 script=3479 events=7201 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241568 present=22530 rb=2471 scene=2901 script=3467 events=7313 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242707 present=22171 rb=2221 scene=3054 script=3727 events=7482 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239460 present=22322 rb=2220 scene=2903 script=3498 events=7372 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230259 present=22157 rb=2210 scene=2901 script=3460 events=7308 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242283 present=22176 rb=2208 scene=2891 script=3471 events=7225 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243124 present=22163 rb=2217 scene=2903 script=3645 events=7373 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242229 present=22173 rb=2217 scene=2904 script=3462 events=7307 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=228259 present=22379 rb=2215 scene=2891 script=3470 events=7222 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239335 present=22369 rb=2360 scene=2898 script=3483 events=7208 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240302 present=22538 rb=2215 scene=2911 script=3450 events=7303 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239022 present=22159 rb=2218 scene=2892 script=3466 events=7222 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243229 present=22310 rb=2211 scene=2904 script=3740 events=7465 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242440 present=22168 rb=2213 scene=2904 script=3454 events=7303 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=238917 present=22310 rb=2215 scene=2890 script=3474 events=7226 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=231140 present=22153 rb=2207 scene=3063 script=3482 events=7199 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241002 present=22302 rb=2226 scene=2904 script=3469 events=7317 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239108 present=22372 rb=2210 scene=2898 script=3469 events=7220 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241637 present=22511 rb=2475 scene=2901 script=3485 events=7204 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230883 present=22371 rb=2220 scene=2900 script=3460 events=7314 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT rbstruct calls=1000 batches=6762 clears=0 clear_px=0 sprites=2690 sprite_px=5348316 clipped=0 flagged=0 noflag=2690 notvs=0 novalid=0 isfull=0 guimiss=0 guihit=0 hitpx=0 fullpx=0 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT skipframe owed=5 prev_us total=241782 present=22381 rb=3978 scene=2892 script=3474 events=7226 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT dirtypresent narrow=0 full=1000 px_narrow=0 px_full=307200000 nocam=0 rej scaled=1000 noscene=0 latched=0 norects=0 pal=0 clip=0 multi=0 px_multi=0 px_multi_bbox=0 boxes=0 out=0 whole=0 rowfr=0 px_bands=0 bands=0 mg0=0/0 mg2k=0/0 mg5k5=0/0 mg12k=0/0
+DOS-PORT skipframe owed=5 prev_us total=241524 present=22514 rb=2210 scene=2902 script=3484 events=7199 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241087 present=22165 rb=2369 scene=2901 script=3726 events=7577 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241581 present=22294 rb=2215 scene=2893 script=3468 events=7220 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) Running on_key_press keycode 383, mod 1310720
+DOS-PORT skipframe owed=5 prev_us total=242398 present=22153 rb=2209 scene=2903 script=4149 events=8570 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240065 present=22310 rb=2220 scene=2904 script=3383 events=7247 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=231029 present=22374 rb=2385 scene=2900 script=3416 events=7414 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241969 present=22533 rb=2209 scene=2901 script=3469 events=7176 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241090 present=22384 rb=2207 scene=3144 script=3386 events=7254 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243227 present=22298 rb=2210 scene=2891 script=3404 events=7328 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT bgstruct calls=1000 whole=8 px=4542910 slow_px=0
+DOS-PORT skipframe owed=5 prev_us total=228543 present=22150 rb=2206 scene=2901 script=3463 events=7350 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241554 present=22165 rb=2208 scene=2908 script=3385 events=7246 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242403 present=22170 rb=2212 scene=2891 script=3393 events=7169 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240003 present=22163 rb=2207 scene=2903 script=3465 events=7173 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240016 present=22308 rb=2210 scene=2904 script=3390 events=7249 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243089 present=22375 rb=2211 scene=2893 script=3396 events=7165 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) [(unknown section):33] Playing sound 9 on channel 3
+DOS-PORT skipframe owed=5 prev_us total=254216 present=22502 rb=2205 scene=2878 script=24081 events=27776 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=184410 present=22294 rb=2215 scene=2893 script=3632 events=7416 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=182353 present=22410 rb=2205 scene=2873 script=3445 events=7129 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181915 present=22529 rb=2489 scene=2879 script=3340 events=6941 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=182499 present=22403 rb=2210 scene=2893 script=3474 events=7265 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239161 present=22383 rb=2452 scene=2891 script=3392 events=7144 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240306 present=22354 rb=2207 scene=2904 script=3469 events=7188 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241414 present=22158 rb=2207 scene=2907 script=3381 events=7526 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239402 present=22169 rb=2214 scene=2893 script=3391 events=7143 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230558 present=22166 rb=2210 scene=2902 script=3463 events=7181 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241625 present=22148 rb=2213 scene=2904 script=3381 events=7250 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239949 present=22529 rb=2210 scene=2893 script=3388 events=7146 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243433 present=22377 rb=2204 scene=2921 script=3462 events=7581 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=229313 present=22459 rb=2221 scene=2904 script=3385 events=7252 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=238907 present=22359 rb=2443 scene=2889 script=3387 events=7144 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239370 present=22310 rb=2210 scene=2901 script=3628 events=7344 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240932 present=22155 rb=2221 scene=2905 script=3389 events=7643 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242303 present=22314 rb=2215 scene=2888 script=3384 events=7140 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242004 present=22159 rb=2203 scene=2904 script=3463 events=7181 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241189 present=22529 rb=2224 scene=2904 script=3382 events=7254 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=227930 present=22367 rb=2225 scene=3056 script=3384 events=7138 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) [(unknown section):33] Playing sound 9 on channel 3
+DOS-PORT skipframe owed=5 prev_us total=221292 present=22315 rb=2205 scene=2881 script=23913 events=27529 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=186287 present=22396 rb=2215 scene=2894 script=3408 events=7205 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=184558 present=22149 rb=2210 scene=2875 script=3414 events=7098 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181885 present=22211 rb=2210 scene=2875 script=3434 events=7029 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181596 present=22540 rb=2210 scene=2892 script=3410 events=7199 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241968 present=22145 rb=2211 scene=2893 script=3398 events=7157 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=227324 present=22304 rb=2205 scene=2906 script=3466 events=7175 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242682 present=22173 rb=2215 scene=2902 script=3379 events=7247 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240949 present=22476 rb=2211 scene=2890 script=3395 events=7161 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241158 present=22385 rb=2211 scene=2901 script=3460 events=7173 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=228280 present=22514 rb=2218 scene=2904 script=3386 events=7253 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241752 present=22379 rb=2210 scene=2894 script=3388 events=7164 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242701 present=22168 rb=2211 scene=2907 script=3686 events=7407 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241525 present=22172 rb=2209 scene=2904 script=3381 events=7242 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242090 present=22159 rb=2215 scene=2888 script=3399 events=7164 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241875 present=22370 rb=2208 scene=2904 script=3459 events=7170 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243294 present=22535 rb=2444 scene=2908 script=3381 events=7250 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=229822 present=22169 rb=2216 scene=2893 script=3397 events=7158 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239948 present=22301 rb=2209 scene=2904 script=3463 events=7171 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242225 present=22157 rb=2210 scene=2908 script=3617 events=7488 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240131 present=22505 rb=2215 scene=2895 script=3399 events=7161 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230258 present=22381 rb=2472 scene=3060 script=3462 events=7173 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242684 present=22507 rb=2220 scene=3147 script=3380 events=7246 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241079 present=22172 rb=2215 scene=2890 script=3399 events=7157 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240342 present=22316 rb=2215 scene=2901 script=3458 events=7174 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241625 present=22294 rb=2212 scene=2905 script=3612 events=7482 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240609 present=22150 rb=2211 scene=2892 script=3394 events=7162 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240060 present=22376 rb=2215 scene=2899 script=3461 events=7184 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=228332 present=22522 rb=2214 scene=3136 script=3639 events=7515 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242179 present=22520 rb=2211 scene=2888 script=3401 events=7162 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240769 present=22369 rb=2464 scene=2904 script=3460 events=7175 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242567 present=22311 rb=2225 scene=2901 script=3386 events=7254 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=229111 present=22145 rb=2224 scene=2890 script=3398 events=7165 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241328 present=22326 rb=2207 scene=2906 script=3463 events=7439 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240999 present=22172 rb=2207 scene=3057 script=3388 events=7247 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241943 present=22507 rb=2215 scene=2895 script=3393 events=7160 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241332 present=22398 rb=2217 scene=2899 script=3462 events=7164 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241056 present=22529 rb=2215 scene=2903 script=3382 events=7253 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239830 present=22373 rb=2215 scene=2893 script=3399 events=7157 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230111 present=22313 rb=2207 scene=2898 script=3460 events=7170 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241203 present=22163 rb=2215 scene=2904 script=3382 events=7252 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240316 present=22297 rb=2211 scene=2891 script=3395 events=7158 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) [(unknown section):33] Playing sound 9 on channel 3
+DOS-PORT skipframe owed=5 prev_us total=188889 present=22406 rb=2218 scene=2906 script=3452 events=7154 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=184152 present=22530 rb=2212 scene=2900 script=3400 events=7254 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=182291 present=22409 rb=2217 scene=2893 script=3480 events=7445 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181632 present=22554 rb=2211 scene=2902 script=3456 events=7160 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=179525 present=22395 rb=2209 scene=2901 script=3391 events=7240 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240979 present=22308 rb=2225 scene=2893 script=3389 events=7139 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243301 present=22157 rb=2204 scene=2906 script=3461 events=7183 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=231091 present=22306 rb=2214 scene=2904 script=3760 events=7643 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241663 present=22142 rb=2216 scene=2893 script=3390 events=7141 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241405 present=22313 rb=2208 scene=2904 script=3458 events=7185 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241692 present=22379 rb=2212 scene=2904 script=3377 events=7254 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239950 present=22378 rb=2220 scene=2893 script=3387 events=7142 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241840 present=22362 rb=2213 scene=2908 script=3469 events=7185 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243292 present=22359 rb=2225 scene=3140 script=3381 events=7260 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=229352 present=22161 rb=2222 scene=2892 script=3387 events=7144 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242624 present=22159 rb=2203 scene=2902 script=3708 events=7424 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241047 present=22141 rb=2218 scene=2905 script=3536 events=7407 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243010 present=22176 rb=2209 scene=2891 script=3392 events=7142 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=231792 present=22385 rb=2203 scene=2904 script=3463 events=7185 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240452 present=22362 rb=2211 scene=3071 script=3382 events=7251 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242595 present=22515 rb=2215 scene=2893 script=3394 events=7146 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242339 present=22172 rb=2209 scene=2905 script=3474 events=7425 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240399 present=22515 rb=2448 scene=2905 script=3388 events=7414 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241933 present=22147 rb=2215 scene=2893 script=3390 events=7152 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240429 present=22318 rb=2206 scene=2904 script=3460 events=7179 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=229929 present=22163 rb=2210 scene=3069 script=3632 events=7517 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240100 present=22311 rb=2211 scene=2893 script=3378 events=7129 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239428 present=22372 rb=2206 scene=2902 script=3460 events=7179 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240894 present=22519 rb=2452 scene=2903 script=3536 events=7412 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230559 present=22145 rb=2220 scene=2900 script=3393 events=7151 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241702 present=22298 rb=2208 scene=2907 script=3461 events=7182 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239672 present=22150 rb=2215 scene=2904 script=3387 events=7405 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240111 present=22304 rb=2214 scene=2891 script=3633 events=7385 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) Running on_key_press keycode 383, mod 1310720
+DOS-PORT skipframe owed=5 prev_us total=240132 present=22322 rb=2208 scene=2910 script=3469 events=7183 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243980 present=22160 rb=2213 scene=2914 script=3380 events=7258 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240474 present=22516 rb=2217 scene=2917 script=3406 events=7158 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230820 present=22515 rb=2206 scene=2908 script=3471 events=7185 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240867 present=22456 rb=2215 scene=2913 script=3385 events=7257 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242268 present=22170 rb=2214 scene=2914 script=3669 events=7423 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241737 present=22162 rb=2205 scene=2911 script=3475 events=7191 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=227855 present=22507 rb=2209 scene=2916 script=3385 events=7254 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242107 present=22514 rb=2216 scene=2918 script=3405 events=7156 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243554 present=22381 rb=2210 scene=2912 script=3465 events=7192 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243872 present=22528 rb=2224 scene=3148 script=3388 events=7258 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243382 present=22371 rb=2220 scene=2916 script=3564 events=7320 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240503 present=22526 rb=2209 scene=2914 script=3467 events=7189 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT rbstruct calls=1500 batches=10262 clears=0 clear_px=0 sprites=4190 sprite_px=8018316 clipped=0 flagged=0 noflag=4190 notvs=0 novalid=0 isfull=0 guimiss=0 guihit=0 hitpx=0 fullpx=0 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT skipframe owed=5 prev_us total=244945 present=22353 rb=5603 scene=2916 script=3380 events=7407 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT dirtypresent narrow=0 full=1500 px_narrow=0 px_full=460800000 nocam=0 rej scaled=1500 noscene=0 latched=0 norects=0 pal=0 clip=0 multi=0 px_multi=0 px_multi_bbox=0 boxes=0 out=0 whole=0 rowfr=0 px_bands=0 bands=0 mg0=0/0 mg2k=0/0 mg5k5=0/0 mg12k=0/0
+DOS-PORT skipframe owed=5 prev_us total=226467 present=22300 rb=2215 scene=2917 script=3406 events=7163 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241063 present=22145 rb=2208 scene=2908 script=3620 events=7341 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241723 present=22165 rb=2215 scene=2914 script=3386 events=7261 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239703 present=22368 rb=2220 scene=2920 script=3409 events=7165 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=229814 present=22509 rb=2210 scene=3154 script=3620 events=7345 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241595 present=22524 rb=2213 scene=2912 script=3385 events=7250 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241340 present=22385 rb=2445 scene=2918 script=3410 events=7160 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239231 present=22521 rb=2205 scene=2909 script=3470 events=7194 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241526 present=22370 rb=2214 scene=2914 script=3379 events=7249 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT bgstruct calls=1500 whole=8 px=5184910 slow_px=0
+DOS-PORT skipframe owed=5 prev_us total=239606 present=22312 rb=2212 scene=2916 script=3410 events=7157 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240646 present=22168 rb=2201 scene=3072 script=3467 events=7186 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=228211 present=22524 rb=2215 scene=2910 script=3379 events=7262 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242963 present=22372 rb=2215 scene=2918 script=3406 events=7159 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=237760 present=22512 rb=2453 scene=2909 script=3471 events=7187 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240339 present=22162 rb=2361 scene=2914 script=3381 events=7250 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) [(unknown section):33] Playing sound 9 on channel 3
+DOS-PORT skipframe owed=5 prev_us total=244220 present=22387 rb=2211 scene=3160 script=23870 events=27631 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=185605 present=22305 rb=2208 scene=2921 script=3463 events=7203 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=182705 present=22309 rb=2216 scene=2924 script=3379 events=7243 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=182400 present=22302 rb=2215 scene=2919 script=3403 events=7133 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=182054 present=22145 rb=2211 scene=2924 script=3467 events=7370 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243249 present=22281 rb=2208 scene=2912 script=3664 events=7543 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240456 present=22158 rb=2210 scene=2914 script=3400 events=7170 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239805 present=22291 rb=2207 scene=2912 script=3471 events=7192 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243162 present=22142 rb=2216 scene=2912 script=3384 events=7261 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=228770 present=22529 rb=2210 scene=2918 script=3399 events=7167 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239892 present=22364 rb=2208 scene=2911 script=3471 events=7195 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240693 present=22369 rb=2212 scene=2914 script=3384 events=7259 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240177 present=22383 rb=2476 scene=2915 script=3398 events=7169 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230566 present=22155 rb=2205 scene=2914 script=3507 events=7688 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=238405 present=22295 rb=2212 scene=2919 script=3377 events=7252 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241382 present=22155 rb=2218 scene=2914 script=3419 events=7330 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241446 present=22290 rb=2208 scene=2908 script=3472 events=7187 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240555 present=22156 rb=2366 scene=2916 script=3381 events=7259 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240209 present=22522 rb=2210 scene=2914 script=3399 events=7173 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242513 present=22375 rb=2394 scene=2912 script=3468 events=7186 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=231096 present=22514 rb=2214 scene=2915 script=3375 events=7260 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) [(unknown section):31] Playing sound 3 on channel 3
+DOS-PORT skipframe owed=5 prev_us total=296711 present=22166 rb=2213 scene=2921 script=100637 events=104383 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=185052 present=22155 rb=2209 scene=2918 script=3465 events=7502 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241276 present=22521 rb=2214 scene=2915 script=3377 events=7410 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=231060 present=22383 rb=2216 scene=2915 script=3411 events=7162 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242423 present=22381 rb=2202 scene=2911 script=3472 events=7185 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242322 present=22355 rb=2213 scene=3146 script=3386 events=7259 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242110 present=22315 rb=2214 scene=2912 script=3410 events=7156 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=238629 present=22160 rb=2216 scene=2914 script=3887 events=7848 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240636 present=22165 rb=2215 scene=2913 script=3389 events=7257 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=238112 present=22382 rb=2210 scene=2913 script=3405 events=7162 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230428 present=22533 rb=2204 scene=3161 script=3501 events=7356 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239889 present=22370 rb=2215 scene=2912 script=3385 events=7256 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241630 present=22300 rb=2212 scene=2917 script=3406 events=7153 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240372 present=22165 rb=2205 scene=2908 script=3468 events=7365 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=228048 present=22302 rb=2222 scene=2915 script=3383 events=7256 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240799 present=22171 rb=2212 scene=2916 script=3673 events=7647 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242225 present=22382 rb=2211 scene=2914 script=3465 events=7188 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243224 present=22379 rb=2216 scene=2916 script=3386 events=7253 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241420 present=22366 rb=2215 scene=3085 script=3408 events=7159 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=238196 present=22503 rb=2213 scene=2912 script=3465 events=7185 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240869 present=22162 rb=2217 scene=2918 script=3389 events=7260 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) [(unknown section):33] Playing sound 9 on channel 3
+DOS-PORT silentirq tick=10160 room=3 irqs=1 since_room=7064
+DOS-PORT skipframe owed=5 prev_us total=187317 present=22178 rb=2212 scene=2913 script=3656 events=7422 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=186435 present=22550 rb=2205 scene=2910 script=3467 events=7448 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=182849 present=22161 rb=2211 scene=2919 script=3378 events=7251 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181810 present=22310 rb=2224 scene=2917 script=3396 events=7155 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181571 present=22391 rb=2207 scene=2914 script=3473 events=7449 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241795 present=22152 rb=2208 scene=2919 script=3385 events=7250 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242262 present=22317 rb=2218 scene=2915 script=3394 events=7153 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230147 present=22381 rb=2207 scene=2910 script=3469 events=7197 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240658 present=22170 rb=2207 scene=2920 script=3627 events=7497 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239118 present=22383 rb=2215 scene=2919 script=3390 events=7141 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240911 present=22318 rb=2205 scene=2913 script=3696 events=7430 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240989 present=22372 rb=2216 scene=2919 script=3547 events=7413 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239441 present=22162 rb=2212 scene=2914 script=3393 events=7624 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240183 present=22159 rb=2210 scene=2910 script=3469 events=7196 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=231313 present=22156 rb=2213 scene=2914 script=3625 events=7499 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242021 present=22316 rb=2214 scene=2919 script=3395 events=7141 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=238243 present=22383 rb=2207 scene=2912 script=3471 events=7198 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242124 present=22508 rb=2470 scene=2918 script=3383 events=7250 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230895 present=22143 rb=2215 scene=2914 script=3396 events=7147 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241376 present=22308 rb=2213 scene=2914 script=3470 events=7474 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242379 present=22158 rb=2396 scene=2919 script=3386 events=7256 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243136 present=22290 rb=2215 scene=2917 script=3389 events=7146 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241270 present=22153 rb=2205 scene=2913 script=3635 events=7370 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239452 present=22317 rb=2215 scene=2916 script=3382 events=7256 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240549 present=22360 rb=2210 scene=2915 script=3398 events=7148 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=231537 present=22517 rb=2218 scene=2911 script=3738 events=7471 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242805 present=22526 rb=2215 scene=2917 script=3387 events=7255 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) Running on_key_press keycode 383, mod 1310720
+DOS-PORT skipframe owed=5 prev_us total=242968 present=22367 rb=2213 scene=3079 script=3389 events=7140 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240934 present=22512 rb=2212 scene=2912 script=3470 events=7196 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=229464 present=22160 rb=2215 scene=2919 script=3379 events=7253 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=238713 present=22312 rb=2215 scene=2915 script=3391 events=7150 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242302 present=22171 rb=2360 scene=2910 script=3474 events=7202 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241032 present=22310 rb=2213 scene=2916 script=3431 events=7508 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240589 present=22171 rb=2217 scene=2913 script=3434 events=7730 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241355 present=22499 rb=2215 scene=2910 script=3645 events=7378 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243583 present=22383 rb=2214 scene=3144 script=3380 events=7252 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230921 present=22298 rb=2214 scene=2919 script=3389 events=7147 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240737 present=22158 rb=2208 scene=2912 script=3699 events=7432 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241058 present=22287 rb=2215 scene=2915 script=3385 events=7259 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240355 present=22171 rb=2210 scene=2915 script=3392 events=7367 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230914 present=22541 rb=2201 scene=2918 script=3470 events=7193 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239699 present=22373 rb=2210 scene=2915 script=3384 events=7249 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) [(unknown section):33] Playing sound 9 on channel 3
+DOS-PORT silentirq tick=11159 room=3 irqs=1 since_room=8063
+DOS-PORT skipframe owed=5 prev_us total=186268 present=22157 rb=2214 scene=2903 script=3663 events=7354 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=189530 present=22530 rb=2206 scene=2886 script=3441 events=7039 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181921 present=22388 rb=2227 scene=3059 script=3412 events=7199 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181915 present=22538 rb=2221 scene=3167 script=3411 events=7099 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=179138 present=22559 rb=2203 scene=2911 script=3462 events=7144 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241863 present=22158 rb=2212 scene=2915 script=3377 events=7248 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242484 present=22305 rb=2209 scene=2912 script=3552 events=7323 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239619 present=22381 rb=2374 scene=2910 script=3472 events=7187 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243009 present=22512 rb=2210 scene=2918 script=3563 events=7434 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241765 present=22379 rb=2228 scene=3148 script=3400 events=7160 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241157 present=22528 rb=2207 scene=2913 script=3472 events=7187 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230474 present=22168 rb=2225 scene=2919 script=3387 events=7254 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240154 present=22152 rb=2213 scene=2914 script=3399 events=7164 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240614 present=22172 rb=2205 scene=2916 script=3481 events=7194 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241538 present=22311 rb=2212 scene=2918 script=3387 events=7253 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=227304 present=22358 rb=2212 scene=2913 script=3396 events=7165 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242556 present=22530 rb=2204 scene=3150 script=3468 events=7193 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242957 present=22147 rb=2212 scene=2917 script=3758 events=7636 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241962 present=22145 rb=2214 scene=2914 script=3396 events=7164 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243055 present=22309 rb=2210 scene=2913 script=3465 events=7189 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=238461 present=22151 rb=2215 scene=2914 script=3390 events=7248 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241081 present=22377 rb=2210 scene=2912 script=3397 events=7170 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230615 present=22532 rb=2438 scene=2911 script=3466 events=7186 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240116 present=22379 rb=2210 scene=2914 script=3380 events=7243 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241453 present=22155 rb=2212 scene=2910 script=3612 events=7398 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT rbstruct calls=2000 batches=13762 clears=0 clear_px=0 sprites=5690 sprite_px=10688316 clipped=0 flagged=0 noflag=5690 notvs=0 novalid=0 isfull=0 guimiss=0 guihit=0 hitpx=0 fullpx=0 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT skipframe owed=5 prev_us total=241640 present=22155 rb=3968 scene=2917 script=3465 events=7194 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT dirtypresent narrow=0 full=2000 px_narrow=0 px_full=614400000 nocam=0 rej scaled=2000 noscene=0 latched=0 norects=0 pal=0 clip=0 multi=0 px_multi=0 px_multi_bbox=0 boxes=0 out=0 whole=0 rowfr=0 px_bands=0 bands=0 mg0=0/0 mg2k=0/0 mg5k5=0/0 mg12k=0/0
+DOS-PORT skipframe owed=5 prev_us total=230740 present=22146 rb=2213 scene=2916 script=3378 events=7252 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241090 present=22304 rb=2210 scene=2913 script=3399 events=7167 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241535 present=22161 rb=2208 scene=2914 script=3463 events=7451 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242032 present=22502 rb=2213 scene=2914 script=3381 events=7247 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242010 present=22381 rb=2221 scene=2914 script=3399 events=7171 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242294 present=22538 rb=2209 scene=3147 script=3476 events=7190 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242299 present=22143 rb=2215 scene=3084 script=3645 events=7516 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230615 present=22321 rb=2210 scene=2918 script=3396 events=7166 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240387 present=22147 rb=2206 scene=2909 script=3646 events=7371 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT bgstruct calls=2000 whole=8 px=5826910 slow_px=0
+DOS-PORT skipframe owed=5 prev_us total=241394 present=22284 rb=2215 scene=2913 script=3387 events=7260 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=238945 present=22387 rb=2214 scene=2911 script=3395 events=7161 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230016 present=22526 rb=2213 scene=2914 script=3476 events=7194 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239168 present=22378 rb=2216 scene=2925 script=3386 events=7246 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240808 present=22321 rb=2210 scene=2913 script=3658 events=7422 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242281 present=22172 rb=2205 scene=2913 script=3465 events=7192 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) [(unknown section):33] Playing sound 9 on channel 3
+DOS-PORT skipframe owed=5 prev_us total=254066 present=22362 rb=2216 scene=2919 script=23887 events=27743 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=186138 present=22147 rb=2211 scene=3088 script=3480 events=7209 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=184683 present=22542 rb=2492 scene=2911 script=3468 events=7185 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=182047 present=22385 rb=2215 scene=2919 script=3394 events=7250 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=182767 present=22315 rb=2212 scene=2916 script=3489 events=7377 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241586 present=22398 rb=2447 scene=2918 script=3467 events=7201 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240722 present=22523 rb=2463 scene=2914 script=3378 events=7256 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243475 present=22368 rb=2215 scene=2919 script=3386 events=7140 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=238247 present=22294 rb=2204 scene=2909 script=3470 events=7196 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=229084 present=22145 rb=2210 scene=2914 script=3377 events=7261 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241291 present=22320 rb=2210 scene=2914 script=3388 events=7151 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=238062 present=22364 rb=2211 scene=2907 script=3475 events=7199 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241356 present=22505 rb=2212 scene=2916 script=3376 events=7252 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=231851 present=22388 rb=2218 scene=2913 script=3392 events=7151 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=244432 present=22383 rb=2209 scene=2913 script=3472 events=7205 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241986 present=22529 rb=2215 scene=3148 script=3377 events=7252 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240535 present=22382 rb=2213 scene=2917 script=3390 events=7147 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240713 present=22512 rb=2207 scene=2913 script=3472 events=7205 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240783 present=22160 rb=2216 scene=3071 script=3379 events=7251 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=237205 present=22296 rb=2215 scene=2911 script=3388 events=7152 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=228577 present=22378 rb=2213 scene=2914 script=3473 events=7204 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241337 present=22519 rb=2209 scene=2918 script=3827 events=7707 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240855 present=22357 rb=2215 scene=3231 script=3384 events=7379 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239464 present=22317 rb=2205 scene=2910 script=3474 events=7197 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=229035 present=22168 rb=2209 scene=2915 script=3385 events=7252 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=237630 present=22313 rb=2210 scene=2915 script=3393 events=7145 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239861 present=22370 rb=2209 scene=2914 script=3472 events=7198 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240072 present=22526 rb=2216 scene=2919 script=3380 events=7253 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=238950 present=22372 rb=2212 scene=2910 script=3553 events=7313 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240972 present=22519 rb=2204 scene=3149 script=3477 events=7359 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242018 present=22382 rb=2209 scene=2914 script=3376 events=7251 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=228744 present=22308 rb=2212 scene=2916 script=3393 events=7152 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240310 present=22167 rb=2215 scene=2913 script=3472 events=7191 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243237 present=22168 rb=2208 scene=2918 script=3381 events=7248 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=238509 present=22148 rb=2220 scene=2914 script=3386 events=7141 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=229416 present=22527 rb=2217 scene=2909 script=3698 events=7429 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240059 present=22523 rb=2213 scene=2917 script=3374 events=7249 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242672 present=22368 rb=2216 scene=3152 script=3388 events=7147 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241263 present=22514 rb=2208 scene=2915 script=3472 events=7198 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241319 present=22173 rb=2372 scene=2919 script=3608 events=7486 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243576 present=22306 rb=2221 scene=2914 script=3393 events=7146 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241249 present=22145 rb=2381 scene=2914 script=3474 events=7198 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) [(unknown section):31] Playing sound 3 on channel 3
+DOS-PORT silentirq tick=13160 room=3 irqs=2 since_room=10064
+DOS-PORT skipframe owed=5 prev_us total=186653 present=22395 rb=2224 scene=2901 script=3403 events=7197 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=185540 present=22165 rb=2210 scene=2903 script=3448 events=7378 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242046 present=22375 rb=2445 scene=2912 script=3472 events=7192 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243031 present=22307 rb=2208 scene=2914 script=3392 events=7494 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230793 present=22171 rb=2212 scene=2916 script=3399 events=7311 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240625 present=22160 rb=2210 scene=2915 script=3469 events=7189 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239717 present=22405 rb=2215 scene=2914 script=3378 events=7251 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242865 present=22517 rb=2208 scene=2915 script=3399 events=7163 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242912 present=22535 rb=2214 scene=2908 script=3475 events=7193 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) Running on_key_press keycode 383, mod 1310720
+DOS-PORT skipframe owed=5 prev_us total=243300 present=22393 rb=2361 scene=2914 script=3383 events=7260 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240056 present=22150 rb=2212 scene=2914 script=3804 events=7565 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230147 present=22158 rb=2208 scene=2910 script=3464 events=7195 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239534 present=22315 rb=2212 scene=2911 script=3371 events=7255 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=245420 present=22155 rb=2220 scene=2922 script=3411 events=7159 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239976 present=22316 rb=2205 scene=2904 script=3474 events=7358 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=229691 present=22165 rb=2221 scene=2916 script=3378 events=7239 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242607 present=22158 rb=2210 scene=2919 script=3651 events=7400 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=238517 present=22376 rb=2206 scene=2911 script=3473 events=7182 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240515 present=22512 rb=2209 scene=2917 script=3388 events=7415 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=238121 present=22372 rb=2209 scene=2914 script=3409 events=7161 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242095 present=22293 rb=2208 scene=2909 script=3465 events=7180 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) [(unknown section):33] Playing sound 9 on channel 3
+DOS-PORT skipframe owed=5 prev_us total=189268 present=22307 rb=2215 scene=2916 script=3379 events=7243 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=184240 present=22543 rb=2215 scene=2933 script=3402 events=7135 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181723 present=22392 rb=2355 scene=2916 script=3460 events=7204 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181395 present=22379 rb=2215 scene=2919 script=3382 events=7239 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181299 present=22547 rb=2216 scene=3205 script=3409 events=7133 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243404 present=22159 rb=2206 scene=2912 script=3462 events=7189 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241971 present=22310 rb=2214 scene=2914 script=3382 events=7256 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=226994 present=22373 rb=2222 scene=2915 script=3398 events=7174 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242447 present=22538 rb=2212 scene=2913 script=3465 events=7188 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241472 present=22376 rb=2214 scene=3151 script=3613 events=7490 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240094 present=22528 rb=2210 scene=2916 script=3398 events=7168 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239474 present=22374 rb=2209 scene=2915 script=3635 events=7359 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240479 present=22169 rb=2210 scene=2917 script=3643 events=7524 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243064 present=22309 rb=2210 scene=2916 script=3398 events=7162 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230733 present=22167 rb=2217 scene=2911 script=3464 events=7188 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241431 present=22287 rb=2213 scene=2912 script=3381 events=7254 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240899 present=22163 rb=2210 scene=2920 script=3399 events=7166 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240130 present=22528 rb=2210 scene=2919 script=3466 events=7189 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230217 present=22367 rb=2218 scene=2915 script=3380 events=7257 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242744 present=22519 rb=2211 scene=2914 script=3400 events=7170 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240209 present=22155 rb=2207 scene=2911 script=3469 events=7192 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) [(unknown section):33] Playing sound 9 on channel 3
+DOS-PORT skipframe owed=5 prev_us total=186507 present=22538 rb=2499 scene=2919 script=3397 events=7414 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=189506 present=22162 rb=2217 scene=2923 script=3412 events=7144 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=181817 present=22300 rb=2205 scene=2919 script=3470 events=7211 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=182097 present=22152 rb=2223 scene=3094 script=3382 events=7244 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=189697 present=22392 rb=2210 scene=2913 script=3490 events=7203 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241123 present=22365 rb=2207 scene=3074 script=3475 events=7185 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243269 present=22523 rb=2210 scene=2924 script=3381 events=7431 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240985 present=22167 rb=2207 scene=2915 script=3415 events=7168 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241171 present=22528 rb=2211 scene=2914 script=3469 events=7191 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240637 present=22173 rb=2210 scene=3081 script=3382 events=7253 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241130 present=22304 rb=2213 scene=2917 script=3399 events=7159 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230104 present=22381 rb=2210 scene=2911 script=3466 events=7185 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241189 present=22526 rb=2212 scene=2918 script=3379 events=7257 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241530 present=22386 rb=2214 scene=2916 script=3406 events=7161 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=238608 present=22504 rb=2432 scene=2912 script=3463 events=7189 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=228830 present=22143 rb=2212 scene=2920 script=3380 events=7483 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241446 present=22301 rb=2216 scene=2915 script=3410 events=7165 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239879 present=22155 rb=2210 scene=2910 script=3480 events=7348 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240567 present=22533 rb=2214 scene=2914 script=3377 events=7256 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241193 present=22370 rb=2209 scene=2916 script=3570 events=7324 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239524 present=22520 rb=2445 scene=2909 script=3627 events=7346 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242869 present=22149 rb=2210 scene=2912 script=3641 events=7520 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=231953 present=22295 rb=2219 scene=2919 script=3403 events=7161 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=238356 present=22160 rb=2212 scene=2909 script=3468 events=7189 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240164 present=22299 rb=2225 scene=2916 script=3627 events=7741 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT rbstruct calls=2500 batches=17262 clears=0 clear_px=0 sprites=7190 sprite_px=13358316 clipped=0 flagged=0 noflag=7190 notvs=0 novalid=0 isfull=0 guimiss=0 guihit=0 hitpx=0 fullpx=0 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT skipframe owed=5 prev_us total=243388 present=22377 rb=5460 scene=2914 script=3407 events=7152 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT dirtypresent narrow=0 full=2500 px_narrow=0 px_full=768000000 nocam=0 rej scaled=2500 noscene=0 latched=0 norects=0 pal=0 clip=0 multi=0 px_multi=0 px_multi_bbox=0 boxes=0 out=0 whole=0 rowfr=0 px_bands=0 bands=0 mg0=0/0 mg2k=0/0 mg5k5=0/0 mg12k=0/0
+DOS-PORT skipframe owed=5 prev_us total=230385 present=22522 rb=2205 scene=2913 script=3623 events=7596 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=237810 present=22360 rb=2213 scene=2915 script=3538 events=7410 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240199 present=22373 rb=2210 scene=2917 script=3409 events=7157 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242692 present=22171 rb=2209 scene=2911 script=3466 events=7425 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243188 present=22377 rb=2215 scene=3074 script=3384 events=7256 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241007 present=22299 rb=2211 scene=2919 script=3399 events=7153 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240616 present=22163 rb=2210 scene=2911 script=3468 events=7188 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230299 present=22393 rb=2214 scene=2916 script=3625 events=7502 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241606 present=22390 rb=2213 scene=3078 script=3406 events=7160 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT bgstruct calls=2500 whole=8 px=6468910 slow_px=0
+DOS-PORT skipframe owed=5 prev_us total=241730 present=22517 rb=2212 scene=3151 script=3475 events=7190 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241514 present=22374 rb=2214 scene=3068 script=3383 events=7252 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=231141 present=22307 rb=2220 scene=2914 script=3400 events=7153 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241457 present=22373 rb=2212 scene=2913 script=3464 events=7181 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243994 present=22149 rb=2216 scene=2915 script=3385 events=7528 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240514 present=22153 rb=2215 scene=2915 script=3403 events=7157 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) [(unknown section):31] Playing sound 3 on channel 3
+DOS-PORT skipframe owed=5 prev_us total=331674 present=22290 rb=2209 scene=2892 script=100351 events=104063 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=185175 present=22566 rb=2217 scene=3172 script=3396 events=7401 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240455 present=22542 rb=2213 scene=2913 script=3392 events=7154 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230584 present=22149 rb=2209 scene=2911 script=3474 events=7204 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241120 present=22322 rb=2212 scene=2914 script=3377 events=7515 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240601 present=22166 rb=2216 scene=3074 script=3386 events=7145 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240192 present=22341 rb=2212 scene=2912 script=3469 events=7203 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230472 present=22376 rb=2215 scene=2915 script=3378 events=7254 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239056 present=22509 rb=2217 scene=2919 script=3386 events=7138 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=238315 present=22167 rb=2207 scene=2911 script=3468 events=7200 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241476 present=22305 rb=2210 scene=2915 script=3536 events=7406 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241542 present=22158 rb=2215 scene=2913 script=3433 events=7404 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242699 present=22298 rb=2220 scene=2911 script=3479 events=7207 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241267 present=22163 rb=2214 scene=2914 script=3381 events=7259 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=226525 present=22512 rb=2215 scene=2912 script=3396 events=7390 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239937 present=22377 rb=2211 scene=2913 script=3472 events=7194 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239911 present=22523 rb=2433 scene=2920 script=3377 events=7253 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241830 present=22154 rb=2213 scene=2914 script=3634 events=7389 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=231367 present=22315 rb=2221 scene=2913 script=3473 events=7678 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240481 present=22155 rb=2219 scene=2917 script=3380 events=7257 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241716 present=22538 rb=2211 scene=2912 script=3392 events=7147 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241134 present=22373 rb=2212 scene=2908 script=3923 events=7646 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241324 present=22376 rb=2215 scene=2919 script=3380 events=7251 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241112 present=22382 rb=2445 scene=2914 script=3385 events=7144 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Game : (room:3) Running on_key_press keycode 383, mod 1310720
+DOS-PORT skipframe owed=5 prev_us total=244195 present=22170 rb=2215 scene=2901 script=3718 events=7439 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=228893 present=22155 rb=2208 scene=2907 script=3383 events=7249 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240011 present=22171 rb=2214 scene=2890 script=3390 events=7148 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239968 present=22160 rb=2207 scene=2903 script=3459 events=7444 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=239269 present=22516 rb=2218 scene=3136 script=3600 events=7476 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=230272 present=22165 rb=2211 scene=2890 script=3654 events=7780 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=242408 present=22352 rb=2205 scene=2900 script=3465 events=7182 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=241553 present=22172 rb=2226 scene=2904 script=3777 events=7664 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240845 present=22145 rb=2210 scene=2893 script=3397 events=7312 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240025 present=22307 rb=2208 scene=2902 script=3463 events=7443 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=243712 present=22170 rb=2213 scene=2901 script=3378 events=7250 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+DOS-PORT skipframe owed=5 prev_us total=240955 present=22290 rb=2223 scene=2891 script=3386 events=7141 sprite_px=5340 present_px=307200 sprites=3 maxspr=320x13
+Quitting the game...
+Set game text language: 
+Set locale: 
+***** ENGINE HAS SHUTDOWN
+DOS-PORT bgstruct_final calls=2665 whole=8 px=6680770 slow_px=0
+DOS-PORT bgspans n=202216 lt16=37455 lt64=149385 ge64=15376 mean_px=33
+DOS-PORT evtype none n=0 us=0
+DOS-PORT evtype script n=12849 us=12966392
+DOS-PORT evtype object n=25708 us=128998890
+DOS-PORT evtype fadein n=4 us=5248703
+DOS-PORT evtype gui n=0 us=0
+DOS-PORT evtype newroom n=0 us=0
+DOS-PORT evobj room n=12854 us=127858747
+DOS-PORT evobj hotspot n=12854 us=1140143
+DOS-PORT afterfadein gui_n=3 gui_us=36 log_n=3 log_us=40327 line_n=3 line_us=3501
+DOS-PORT afterfadein_script us=0
+DOS-PORT afterfadein onevent_n=3 onevent_us=3059 nested_us=0
+DOS-PORT dirtysrc other n=0 px=0
+DOS-PORT dirtysrc roomsprite n=2695 px=3657814
+DOS-PORT dirtysrc uisprite n=385 px=2161721
+DOS-PORT dirtysrc cursor n=2663 px=425405
+DOS-PORT dirtysrc screen n=0 px=0
+DOS-PORT dirtysrc carry n=5256 px=7008289
+DOS-PORT vblank vsync_leg=0 dac_leg=0 called=0 skipped=0
+DOS-PORT vblank2 vsync_leg=0 dac_leg=0 called=0 skipped=0
+DOS-PORT fade8 steps=0 interp_us=0 setpal_us=0
+DOS-PORT flushpath banked=0 lfb=0 vblank_entered=0 fb_created=1
+DOS-PORT objsetup setview_n=0 setview_us=0 animate_n=0 animate_us=0 visible_n=0 visible_us=0
+DOS-PORT scfile open_n=0 open_us=0 write_n=0 write_us=0 close_n=0 close_us=0
+DOS-PORT dirtycarry presents=2662 boxes=5256 full=0
+DOS-PORT guiskip flushed=0 late=0 hidden=0 props=0 flag=0
+DOS-PORT objflush n=1
+DOS-PORT objflush idx=0 n=1
+DOS-PORT bigguiopaque opaque=0 masked=0
+DOS-PORT biggui_final n=0 unchanged=0 changed=0 pct=0
+DOS-PORT screenshot n=0 us=0
+DOS-PORT evinteraction n=25708 us=126416430
+DOS-PORT evroom firstenter n=4 us=63936361
+DOS-PORT evroom beforefadein n=4 us=154129
+DOS-PORT evroom repexec n=12843 us=1719534
+DOS-PORT evroom afterfadein n=3 us=62048723
+DOS-PORT blackfill skipped=2656 done=9 px=618880 rects=9 whole=8

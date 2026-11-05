@@ -1,0 +1,104 @@
+From 69947cec707c017865a8df86babd1880d0dfa097 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 14:40:10 -0700
+Subject: [PATCH] DOS-PORT: patch 0340 -- CMOS reads are atomic against
+ interrupt handlers
+
+Both main-thread CMOS readers (0095's clock cross-check, 0206's clk=
+witness) write the index port 70h and then read 71h with interrupts
+enabled. Any interrupt handler that selects another CMOS register
+between the two hands the reader that register's value instead. 0095
+already measured this on the 486 target: a constant register came back
+as another register's value about once in 60,000 reads, from some ISR
+that reads the clock. 0095 guards against it by reading everything
+twice. 0206's reader has no guard at all.
+
+The next patches give IRQ 8 to an RTC pump that touches 70h on every
+tick, at 2048 Hz while MPU bytes are pending. That turns a one in
+60,000 hazard into a routine one. So each index/data pair now runs with
+interrupts off: a few port cycles, restored to the caller's state
+afterwards. 0095's double read stays in place. It still catches a
+second ticking over mid-read.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/main/main.cpp                     | 12 +++++++++++-
+ Engine/platform/dos/dos_midi_backend.cpp | 24 ++++++++++++++++++------
+ 2 files changed, 29 insertions(+), 7 deletions(-)
+
+diff --git a/Engine/main/main.cpp b/Engine/main/main.cpp
+index 7c9521a5c..907e88e05 100644
+--- a/Engine/main/main.cpp
++++ b/Engine/main/main.cpp
+@@ -110,10 +110,20 @@ long dos_port_crosscheck_start_rtc_s = -1;
+ // bits instead of assuming the PC defaults. Index writes keep bit 7 clear
+ // (NMI stays enabled, its normal state). Returns time of day in seconds,
+ // -1 if unreadable.
++// DOS-PORT patch 0340: the index write and the data read form one access, so
++// interrupts are off between them -- an ISR that selects another CMOS
++// register in between (0260's RTC pump does, every tick; so does whatever
++// moved the index here once in 60,000 reads on the 486) would otherwise hand
++// back that register's value. The caller's interrupt state is restored.
+ static int dos_port_cmos_read(int reg)
+ {
++    unsigned long flags;
++    __asm__ __volatile__("pushfl\n\tpopl %0\n\tcli" : "=r"(flags) : : "memory");
+     outportb(0x70, reg & 0x7F);
+-    return inportb(0x71);
++    const int v = inportb(0x71);
++    if (flags & 0x200)
++        __asm__ __volatile__("sti" : : : "memory");
++    return v;
+ }
+ 
+ static long dos_port_rtc_read_s()
+diff --git a/Engine/platform/dos/dos_midi_backend.cpp b/Engine/platform/dos/dos_midi_backend.cpp
+index b3873faa4..18a0b28ca 100644
+--- a/Engine/platform/dos/dos_midi_backend.cpp
++++ b/Engine/platform/dos/dos_midi_backend.cpp
+@@ -60,23 +60,35 @@ static bool g_pb_first = false;
+ uint32_t g_real_period_us = 0; // DOS-PORT (patch 0208)
+ int g_rtc_last_s = -1;
+ 
++// DOS-PORT patch 0340: one CMOS register, index write and data read with
++// interrupts off between them (an ISR selecting another register in between
++// -- 0260's RTC pump, every tick -- would return that register's value);
++// the caller's interrupt state is restored.
++int cmos_read(int reg)
++{
++    unsigned long flags;
++    __asm__ __volatile__("pushfl\n\tpopl %0\n\tcli" : "=r"(flags) : : "memory");
++    outportb(0x70, reg & 0x7F);
++    const int v = inportb(0x71);
++    if (flags & 0x200)
++        __asm__ __volatile__("sti" : : : "memory");
++    return v;
++}
++
+ // Seconds since midnight from the CMOS RTC (BCD or binary per status B),
+ // after the update-in-progress bit clears; -1 if it never clears.
+ int rtc_seconds_of_day()
+ {
+     for (int i = 0; i < 20000; i++)
+     {
+-        outportb(0x70, 0x0A);
+-        if (!(inportb(0x71) & 0x80))
++        if (!(cmos_read(0x0A) & 0x80))
+             break;
+         if (i == 19999)
+             return -1;
+     }
+-    outportb(0x70, 0x0B);
+-    const bool binary = (inportb(0x71) & 0x04) != 0;
++    const bool binary = (cmos_read(0x0B) & 0x04) != 0;
+     auto rd = [binary](int reg) {
+-        outportb(0x70, reg);
+-        const int v = inportb(0x71);
++        const int v = cmos_read(reg);
+         return binary ? v : ((v >> 4) * 10 + (v & 0x0F));
+     };
+     const int sec = rd(0x00), min = rd(0x02), hour = rd(0x04) & 0x3F;
+-- 
+2.47.3
+

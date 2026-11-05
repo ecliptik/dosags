@@ -1,0 +1,64 @@
+bwprobe32 UCLOCKS_PER_SEC=1193180
+VBE 2.0, 2048 KB video memory
+mode list: 53 modes
+  listed 0x101 640x480 bpp=8 pitch=640 physbase=0xE0000000
+  listed 0x110 640x480 bpp=15 pitch=1280 physbase=0xE0000000
+  listed 0x111 640x480 bpp=16 pitch=1280 physbase=0xE0000000
+  listed 0x112 640x480 bpp=32 pitch=2560 physbase=0xE0000000
+  listed 0x1F1 640x480 bpp=32 pitch=2560 physbase=0xE0000000
+  listed 0x201 640x480 bpp=8 pitch=640 physbase=0xE0000000
+mode 0x111: 640x480 bpp=16 pitch=1280 physbase=0xE0000000 win_gran=64KB frame=614400
+0x111/16 banked A000+4F05      dosmemput  bytes= 460800 reps= 400 ms_per_copy=   1.048 MB_per_s= 419.27
+0x111/16 banked A000+4F05      dosmemput  bytes= 614400 reps= 400 ms_per_copy=   0.880 MB_per_s= 665.96
+0x111/16 LFB nearptr           movsl      bytes= 460800 reps= 400 ms_per_copy=   0.499 MB_per_s= 880.51
+0x111/16 LFB nearptr           memcpy     bytes= 460800 reps= 400 ms_per_copy=   0.454 MB_per_s= 968.64
+0x111/16 LFB nearptr           movsl      bytes= 614400 reps= 400 ms_per_copy=   0.447 MB_per_s=1310.97
+0x111/16 LFB nearptr           memcpy     bytes= 614400 reps= 400 ms_per_copy=   0.423 MB_per_s=1386.43
+0x111/16 LFB write-only        stosl      bytes= 614400 reps= 400 ms_per_copy=   0.403 MB_per_s=1455.61
+0x111/16 LFB rect              w32xh80    bytes=   5120 reps= 400 ms_per_copy=   0.014 MB_per_s= 361.31
+0x111/16 LFB rect              w64xh40    bytes=   5120 reps= 400 ms_per_copy=   0.010 MB_per_s= 503.12
+0x111/16 LFB rect              w160xh16   bytes=   5120 reps= 400 ms_per_copy=   0.007 MB_per_s= 658.13
+0x111/16 LFB rect              w320xh8    bytes=   5120 reps= 400 ms_per_copy=   0.007 MB_per_s= 733.53
+0x111/16 LFB rect              w640xh4    bytes=   5120 reps= 400 ms_per_copy=   0.006 MB_per_s= 777.85
+verify 0x111 LFB readback: ok
+mode 0x112: 640x480 bpp=32 pitch=2560 physbase=0xE0000000 win_gran=64KB frame=1228800
+0x112/32 banked A000+4F05      dosmemput  bytes= 460800 reps= 400 ms_per_copy=   0.288 MB_per_s=1526.87
+0x112/32 banked A000+4F05      dosmemput  bytes= 614400 reps= 400 ms_per_copy=   0.459 MB_per_s=1276.62
+0x112/32 banked A000+4F05      dosmemput  bytes= 921600 reps= 400 ms_per_copy=   0.679 MB_per_s=1294.10
+0x112/32 banked A000+4F05      dosmemput  bytes=1228800 reps= 400 ms_per_copy=   0.900 MB_per_s=1302.66
+0x112/32 LFB nearptr           movsl      bytes= 460800 reps= 400 ms_per_copy=   0.336 MB_per_s=1308.85
+0x112/32 LFB nearptr           memcpy     bytes= 460800 reps= 400 ms_per_copy=   0.443 MB_per_s= 991.60
+0x112/32 LFB nearptr           movsl      bytes= 614400 reps= 400 ms_per_copy=   0.562 MB_per_s=1041.92
+0x112/32 LFB nearptr           memcpy     bytes= 614400 reps= 400 ms_per_copy=   0.480 MB_per_s=1220.57
+0x112/32 LFB nearptr           movsl      bytes= 921600 reps= 400 ms_per_copy=   0.649 MB_per_s=1353.81
+0x112/32 LFB nearptr           memcpy     bytes= 921600 reps= 400 ms_per_copy=   0.619 MB_per_s=1418.92
+0x112/32 LFB nearptr           movsl      bytes=1228800 reps= 400 ms_per_copy=   0.780 MB_per_s=1502.50
+0x112/32 LFB nearptr           memcpy     bytes=1228800 reps= 400 ms_per_copy=   0.747 MB_per_s=1568.13
+0x112/32 LFB write-only        stosl      bytes=1228800 reps= 400 ms_per_copy=   0.705 MB_per_s=1662.01
+0x112/32 LFB rect              w32xh80    bytes=  10240 reps= 400 ms_per_copy=   0.016 MB_per_s= 600.16
+0x112/32 LFB rect              w64xh40    bytes=  10240 reps= 400 ms_per_copy=   0.013 MB_per_s= 780.98
+0x112/32 LFB rect              w160xh16   bytes=  10240 reps= 400 ms_per_copy=   0.010 MB_per_s= 953.53
+0x112/32 LFB rect              w320xh8    bytes=  10240 reps= 400 ms_per_copy=   0.009 MB_per_s=1029.34
+0x112/32 LFB rect              w640xh4    bytes=  10240 reps= 400 ms_per_copy=   0.009 MB_per_s=1071.95
+verify 0x112 LFB readback: ok
+mode 0x1F1: 640x480 bpp=32 pitch=2560 physbase=0xE0000000 win_gran=64KB frame=1228800
+0x1F1/32 banked A000+4F05      dosmemput  bytes= 460800 reps= 400 ms_per_copy=   0.297 MB_per_s=1478.73
+0x1F1/32 banked A000+4F05      dosmemput  bytes= 614400 reps= 400 ms_per_copy=   0.493 MB_per_s=1189.22
+0x1F1/32 banked A000+4F05      dosmemput  bytes= 921600 reps= 400 ms_per_copy=   0.697 MB_per_s=1260.22
+0x1F1/32 banked A000+4F05      dosmemput  bytes=1228800 reps= 400 ms_per_copy=   0.887 MB_per_s=1321.11
+0x1F1/32 LFB nearptr           movsl      bytes= 460800 reps= 400 ms_per_copy=   0.321 MB_per_s=1369.68
+0x1F1/32 LFB nearptr           memcpy     bytes= 460800 reps= 400 ms_per_copy=   0.320 MB_per_s=1374.73
+0x1F1/32 LFB nearptr           movsl      bytes= 614400 reps= 400 ms_per_copy=   0.419 MB_per_s=1398.85
+0x1F1/32 LFB nearptr           memcpy     bytes= 614400 reps= 400 ms_per_copy=   0.395 MB_per_s=1482.24
+0x1F1/32 LFB nearptr           movsl      bytes= 921600 reps= 400 ms_per_copy=   0.577 MB_per_s=1522.79
+0x1F1/32 LFB nearptr           memcpy     bytes= 921600 reps= 400 ms_per_copy=   0.569 MB_per_s=1545.00
+0x1F1/32 LFB nearptr           movsl      bytes=1228800 reps= 400 ms_per_copy=   0.755 MB_per_s=1551.34
+0x1F1/32 LFB nearptr           memcpy     bytes=1228800 reps= 400 ms_per_copy=   0.743 MB_per_s=1576.53
+0x1F1/32 LFB write-only        stosl      bytes=1228800 reps= 400 ms_per_copy=   0.713 MB_per_s=1643.01
+0x1F1/32 LFB rect              w32xh80    bytes=  10240 reps= 400 ms_per_copy=   0.016 MB_per_s= 592.83
+0x1F1/32 LFB rect              w64xh40    bytes=  10240 reps= 400 ms_per_copy=   0.013 MB_per_s= 772.18
+0x1F1/32 LFB rect              w160xh16   bytes=  10240 reps= 400 ms_per_copy=   0.010 MB_per_s= 943.49
+0x1F1/32 LFB rect              w320xh8    bytes=  10240 reps= 400 ms_per_copy=   0.010 MB_per_s=1018.77
+0x1F1/32 LFB rect              w640xh4    bytes=  10240 reps= 400 ms_per_copy=   0.009 MB_per_s=1061.22
+verify 0x1F1 LFB readback: ok
+done

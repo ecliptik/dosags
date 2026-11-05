@@ -1,0 +1,71 @@
+fsprobe: sweep path = C:\FSTEST\FSSWEEP.TMP
+fsprobe: default drive = C:, interrogating the sweep's own drive
+fsprobe: sweep drive = C:
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14582 volume_bytes=2014511104 free_bytes=477822976
+fsprobe: GEOMETRY MATCHES THE CF VOLUME (32768-byte clusters, 61478 total) -- this is C:, NOT a different device.
+fsprobe: 200 iterations per arm, line length 128 bytes
+fsprobe: UCLOCKS_PER_SEC=1193180
+fsprobe: arm order = none
+fsprobe: arms SKIPPED -- the sweep's fsync'd bytes are then
+fsprobe: the only bytes forced to the device in this run.
+
+raw     n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+flush   n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+sync    n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+reopen  n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+
+fsprobe: fsync cost per call = mean_us(sync) - mean_us(flush) = 0.0 us
+fsprobe: 240 such calls in a gate run = 0.0 ms
+
+===== STAGE1: SMARTDRV /S =====
+Microsoft SMARTDrive Disk Cache version 5.0
+Copyright 1991,1993 Microsoft Corp.
+
+Room for    512 elements of   8,192 bytes each
+There have been    175 cache hits
+    and    95 cache misses
+
+Cache size:  4,194,304 bytes
+Cache size while running Windows:  1,048,576 bytes
+
+            Disk Caching Status
+drive   read cache   write cache   buffering
+--------------------------------------------
+  B:       yes           no           no
+  C:       yes           no           no
+Write behind data will be committed before command prompt returns.
+
+
+For help, type "Smartdrv /?".
+===== STAGE1 rc=1 =====
+
+fsprobe: ===== SWEEP 1 (STAGE1) =====
+
+fsprobe: sweep -- 800-byte records to 393216 bytes, spikes >= 20000 us
+fsprobe: at this record size, byte 6400 is record 8 and byte 58400 is record 73; record 8 is byte 6400 and record 73 is byte 58400
+  FIRST rec=1     end_off=800     us=13031    cum_ms=13.0  (first cluster + directory entry)
+  SPIKE rec=16    end_off=12800   us=217145   cum_ms=325.3
+  SPIKE rec=67    end_off=53600   us=217515   cum_ms=874.8
+  SPIKE rec=102   end_off=81600   us=217981   cum_ms=1316.9
+  SPIKE rec=139   end_off=111200  us=219159   cum_ms=1773.0
+  SPIKE rec=164   end_off=131200  us=230261   cum_ms=2157.1
+  SPIKE rec=200   end_off=160000  us=218511   cum_ms=2600.0
+  SPIKE rec=235   end_off=188000  us=223755   cum_ms=3050.9
+  SPIKE rec=267   end_off=213600  us=220570   cum_ms=3478.1
+  SPIKE rec=303   end_off=242400  us=222496   cum_ms=3930.1
+  SPIKE rec=338   end_off=270400  us=219008   cum_ms=4373.2
+  SPIKE rec=374   end_off=299200  us=218641   cum_ms=4822.3
+  SPIKE rec=410   end_off=328000  us=224145   cum_ms=5271.5
+  SPIKE rec=445   end_off=356000  us=220559   cum_ms=5713.0
+  SPIKE rec=481   end_off=384800  us=220544   cum_ms=6165.6
+fsprobe: sweep done -- 492 records, 393600 device bytes, 14 spikes, worst 230261 us at off=131200
+fsprobe: sweep elapsed 6280.9 ms by uclock, 6241.9 ms summed per-record; quiet records n=478 mean_us=6593.3
+fsprobe: RATE = one event per 28114 device bytes (27 KB)
+fsprobe: volume after sweep:
+fsprobe: default drive = C:, interrogating the sweep's own drive
+fsprobe: sweep drive = C:
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14582 volume_bytes=2014511104 free_bytes=477822976
+fsprobe: GEOMETRY MATCHES THE CF VOLUME (32768-byte clusters, 61478 total) -- this is C:, NOT a different device.
+fsprobe: done

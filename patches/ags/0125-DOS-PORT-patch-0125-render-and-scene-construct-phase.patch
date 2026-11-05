@@ -1,0 +1,522 @@
+From 1b05af627f32a0ecdb952da43796cdedaf64e8a0 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 21 Sep 2026 11:17:30 -0700
+Subject: [PATCH] DOS-PORT: patch 0125 -- render and scene-construct phase
+ brackets, empty black-fill skip
+
+Consolidates 0125, 0126, 0133, 0135, 0136, 0137, 0138, 0162, 0166 and the
+counter fields that 0167's clip accounting (0170-0174) reads.
+
+Why. After the present was cut, render_backbuffer (5.04 ms/tick, 20.2% of a
+16-bit frame) and scene_construct (24%) were the largest terms nobody had
+opened, and this campaign's own record is that naming such a term from
+reading was wrong twice. So each is bracketed and counted rather than
+guessed at:
+- 0125: render_backbuffer structure (batches, per-batch clears and their
+  area, sprites, composited pixels) and a bracket on the blitting half.
+- 0126: the background restore timed on its own, with pixels copied, whole
+  frames and the slow (non-memcpy) arm counted. Upstream's own comment on
+  that call says it can take up to half the CPU at high resolutions.
+- 0133 and 0135: four sc_* brackets on the scene construction stages and
+  five inside construct_room_view (preroom, prep objects, prep characters,
+  draw list, viewports).
+- 0162: span count and a coarse length histogram for the restore loop.
+- 0166: the largest sprite's dimensions, so a tail frame can be attributed to
+  one element or to many.
+- 0137: whole-frame fills counted.
+
+Two of these change what executes, not only what is measured:
+- 0136: update_invalid_region(Bitmap*, color_t, ...) now returns early when
+  there are no dirty regions, as its bitmap overload already did. Without it
+  a 360-row scan with a 36-byte memcmp per row ran to discover nothing to
+  fill (sc_preroom measured 1,737 ms, 60% of construct_room_view).
+- 0138: the per-row loop tests numSpans before the identical-row memcmp.
+  The comment argues the output is identical (empty rows merge and then fill
+  nothing); the DOSBox-X screenshot-hash gate is what checks it.
+
+The DosPortTickTiming hunk is carried whole, so it also declares the rb_clip_*
+and rb_gui_* fields whose users arrive in 0167.
+
+Provenance of this export (2026-09-21): these edits sat uncommitted in the
+vendor tree from patch 0123 onward, which is why every gate cell since said
+build_dirty=1. They were made under one campaign-wide patch counter shared
+with vendor/SDL, and each hunk carries its number in an in-source comment.
+Intermediate states were never committed, so this patch is a hunk-level
+partition of the final tree by concern, attributed by those comments -- not a
+replay of the order the edits were made in, and its intermediate state was not
+built on its own. The numbers named below are the ones found in its hunks.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/ac/draw.cpp                 |  49 ++++++++++++
+ Engine/ac/draw_software.cpp        | 117 +++++++++++++++++++++++++++++
+ Engine/gfx/ali3dsw.cpp             |  69 +++++++++++++++++
+ Engine/main/dos_port_tick_timing.h |  59 +++++++++++++++
+ 4 files changed, 294 insertions(+)
+
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index 089ed2961..58626a144 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -2397,8 +2397,18 @@ void prepare_room_sprites()
+ 
+     if ((debug_flags & DBG_NOOBJECTS) == 0)
+     {
++#ifdef __DJGPP__
++        { DosPortTickScope _dp(dos_port_tick_timing.sc_prep_objects);  // patch 0135
++#endif
+         prepare_objects_for_drawing();
++#ifdef __DJGPP__
++        }
++        { DosPortTickScope _dp(dos_port_tick_timing.sc_prep_chars);
++#endif
+         prepare_characters_for_drawing();
++#ifdef __DJGPP__
++        }
++#endif
+         add_roomovers_for_drawing();
+ 
+         if ((debug_flags & DBG_NODRAWSPRITES) == 0)
+@@ -2423,7 +2433,13 @@ void prepare_room_sprites()
+             if (pl_any_want_hook(kPluginEvt_PreScreenDraw))
+                 add_render_stage(kPluginEvt_PreScreenDraw);
+ 
++#ifdef __DJGPP__
++            { DosPortTickScope _dp(dos_port_tick_timing.sc_draw_list);  // patch 0135
++#endif
+             draw_sprite_list();
++#ifdef __DJGPP__
++            }
++#endif
+         }
+     }
+     set_our_eip(36);
+@@ -2788,11 +2804,20 @@ void GfxDriverOnInitCallback(void *data)
+ // Schedule room rendering: background, objects, characters
+ static void construct_room_view()
+ {
++#ifdef __DJGPP__
++    { DosPortTickScope _dp(dos_port_tick_timing.sc_preroom);       // patch 0135
++#endif
+     draw_preroom_background();
++#ifdef __DJGPP__
++    }
++#endif
+     prepare_room_sprites();
+     // reset the Baselines Changed flag now that we've drawn stuff
+     walk_behind_baselines_changed = 0;
+ 
++#ifdef __DJGPP__
++    DosPortTickScope _dp_vp(dos_port_tick_timing.sc_viewports);    // patch 0135
++#endif
+     for (const auto &viewport : play.GetRoomViewportsZOrdered())
+     {
+         if (!viewport->IsVisible())
+@@ -2961,7 +2986,13 @@ void construct_game_scene(bool full_redraw)
+         invalidate_screen();
+ 
+     // Overlays may be both in rooms and ui layer, prepare their textures beforehand
++#ifdef __DJGPP__
++    { DosPortTickScope _dp(dos_port_tick_timing.sc_overlays);   // patch 0133
++#endif
+     construct_overlays();
++#ifdef __DJGPP__
++    }
++#endif
+ 
+     // Begin with the parent scene node, defining global offset and flip
+     gfxDriver->BeginSpriteBatch(play.GetMainViewport(),
+@@ -2973,7 +3004,13 @@ void construct_game_scene(bool full_redraw)
+     {
+         if (displayed_room >= 0)
+         {
++#ifdef __DJGPP__
++            { DosPortTickScope _dp(dos_port_tick_timing.sc_room_view);  // patch 0133
++#endif
+             construct_room_view();
++#ifdef __DJGPP__
++            }
++#endif
+         }
+         else if (!drawstate.FullFrameRedraw)
+         {
+@@ -2988,7 +3025,13 @@ void construct_game_scene(bool full_redraw)
+     // Stage: UI overlay
+     if (play.screen_is_faded_out == 0)
+     {
++#ifdef __DJGPP__
++        { DosPortTickScope _dp(dos_port_tick_timing.sc_ui_view);    // patch 0133
++#endif
+         construct_ui_view();
++#ifdef __DJGPP__
++        }
++#endif
+     }
+ 
+     // End the parent scene node
+@@ -3193,7 +3236,13 @@ void render_graphics(IDriverDependantBitmap *extraBitmap, int extraX, int extraY
+             gfxDriver->DrawSprite(extraX, extraY, extraBitmap);
+             gfxDriver->EndSpriteBatch();
+         }
++#ifdef __DJGPP__
++        { DosPortTickScope _dp(dos_port_tick_timing.sc_screen_ovl); // patch 0133
++#endif
+         construct_game_screen_overlay(!in_room_transition);
++#ifdef __DJGPP__
++        }
++#endif
+     }
+     // DOS-PORT patch 0086: render_to_screen() has MANY call sites besides
+     // this one (ac/screen.cpp's fade-transition state machine,
+diff --git a/Engine/ac/draw_software.cpp b/Engine/ac/draw_software.cpp
+index ba8a2ccf1..bca86cbff 100644
+--- a/Engine/ac/draw_software.cpp
++++ b/Engine/ac/draw_software.cpp
+@@ -618,6 +618,15 @@ void update_invalid_region(Bitmap *ds, Bitmap *src, const DirtyRects &rects, boo
+ 
+     if (rects.NumDirtyRegions == WHOLESCREENDIRTY)
+     {
++#ifdef __DJGPP__
++        // patch 0126: the expensive arm -- a full 640x360x16 copy is
++        // 460,800 bytes, which at this machine's measured 17.0 MB/s copy
++        // rate is 27 ms all by itself. Counted separately because one
++        // such frame costs more than a whole normal frame's budget.
++        dos_port_tick_timing.bg_whole++;
++        dos_port_tick_timing.bg_px +=
++            (long long)rects.SurfaceSize.Width * rects.SurfaceSize.Height;
++#endif
+         ds->Blit(src, src_x, src_y, dst_x, dst_y, rects.SurfaceSize.Width, rects.SurfaceSize.Height);
+     }
+     else
+@@ -639,6 +648,29 @@ void update_invalid_region(Bitmap *ds, Bitmap *src, const DirtyRects &rects, boo
+                 {
+                     int tx1 = dirty_row.span[k].x1;
+                     int tx2 = dirty_row.span[k].x2;
++#ifdef __DJGPP__
++                    dos_port_tick_timing.bg_px += (tx2 - tx1) + 1;  // patch 0126
++                    // patch 0162: span COUNT, so mean span length is known
++                    // before anyone optimises this loop.
++                    //
++                    // The restore runs at 12.2 MB/s against a measured 17.0
++                    // copy ceiling -- 72% of achievable, about 1 ms in it.
++                    // The obvious explanation is per-memcpy call overhead on
++                    // short spans, which is exactly the shape that just made
++                    // the run-based blit deliver 0.48 ms instead of 2.44.
++                    //
++                    // That failure happened because I cleared a threshold by
++                    // 3.6x on a figure that did not describe the population
++                    // being blitted, and declined the split that would have
++                    // shown it. Same validity check, made first this time.
++                    dos_port_tick_timing.bg_spans++;
++                    {
++                        const long w = (tx2 - tx1) + 1;
++                        if (w < 16)        dos_port_tick_timing.bg_span_lt16++;
++                        else if (w < 64)   dos_port_tick_timing.bg_span_lt64++;
++                        else               dos_port_tick_timing.bg_span_ge64++;
++                    }
++#endif
+                     memcpy(&dst_scanline[(tx1 + dst_x) * bypp], &src_scanline[(tx1 + src_x) * bypp], ((tx2 - tx1) + 1) * bypp);
+                 }
+             }
+@@ -659,6 +691,14 @@ void update_invalid_region(Bitmap *ds, Bitmap *src, const DirtyRects &rects, boo
+                 {
+                     int tx1 = dirty_row.span[k].x1;
+                     int tx2 = dirty_row.span[k].x2;
++#ifdef __DJGPP__
++                    // patch 0126: the slow arm. If this ever fires the
++                    // colour depths differ and we are NOT getting memcpy.
++                    dos_port_tick_timing.bg_px +=
++                        (long long)((tx2 - tx1) + 1) * rowsInOne;
++                    dos_port_tick_timing.bg_slow_px +=
++                        (long long)((tx2 - tx1) + 1) * rowsInOne;
++#endif
+                     ds->Blit(src, tx1 + src_x, i + src_y, tx1 + dst_x, i + dst_y, (tx2 - tx1) + 1, rowsInOne);
+                 }
+             }
+@@ -668,10 +708,38 @@ void update_invalid_region(Bitmap *ds, Bitmap *src, const DirtyRects &rects, boo
+ 
+ void update_invalid_region(Bitmap *ds, color_t fill_color, const DirtyRects &rects)
+ {
++#ifdef __DJGPP__
++    // DOS-PORT patch 0136: the bitmap overload two functions up opens with
++    // exactly this guard; this one does not, and the omission costs a full
++    // scanline walk per frame for nothing.
++    //
++    // With no dirty regions the loop below still runs over every scanline
++    // of the surface, and its inner "merge identical rows" while-loop does
++    // a 36-byte memcmp per row -- 360 memcmp calls to discover there is
++    // nothing to fill. Measured as sc_preroom: 1,737 ms, 60% of
++    // construct_room_view and 55% of scene_construct, the single largest
++    // component of what I had been calling draw-list building.
++    //
++    // BlackRects is the letterbox//between-viewport region. For a game
++    // whose room viewport fills the virtual screen it is initialised and
++    // permanently empty, so this is the common case, not the edge case.
++    if (rects.NumDirtyRegions == 0)
++    {
++        dos_port_tick_timing.black_fill_skipped++;
++        return;
++    }
++    dos_port_tick_timing.black_fill_done++;
++#endif
+     ds->SetClip(rects.Viewport);
+ 
+     if (rects.NumDirtyRegions == WHOLESCREENDIRTY)
+     {
++#ifdef __DJGPP__
++        dos_port_tick_timing.black_fill_px +=
++            (long long)rects.Viewport.GetWidth() * rects.Viewport.GetHeight();
++        dos_port_tick_timing.black_fill_rects++;
++        dos_port_tick_timing.black_fill_whole++;   // patch 0137
++#endif
+         ds->FillRect(rects.Viewport, fill_color);
+     }
+     else
+@@ -680,6 +748,38 @@ void update_invalid_region(Bitmap *ds, color_t fill_color, const DirtyRects &rec
+         const int surf_height = rects.SurfaceSize.Height;
+         {
+             const PlaneScaling &tf = rects.Room2Screen;
++#ifdef __DJGPP__
++            // DOS-PORT patch 0138: skip empty rows without a memcmp.
++            //
++            // Measured, after a wrong guess and then an area measurement
++            // that redirected it: this loop paints 1,177 px/frame across
++            // 1.54 rects -- the FILLING is free. The cost is the scan. The
++            // original runs a 36-byte memcmp per scanline to merge
++            // identical rows, 360 calls per frame, and for an empty row
++            // there is nothing to merge and nothing to fill. Testing
++            // numSpans first turns those into an int load.
++            //
++            // Output is identical: the original merges runs of empty rows
++            // and then fills none of them, because numSpans is 0.
++            for (int i = 0; i < surf_height; )
++            {
++                if (dirtyRow[i].numSpans == 0) { ++i; continue; }
++                int rowsInOne = 1;
++                while ((i + rowsInOne < surf_height) && (memcmp(&dirtyRow[i], &dirtyRow[i + rowsInOne], sizeof(IRRow)) == 0))
++                    rowsInOne++;
++                const IRRow &dirty_row = dirtyRow[i];
++                for (int k = 0; k < dirty_row.numSpans; k++)
++                {
++                    Rect src_r(dirty_row.span[k].x1, i, dirty_row.span[k].x2, i + rowsInOne - 1);
++                    Rect dst_r = tf.ScaleRange(src_r);
++                    dos_port_tick_timing.black_fill_px +=
++                        (long long)dst_r.GetWidth() * dst_r.GetHeight();
++                    dos_port_tick_timing.black_fill_rects++;
++                    ds->FillRect(dst_r, fill_color);
++                }
++                i += rowsInOne;
++            }
++#else
+             for (int i = 0, rowsInOne = 1; i < surf_height; i += rowsInOne, rowsInOne = 1)
+             {
+                 // if there are rows with identical masks, do them all in one go
+@@ -695,6 +795,7 @@ void update_invalid_region(Bitmap *ds, color_t fill_color, const DirtyRects &rec
+                     ds->FillRect(dst_r, fill_color);
+                 }
+             }
++#endif
+         }
+     }
+ }
+@@ -712,6 +813,22 @@ void update_room_invreg_and_reset(int view_index, Bitmap *ds, Bitmap *src, bool
+     if (view_index < 0 || RoomCamRects.size() == 0)
+         return;
+     
++#ifdef __DJGPP__
++    // patch 0126: time the background restore on its own. It sits inside
++    // scene_construct's bracket but is pixel work, not list building --
++    // so scene_construct's 24.3%% cannot be read as "scaffolding" until
++    // this is subtracted out.
++    dos_port_tick_timing.bg_calls++;
++    {
++    DosPortTickScope _dp_bg(dos_port_tick_timing.bg_restore);
++#endif
+     update_invalid_region(ds, src, RoomCamRects[view_index], no_transform);
++#ifdef __DJGPP__
++    }
++    if ((dos_port_tick_timing.bg_calls % 500) == 0)
++        AGS::Common::Debug::Printf("DOS-PORT bgstruct calls=%ld whole=%ld px=%ld slow_px=%ld",
++            dos_port_tick_timing.bg_calls, dos_port_tick_timing.bg_whole,
++            (long)dos_port_tick_timing.bg_px, (long)dos_port_tick_timing.bg_slow_px);
++#endif
+     RoomCamRects[view_index].Reset();
+ }
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index c28a50c0e..bdd15c13e 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -603,6 +603,23 @@ void SDLRendererGraphicsDriver::RenderToBackBuffer()
+     // be required (similarily to how AGS caches flipped/scaled object sprites now for).
+     //
+ 
++#ifdef __DJGPP__
++    dos_port_tick_timing.rb_calls++;
++    dos_port_tick_timing.rb_batches += (long)_spriteBatchDesc.size();
++    if ((dos_port_tick_timing.rb_calls % 500) == 0)
++        Debug::Printf("DOS-PORT rbstruct calls=%ld batches=%ld clears=%ld clear_px=%ld sprites=%ld sprite_px=%ld clipped=%ld flagged=%ld noflag=%ld notvs=%ld novalid=%ld isfull=%ld guimiss=%ld guihit=%ld hitpx=%ld fullpx=%ld bigmiss=%ld bighit=%ld bigisect=%ld bigfull=%ld",
++            dos_port_tick_timing.rb_calls, dos_port_tick_timing.rb_batches,
++            dos_port_tick_timing.rb_clears, (long)dos_port_tick_timing.rb_clear_px,
++            dos_port_tick_timing.rb_sprites, (long)dos_port_tick_timing.rb_sprite_px,
++            dos_port_tick_timing.rb_clipped_sprites,
++            dos_port_tick_timing.rb_clip_flagged, dos_port_tick_timing.rb_clip_noflag,
++            dos_port_tick_timing.rb_clip_notvs, dos_port_tick_timing.rb_clip_novalid,
++            dos_port_tick_timing.rb_clip_isfull,
++            dos_port_tick_timing.rb_gui_miss, dos_port_tick_timing.rb_gui_hit,
++            (long)dos_port_tick_timing.rb_gui_hit_px, (long)dos_port_tick_timing.rb_gui_full_px,
++            dos_port_tick_timing.rb_gui_big_miss, dos_port_tick_timing.rb_gui_big_hit,
++            (long)dos_port_tick_timing.rb_gui_big_isect_px, (long)dos_port_tick_timing.rb_gui_big_full_px);
++#endif
+     const size_t last_batch_to_rend = _spriteBatchDesc.size() - 1;
+     for (size_t cur_bat = 0u, last_bat = 0u, cur_spr = 0u; last_bat <= last_batch_to_rend;)
+     {
+@@ -612,7 +629,22 @@ void SDLRendererGraphicsDriver::RenderToBackBuffer()
+             const auto &batch = _spriteBatches[cur_bat];
+             // Prepare the transparent surface
+             if (batch.Surface && !batch.Opaque)
++            {
++#ifdef __DJGPP__
++                // patch 0125: a full-surface clear per non-opaque batch,
++                // every frame. render_backbuffer is 5.04 ms/tick and 20.2%
++                // of a 16-bit frame -- the largest term nobody has
++                // examined. Looking for STRUCTURE first (how many batches,
++                // how many clears, over how many bytes) rather than
++                // efficiency, because this campaign's biggest win came
++                // from redundancy in an unexamined path and its best
++                // micro-optimisation was 8x smaller.
++                dos_port_tick_timing.rb_clears++;
++                dos_port_tick_timing.rb_clear_px +=
++                    (long long)batch.Surface->GetWidth() * batch.Surface->GetHeight();
++#endif
+                 batch.Surface->ClearTransparent();
++            }
+         }
+ 
+         // Render immediate batch sprites, if any, update cur_spr iterator
+@@ -680,9 +712,18 @@ void SDLRendererGraphicsDriver::RenderToBackBuffer()
+ 
+ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch, size_t from, Bitmap *surface, int surf_offx, int surf_offy)
+ {
++#ifdef __DJGPP__
++  // patch 0125: 1.09 sprites per batch means any per-batch setup is paid
++  // once per sprite rather than amortised. Bracketing the blitting half
++  // separates it from the outer batch loop's own cost.
++  DosPortTickScope _dp_rb_spr(dos_port_tick_timing.rb_sprite_time);
++#endif
+   for (; (from < _spriteList.size()) && (_spriteList[from].node == batch.ID); ++from)
+   {
+     const auto &sprite = _spriteList[from];
++#ifdef __DJGPP__
++    dos_port_tick_timing.rb_sprites++;   // patch 0125
++#endif
+     if (sprite.ddb == nullptr)
+     {
+       if (_spriteEvtCallback)
+@@ -702,6 +743,34 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+     }
+ 
+     ALSoftwareBitmap* bitmap = sprite.ddb;
++#ifdef __DJGPP__
++    // patch 0125: MEASURE the composited area instead of assuming a sprite
++    // size. An earlier reading inferred ~2.3 cycles/pixel from an assumed
++    // 100x200 sprite -- but 0.70 ms at this machine's measured 17 MB/s is
++    // only ~12 KB, so the assumed size and the measured time cannot both be
++    // right. Counting pixels settles whether this blit sits at the memory
++    // ceiling (irreducible) or beats it (cache-resident, different ceiling).
++    if (bitmap && bitmap->GetBitmap())
++    {
++        const long _w = bitmap->GetBitmap()->GetWidth();
++        const long _h = bitmap->GetBitmap()->GetHeight();
++        dos_port_tick_timing.rb_sprite_px += (long long)_w * _h;
++        // patch 0166: remember the frame's LARGEST sprite's dimensions.
++        //
++        // A count separates one enormous sprite from many; it does not
++        // separate redundant work from necessary work, which is what
++        // decides whether there is a win. If the same dimensions appear on
++        // every tail frame, an unchanged overlay is being recomposited --
++        // the class that produced every win that landed today. If they
++        // vary, it is real content and the answer is different.
++        if (_w * _h > dos_port_tick_timing.rb_max_spr_px)
++        {
++            dos_port_tick_timing.rb_max_spr_px = _w * _h;
++            dos_port_tick_timing.rb_max_spr_w = _w;
++            dos_port_tick_timing.rb_max_spr_h = _h;
++        }
++    }
++#endif
+     int drawAtX = sprite.x + surf_offx;
+     int drawAtY = sprite.y + surf_offy;
+     const int alpha = bitmap->GetAlpha();
+diff --git a/Engine/main/dos_port_tick_timing.h b/Engine/main/dos_port_tick_timing.h
+index dc70fc3d5..66b8b64ac 100644
+--- a/Engine/main/dos_port_tick_timing.h
++++ b/Engine/main/dos_port_tick_timing.h
+@@ -386,6 +386,65 @@ struct DosPortTickTiming
+     long blits_unscaled = 0;
+     // patch 0120: the redundant RAM->RAM present copy, eliminated by
+     // aliasing AGS's virtual screen onto the window surface.
++    // patch 0125: render_backbuffer structure -- batches, per-batch
++    // surface clears and their area, and sprites composited.
++    long rb_calls = 0, rb_batches = 0, rb_clears = 0, rb_sprites = 0;
++    long rb_clipped_sprites = 0;   // patch 0170: composites clipped to the dirty bbox
++    // patch 0171: why the clip did not engage, per condition
++    long rb_clip_flagged = 0, rb_clip_noflag = 0;
++    long rb_clip_notvs = 0, rb_clip_novalid = 0, rb_clip_isfull = 0;
++    // patch 0173: would stage 1.5 ever fire, and how much does the overlap
++    // cost when it does not
++    long rb_gui_miss = 0, rb_gui_hit = 0;
++    long long rb_gui_hit_px = 0, rb_gui_full_px = 0;
++    long rb_gui_big_miss = 0, rb_gui_big_hit = 0;   // patch 0174: >=50,000 px only
++    long long rb_gui_big_isect_px = 0, rb_gui_big_full_px = 0;
++    long long rb_clear_px = 0;
++    long long rb_sprite_px = 0;          // patch 0125: measured composited area
++    // patch 0166: the largest sprite seen since the last skip report, so a
++    // tail frame's 107,625 px can be attributed to one element or to many.
++    long long rb_max_spr_px = 0;
++    long rb_max_spr_w = 0, rb_max_spr_h = 0;
++    DosPortTickPhaseStats rb_sprite_time;  // patch 0125: blitting half only
++    // patch 0126: scene_construct's background restore. Upstream's own
++    // comment above the call site (ac/draw.cpp, "by CJ") says this line
++    // "takes up to 50% of the game CPU time at high resolutions and
++    // colour depths" -- 640x360x16 is exactly that case, so the term is
++    // measured rather than assumed. bg_px counts pixels actually copied
++    // (summed span widths, or the full surface on a whole-screen frame),
++    // bg_whole counts the frames that took the whole-surface Blit.
++    long bg_calls = 0, bg_whole = 0;
++    long long bg_px = 0;
++    long long bg_slow_px = 0;    // pixels that went the non-memcpy Blit arm
++    // patch 0162: span count and a coarse length histogram. Mean span
++    // length decides whether the restore's 28% headroom is reachable by
++    // reducing per-memcpy overhead, or whether it is the same short-run
++    // trap that limited the run-based blit to 0.48 ms.
++    long bg_spans = 0;
++    long bg_span_lt16 = 0, bg_span_lt64 = 0, bg_span_ge64 = 0;
++    // patch 0136: how often the empty-BlackRects fill was skipped, versus
++    // actually had something to fill. If "done" is near zero the whole
++    // scanline walk was always for nothing.
++    long black_fill_skipped = 0, black_fill_done = 0;
++    long long black_fill_px = 0;     // patch 0137: area actually painted
++    long black_fill_rects = 0, black_fill_whole = 0;
++    DosPortTickPhaseStats bg_restore;
++    // patch 0133: scene_construct is 8.80 ms/tick on hardware and
++    // bg_restore accounts for 3.66 of it, so 5.14 ms is genuine draw-list
++    // building -- larger than the background restore and larger than the
++    // whole present now is. Sub-bracketed rather than guessed at, because
++    // the last two times I named this term from reading I was wrong.
++    DosPortTickPhaseStats sc_overlays;   // construct_overlays()
++    DosPortTickPhaseStats sc_room_view;  // construct_room_view() incl. bg_restore
++    DosPortTickPhaseStats sc_ui_view;    // construct_ui_view()
++    DosPortTickPhaseStats sc_screen_ovl; // construct_game_screen_overlay()
++    // patch 0135: inside construct_room_view, which 0133 measured at 92%
++    // of scene_construct. bg_restore lives inside sc_viewports.
++    DosPortTickPhaseStats sc_preroom;      // draw_preroom_background()
++    DosPortTickPhaseStats sc_prep_objects; // prepare_objects_for_drawing()
++    DosPortTickPhaseStats sc_prep_chars;   // prepare_characters_for_drawing()
++    DosPortTickPhaseStats sc_draw_list;    // draw_sprite_list()
++    DosPortTickPhaseStats sc_viewports;    // the per-viewport loop
+     long blits_aliased = 0;      // presents where the copy had nothing to do
+     long vscreen_alias_on = 0;   // times the alias was adopted
+     long vscreen_alias_off = 0;  // times geometry deviated and it reverted // patch 0100: fast-path blits that were 1:1 row copies
+-- 
+2.47.3
+

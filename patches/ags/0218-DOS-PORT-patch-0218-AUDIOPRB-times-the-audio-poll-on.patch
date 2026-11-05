@@ -1,0 +1,372 @@
+From e10c88f60e878c0e78887d47c1a7ceabde9ac051 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 25 Sep 2026 11:45:50 -0700
+Subject: [PATCH] DOS-PORT: patch 0218 -- AUDIOPRB times the audio poll only
+ when SDL_HINT_DOS_AUDIO_DIAG_TIMING is set
+
+Why: ags 0059's temporary AUDIOPRB diagnostic (with 0061/0062/0069-0073) reads uclock() three times per
+audio_core_entry_poll() call, about 6 unguarded PIT reads a tick on the 486 in every build (LAB-MMD 44,
+~26 us/tick), plus the miditick and prepsong brackets. No current gate or scorer reads it: lab-wb and
+lab-journeys use none of it, and lab-metric's three readers (lab-d2, lab-d2hw, lab-s32f1) are closed
+D2-era scorers whose cells are already scored. The per-call timing is the cost, not the file, so an
+end-of-run dump alone would not help.
+
+What: the poll, the miditick bracket and the prepsong bracket read the clock and snapshot SDL's
+diagnostics only when SDL 0199's switch is on (SDL_DOSAudioDiagTiming(), default off). The engine
+latches it in engine_init_audio(), on the main thread before any audio exists, because the OPL write it
+also gates can run from the IRQ-0 pump. With it off, the poll is only counted, and RUNMANI.LOG gets one
+"DOS-PORT audioprb timing=off total_calls=N" line instead of zero-cost windows. With it on, the windows
+are unchanged (the D2-era scorers still parse them) plus one "pump_hist" line: whole-run poll count,
+pump and slot totals, and a per-call pump histogram (< 1, 1-5, 5-9, >= 9 ms), which never drops
+anything, unlike the 64-window cap (lab-metric's suggestion).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ Engine/main/engine.cpp                   |  11 ++
+ Engine/media/audio/audio_core.cpp        | 195 +++++++++++++----------
+ Engine/media/audio/audioplayer.cpp       |  18 ++-
+ Engine/platform/dos/dos_midi_backend.cpp |   8 +-
+ 4 files changed, 144 insertions(+), 88 deletions(-)
+
+diff --git a/Engine/main/engine.cpp b/Engine/main/engine.cpp
+index fe227ae54..3a4a4c235 100644
+--- a/Engine/main/engine.cpp
++++ b/Engine/main/engine.cpp
+@@ -396,8 +396,19 @@ void engine_init_keyboard()
+     /* do nothing */
+ }
+ 
++#ifdef __DJGPP__
++// DOS-PORT patch 0218: SDL patch 0199's switch for the temporary audio cost timings (AUDIOPRB).
++extern "C" bool SDL_DOSAudioDiagTiming(void);
++#endif
++
+ void engine_init_audio()
+ {
++#ifdef __DJGPP__
++    // DOS-PORT patch 0218: latch SDL_HINT_DOS_AUDIO_DIAG_TIMING here, on the main thread and before any audio
++    // exists: the OPL register write it gates can later run from the IRQ-0 music pump, where reading a hint
++    // is not safe.
++    (void)SDL_DOSAudioDiagTiming();
++#endif
+     if (usetup.AudioEnabled)
+     {
+         Debug::Printf("Initializing audio");
+diff --git a/Engine/media/audio/audio_core.cpp b/Engine/media/audio/audio_core.cpp
+index 55ec06681..2f402d13a 100644
+--- a/Engine/media/audio/audio_core.cpp
++++ b/Engine/media/audio/audio_core.cpp
+@@ -209,6 +209,12 @@ extern uclock_t dos_port_engine_start_uclock;
+ // audio_core_entry_poll() invocation below so each call's own register-
+ // write cost is attributed to the right AudioPollWindow, not smeared
+ // across window boundaries.
++// DOS-PORT patch 0218: SDL patch 0199's switch. Everything below that reads the clock (the three per-poll
++// reads here, and every SDL/ags bracket the snapshots below collect) runs only when
++// SDL_HINT_DOS_AUDIO_DIAG_TIMING is set. Default off: those were ~6 unguarded PIT reads a tick on the 486
++// (LAB-MMD 44) that no current gate reads. With it off, the poll is only counted.
++extern "C" bool SDL_DOSAudioDiagTiming(void);
++
+ extern "C" void SDL_DOSOpl3RegWriteDiagSnapshot(
+     uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us);
+ 
+@@ -425,6 +431,11 @@ struct AudioPollDiag
+     uint32_t prepsong_calls_sum = 0;
+     uint64_t prepsong_us_sum = 0, prepsong_min_us = UINT64_MAX, prepsong_max_us = 0;
+ 
++    // DOS-PORT patch 0218: whole-run pump totals and a per-call histogram (< 1, 1-5, 5-9, >= 9 ms), which,
++    // unlike the windows, never drop anything.
++    uint64_t pump_total_us = 0, slots_total_us = 0;
++    uint32_t pump_hist[4] = { 0, 0, 0, 0 };
++
+     AudioPollWindow windows[AUDIO_POLL_DIAG_MAX_WINDOWS];
+     uint32_t windows_recorded = 0;
+     uint32_t windows_dropped = 0;   // AUDIO_POLL_DIAG_MAX_WINDOWS exceeded
+@@ -542,6 +553,9 @@ void dos_diag_record_audio_poll(uint64_t slots_us, uint64_t pump_us)
+     if (slots_us < d.slots_min_us) d.slots_min_us = slots_us;
+     if (slots_us > d.slots_max_us) d.slots_max_us = slots_us;
+     d.pump_sum_us += pump_us;
++    d.pump_total_us += pump_us;
++    d.slots_total_us += slots_us;
++    d.pump_hist[pump_us < 1000 ? 0 : pump_us < 5000 ? 1 : pump_us < 9000 ? 2 : 3]++;
+     if (pump_us < d.pump_min_us) d.pump_min_us = pump_us;
+     if (pump_us > d.pump_max_us) d.pump_max_us = pump_us;
+     if (d.window_calls >= AUDIO_POLL_DIAG_WINDOW)
+@@ -696,9 +710,21 @@ void dos_diag_dump_audio_poll(FILE *fp)
+     if (!fp)
+         return;
+     AudioPollDiag &d = g_audio_poll_diag;
++    if (!SDL_DOSAudioDiagTiming())
++    {
++        // DOS-PORT patch 0218: nothing was timed; say so rather than print zero-cost windows.
++        fprintf(fp, "DOS-PORT audioprb timing=off total_calls=%lu (SDL_HINT_DOS_AUDIO_DIAG_TIMING=1 to time)\n",
++            (unsigned long)d.total_calls);
++        return;
++    }
+     // Fold the still-in-progress partial window in too, so a run that
+     // exits mid-window doesn't silently lose its tail.
+     dos_diag_close_window();
++    fprintf(fp, "DOS-PORT audioprb pump_hist calls=%lu pump_total_us=%llu slots_total_us=%llu "
++        "lt1ms=%lu 1to5ms=%lu 5to9ms=%lu ge9ms=%lu\n",
++        (unsigned long)d.total_calls, (unsigned long long)d.pump_total_us,
++        (unsigned long long)d.slots_total_us, (unsigned long)d.pump_hist[0],
++        (unsigned long)d.pump_hist[1], (unsigned long)d.pump_hist[2], (unsigned long)d.pump_hist[3]);
+     fprintf(fp, "DOS-PORT audioprb total_calls=%lu windows_recorded=%lu windows_dropped=%lu\n",
+         (unsigned long)d.total_calls, (unsigned long)d.windows_recorded,
+         (unsigned long)d.windows_dropped);
+@@ -754,48 +780,52 @@ void dos_diag_dump_audio_poll(FILE *fp)
+ void audio_core_entry_poll()
+ {
+ #ifdef __DJGPP__
+-    const uint64_t t_entry_us = dos_diag_now_us();
+-    // Discard-snapshot: SDL_DOSOpl3WriteRegister() can also be called from
+-    // OUTSIDE this function entirely -- e.g. opl3_sink_open() ->
+-    // SDL_DOSOpl3InitChip() at MIDI-slot-creation time
+-    // (audio_core_slot_init_midi(), triggered by the engine's own music
+-    // dispatch, not by this poll loop). Without this, that unrelated
+-    // burst of writes sits in the SDL-side accumulator until whichever
+-    // audio_core_entry_poll() call happens to run next, and gets folded
+-    // into THAT call's regwrite snapshot even though its own slots_us
+-    // never saw it -- a real bug this diagnostic's own first DOSBox-X
+-    // smoke run caught directly (regwrite max_us=54950 exceeding that
+-    // same window's own slots_us max=4807, which is structurally
+-    // impossible if regwrite time is truly a subset of slots_us time).
+-    // Reset here, before the slot loop, so only writes that happen
+-    // DURING this call's own slot loop reach the real snapshot below.
+-    SDL_DOSOpl3RegWriteDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
+-    // S7-GUS: same discard-snapshot reasoning -- SDL_DOSGusGetState() can
+-    // also run from outside this function (e.g. any future direct engine
+-    // poll of GUS state), so reset before the slot loop for the same
+-    // attribution-correctness reason as the OPL3 regwrite discard above.
+-    SDL_DOSGusGetStateDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
+-    // S7-GUS continuation: same discard-snapshot reasoning, one per
+-    // SDL_DOSGus* voice-setup/-teardown function.
+-    SDL_DOSGusSetVoiceFreqDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
+-    SDL_DOSGusSetVoiceVolDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
+-    SDL_DOSGusSetVoicePanDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
+-    SDL_DOSGusStartVoiceDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
+-    SDL_DOSGusStopVoiceDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
+-    // S7-GUS continuation: same discard-snapshot reasoning, for the
+-    // midi_sched_tick() call-site bracket (audioplayer.cpp) -- it runs
+-    // from inside this same slot loop below (AudioPlayer::Poll() ->
+-    // MidiPoll()), so this reset is defensive symmetry with the others,
+-    // not expected to discard anything real in practice.
+-    DOSAGS_MidiTickDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
+-    // S7-GUS continuation: same discard-snapshot reasoning, for the
+-    // .pat-upload PIO chain -- gus_sink_prepare_song() (and everything
+-    // it triggers) runs from inside this same slot loop below, via
+-    // AudioPlayer::Poll() -> Init() -> MidiInit(), on a song's first
+-    // real tick.
+-    SDL_DOSGusUploadPioDiagSnapshot(nullptr, nullptr, nullptr, nullptr, nullptr);
+-    SDL_DOSGusUploadSampleDiagSnapshot(nullptr, nullptr, nullptr, nullptr, nullptr);
+-    DOSAGS_MidiPrepSongDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
++    // DOS-PORT patch 0218: no clock read and no snapshot unless the timing hint is set.
++    const bool diag = SDL_DOSAudioDiagTiming();
++    const uint64_t t_entry_us = diag ? dos_diag_now_us() : 0;
++    if (diag) {
++        // Discard-snapshot: SDL_DOSOpl3WriteRegister() can also be called from
++        // OUTSIDE this function entirely -- e.g. opl3_sink_open() ->
++        // SDL_DOSOpl3InitChip() at MIDI-slot-creation time
++        // (audio_core_slot_init_midi(), triggered by the engine's own music
++        // dispatch, not by this poll loop). Without this, that unrelated
++        // burst of writes sits in the SDL-side accumulator until whichever
++        // audio_core_entry_poll() call happens to run next, and gets folded
++        // into THAT call's regwrite snapshot even though its own slots_us
++        // never saw it -- a real bug this diagnostic's own first DOSBox-X
++        // smoke run caught directly (regwrite max_us=54950 exceeding that
++        // same window's own slots_us max=4807, which is structurally
++        // impossible if regwrite time is truly a subset of slots_us time).
++        // Reset here, before the slot loop, so only writes that happen
++        // DURING this call's own slot loop reach the real snapshot below.
++        SDL_DOSOpl3RegWriteDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
++        // S7-GUS: same discard-snapshot reasoning -- SDL_DOSGusGetState() can
++        // also run from outside this function (e.g. any future direct engine
++        // poll of GUS state), so reset before the slot loop for the same
++        // attribution-correctness reason as the OPL3 regwrite discard above.
++        SDL_DOSGusGetStateDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
++        // S7-GUS continuation: same discard-snapshot reasoning, one per
++        // SDL_DOSGus* voice-setup/-teardown function.
++        SDL_DOSGusSetVoiceFreqDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
++        SDL_DOSGusSetVoiceVolDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
++        SDL_DOSGusSetVoicePanDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
++        SDL_DOSGusStartVoiceDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
++        SDL_DOSGusStopVoiceDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
++        // S7-GUS continuation: same discard-snapshot reasoning, for the
++        // midi_sched_tick() call-site bracket (audioplayer.cpp) -- it runs
++        // from inside this same slot loop below (AudioPlayer::Poll() ->
++        // MidiPoll()), so this reset is defensive symmetry with the others,
++        // not expected to discard anything real in practice.
++        DOSAGS_MidiTickDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
++        // S7-GUS continuation: same discard-snapshot reasoning, for the
++        // .pat-upload PIO chain -- gus_sink_prepare_song() (and everything
++        // it triggers) runs from inside this same slot loop below, via
++        // AudioPlayer::Poll() -> Init() -> MidiInit(), on a song's first
++        // real tick.
++        SDL_DOSGusUploadPioDiagSnapshot(nullptr, nullptr, nullptr, nullptr, nullptr);
++        SDL_DOSGusUploadSampleDiagSnapshot(nullptr, nullptr, nullptr, nullptr, nullptr);
++        DOSAGS_MidiPrepSongDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
++    }
+ #endif
+ 
+     for (auto &entry : g_acore.slots_) {
+@@ -809,43 +839,45 @@ void audio_core_entry_poll()
+     }
+ 
+ #ifdef __DJGPP__
+-    const uint64_t t_after_slots_us = dos_diag_now_us();
+-    {
+-        uint32_t rw_calls, rw_min_us, rw_mean_us, rw_max_us;
+-        SDL_DOSOpl3RegWriteDiagSnapshot(&rw_calls, &rw_min_us, &rw_mean_us, &rw_max_us);
+-        dos_diag_record_regwrite(rw_calls, rw_min_us, rw_mean_us, rw_max_us);
+-    }
+-    {
+-        uint32_t gs_calls, gs_min_us, gs_mean_us, gs_max_us;
+-        SDL_DOSGusGetStateDiagSnapshot(&gs_calls, &gs_min_us, &gs_mean_us, &gs_max_us);
+-        dos_diag_record_gusscan(gs_calls, gs_min_us, gs_mean_us, gs_max_us);
+-    }
+-    {
+-        uint32_t c, mn, me, mx;
+-        SDL_DOSGusSetVoiceFreqDiagSnapshot(&c, &mn, &me, &mx);
+-        dos_diag_record_voicefreq(c, mn, me, mx);
+-        SDL_DOSGusSetVoiceVolDiagSnapshot(&c, &mn, &me, &mx);
+-        dos_diag_record_voicevol(c, mn, me, mx);
+-        SDL_DOSGusSetVoicePanDiagSnapshot(&c, &mn, &me, &mx);
+-        dos_diag_record_voicepan(c, mn, me, mx);
+-        SDL_DOSGusStartVoiceDiagSnapshot(&c, &mn, &me, &mx);
+-        dos_diag_record_voicestart(c, mn, me, mx);
+-        SDL_DOSGusStopVoiceDiagSnapshot(&c, &mn, &me, &mx);
+-        dos_diag_record_voicestop(c, mn, me, mx);
+-        DOSAGS_MidiTickDiagSnapshot(&c, &mn, &me, &mx);
+-        dos_diag_record_miditick(c, mn, me, mx);
+-    }
+-    {
+-        uint32_t c, mn, me, mx, by;
+-        SDL_DOSGusUploadPioDiagSnapshot(&c, &mn, &me, &mx, &by);
+-        dos_diag_record_uploadpio(c, mn, me, mx, by);
+-        SDL_DOSGusUploadSampleDiagSnapshot(&c, &mn, &me, &mx, &by);
+-        dos_diag_record_uploadsample(c, mn, me, mx, by);
+-    }
+-    {
+-        uint32_t c, mn, me, mx;
+-        DOSAGS_MidiPrepSongDiagSnapshot(&c, &mn, &me, &mx);
+-        dos_diag_record_prepsong(c, mn, me, mx);
++    const uint64_t t_after_slots_us = diag ? dos_diag_now_us() : 0;
++    if (diag) {
++        {
++            uint32_t rw_calls, rw_min_us, rw_mean_us, rw_max_us;
++            SDL_DOSOpl3RegWriteDiagSnapshot(&rw_calls, &rw_min_us, &rw_mean_us, &rw_max_us);
++            dos_diag_record_regwrite(rw_calls, rw_min_us, rw_mean_us, rw_max_us);
++        }
++        {
++            uint32_t gs_calls, gs_min_us, gs_mean_us, gs_max_us;
++            SDL_DOSGusGetStateDiagSnapshot(&gs_calls, &gs_min_us, &gs_mean_us, &gs_max_us);
++            dos_diag_record_gusscan(gs_calls, gs_min_us, gs_mean_us, gs_max_us);
++        }
++        {
++            uint32_t c, mn, me, mx;
++            SDL_DOSGusSetVoiceFreqDiagSnapshot(&c, &mn, &me, &mx);
++            dos_diag_record_voicefreq(c, mn, me, mx);
++            SDL_DOSGusSetVoiceVolDiagSnapshot(&c, &mn, &me, &mx);
++            dos_diag_record_voicevol(c, mn, me, mx);
++            SDL_DOSGusSetVoicePanDiagSnapshot(&c, &mn, &me, &mx);
++            dos_diag_record_voicepan(c, mn, me, mx);
++            SDL_DOSGusStartVoiceDiagSnapshot(&c, &mn, &me, &mx);
++            dos_diag_record_voicestart(c, mn, me, mx);
++            SDL_DOSGusStopVoiceDiagSnapshot(&c, &mn, &me, &mx);
++            dos_diag_record_voicestop(c, mn, me, mx);
++            DOSAGS_MidiTickDiagSnapshot(&c, &mn, &me, &mx);
++            dos_diag_record_miditick(c, mn, me, mx);
++        }
++        {
++            uint32_t c, mn, me, mx, by;
++            SDL_DOSGusUploadPioDiagSnapshot(&c, &mn, &me, &mx, &by);
++            dos_diag_record_uploadpio(c, mn, me, mx, by);
++            SDL_DOSGusUploadSampleDiagSnapshot(&c, &mn, &me, &mx, &by);
++            dos_diag_record_uploadsample(c, mn, me, mx, by);
++        }
++        {
++            uint32_t c, mn, me, mx;
++            DOSAGS_MidiPrepSongDiagSnapshot(&c, &mn, &me, &mx);
++            dos_diag_record_prepsong(c, mn, me, mx);
++        }
+     }
+ #endif
+ 
+@@ -863,7 +895,10 @@ void audio_core_entry_poll()
+     dos_audio_mixer_pump();
+ 
+ #ifdef __DJGPP__
+-    dos_diag_record_audio_poll(t_after_slots_us - t_entry_us, dos_diag_now_us() - t_after_slots_us);
++    if (diag)
++        dos_diag_record_audio_poll(t_after_slots_us - t_entry_us, dos_diag_now_us() - t_after_slots_us);
++    else
++        g_audio_poll_diag.total_calls++;
+ #endif
+ }
+ 
+diff --git a/Engine/media/audio/audioplayer.cpp b/Engine/media/audio/audioplayer.cpp
+index 63e4d0ec1..ab1ae387b 100644
+--- a/Engine/media/audio/audioplayer.cpp
++++ b/Engine/media/audio/audioplayer.cpp
+@@ -345,6 +345,9 @@ static uint64_t s_miditick_sum_us = 0;
+ static uint64_t s_miditick_min_us = UINT64_MAX;
+ static uint64_t s_miditick_max_us = 0;
+ 
++// DOS-PORT patch 0218: the bracket below times only when SDL_HINT_DOS_AUDIO_DIAG_TIMING is set (SDL 0199).
++extern "C" bool SDL_DOSAudioDiagTiming(void);
++
+ extern "C" void DOSAGS_MidiTickDiagSnapshot(
+     uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us)
+ {
+@@ -380,13 +383,16 @@ void AudioPlayer::MidiPoll()
+         return;
+     }
+     {
+-        const uclock_t t0 = uclock(); /* TEMPORARY DIAGNOSTIC, see above */
++        const bool diag = SDL_DOSAudioDiagTiming(); /* patch 0218: off by default */
++        const uclock_t t0 = diag ? uclock() : 0; /* TEMPORARY DIAGNOSTIC, see above */
+         midi_sched_tick(_midiSched, MidiNowMs());
+-        const uint64_t call_us = (uint64_t)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
+-        s_miditick_calls++;
+-        s_miditick_sum_us += call_us;
+-        if (call_us < s_miditick_min_us) s_miditick_min_us = call_us;
+-        if (call_us > s_miditick_max_us) s_miditick_max_us = call_us;
++        if (diag) {
++            const uint64_t call_us = (uint64_t)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
++            s_miditick_calls++;
++            s_miditick_sum_us += call_us;
++            if (call_us < s_miditick_min_us) s_miditick_min_us = call_us;
++            if (call_us > s_miditick_max_us) s_miditick_max_us = call_us;
++        }
+     }
+ 
+     const uint64_t total = midi_sched_dispatched(_midiSched);
+diff --git a/Engine/platform/dos/dos_midi_backend.cpp b/Engine/platform/dos/dos_midi_backend.cpp
+index b102bd047..636f01d87 100644
+--- a/Engine/platform/dos/dos_midi_backend.cpp
++++ b/Engine/platform/dos/dos_midi_backend.cpp
+@@ -291,6 +291,9 @@ static uint64_t s_prepsong_sum_us = 0;
+ static uint64_t s_prepsong_min_us = UINT64_MAX;
+ static uint64_t s_prepsong_max_us = 0;
+ 
++// DOS-PORT patch 0218: the bracket below times only when SDL_HINT_DOS_AUDIO_DIAG_TIMING is set (SDL 0199).
++extern "C" bool SDL_DOSAudioDiagTiming(void);
++
+ extern "C" void DOSAGS_MidiPrepSongDiagSnapshot(
+     uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us)
+ {
+@@ -310,9 +313,10 @@ void dos_midi_backend_prepare_song(void *handle, DosMidiBackendKind kind, const
+     if (kind != DOS_MIDI_BACKEND_GUS || !handle || !m)
+         return; // no-op for every other backend, or a not-yet-open GUS sink
+ 
+-    const uclock_t t0 = uclock(); /* TEMPORARY DIAGNOSTIC, see above */
++    const bool diag = SDL_DOSAudioDiagTiming(); /* patch 0218: off by default */
++    const uclock_t t0 = diag ? uclock() : 0; /* TEMPORARY DIAGNOSTIC, see above */
+     gus_sink_prepare_song((gus_sink *)handle, m);
+-    {
++    if (diag) {
+         const uint64_t call_us = (uint64_t)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
+         s_prepsong_calls++;
+         s_prepsong_sum_us += call_us;
+-- 
+2.47.3
+

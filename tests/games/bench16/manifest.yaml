@@ -1,0 +1,214 @@
+# BENCH16 -- manifest for the self-authored, TAS-driven benchmark fixture at
+# 16-bit (HighColor). Same source, same scenes and same scripts as BENCH8
+# (tests/games/bench8/manifest.yaml, which this is copied from); only
+# Game.agf's <ColorDepth> and the RGBA export of the drawings differ
+# (tests/fixtures/bench/README.md, "BENCH16 -- HighColor build"). Not a
+# sourced third-party game: source, assets and build live in this repo
+# (tests/fixtures/bench/), CC0 assets + MIT scripts + the OFL font.
+#
+# Arms are SCENES, not sound on/off: one scripted scene per run, chosen by
+# the BENCH.CFG each arm stages (extra_files). Build the package first:
+#   tests/fixtures/bench/build-host-tools.sh <pristine AGS src at the pin>
+#   tests/fixtures/bench/build.sh --depth 16
+# then, DOSBox-X:
+#   tools/port-game/port_game.py validate --manifest tests/games/bench16/manifest.yaml \
+#       --layout-dir tests/harness/games/bench16 --arm all
+# and on real hardware, per arm <A> (cfg file tests/fixtures/bench/cfg/<A>.cfg):
+#   tests/harness/run-hw.sh bench16 --tag <TAG> \
+#       --extra-file tests/harness/games/bench16/ACSETUP-OFF.CFG:ACSETUP.CFG \
+#       --extra-file tests/fixtures/bench/cfg/<A>.cfg:BENCH.CFG \
+#       --env DOSAGS_TAS_AUTO_EXIT_TICK=1500 --env DOSAGS_SCENE=<A>
+#   tools/port-game/port_game.py check --manifest ... --arm <A> --run-dir <collected>
+# Every scene's capture is PH01.BMP, a name run-hw.sh already collects.
+# CLEAR PH*.BMP AND AUTOPLT.LOG ON THE TARGET BEFORE EACH CELL (AUTOPLT.LOG
+# is opened in append mode); the scene-specific pose makes a stale capture
+# from a different scene fail its hash, but not one from the same scene.
+#
+# The 16-bit build carries two objects BENCH8 does not (oGlitchA, oGlitchM:
+# the load-time alpha-to-mask regression sprites), so every capture hash
+# differs from BENCH8's. Hashes are from tests/harness/expected/bench16/
+# dosbox-x.json. The `audio` arm is left out here exactly as in BENCH8's
+# manifest (its expected hash is in that JSON if it is wanted).
+
+id: bench16
+title: "Bench 16-bit"
+source: in-repo -- tests/fixtures/bench/ (see tests/harness/packages/bench/PIN)
+license: "assets CC0 1.0; scripts/tooling MIT; font Press Start 2P, SIL OFL 1.1"
+
+data_version: 3060310        # as logged: "Game data version: 3060310"
+compiled_with_editor: "3.6.3.13 headless tools (agf2dta/agscc/spritepak/crmpak/agspak), no Editor"
+loadable: true
+legacy_audio_system: false
+
+resolution: "320x200"        # TRUE 320x200 to the engine, as BENCH8: log reads
+color_depth: 16              # "Game native resolution: 320 x 200 (16 bit)". There
+                             # is no 16-bit Mode 13h; a 16-bit rung is a VESA mode
+audio:
+  clip_count: 2
+  formats: [midi, wav]       # au000000.mid, au000001.wav (11025 Hz mono 16-bit)
+  needs_host_transcode: false
+  has_audio_vox: false
+  has_speech_vox: false
+fonts:
+  - {file: agsfnt0.ttf, kind: "TTF (Press Start 2P, OFL) -- exercises alfont/FreeType"}
+
+driving_recipe: "AutoPilot.asc runs the scene named in BENCH.CFG for
+  hold_ticks logic ticks, forces a scene-specific fixed pose, waits 40
+  still ticks, SaveScreenShot(PH01.BMP), QuitGame -- so the run ends
+  itself with a RUNMANIFEST. auto_exit_tick below is only a safety net
+  (hold 1000 + settle 40 = ~1045 ticks); a run that needed it fails the
+  stdout witnesses. Fixed timestep ON, as for every benchmark cell."
+
+validate:
+  pkg: bench16
+  auto_exit_tick: 1500
+  timeout_s: 240
+  arms:
+    idle:
+      cfg: ACSETUP-OFF.CFG
+      extra_files:
+        BENCH.CFG: tests/fixtures/bench/cfg/idle.cfg
+      env:
+        DOSAGS_SCENE: idle
+    walk:
+      cfg: ACSETUP-OFF.CFG
+      extra_files:
+        BENCH.CFG: tests/fixtures/bench/cfg/walk.cfg
+      env:
+        DOSAGS_SCENE: walk
+    anim4:
+      cfg: ACSETUP-OFF.CFG
+      extra_files:
+        BENCH.CFG: tests/fixtures/bench/cfg/anim4.cfg
+      env:
+        DOSAGS_SCENE: anim4
+    anim12:
+      cfg: ACSETUP-OFF.CFG
+      extra_files:
+        BENCH.CFG: tests/fixtures/bench/cfg/anim12.cfg
+      env:
+        DOSAGS_SCENE: anim12
+    text:
+      cfg: ACSETUP-OFF.CFG
+      extra_files:
+        BENCH.CFG: tests/fixtures/bench/cfg/text.cfg
+      env:
+        DOSAGS_SCENE: text
+    gui:
+      cfg: ACSETUP-OFF.CFG
+      extra_files:
+        BENCH.CFG: tests/fixtures/bench/cfg/gui.cfg
+      env:
+        DOSAGS_SCENE: gui
+    full:
+      cfg: ACSETUP-OFF.CFG
+      extra_files:
+        BENCH.CFG: tests/fixtures/bench/cfg/full.cfg
+      env:
+        DOSAGS_SCENE: full
+
+# The block name is historical; `check` applies the same expectations to
+# a real-hardware run directory. SaveScreenShot writes the engine's own
+# 16-bit virtual screen, so the capture hash is expected to be identical on
+# real hardware (AGS Quest's captures were, DOSBox-X vs the Mach64) -- if
+# it is not, that is a finding, not a baseline to update.
+expected_runmanifest_dosbox_x:
+  idle:
+    exit_code: 0
+    audio_vital_status: "NA"
+    stdout_contains:
+      - "Game native resolution: 320 x 200 (16 bit)"
+      - "AUTOPILOT config scene=idle hold_ticks=1000 objects=4 midshot=0"
+      - "AUTOPILOT phase=idle status=ok"
+      - "AUTOPILOT phase=shot status=ok"
+    capture_sha256:
+      PH01.BMP: "72b0ad4e85766fb629effc8a22155dfb7e7f32dc1ef975aae31565e8abf4e81c"
+  walk:
+    exit_code: 0
+    audio_vital_status: "NA"
+    stdout_contains:
+      - "Game native resolution: 320 x 200 (16 bit)"
+      - "AUTOPILOT config scene=walk hold_ticks=1000 objects=4 midshot=0"
+      - "AUTOPILOT phase=walk status=ok"
+      - "AUTOPILOT phase=shot status=ok"
+    capture_sha256:
+      PH01.BMP: "40bbfddfbd9062e587fe84775c795dd87464c8f5d3625baa5a8a92ccfaf1eb35"
+  anim4:
+    exit_code: 0
+    audio_vital_status: "NA"
+    stdout_contains:
+      - "Game native resolution: 320 x 200 (16 bit)"
+      - "AUTOPILOT config scene=anim hold_ticks=1000 objects=4 midshot=0"
+      - "AUTOPILOT phase=anim status=ok"
+      - "AUTOPILOT phase=shot status=ok"
+    capture_sha256:
+      PH01.BMP: "64f5f0f122fd8e5e2ec0593261f2cfe2ef7534ffa26e1088297243404d78f8fc"
+  anim12:
+    exit_code: 0
+    audio_vital_status: "NA"
+    stdout_contains:
+      - "Game native resolution: 320 x 200 (16 bit)"
+      - "AUTOPILOT config scene=anim hold_ticks=1000 objects=12 midshot=0"
+      - "AUTOPILOT phase=anim status=ok"
+      - "AUTOPILOT phase=shot status=ok"
+    capture_sha256:
+      PH01.BMP: "969a479fc73e521d8ce7916a5832ed535b47328a9ae5ca205a58f45e807ae7d6"
+  text:
+    exit_code: 0
+    audio_vital_status: "NA"
+    stdout_contains:
+      - "Game native resolution: 320 x 200 (16 bit)"
+      - "AUTOPILOT config scene=text hold_ticks=1000 objects=4 midshot=0"
+      - "AUTOPILOT phase=text status=ok"
+      - "AUTOPILOT phase=shot status=ok"
+    capture_sha256:
+      PH01.BMP: "c71e42526db05b0132e4354761b95ea7e1d60c8dda690ac4dc91e5eb30e93e02"
+  gui:
+    exit_code: 0
+    audio_vital_status: "NA"
+    stdout_contains:
+      - "Game native resolution: 320 x 200 (16 bit)"
+      - "AUTOPILOT config scene=gui hold_ticks=1000 objects=4 midshot=0"
+      - "AUTOPILOT phase=gui status=ok"
+      - "AUTOPILOT phase=shot status=ok"
+    capture_sha256:
+      PH01.BMP: "d9eb97884a73fabf65e57b822ba9dbad80fdb97dca75091ade2a3d9633a42426"
+  full:
+    exit_code: 0
+    audio_vital_status: "NA"
+    stdout_contains:
+      - "Game native resolution: 320 x 200 (16 bit)"
+      - "AUTOPILOT config scene=full hold_ticks=1000 objects=4 midshot=0"
+      - "AUTOPILOT phase=look status=ok"
+      - "AUTOPILOT phase=pickup status=ok"
+      - "AUTOPILOT phase=useinv status=ok"
+      - "AUTOPILOT phase=gui status=ok"
+      - "AUTOPILOT phase=save status=ok"
+      - "AUTOPILOT phase=restore status=ok"
+      - "AUTOPILOT phase=full status=ok"
+      - "AUTOPILOT phase=shot status=ok"
+    capture_sha256:
+      PH01.BMP: "c8463175511ec5723cc52f1dfa6feb2ef2b9dbab29d7ffdb097ce076b03d4c32"
+
+
+validated:
+  - environment: dosbox-x
+    date: 2026-09-21
+    idle: {tag: B16VDLE, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.00, fps_p95: 40.12, tick_rate: 39.73, frames_skipped: 0, presents_real: 1039, presents_skipped: 0, tick_rate_steady: 40.08, tick_rate_window: 40.00, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 1039 of 1039 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 667514e4b97d}
+    walk: {tag: B16VALK, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.04, fps_p95: 40.12, tick_rate: 39.66, frames_skipped: 0, presents_real: 1039, presents_skipped: 0, tick_rate_steady: 40.08, tick_rate_window: 40.00, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 1039 of 1039 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 667514e4b97d}
+    anim4: {tag: B16VIM4, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.04, fps_p95: 40.16, tick_rate: 39.70, frames_skipped: 0, presents_real: 1039, presents_skipped: 0, tick_rate_steady: 40.08, tick_rate_window: 40.01, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 1039 of 1039 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 667514e4b97d}
+    anim12: {tag: B16VM12, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.00, fps_p95: 40.12, tick_rate: 39.68, frames_skipped: 2, presents_real: 1037, presents_skipped: 0, tick_rate_steady: 40.03, tick_rate_window: 40.00, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 1037 of 1037 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 667514e4b97d}
+    text: {tag: B16VEXT, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.04, fps_p95: 40.20, tick_rate: 39.70, frames_skipped: 0, presents_real: 1039, presents_skipped: 0, tick_rate_steady: 40.08, tick_rate_window: 40.00, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 1039 of 1039 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 667514e4b97d}
+    gui: {tag: B16VGUI, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.00, fps_p95: 40.12, tick_rate: 39.66, frames_skipped: -1, presents_real: 1040, presents_skipped: 0, tick_rate_steady: 40.04, tick_rate_window: 40.00, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 1040 of 1040 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 667514e4b97d}
+    full: {tag: B16VULL, exit_code: 0, audio_vital_status: "NA", fps_p50: 1.00, fps_p95: 1.00, tick_rate: 1.38, frames_skipped: 0, presents_real: 80, presents_skipped: 0, tick_rate_steady: 847.46, tick_rate_window: NA, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [{"index": 1, "ms": 999}, {"index": 3, "ms": 998}], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 80 of 80 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 667514e4b97d}
+    note: "First validate of the BENCH16 manifest, on the clean build binary_sha12 667514e4b97d (patches ags 0124-0186 + SDL 0177/0189 exported, build_dirty=0). 5 of 7 arms PASS with capture hashes identical to tests/harness/expected/bench16/dosbox-x.json (idle walk anim4 anim12 text). gui FAILS on its capture hash: the default-on unchanged-GUI invalidation skip (ags patch 0169, stage 1) leaves a hidden menu's pixels on screen; DOSAGS_GUI_NOINVAL=0 restores the baseline hash exactly (see tests/harness/results/EXPORT1-2026-09-21/). full FAILS before its final phases: after RestoreGameSlot the fixture's WriteLog hits a closed file handle (fixture change 155ad57, 2026-09-20, holds the log handle open); the same fixture fails the same way at 8-bit. Neither failure is caused by the patch export. DOSBox-X: correctness only, no performance claim."
+  - environment: dosbox-x
+    date: 2026-09-21
+    idle: {tag: F2D16DLE, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.04, fps_p95: 40.08, tick_rate: 39.64, frames_skipped: -1, presents_real: 1040, presents_skipped: 0, tick_rate_steady: 40.04, tick_rate_window: 40.00, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 1040 of 1040 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 53df45d9ac94}
+    walk: {tag: F2D16ALK, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.00, fps_p95: 40.12, tick_rate: 39.60, frames_skipped: 1, presents_real: 1038, presents_skipped: 0, tick_rate_steady: 40.00, tick_rate_window: 40.00, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 1038 of 1038 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 53df45d9ac94}
+    anim4: {tag: F2D16IM4, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.00, fps_p95: 40.20, tick_rate: 39.71, frames_skipped: -1, presents_real: 1040, presents_skipped: 0, tick_rate_steady: 40.04, tick_rate_window: 39.99, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 1040 of 1040 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 53df45d9ac94}
+    anim12: {tag: F2D16M12, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.04, fps_p95: 40.12, tick_rate: 39.73, frames_skipped: 0, presents_real: 1039, presents_skipped: 0, tick_rate_steady: 40.08, tick_rate_window: 40.00, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 1039 of 1039 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 53df45d9ac94}
+    text: {tag: F2D16EXT, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.00, fps_p95: 40.16, tick_rate: 39.77, frames_skipped: 0, presents_real: 1039, presents_skipped: 0, tick_rate_steady: 40.08, tick_rate_window: 40.00, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 1039 of 1039 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 53df45d9ac94}
+    gui: {tag: F2D16GUI, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.00, fps_p95: 40.08, tick_rate: 39.74, frames_skipped: -1, presents_real: 1040, presents_skipped: 0, tick_rate_steady: 40.04, tick_rate_window: 40.00, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 1040 of 1040 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 53df45d9ac94}
+    full: {tag: F2D16ULL, exit_code: 0, audio_vital_status: "NA", fps_p50: 0.95, fps_p95: 0.95, tick_rate: 12.75, frames_skipped: 2, presents_real: 118, presents_skipped: 0, tick_rate_steady: 40.74, tick_rate_window: NA, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [{"index": 1, "ms": 1083}, {"index": 3, "ms": 998}], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 118 of 118 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 53df45d9ac94}
+    note: "All seven arms PASS with capture hashes equal to the baselines, on binary_sha12 53df45d9ac94 (ags 0191) with the fixture fix that drops the stale WriteLog handle after a restore (tests/fixtures/bench AutoPilot.asc). Supersedes the two FAIL arms (gui, full) of the first entry, whose causes were ags 0169 stage 1 (fixed by ags 0191) and the fixture log handle. DOSBox-X: correctness only, no performance claim."

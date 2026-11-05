@@ -1,0 +1,85 @@
+{
+  "depth_32_native": {
+    "tag": "S32TV1",
+    "run_dir": "/tmp/s32tv1-rundir",
+    "runmanifest_log": "/tmp/s32tv1-rundir/RUNMANI.LOG",
+    "runmanifest": {
+      "schema_version": "1",
+      "environment": "realhw",
+      "binary_sha12": "96729c73fc14",
+      "wave_tag": "S32TV1",
+      "scene": "boot",
+      "env_block_sha": "86414d38bb21",
+      "started_utc": "2026-09-16T16:11:43Z",
+      "duration_s": "3170",
+      "exit_code": "0",
+      "fps_p50": "0.05",
+      "fps_p95": "0.05",
+      "audio_vital_status": "NA",
+      "regime": "NA",
+      "banner_required_hit": "0",
+      "banner_required_total": "0",
+      "banner_forbidden_hit": "0",
+      "banner_optional_hit": "0",
+      "critical_count": "0",
+      "warn_count": "0",
+      "tick_rate": "0.32",
+      "frames_skipped": "833",
+      "memory_min_free_kb": "123584",
+      "script_vm_calls": "1439",
+      "script_vm_total_ms": "943348",
+      "script_vm_min_ms": "1",
+      "script_vm_max_ms": "938075",
+      "script_vm_mean_ms": "655.56",
+      "render_backbuffer_calls": "193",
+      "render_backbuffer_total_ms": "21942",
+      "render_backbuffer_min_ms": "0",
+      "render_backbuffer_max_ms": "220",
+      "render_backbuffer_mean_ms": "113.69"
+    },
+    "expected": {
+      "exit_code": 0,
+      "audio_vital_status": "NA",
+      "stdout_contains": [
+        "Graphics mode set: 640 x 480 (32-bit) fullscreen desktop"
+      ]
+    },
+    "checks": {
+      "runmanifest_present": {
+        "ok": true
+      },
+      "exit_code": {
+        "ok": true,
+        "expected": 0,
+        "actual": "0"
+      },
+      "critical_count": {
+        "ok": true,
+        "expected": "0",
+        "actual": "0"
+      },
+      "warn_count": {
+        "ok": true,
+        "expected": "0",
+        "actual": "0"
+      },
+      "audio_vital_status": {
+        "ok": true,
+        "expected": "NA",
+        "actual": "NA"
+      },
+      "stdout_present": {
+        "ok": false,
+        "detail": "no STDOUT.TXT in the staged run dir"
+      },
+      "game_speed_40hz": {
+        "ok": false,
+        "gating": false,
+        "tick_rate": 0.32,
+        "band": "40.0 +/- 2%"
+      }
+    },
+    "pass": false,
+    "capture_hash": null
+  }
+}

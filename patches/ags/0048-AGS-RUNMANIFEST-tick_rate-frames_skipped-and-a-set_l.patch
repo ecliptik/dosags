@@ -1,0 +1,152 @@
+From 361ae8da71c97b9d1fe1bf4544c2fe85b2ef5c85 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 11 Sep 2026 22:52:09 -0700
+Subject: [PATCH] [AGS] RUNMANIFEST tick_rate/frames_skipped, and a
+ set_loop_counter() resync fix
+
+Completes S0's own work order item (PLAN.md's "Fixed timestep and the
+fps KPI"): "fixed timestep + tick_rate/frames_skipped instrumentation".
+tick_rate is the measured LOGIC-tick rate over the whole run
+(get_loop_counter() ticks / get_runtime_ms() wall time) -- a single
+pre-registered pass/fail number (40 +/- 2% is the eventual KPI target,
+not claimed here), not a percentile like fps_p50/p95. frames_skipped
+(dos_get_frames_skipped(): LoopCounter minus RenderCounter) is always 0
+with DOSAGS_FIXED_TIMESTEP unset (every tick renders in the
+un-timestepped path) and positive whenever the catch-up loop ran
+logic-only ticks, so "40 ticks/s at 12 fps" is visible as exactly that
+rather than inferred from two separate numbers. Own RUNMANI.LOG line
+after the standard block, same rationale as the existing
+memory_min_free_kb line (no RUNMANIFEST schema field for this).
+
+A real bug found while validating dos_get_frames_skipped(), fixed here
+since this is what actually exercises it: a fresh DOSBox-X run with
+DOSAGS_FIXED_TIMESTEP unset reported frames_skipped=-1, where 0 is the
+only correct value in the un-timestepped path (every tick renders).
+Root cause: set_loop_counter() (called once early by room.cpp's
+first-room-setup reset to 0, and again on every save restore) reset
+LoopCounter but never resynced RenderCounter to match -- any render that
+already happened before that call (boot/title-screen frames here; a
+prior session's own render count baked into a loaded save, in the
+restore case) permanently offset the LoopCounter-minus-RenderCounter
+difference by that amount. Fixed by resyncing RenderCounter to the same
+new_counter value in set_loop_counter() -- safe because both
+RenderCounter-derived numbers (get_real_fps() and
+dos_get_frames_skipped()) only ever consume deltas or a difference from
+LoopCounter, never RenderCounter's own cumulative count, so there is no
+other consumer of its absolute value to disturb.
+
+Confirmed via a full DOSBox-X harness run with DOSAGS_FIXED_TIMESTEP
+unset: all 18 phases ok, all 3 screenshot hashes unchanged,
+frames_skipped=0 (was -1 before the fix), tick_rate=33.05 (a whole-run
+average that includes boot/loading time before the first game-loop
+tick, deliberately not refined further here -- S7's own eventual KPI
+claim is what picks the real measurement window, this patch only wires
+the raw numbers through).
+---
+ Engine/main/game_run.cpp | 33 ++++++++++++++++++++++++++-------
+ Engine/main/game_run.h   |  2 +-
+ Engine/main/quit.cpp     | 24 ++++++++++++++++++++++++
+ 3 files changed, 51 insertions(+), 8 deletions(-)
+
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 6bd2fcd63..5f27ee0c1 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1302,6 +1302,15 @@ void dos_auto_exit_check()
+     if (dos_auto_exit_tick >= 0 && (long)get_loop_counter() >= dos_auto_exit_tick)
+         quit("|DOS-PORT: DOSAGS_TAS_AUTO_EXIT_TICK reached");
+ }
++
++// DOS-PORT (patch 0048): see game_run.h's own comment. A plain
++// subtraction rather than a running total kept in step with two
++// independent increment sites -- LoopCounter and RenderCounter are both
++// already right here, so there is nothing to drift.
++long dos_get_frames_skipped()
++{
++    return (long)GameTimer.LoopCounter - (long)GameTimer.RenderCounter;
++}
+ #endif // __DJGPP__
+ 
+ float get_game_fps()
+@@ -1326,13 +1335,23 @@ float get_real_fps()
+ void set_loop_counter(uint32_t new_counter)
+ {
+     GameTimer.LoopCounter = new_counter;
+-    // DOS-PORT (patch 0046): resync against RenderCounter (the FPS calc's
+-    // own source now) instead of the removed LastFPSSyncCounter -- see
+-    // GameTimer's own comment. RenderCounter itself is untouched: renders
+-    // already performed this session are real and this call (save
+-    // restore, room/game reset) doesn't undo them; only the sync baseline
+-    // needs to catch up so the next game_loop_update_fps() call measures
+-    // forward from here, not across the reset.
++    // DOS-PORT (patch 0048): also resync RenderCounter to the same value
++    // -- a real bug found while validating dos_get_frames_skipped()
++    // (LoopCounter minus RenderCounter): this function is called once
++    // early (room.cpp's first-room-setup reset to 0) and again on every
++    // save restore, and any render that already happened before that
++    // call (boot/title-screen frames, or a prior session's own render
++    // count baked into a loaded save) permanently offset frames_skipped
++    // by that amount otherwise -- confirmed empirically, a fresh
++    // DOSBox-X run reported frames_skipped=-1 with
++    // DOSAGS_FIXED_TIMESTEP unset, where 0 is the only correct value
++    // (every tick renders in the un-timestepped path). Since both
++    // RenderCounter-derived numbers (get_real_fps() and
++    // dos_get_frames_skipped()) only ever consume DELTAS or a
++    // difference from LoopCounter, not RenderCounter's own cumulative
++    // count, resyncing it here is exactly sufficient -- there is no
++    // other consumer of its absolute value.
++    GameTimer.RenderCounter = new_counter;
+     GameTimer.LastFPSSyncRenderCounter = GameTimer.RenderCounter;
+     GameTimer.LastFPSSyncTime = Clock::now();
+     GameTimer.FPS = std::numeric_limits<float>::quiet_NaN();
+diff --git a/Engine/main/game_run.h b/Engine/main/game_run.h
+index 41aa61922..c1d36653a 100644
+--- a/Engine/main/game_run.h
++++ b/Engine/main/game_run.h
+@@ -111,7 +111,7 @@ long dos_memory_min_free_kb();
+ // cleanly" without any game-specific script logic.
+ void dos_auto_exit_check();
+ 
+-// DOS-PORT (patch 0046): fixed-timestep KPI support -- see PLAN.md's
++// DOS-PORT (patch 0048): fixed-timestep KPI support -- see PLAN.md's
+ // "Fixed timestep and the fps KPI". dos_get_frames_skipped() returns
+ // LoopCounter (logic ticks advanced) minus RenderCounter (frames
+ // actually rendered) -- always 0 with DOSAGS_FIXED_TIMESTEP unset (today's
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 125e70e92..69a4efa15 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -387,6 +387,30 @@ void quit(const char *quitmsg)
+             // and [RUNMANIFEST-END] is unaffected.
+             fprintf(run_manifest_log, "DOS-PORT memory_min_free_kb=%ld\n", dos_memory_min_free_kb());
+ 
++            // DOS-PORT (patch 0048): tick_rate/frames_skipped -- see
++            // PLAN.md's "Fixed timestep and the fps KPI" (decided
++            // 2026-09-11). tick_rate is the measured LOGIC-tick rate over
++            // the whole run (get_loop_counter() ticks / get_runtime_ms()
++            // wall time), not a percentile like fps_p50/p95 above -- the
++            // KPI this supports is a single pre-registered pass/fail
++            // number (40 +/- 2%), not a distribution. frames_skipped
++            // (dos_get_frames_skipped(): LoopCounter minus RenderCounter)
++            // is always 0 with DOSAGS_FIXED_TIMESTEP unset (today's 1:1
++            // coupling -- every tick renders) and positive whenever the
++            // fixed-timestep catch-up loop ran logic-only ticks, so "40
++            // ticks/s at 12 fps" is visible as exactly that rather than
++            // inferred from the two numbers separately. Same rationale as
++            // memory_min_free_kb just above for why this is its own line
++            // rather than a RUNMANIFEST schema field.
++            {
++                uint32_t runtime_ms = get_runtime_ms();
++                double tick_rate_hz = runtime_ms > 0
++                    ? 1000.0 * (double)get_loop_counter() / (double)runtime_ms
++                    : 0.0;
++                fprintf(run_manifest_log, "DOS-PORT tick_rate=%.2f frames_skipped=%ld\n",
++                    tick_rate_hz, dos_get_frames_skipped());
++            }
++
+             fclose(run_manifest_log);
+         }
+     }
+-- 
+2.47.3
+

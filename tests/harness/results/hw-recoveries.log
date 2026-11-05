@@ -1,0 +1,38 @@
+HW-RECOVERY tag=RBB1 step=send seen="{\"witness\": false, \"forced\": false, \"step\": \"send\", \"post_edges\": 1, \"ready_edges\": 1, \"need\": 2, \"screen\": \"no-picture\", \"waited_s\": 152.6}" verify_input_before=false action=power-cycle outcome=RECOVERED detail="boot_s=39 screen=ready-prompt verify_input=True" forced=0 time_lost_s=61 utc=2026-09-19T15:39:14Z
+HW-RECOVERY tag=RH090233 step=send seen="send-file job did not verify (job.ok=False)" verify_input_before=true action=reboot-chord outcome=RECOVERED detail="select_boot_profile(None) -> {'edge_s': 18.50957751274109, 'ready_s': 10.613145351409912, 'attempts': 0, 'keys': 0, 'buffer_margin': 15} verify_input_after=True" forced=0 time_lost_s=32 utc=2026-09-19T16:08:03Z
+HW-RECOVERY tag=FIVE1 step=send seen="send-file job did not verify (job.ok=False)" action=none outcome=STOPPED-lock-held-by-mcp:claude:1917968 forced=0 time_lost_s=0 utc=2026-09-19T18:40:02Z
+HW-MAINS-CYCLE n=1 utc=2026-09-21T03:35Z cause=INSTRUCTED-PROBE not=hardware-fault
+  what: a drive-map probe (VOL C:;VOL D:;VOL E:;VOL F:) hit the empty optical
+        drive, raised DOS critical error CDR101, and blocked the machine at
+        "Abort, Retry, Fail?" with no automated way to answer it.
+  then: PS/2 link stopped carrying keystrokes (verify_input false; a typed 'F'
+        did not reach the prompt), so no warm reboot was possible.
+  attribution: NOT the documented post-FTP keyboard hang, although
+        verify_input produced that fault's exact signature. The screenshot
+        showed the harness's own "CD C:\FSTEST" and "PRUN.BAT" had typed and
+        executed, so the input path was alive when the probe started. Filing
+        this under the hardware fault would have corrupted the power log as
+        evidence about the machine.
+  recovery: one mains cycle. After: power 24,195 mW, verify_input true, full
+        boot sequence verified by capture through "[PGSB] ready."
+  prevention: read the drive map from the MSCDEX boot banner, which the
+        capture channel already carries, instead of probing removable media.
+HW-RECOVERY tag=C1A2 step=collect seen="get-file reboot into NET refused repeatedly for 13+ min after the game had exited (prompt on screen); verify-input: no LED change, PS/2 link not carrying keystrokes" verify_input_before=false action=power-cycle outcome=RECOVERED detail="boot_s=40 screen=ready-prompt verify_input=True" forced=0 time_lost_s=62 utc=2026-09-21T20:35:15Z
+HW-RECOVERY tag=S2S1 step=collect seen="get-file refused 3 times after the game exited; screen=ready-prompt" verify_input_before=false action=power-cycle outcome=RECOVERED detail="boot_s=40 screen=ready-prompt verify_input=True" forced=0 time_lost_s=61 utc=2026-09-22T01:38:59Z
+HW-RECOVERY tag=S2S1 step=collect seen="get-file refused 3 times after the game exited; screen=ready-prompt" action=none outcome=STOPPED-second-failure forced=0 time_lost_s=0 utc=2026-09-22T01:45:36Z
+HW-RECOVERY tag=S2S2 step=collect seen="get-file refused 3 times after the game exited; screen=ready-prompt" verify_input_before=false action=power-cycle outcome=RECOVERED detail="boot_s=39 screen=ready-prompt verify_input=True" forced=0 time_lost_s=61 utc=2026-09-22T02:07:22Z
+HW-RECOVERY tag=S2S2 step=collect seen="get-file refused 3 times after the game exited; screen=ready-prompt" action=none outcome=STOPPED-second-failure forced=0 time_lost_s=0 utc=2026-09-22T02:14:00Z
+HW-RECOVERY tag=HANGTEST1 step=collect seen="get-file refused 3 times after the game exited; screen=ready-prompt" verify_input_before=true action=reboot-chord outcome=RECOVERED detail="select_boot_profile(None) -> {'edge_s': 18.443036556243896, 'ready_s': 10.97092056274414, 'attempts': 0, 'keys': 0, 'buffer_margin': 15} verify_input_after=True" forced=0 time_lost_s=49 utc=2026-09-22T02:53:45Z
+HW-RECOVERY tag=HANGTEST1 step=collect seen="get-file refused 3 times after the game exited; screen=ready-prompt" action=none outcome=STOPPED-second-failure forced=0 time_lost_s=0 utc=2026-09-22T03:00:52Z
+HW-RECOVERY tag=HANGTEST2 step=collect seen="get-file refused 3 times after the game exited; screen=ready-prompt" verify_input_before=true action=reboot-chord outcome=RECOVERED detail="select_boot_profile(None) -> {'edge_s': 18.482402086257935, 'ready_s': 10.896248817443848, 'attempts': 0, 'keys': 0, 'buffer_margin': 15} verify_input_after=True" forced=0 time_lost_s=49 utc=2026-09-22T03:42:56Z
+HW-RECOVERY tag=HANGTEST2 step=collect seen="get-file refused 3 times after the game exited; screen=ready-prompt" action=none outcome=STOPPED-second-failure forced=0 time_lost_s=0 utc=2026-09-22T03:50:04Z
+HW-RECOVERY tag=HANGTEST3 step=collect seen="get-file refused 3 times after the game exited; screen=ready-prompt" verify_input_before=true action=reboot-chord outcome=RECOVERED detail="select_boot_profile(None) -> {'edge_s': 18.404832124710083, 'ready_s': 10.702590227127075, 'attempts': 0, 'keys': 0, 'buffer_margin': 15} verify_input_after=True" forced=0 time_lost_s=48 utc=2026-09-22T04:31:56Z
+HW-RECOVERY tag=HANGTEST3 step=collect seen="get-file refused 3 times after the game exited; screen=dos-prompt" action=none outcome=STOPPED-second-failure forced=0 time_lost_s=0 utc=2026-09-22T04:39:04Z
+HW-RECOVERY tag=HW-MMD-0 step=collect seen="get-file refused 3 times after the game exited; screen=ready-prompt" verify_input_before=true action=reboot-chord outcome=RECOVERED detail="select_boot_profile(None) -> {'edge_s': 18.418587684631348, 'ready_s': 10.612629652023315, 'attempts': 0, 'keys': 0, 'buffer_margin': 15} verify_input_after=True" forced=0 time_lost_s=49 utc=2026-09-24T02:46:26Z
+HW-RECOVERY tag=HW-MMD-0 step=collect seen="get-file refused 3 times after the game exited; screen=dos-prompt" action=none outcome=STOPPED-second-failure forced=0 time_lost_s=0 utc=2026-09-24T02:53:35Z
+# READING (2026-09-24, dosags-worker; see PLAN.md and run-hw.sh be42cfa0): the STOPPED-second-failure entries for
+# HW-MMD-0 and HANGTEST1/2/3 are a HARNESS NAMING BUG, not target hangs -- the engine writes the manifest as the tag
+# uppercased, [A-Z0-9_] only, 8 chars (HW-MMD-0 -> HWMMD0.LOG, HANGTEST1..3 -> HANGTEST.LOG), run-hw asked for
+# <TAG>.LOG verbatim, so every collection came back not-ok and was read as the dead link. HWMMD0.LOG and
+# HANGTEST.LOG were found on C:\DOSAGS. S2S1/S2S2 (4-char tags) are NOT explained by this; no S2S manifest is on
+# the target. C1A2, RBB1, RH090233, FIVE1 tags are name-safe, not explained either.

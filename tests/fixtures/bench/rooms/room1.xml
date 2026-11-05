@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- mkroom input: room 1's DATA (images and script come from crmpak).
+     Geometry must match assets/generate_assets.py; sprite slots match
+     gen_agf.py. Event indices are the engine's own: room 7 = after
+     fade-in (Engine/ac/event.h); hotspot 1 look, 2 interact, 3 use
+     inventory (Engine/ac/global_hotspot.cpp:106-113); object 1 interact
+     (Engine/ac/global_object.cpp:453-459). -->
+<Room Width="320" Height="200" MaskResolution="1" GameID="1486066">
+  <Edges Left="0" Right="319" Top="40" Bottom="199"/>
+  <Event Index="7" Function="room_AfterFadeIn"/>
+  <Hotspot ID="1" Name="Sign" ScriptName="hSign" WalkToX="0" WalkToY="0">
+    <Event Index="1" Function="hSign_Look"/>
+    <Event Index="2" Function="hSign_Interact"/>
+    <Event Index="3" Function="hSign_UseInv"/>
+  </Hotspot>
+  <!-- object 0: the key on the floor -->
+  <Object Name="Key" ScriptName="oKey" X="206" Y="186" Sprite="3" Visible="1" Clickable="1">
+    <Event Index="1" Function="oKey_Interact"/>
+  </Object>
+  <!-- objects 1..12: the `anim` scene's spinners, off until BENCH.CFG
+       asks for them (objects=N). Two rows of six on the wall. -->
+  <Object Name="Spinner0" ScriptName="oSpin0" X="12" Y="54" Sprite="30" Visible="0" Clickable="0"/>
+  <Object Name="Spinner1" ScriptName="oSpin1" X="62" Y="54" Sprite="30" Visible="0" Clickable="0"/>
+  <Object Name="Spinner2" ScriptName="oSpin2" X="112" Y="54" Sprite="30" Visible="0" Clickable="0"/>
+  <Object Name="Spinner3" ScriptName="oSpin3" X="162" Y="54" Sprite="30" Visible="0" Clickable="0"/>
+  <Object Name="Spinner4" ScriptName="oSpin4" X="212" Y="54" Sprite="30" Visible="0" Clickable="0"/>
+  <Object Name="Spinner5" ScriptName="oSpin5" X="262" Y="54" Sprite="30" Visible="0" Clickable="0"/>
+  <Object Name="Spinner6" ScriptName="oSpin6" X="12" Y="138" Sprite="30" Visible="0" Clickable="0"/>
+  <Object Name="Spinner7" ScriptName="oSpin7" X="62" Y="138" Sprite="30" Visible="0" Clickable="0"/>
+  <Object Name="Spinner8" ScriptName="oSpin8" X="112" Y="138" Sprite="30" Visible="0" Clickable="0"/>
+  <Object Name="Spinner9" ScriptName="oSpin9" X="162" Y="138" Sprite="30" Visible="0" Clickable="0"/>
+  <Object Name="Spinner10" ScriptName="oSpin10" X="212" Y="138" Sprite="30" Visible="0" Clickable="0"/>
+  <Object Name="Spinner11" ScriptName="oSpin11" X="262" Y="138" Sprite="30" Visible="0" Clickable="0"/>
+  <WalkArea ID="1" ScalingFar="100" ScalingNear="100"/>
+  <!-- the pillar: feet above y=151 are drawn behind it -->
+  <WalkBehind ID="1" Baseline="151"/>
+</Room>

@@ -1,0 +1,97 @@
+From 71b209b9d5540bd5a9c30837d92fe6ca84064606 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 17 Sep 2026 09:33:05 -0700
+Subject: [PATCH] DOS-PORT: patch 0092 -- word-sized frame comparison for the
+ unchanged-frame check
+
+Patch 0091's own frame-unchanged check called std::memcmp(), which
+TNP91A measured at ~14.69ms/call for a 76800-byte comparison. Read the
+actual implementation before assuming it needed optimizing: extracted
+and disassembled DJGPP's own memcmp.o from libc.a directly
+(i586-pc-msdosdjgpp-objdump), confirming it is a genuinely naive
+byte-at-a-time loop (load byte, load byte, compare, branch, increment
+both pointers, decrement counter, loop) -- no REP CMPSB, no
+word-at-a-time widening, no SIMD -- consistent with the measured
+~12 cycles/byte on a 66MHz 486.
+
+Adds FramesEqualFast(): compares in 32-bit words (a quarter as many
+loop iterations for the same byte count, each paying similar
+per-iteration overhead), with a byte-wise tail loop for any remainder.
+Semantically identical to a byte-for-byte compare, not an
+approximation -- a Uint32 is equal iff all 4 of its bytes are, so this
+cannot produce a false "unchanged" the way a hash/checksum shortcut
+could. Verified against a standalone host-side test suite before
+landing: identical-content cases, a difference injected at every
+single byte position (including the non-word-aligned tail) for
+multiple lengths, and 5000 random fuzz iterations cross-checked
+against libc's own memcmp -- all passed.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hnodGZ6cg8CWuFXEDTsUq
+---
+ Engine/gfx/ali3dsw.cpp | 42 +++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 41 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index e0ac13f4e..bb46bf2b5 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -918,6 +918,46 @@ static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const
+ }
+ #endif // __DJGPP__
+ 
++// DOS-PORT patch 0092 (8-bit optimization pass, closing round): patch
++// 0091's own frame-unchanged check called std::memcmp() -- confirmed by
++// disassembling DJGPP's libc.a directly (i586-pc-msdosdjgpp-objdump),
++// not assumed, that its memcmp is a genuinely naive byte-at-a-time loop
++// (load byte, load byte, compare, branch, increment both pointers,
++// decrement counter, loop -- no REP CMPSB, no word-at-a-time widening,
++// no SIMD). Real-hardware data (TNP91A) put present_dirty_check at
++// ~14.69ms/call for a 76800-byte comparison, consistent with that
++// per-byte loop's own real cost on a 66MHz 486. This compares in
++// 32-bit words instead -- a quarter as many loop iterations for the
++// same byte count, each iteration paying similar per-iteration
++// overhead. Semantically identical to a byte-for-byte compare (a
++// Uint32 is equal iff all 4 of its bytes are; the tail loop below
++// covers any remainder when the byte count isn't a multiple of 4) --
++// this is NOT an approximation or a hash/checksum shortcut, so it
++// cannot produce a false "unchanged" the way a hash collision could.
++// x86 tolerates unaligned reads (just potentially slower, never
++// incorrect), so no alignment precondition is required for
++// correctness, only for best-case speed.
++static bool FramesEqualFast(const void *a, const void *b, size_t n)
++{
++    const size_t nwords = n / 4;
++    const Uint32 *wa = (const Uint32 *)a;
++    const Uint32 *wb = (const Uint32 *)b;
++    for (size_t i = 0; i < nwords; i++)
++    {
++        if (wa[i] != wb[i])
++            return false;
++    }
++    const Uint8 *ta = (const Uint8 *)a + nwords * 4;
++    const Uint8 *tb = (const Uint8 *)b + nwords * 4;
++    const size_t tail = n - nwords * 4;
++    for (size_t i = 0; i < tail; i++)
++    {
++        if (ta[i] != tb[i])
++            return false;
++    }
++    return true;
++}
++
+ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+ {
+     SDL_Window *window = sys_get_window();
+@@ -1022,7 +1062,7 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+             _lastPresentedXoff == xoff && _lastPresentedYoff == yoff &&
+             _lastPresentedFlip == flip;
+         const bool unchanged = same_geometry && !palette_changed &&
+-            std::memcmp(blit_src->pixels, _lastPresentedPixels.data(), frame_bytes) == 0;
++            FramesEqualFast(blit_src->pixels, _lastPresentedPixels.data(), frame_bytes);
+         if (unchanged)
+         {
+ #ifdef __DJGPP__
+-- 
+2.47.3
+

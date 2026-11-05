@@ -1,0 +1,498 @@
+{
+ "constants_us_per_unit": {
+  "push_lfb": 0.036630036630036625,
+  "push_mode13": 0.10752688172043011,
+  "copy": 0.05882352941176471,
+  "write": 0.02444987775061125,
+  "cmp": 0.06845965770171149,
+  "scaled": 0.041636703581187984,
+  "msk_per_byte": 0.14696969696969694,
+  "opq_per_byte": 0.05909090909090909
+ },
+ "cells": {
+  "F2B1": {
+   "hw_dir": "/home/claude/git/dosags/tests/harness/results/F2B1-2026-09-21",
+   "lab_dir": "/home/claude/git/dosags-lab-metric/tests/harness/results/LABMETRIC-2026-09-23/LF2B",
+   "push_target": "mode13",
+   "measured": {
+    "ticks": 5000,
+    "stall_ticks": 0,
+    "steady_ticks": 5000,
+    "renders": 4996,
+    "loop_ms": 124980,
+    "stall_ms": 0,
+    "wait_ms": 19397,
+    "busy_ms": 105583,
+    "busy_per_render": 21.133506805444355
+   },
+   "hw_lines": [
+    "DOS-PORT tickstats_script_vm calls=10006 total_ms=5716 min_ms=0 max_ms=243 mean_ms=0.57 clamped_neg=0 total_us=5716680",
+    "DOS-PORT tickstats_wait_next_frame calls=4995 total_ms=19397 min_ms=0 max_ms=7 mean_ms=3.88 clamped_neg=0 total_us=19397841",
+    "DOS-PORT fps_basis counts=render_passes render_passes=4996 presents_real=2481 presents_skipped=2515 presents_palette_only=0",
+    "DOS-PORT tick_rate_steady=40.01 ticks=5000 stall_ticks=0 loop_ms=124980 stall_ms=0 preloop_ms=685 threshold_ms=250"
+   ],
+   "lab_line": "DOS-PORT work scope=steady ticks=5000 renders=5000 presents=2483 script_ins=595609 script_ext=5109 push_bytes=31591734 push_rects=19857 blit1x_bytes=64000 blitsc_bytes=0 cmp_bytes=185808544 cache_bytes=158912000 bg_px=54587832 fill_px=64000 spr_n=74987 spr_opq_px=0 spr_msk_px=38772896 spr_bld_px=0 file_bytes=1204 file_calls=1 vs_bpp=1 win_bpp=1 win=320x200",
+   "mix_ticks_per_render": 1.00080064051241,
+   "prediction": {
+    "terms_ms_per_render": {
+     "push": 0.6793921290322581,
+     "blit1x": 0.0007529411764705883,
+     "blitsc": 0.0,
+     "cmp": 2.5440778640586794,
+     "cache": 1.8695529411764706,
+     "spr_msk": 1.139688155151515,
+     "spr_opq": 0.0,
+     "fill": 0.00031295843520782405,
+     "bg": 0.6422097882352942,
+     "scene": 8.024129
+    },
+    "per_render_ms": 14.900115777265896,
+    "per_tick_ms": 9.373288711402196,
+    "busy_per_render": 24.280909123344955,
+    "closed_form_rate": 40.0
+   },
+   "ratio": 1.1489294865672637,
+   "script_heldout": {
+    "pred_ms": 36505.227434026085,
+    "hw_ms": 5716.68
+   },
+   "hw_phase_ms_per_render": {
+    "present_update_window": 0.9581321056845478,
+    "present_blit": 0.0008328662930344275,
+    "present_dirty_check": 4.734646116893515,
+    "render_backbuffer": 2.729896717373899,
+    "scene_construct": 6.789391513210569,
+    "bg_restore": 1.6831937550040033,
+    "script_vm": 1.1442514011208968,
+    "process_events_dispatch": 1.9989897918334667
+   }
+  },
+  "S2F2": {
+   "hw_dir": "/home/claude/git/dosags/tests/harness/results/S2F2-2026-09-22",
+   "lab_dir": "/home/claude/git/dosags-lab-metric/tests/harness/results/LABMETRIC-2026-09-23/LS2F",
+   "push_target": "lfb",
+   "measured": {
+    "ticks": 4999,
+    "stall_ticks": 2,
+    "steady_ticks": 4997,
+    "renders": 4938,
+    "loop_ms": 126116,
+    "stall_ms": 1085,
+    "wait_ms": 73010,
+    "busy_ms": 52021,
+    "busy_per_render": 10.534831915755367
+   },
+   "hw_lines": [
+    "DOS-PORT tickstats_script_vm calls=4549 total_ms=16608 min_ms=0 max_ms=11667 mean_ms=3.65 clamped_neg=0 total_us=16608211",
+    "DOS-PORT tickstats_wait_next_frame calls=4950 total_ms=73010 min_ms=0 max_ms=23 mean_ms=14.75 clamped_neg=0 total_us=73010730",
+    "DOS-PORT fps_basis counts=render_passes render_passes=4938 presents_real=4950 presents_skipped=0 presents_palette_only=0",
+    "DOS-PORT tick_rate_steady=39.97 ticks=4999 stall_ticks=2 loop_ms=126116 stall_ms=1085 preloop_ms=675 threshold_ms=250"
+   ],
+   "lab_line": "DOS-PORT work scope=steady ticks=4998 renders=4987 presents=4987 script_ins=271805 script_ext=18038 push_bytes=18385202 push_rects=9535 blit1x_bytes=0 blitsc_bytes=0 cmp_bytes=0 cache_bytes=0 bg_px=8011965 fill_px=979070 spr_n=14909 spr_opq_px=0 spr_msk_px=25600251 spr_bld_px=0 file_bytes=98304 file_calls=12 vs_bpp=2 win_bpp=2 win=512x384",
+   "mix_ticks_per_render": 1.0119481571486433,
+   "prediction": {
+    "terms_ms_per_render": {
+     "push": 0.13504123174466065,
+     "blit1x": 0.0,
+     "blitsc": 0.0,
+     "cmp": 0.0,
+     "cache": 0.0,
+     "spr_msk": 1.5089076125198242,
+     "spr_opq": 0.0,
+     "fill": 0.009600217288666916,
+     "bg": 0.1890082449663242,
+     "scene": 4.001506917986766
+    },
+    "per_render_ms": 5.8440642245062415,
+    "per_tick_ms": 5.4204792424747215,
+    "busy_per_render": 11.32930820479101,
+    "closed_form_rate": 40.0
+   },
+   "ratio": 1.0754142349293172,
+   "script_heldout": {
+    "pred_ms": 16608.211000000003,
+    "hw_ms": 16608.211
+   },
+   "hw_phase_ms_per_render": {
+    "present_update_window": 0.48989185905224786,
+    "present_blit": 0.001881125961927906,
+    "present_dirty_check": 0.0,
+    "render_backbuffer": 1.942823612798704,
+    "scene_construct": 3.1708770757391656,
+    "bg_restore": 0.6087964763061968,
+    "script_vm": 3.3633477116241393,
+    "process_events_dispatch": 4.103920008100445
+   }
+  },
+  "AQF1": {
+   "hw_dir": "/home/claude/git/dosags/tests/harness/results/AQF1-2026-09-21",
+   "lab_dir": "/home/claude/git/dosags-lab-metric/tests/harness/results/LABMETRIC-2026-09-23/LAQF",
+   "push_target": "lfb",
+   "measured": {
+    "ticks": 3577,
+    "stall_ticks": 17,
+    "steady_ticks": 3560,
+    "renders": 3282,
+    "loop_ms": 170385,
+    "stall_ms": 83940,
+    "wait_ms": 27972,
+    "busy_ms": 58473,
+    "busy_per_render": 17.816270566727606
+   },
+   "hw_lines": [
+    "DOS-PORT tickstats_script_vm calls=501 total_ms=102102 min_ms=0 max_ms=16987 mean_ms=203.80 clamped_neg=0 total_us=102102069",
+    "DOS-PORT tickstats_wait_next_frame calls=3588 total_ms=27972 min_ms=0 max_ms=18 mean_ms=7.80 clamped_neg=0 total_us=27972496",
+    "DOS-PORT fps_basis counts=render_passes render_passes=3282 presents_real=3586 presents_skipped=0 presents_palette_only=0",
+    "DOS-PORT tick_rate_steady=41.18 ticks=3577 stall_ticks=17 loop_ms=170385 stall_ms=83940 preloop_ms=2314 threshold_ms=250"
+   ],
+   "lab_line": "DOS-PORT work scope=steady ticks=3555 renders=3489 presents=3489 script_ins=51808 script_ext=1534 push_bytes=93497516 push_rects=16867 blit1x_bytes=0 blitsc_bytes=0 cmp_bytes=0 cache_bytes=0 bg_px=35733729 fill_px=9585 spr_n=27233 spr_opq_px=0 spr_msk_px=109323978 spr_bld_px=0 file_bytes=32768 file_calls=4 vs_bpp=2 win_bpp=2 win=640x480",
+   "mix_ticks_per_render": 1.0847044485070079,
+   "prediction": {
+    "terms_ms_per_render": {
+     "push": 0.9816043095148855,
+     "blit1x": 0.0,
+     "blitsc": 0.0,
+     "cmp": 0.0,
+     "cache": 0.0,
+     "spr_msk": 9.21026765158029,
+     "spr_opq": 0.0,
+     "fill": 0.00013433767740877547,
+     "bg": 1.204920641343382,
+     "scene": 5.6148051017483525
+    },
+    "per_render_ms": 17.01173204186432,
+    "per_tick_ms": 2.9898090159350286,
+    "busy_per_render": 20.254791181635404,
+    "closed_form_rate": 40.0
+   },
+   "ratio": 1.1368704300810184,
+   "script_heldout": {
+    "pred_ms": 3777.288066416838,
+    "hw_ms": 102102.069
+   },
+   "hw_phase_ms_per_render": {
+    "present_update_window": 2.791071602681292,
+    "present_blit": 0.008161182205971968,
+    "present_dirty_check": 0.0,
+    "render_backbuffer": 7.568894271785497,
+    "scene_construct": 5.166557282145034,
+    "bg_restore": 2.3509747105423524,
+    "script_vm": 31.109710237659964,
+    "process_events_dispatch": 47.80079951249238
+   }
+  },
+  "S2M1": {
+   "hw_dir": "/home/claude/git/dosags/tests/harness/results/S2M1-2026-09-22",
+   "lab_dir": "/home/claude/git/dosags-lab-metric/tests/harness/results/LABMETRIC-2026-09-23/LS2M",
+   "push_target": "lfb",
+   "measured": {
+    "ticks": 999,
+    "stall_ticks": 1,
+    "steady_ticks": 998,
+    "renders": 239,
+    "loop_ms": 36233,
+    "stall_ms": 1023,
+    "wait_ms": 76,
+    "busy_ms": 35134,
+    "busy_per_render": 147.0041841004184
+   },
+   "hw_lines": [
+    "DOS-PORT tickstats_script_vm calls=2003 total_ms=24628 min_ms=0 max_ms=160 mean_ms=12.30 clamped_neg=0 total_us=24628661",
+    "DOS-PORT tickstats_wait_next_frame calls=252 total_ms=76 min_ms=0 max_ms=23 mean_ms=0.30 clamped_neg=0 total_us=76314",
+    "DOS-PORT fps_basis counts=render_passes render_passes=239 presents_real=251 presents_skipped=0 presents_palette_only=0",
+    "DOS-PORT tick_rate_steady=28.34 ticks=999 stall_ticks=1 loop_ms=36233 stall_ms=1023 preloop_ms=1488 threshold_ms=250"
+   ],
+   "lab_line": "DOS-PORT work scope=steady ticks=998 renders=993 presents=993 script_ins=5636730 script_ext=174650 push_bytes=3036544 push_rects=2977 blit1x_bytes=127104000 blitsc_bytes=0 cmp_bytes=0 cache_bytes=0 bg_px=1518272 fill_px=28160 spr_n=6951 spr_opq_px=0 spr_msk_px=38835237 spr_bld_px=0 file_bytes=0 file_calls=0 vs_bpp=2 win_bpp=2 win=512x384",
+   "mix_ticks_per_render": 4.175732217573222,
+   "prediction": {
+    "terms_ms_per_render": {
+     "push": 0.11201280760193147,
+     "blit1x": 7.529411764705882,
+     "blitsc": 0.0,
+     "cmp": 0.0,
+     "cache": 0.0,
+     "spr_msk": 11.495675757575755,
+     "spr_opq": 0.0,
+     "fill": 0.0013867241842038525,
+     "bg": 0.17987939103133704,
+     "scene": 5.345000000000001
+    },
+    "per_render_ms": 24.66336644509911,
+    "per_tick_ms": 346.95479674144485,
+    "busy_per_render": 1473.4536892399192,
+    "closed_form_rate": 0.0
+   },
+   "ratio": 10.02320919133434,
+   "script_heldout": {
+    "pred_ms": 347142.86527467833,
+    "hw_ms": 24628.661
+   },
+   "hw_phase_ms_per_render": {
+    "present_update_window": 0.7765313807531381,
+    "present_blit": 8.125456066945606,
+    "present_dirty_check": 0.0,
+    "render_backbuffer": 9.944548117154811,
+    "scene_construct": 2.5804435146443514,
+    "bg_restore": 0.6332259414225941,
+    "script_vm": 103.04879079497908,
+    "process_events_dispatch": 110.73869874476988
+   }
+  },
+  "SB5O": {
+   "hw_dir": "/home/claude/git/dosags/tests/harness/results/SB5O-2026-09-23",
+   "lab_dir": "/home/claude/git/dosags-lab-metric/tests/harness/results/LABMETRIC-2026-09-23/LSB5",
+   "push_target": "lfb",
+   "measured": {
+    "ticks": 16043,
+    "stall_ticks": 17,
+    "steady_ticks": 16026,
+    "renders": 2666,
+    "loop_ms": 619404,
+    "stall_ms": 13493,
+    "wait_ms": 26802,
+    "busy_ms": 579109,
+    "busy_per_render": 217.22018004501126
+   },
+   "hw_lines": [
+    "DOS-PORT tickstats_script_vm calls=12856 total_ms=131986 min_ms=0 max_ms=56937 mean_ms=10.27 clamped_neg=0 total_us=131986481",
+    "DOS-PORT tickstats_wait_next_frame calls=2705 total_ms=26802 min_ms=0 max_ms=24 mean_ms=9.91 clamped_neg=0 total_us=26802055",
+    "DOS-PORT fps_basis counts=render_passes render_passes=2666 presents_real=2704 presents_skipped=0 presents_palette_only=0",
+    "DOS-PORT tick_rate_steady=26.45 ticks=16043 stall_ticks=17 loop_ms=619404 stall_ms=13493 preloop_ms=678 threshold_ms=250"
+   ],
+   "lab_line": "DOS-PORT work scope=steady ticks=16002 renders=14710 presents=14708 script_ins=762464 script_ext=51460 push_bytes=9036595200 push_rects=14708 blit1x_bytes=0 blitsc_bytes=9036595200 cmp_bytes=0 cache_bytes=0 bg_px=39995278 fill_px=465280 spr_n=45212 spr_opq_px=0 spr_msk_px=83315783 spr_bld_px=0 file_bytes=671412 file_calls=42 vs_bpp=2 win_bpp=2 win=640x480 script_ins_counted=1",
+   "mix_ticks_per_render": 6.011252813203301,
+   "prediction": {
+    "terms_ms_per_render": {
+     "push": 22.502434615011087,
+     "blit1x": 0.0,
+     "blitsc": 25.578112557823665,
+     "cmp": 0.0,
+     "cache": 0.0,
+     "spr_msk": 1.664839616628556,
+     "spr_opq": 0.0,
+     "fill": 0.0015467082419856426,
+     "bg": 0.31987265965529654,
+     "scene": 4.029641060503059
+    },
+    "per_render_ms": 54.09644721786365,
+    "per_tick_ms": 5.009274209301715,
+    "busy_per_render": 84.20846090063532,
+    "closed_form_rate": 14.781544311173898
+   },
+   "ratio": 0.387664078370555,
+   "script_heldout": {
+    "pred_ms": 46680.466649270704,
+    "hw_ms": 131986.481
+   },
+   "hw_phase_ms_per_render": {
+    "present_update_window": 22.655502625656414,
+    "present_blit": 118.97416654163541,
+    "present_dirty_check": 0.0,
+    "render_backbuffer": 2.32599887471868,
+    "scene_construct": 3.1531020255063766,
+    "bg_restore": 0.8806564141035259,
+    "script_vm": 49.50730720180045,
+    "process_events_dispatch": 55.88967591897974
+   }
+  }
+ },
+ "c_ins_us": 61.057578977166195,
+ "c_ins_basis": {
+  "hw_script_vm_ms": 16608.211,
+  "lab_script_ins": 272009
+ },
+ "verdict": {
+  "predicted_order": [
+   "S2F2",
+   "AQF1",
+   "F2B1",
+   "SB5O",
+   "S2M1"
+  ],
+  "measured_order": [
+   "S2F2",
+   "AQF1",
+   "F2B1",
+   "S2M1",
+   "SB5O"
+  ],
+  "rank_ok": false,
+  "scale_1p5_ok": false,
+  "factor2_ok": false,
+  "pass": false
+ },
+ "per_phase_pred_vs_hw_ms_per_call": {
+  "F2B1": {
+   "present_update_window": [
+    1.3680872513738584,
+    1.9293945989520356
+   ],
+   "present_blit": [
+    0.0015161924616806047,
+    4.161
+   ],
+   "present_dirty_check": [
+    4.41363080523515,
+    4.734646116893515
+   ],
+   "render_backbuffer": [
+    1.139688155151515,
+    2.729896717373899
+   ],
+   "scene_construct(+bg)": [
+    8.666338788235294,
+    6.789391513210569
+   ],
+   "bg_restore": [
+    0.6422097882352942,
+    1.6831937550040033
+   ]
+  },
+  "S2F2": {
+   "present_update_window": [
+    0.13504123174466065,
+    0.4887042424242424
+   ],
+   "present_blit": [
+    0.0,
+    9.289
+   ],
+   "present_dirty_check": [
+    0.0,
+    0.0
+   ],
+   "render_backbuffer": [
+    1.5089076125198242,
+    1.9377222783276107
+   ],
+   "scene_construct(+bg)": [
+    4.19051516295309,
+    3.1715193437310107
+   ],
+   "bg_restore": [
+    0.1890082449663242,
+    0.6087964763061968
+   ]
+  },
+  "AQF1": {
+   "present_update_window": [
+    0.9816043095148854,
+    2.554460959286113
+   ],
+   "present_blit": [
+    0.0,
+    26.785
+   ],
+   "present_dirty_check": [
+    0.0,
+    0.0
+   ],
+   "render_backbuffer": [
+    9.21026765158029,
+    6.909905702364395
+   ],
+   "scene_construct(+bg)": [
+    6.819725743091734,
+    5.039120653789005
+   ],
+   "bg_restore": [
+    1.204920641343382,
+    2.301192663286609
+   ]
+  },
+  "S2M1": {
+   "present_update_window": [
+    0.11201280760193146,
+    0.7394063745019921
+   ],
+   "present_blit": [
+    7.529411764705882,
+    7.736988047808764
+   ],
+   "present_dirty_check": [
+    0.0,
+    0.0
+   ],
+   "render_backbuffer": [
+    11.495675757575755,
+    9.431535714285713
+   ],
+   "scene_construct(+bg)": [
+    5.524879391031337,
+    2.591285714285714
+   ],
+   "bg_restore": [
+    0.17987939103133704,
+    0.6332259414225941
+   ]
+  },
+  "SB5O": {
+   "present_update_window": [
+    22.505494505494504,
+    22.337119082840236
+   ],
+   "present_blit": [
+    25.581590680281895,
+    117.30219230769232
+   ],
+   "present_dirty_check": [
+    0.0,
+    0.0
+   ],
+   "render_backbuffer": [
+    1.664839616628556,
+    2.2916160384331117
+   ],
+   "scene_construct(+bg)": [
+    4.349513720158356,
+    3.154285178236398
+   ],
+   "bg_restore": [
+    0.31987265965529654,
+    0.880326209223847
+   ]
+  }
+ },
+ "posthoc_script": {
+  "F2B1": {
+   "hw_script_ms_per_tick": 1.1433360000000001,
+   "hw_script_ms_per_tick_without_max_call": 1.0947360000000002,
+   "max_call_ms": 243,
+   "lab_ins_per_tick": 119.5764,
+   "lab_ext_per_tick": 1.0346,
+   "us_per_ins_without_max": 9.155117565004467
+  },
+  "S2F2": {
+   "hw_script_ms_per_tick": 3.3223066613322665,
+   "hw_script_ms_per_tick_without_max_call": 0.9884398879775954,
+   "max_call_ms": 11667,
+   "lab_ins_per_tick": 54.412682536507305,
+   "lab_ext_per_tick": 3.6095219043808764,
+   "us_per_ins_without_max": 18.165615843593407
+  },
+  "AQF1": {
+   "hw_script_ms_per_tick": 28.544050601062345,
+   "hw_script_ms_per_tick_without_max_call": 23.795098965613644,
+   "max_call_ms": 16987,
+   "lab_ins_per_tick": 17.295040627626786,
+   "lab_ext_per_tick": 0.5376856262258336,
+   "us_per_ins_without_max": 1375.833655319883
+  },
+  "S2M1": {
+   "hw_script_ms_per_tick": 24.653314314314315,
+   "hw_script_ms_per_tick_without_max_call": 24.493154154154155,
+   "max_call_ms": 160,
+   "lab_ins_per_tick": 5691.191191191191,
+   "lab_ext_per_tick": 177.12712712712712,
+   "us_per_ins_without_max": 4.303695541289245
+  },
+  "SB5O": {
+   "hw_script_ms_per_tick": 8.227044879386648,
+   "hw_script_ms_per_tick_without_max_call": 4.678020382721436,
+   "max_call_ms": 56937,
+   "lab_ins_per_tick": 47.65517025929397,
+   "lab_ext_per_tick": 3.216182442986567,
+   "us_per_ins_without_max": 98.16396326501642
+  }
+ }
+}

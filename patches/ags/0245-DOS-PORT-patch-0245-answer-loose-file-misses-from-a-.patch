@@ -1,0 +1,348 @@
+From 87771e1cc0de9cebc96803082892f3f7bb57fa9f Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 28 Sep 2026 14:07:47 -0700
+Subject: [PATCH] DOS-PORT: patch 0245 -- answer loose-file misses from a
+ directory listing (DOSAGS_DIRCACHE=1, default off)
+
+With 0241 and 0242 on, a first play's asset open still makes one DOS
+path call: the INT 21h/43h for the loose copy of the asset that is not
+in the game directory. A miss must scan the whole directory, and it is
+the only disk-touching call left in the open (docs/lab/io.md residue
+anatomy: one 43h plus six seeks on an open handle), so it is the one
+candidate for the ~13 ms the target still spends per first-play open.
+
+The directory is listed once, at its first eligible miss, and a name
+absent from the listing is answered "missing" with no DOS call. On DOS
+the save and config directories are "." too, so the engine writes the
+game directory during play (saves and their rotation rename, script
+files, config, DOSMIDI.TMP with DOSAGS_MIDI_MEM=0, logs). Exactness
+therefore does not rest on an inventory of writers: every open() for
+writing, _creat(), link(), unlink() and symlink() in the binary passes
+DJGPP's __FSEXT open handler, and rename() and mkdir() -- the two
+name-creating calls that bypass it -- are wrapped at link time; any of
+them drops every listing, and the next eligible miss lists again.
+
+Only paths a listing can mirror are cached: no LFN, drive-absolute,
+every component strict 8.3 (DOS silently truncates a longer name) and
+no device names. Anything else, a directory over 1024 entries or a
+failed listing takes the 43h. DOSAGS_DIRCACHE_SHADOW=1 asks the 43h for
+every cached "missing" as well and counts disagreements; DOS decides.
+---
+ Common/util/stdio_compat.c | 237 +++++++++++++++++++++++++++++++++++++
+ Engine/CMakeLists.txt      |   7 ++
+ Engine/main/quit.cpp       |   8 ++
+ 3 files changed, 252 insertions(+)
+
+diff --git a/Common/util/stdio_compat.c b/Common/util/stdio_compat.c
+index 034a58e82..f8c6bc529 100644
+--- a/Common/util/stdio_compat.c
++++ b/Common/util/stdio_compat.c
+@@ -167,10 +167,233 @@ static int dos_port_exist_candidate(const char *p)
+     return 1;
+ }
+ 
++/*
++ * DOS-PORT patch 0245: answer a loose-file miss from a directory listing.
++ * With 0241 + 0242 on, a first play's asset open still makes one DOS
++ * path call: the 43h for the loose copy that is not there. A miss has
++ * to scan the whole directory (docs/lab/io.md: the only path call left
++ * in the open), so it is the one disk-touching step of the ~13 ms
++ * residue the target showed. Here the directory is listed once (lazily,
++ * at its first eligible miss) and a name absent from the listing is
++ * answered "missing" with no DOS call.
++ * Exactness does not rest on knowing who writes the game directory (on
++ * DOS the save and config directories are "." as well): every open()
++ * for writing, _creat(), link(), unlink() and symlink() passes DJGPP's
++ * __FSEXT open handler, and rename() and mkdir() are wrapped at link
++ * time (-Wl,--wrap in Engine/CMakeLists.txt); any of those drops every
++ * listing, and the next eligible miss lists again. Only a program other
++ * than this one writing the disk mid-run is not seen.
++ * Eligible paths only: no LFN; "X:/" or "X:\" absolute; every component
++ * strict 8.3 (DOS silently truncates a longer name, which a listing
++ * cannot mirror) and not a device name; wildcards, "." and ".." were
++ * already refused by dos_port_exist_candidate(). Anything else, a
++ * directory over DOS_DC_MAX entries or a failed listing takes the 43h.
++ * Default OFF: DOSAGS_DIRCACHE=1 turns it on; DOSAGS_DIRCACHE_SHADOW=1
++ * also asks the 43h for every cached "missing" and counts disagreements
++ * (the 43h then decides, so a disagreement cannot change behaviour).
++ */
++#include <dir.h>
++#include <errno.h>
++#include <sys/fsext.h>
++#include <stdarg.h>
++#include <ctype.h>
++#define DOS_DC_DIRS 4
++#define DOS_DC_MAX 1024
++typedef struct { char key[80]; int state; int n; char (*names)[13]; } DosDcDir;   /* state: 0 unlisted, 1 listed, -1 never */
++static DosDcDir dos_dc[DOS_DC_DIRS];
++static int dos_dc_used = 0;
++int dos_port_dircache_mode = -1, dos_port_dircache_shadow = -1;
++long dos_port_dircache_listings = 0, dos_port_dircache_entries = 0, dos_port_dircache_hits = 0, dos_port_dircache_events = 0,
++     dos_port_dircache_drops = 0, dos_port_dircache_compared = 0, dos_port_dircache_bad = 0;
++
++static void dos_dc_event(void)
++{
++    int i, dropped = 0;
++    dos_port_dircache_events++;
++    for (i = 0; i < dos_dc_used; i++)
++        if (dos_dc[i].state == 1) { dos_dc[i].state = 0; dropped = 1; }
++    dos_port_dircache_drops += dropped;
++}
++
++static int dos_dc_hook(__FSEXT_Fnumber fn, int *rv, va_list args)
++{
++    (void)rv;
++    if (fn == __FSEXT_open)
++    {
++        const char *path = va_arg(args, const char *);
++        int oflag = va_arg(args, int);
++        (void)path;
++        if ((oflag & O_ACCMODE) != O_RDONLY || (oflag & (O_CREAT | O_TRUNC | O_APPEND)))
++            dos_dc_event();
++    }
++    else if (fn == __FSEXT_creat || fn == __FSEXT_link || fn == __FSEXT_unlink || fn == __FSEXT_symlink)
++        dos_dc_event();
++    return 0;   /* never handles the call itself */
++}
++
++int __real_rename(const char *from, const char *to);
++int __wrap_rename(const char *from, const char *to)
++{
++    int r = __real_rename(from, to);
++    dos_dc_event();
++    return r;
++}
++int __real_mkdir(const char *path, mode_t mode);
++int __wrap_mkdir(const char *path, mode_t mode)
++{
++    int r = __real_mkdir(path, mode);
++    dos_dc_event();
++    return r;
++}
++
++static int dos_dc_on(void)
++{
++    if (dos_port_dircache_mode < 0)
++    {
++        const char *e = getenv("DOSAGS_DIRCACHE");
++        dos_port_dircache_mode = (e != NULL && e[0] == '1') ? 1 : 0;
++        e = getenv("DOSAGS_DIRCACHE_SHADOW");
++        dos_port_dircache_shadow = (e != NULL && e[0] == '1') ? 1 : 0;
++        if (dos_port_dircache_mode)
++            __FSEXT_add_open_handler(dos_dc_hook);
++    }
++    return dos_port_dircache_mode;
++}
++
++/* strict 8.3 over [s, s+len): 1-8 name chars, optional '.' + 1-3 ext chars, DOS-safe characters only */
++static int dos_dc_83(const char *s, size_t len)
++{
++    size_t i, dot = (size_t)-1;
++    if (len == 0)
++        return 0;
++    for (i = 0; i < len; i++)
++    {
++        const unsigned char c = (unsigned char)s[i];
++        if (c == '.')
++        {
++            if (dot != (size_t)-1 || i == 0)
++                return 0;
++            dot = i;
++        }
++        else if (c >= 128 || !(isalnum(c) || strchr("!#$%&'()-@^_`{}~", c)))
++            return 0;
++    }
++    if (dot == (size_t)-1)
++        return len <= 8;
++    return dot <= 8 && len - dot - 1 >= 1 && len - dot - 1 <= 3;
++}
++
++static int dos_dc_device(const char *s, size_t len)
++{
++    static const char *dev[] = { "CON", "PRN", "AUX", "NUL", "CLOCK$", NULL };
++    char b[9];
++    size_t i, n = 0;
++    for (i = 0; i < len && s[i] != '.' && n < 8; i++)
++        b[n++] = (char)toupper((unsigned char)s[i]);
++    b[n] = 0;
++    for (i = 0; dev[i]; i++)
++        if (strcmp(b, dev[i]) == 0)
++            return 1;
++    return n == 4 && (strncmp(b, "COM", 3) == 0 || strncmp(b, "LPT", 3) == 0) && b[3] >= '1' && b[3] <= '9';
++}
++
++static int dos_dc_cmp(const void *a, const void *b)
++{
++    return strcmp((const char *)a, (const char *)b);
++}
++
++/* 1 = the path's name is absent from a current listing of its directory; 0 = cannot vouch (ask DOS) */
++static int dos_dc_absent(const char *p)
++{
++    const char *s, *last = NULL;
++    char key[80], name[13];
++    size_t klen, i;
++    DosDcDir *d = NULL;
++    if (_USE_LFN || !isalpha((unsigned char)p[0]) || p[1] != ':' || (p[2] != '/' && p[2] != '\\'))
++        return 0;
++    for (s = p + 3; ; )
++    {
++        const char *e = s;
++        while (*e && *e != '/' && *e != '\\')
++            e++;
++        if (!dos_dc_83(s, (size_t)(e - s)) || dos_dc_device(s, (size_t)(e - s)))
++            return 0;
++        if (!*e)
++        {
++            last = s;
++            break;
++        }
++        s = e + 1;
++    }
++    klen = (size_t)(last - p);
++    if (klen >= sizeof(key) - 4)
++        return 0;
++    for (i = 0; i < klen; i++)
++        key[i] = p[i] == '\\' ? '/' : (char)toupper((unsigned char)p[i]);
++    key[klen] = 0;
++    for (i = 0; last[i]; i++)
++        name[i] = (char)toupper((unsigned char)last[i]);
++    name[i] = 0;
++    for (i = 0; i < (size_t)dos_dc_used; i++)
++        if (strcmp(dos_dc[i].key, key) == 0)
++            d = &dos_dc[i];
++    if (d == NULL)
++    {
++        if (dos_dc_used == DOS_DC_DIRS)
++            return 0;
++        d = &dos_dc[dos_dc_used++];
++        strcpy(d->key, key);
++        d->state = 0;
++        d->n = 0;
++        d->names = NULL;
++    }
++    if (d->state < 0)
++        return 0;
++    if (d->state == 0)
++    {
++        struct ffblk ff;
++        char pat[84];
++        int r;
++        if (d->names == NULL && (d->names = malloc(DOS_DC_MAX * sizeof(*d->names))) == NULL)
++        {
++            d->state = -1;
++            return 0;
++        }
++        snprintf(pat, sizeof(pat), "%s*.*", key);
++        d->n = 0;
++        dos_port_dircache_listings++;
++        r = findfirst(pat, &ff, FA_RDONLY | FA_HIDDEN | FA_SYSTEM | FA_DIREC | FA_ARCH);
++        if (r != 0 && errno != ENMFILE)
++        {
++            d->state = -1;   /* a failed listing never vouches */
++            return 0;
++        }
++        for (; r == 0; r = findnext(&ff))
++        {
++            if (strcmp(ff.ff_name, ".") == 0 || strcmp(ff.ff_name, "..") == 0)
++                continue;
++            if (d->n == DOS_DC_MAX || strlen(ff.ff_name) > 12)
++            {
++                d->state = -1;
++                return 0;
++            }
++            for (i = 0; ff.ff_name[i]; i++)
++                d->names[d->n][i] = (char)toupper((unsigned char)ff.ff_name[i]);
++            d->names[d->n][i] = 0;
++            d->n++;
++        }
++        qsort(d->names, (size_t)d->n, sizeof(*d->names), dos_dc_cmp);
++        dos_port_dircache_entries = d->n;
++        d->state = 1;
++    }
++    return bsearch(name, d->names, (size_t)d->n, sizeof(*d->names), dos_dc_cmp) == NULL;
++}
++
+ /* 1 only when DOS reports the path as not found; 0 means "ask stat()". */
+ static int dos_port_definitely_missing(const char *path)
+ {
+     __dpmi_regs r;
++    int cached;
+     if (dos_port_statexists_mode < 0)
+     {
+         const char *e = getenv("DOSAGS_STATEXISTS");
+@@ -181,6 +404,12 @@ static int dos_port_definitely_missing(const char *path)
+         dos_port_existslow_n++;
+         return 0;
+     }
++    cached = dos_dc_on() && dos_dc_absent(path);   /* patch 0245 */
++    if (cached && !dos_port_dircache_shadow)
++    {
++        dos_port_dircache_hits++;
++        return 1;   /* absent from a current listing: no DOS call */
++    }
+     memset(&r, 0, sizeof(r));
+     _put_path(path);
+     if (_USE_LFN)
+@@ -193,6 +422,14 @@ static int dos_port_definitely_missing(const char *path)
+     r.x.ds = __tb_segment;
+     r.x.dx = __tb_offset;
+     __dpmi_int(0x21, &r);
++    if (cached)
++    {   /* patch 0245 shadow: the listing said missing; DOS must agree, and DOS decides */
++        dos_port_dircache_compared++;
++        if ((r.x.flags & 1) && (r.x.ax == 2 || r.x.ax == 3))
++            dos_port_dircache_hits++;
++        else
++            dos_port_dircache_bad++;
++    }
+     if ((r.x.flags & 1) && (r.x.ax == 2 || r.x.ax == 3))
+     {
+         struct stat st;
+diff --git a/Engine/CMakeLists.txt b/Engine/CMakeLists.txt
+index 399962195..4f162298c 100644
+--- a/Engine/CMakeLists.txt
++++ b/Engine/CMakeLists.txt
+@@ -671,6 +671,13 @@ target_sources(ags
+ 
+ target_link_libraries(ags PRIVATE engine ${AGS_SDLMAIN_LINK_TARGET})
+ 
++if (DOS)
++    # DOS-PORT patch 0245: rename() and mkdir() create names without passing
++    # DJGPP's __FSEXT open handler, so the loose-file listing in
++    # Common/util/stdio_compat.c sees them through these wrappers instead.
++    target_link_options(ags PRIVATE "-Wl,--wrap=rename" "-Wl,--wrap=mkdir")
++endif ()
++
+ if (LINUX)
+     # We may override `allegro_icon` and `load_midi_pf` depending on the version
+     target_link_options(ags PRIVATE -Wl,--allow-multiple-definition)
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 8d90c7335..920568fa8 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -109,6 +109,9 @@ extern "C" long dos_port_existfast_n, dos_port_existslow_n;   // patch 0241, Com
+ extern "C" int dos_port_statexists_mode;
+ extern "C" long dos_port_existshadow_n, dos_port_existshadow_bad;
+ extern "C" int dos_port_existshadow_mode;
++extern "C" int dos_port_dircache_mode, dos_port_dircache_shadow;   // patch 0245, Common/util/stdio_compat.c
++extern "C" long dos_port_dircache_listings, dos_port_dircache_entries, dos_port_dircache_hits, dos_port_dircache_events,
++    dos_port_dircache_drops, dos_port_dircache_compared, dos_port_dircache_bad;
+ namespace AGS { namespace Common { extern long dos_port_pak_opened, dos_port_pak_reused, dos_port_pak_fallback, dos_port_pak_closed; } }   // patch 0242, Common/util/file.cpp
+ #endif
+ 
+@@ -718,6 +721,11 @@ void quit(const char *quitmsg)
+                     Debug::Printf("DOS-PORT existfast mode=%d misses=%ld stat=%ld shadow=%d compared=%ld mismatches=%ld",
+                         dos_port_statexists_mode, dos_port_existfast_n, dos_port_existslow_n,
+                         dos_port_existshadow_mode, dos_port_existshadow_n, dos_port_existshadow_bad);
++                    // patch 0245: misses answered from a directory listing, listings taken, and the write events that dropped them
++                    Debug::Printf("DOS-PORT dircache mode=%d listings=%ld entries=%ld hits=%ld events=%ld drops=%ld shadow=%d compared=%ld mismatches=%ld",
++                        dos_port_dircache_mode, dos_port_dircache_listings, dos_port_dircache_entries, dos_port_dircache_hits,
++                        dos_port_dircache_events, dos_port_dircache_drops, dos_port_dircache_shadow, dos_port_dircache_compared,
++                        dos_port_dircache_bad);
+                     // patch 0242: shared package handles -- opened, reused, fell back; closed right here at exit
+                     AGS::Common::File::CloseSharedPackageHandles();
+                     Debug::Printf("DOS-PORT pakhandle opened=%ld reused=%ld fallback=%ld closed=%ld",
+-- 
+2.47.3
+

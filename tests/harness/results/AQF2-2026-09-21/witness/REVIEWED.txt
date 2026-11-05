@@ -1,0 +1,7 @@
+who=dosags-worker
+when=2026-09-22T00:50:14Z
+verdict=clean
+mode=card+camera
+sheet_sha256=29160e5527b72e6524cb3da3bfeec544d13ac4e49d8d512fad5677dad7af71c7
+sheet_camera_sha256=9444691cb6d1fcf03bef262936dab791ceec09584f4e7d88a204f784fcbb19dd
+note=AQF2 640x480x16 alias y=60, final binary 0194, second replicate. Card (29 frames, not SHORT) and camera (29 frames, not SHORT) both viewed: forest with speech, treehouse interior with a topic-list GUI (frame 11), credits panel, fade-outs; complete backgrounds throughout, single character instances, no repeated sprites, no missing background. ONE item investigated before this verdict: frame 11 (both card and camera) shows the topic-list GUI's every line missing its leading glyph, cut flush to x=0 of the raster. Root-caused via DOSBox-X A/B at the exact same binary+package+cfg, 0.12s screen-series (the AGS dialog-options render loop bypasses dos_run_tick_fixed()/DOSAGS_FREEZE_TICKS, so the tick-freeze tool could not reach it): the GUI renders COMPLETE under BOTH the alias present path (A3) and a full unnarrowed push (B3, DOSAGS_DIRTY_PRESENT=0) -- not present-path-dependent, not a trail, not missing background. Consistent with real-hardware capture-chain framing (overscan-like, at the literal left raster edge), not a port software defect. Full evidence and images in results/AQF2-DLG-2026-09-21/README.md. Rate fields match AQF1 exactly (deterministic scripted run): steady 41.18, frames_skipped 295/3577 -> stable 37.78, presents_real 3586, present_update_window mean 2.55 ms, guiskip flushed 51.

@@ -1,0 +1,148 @@
+From ac21c15afa4e79b8301a628df1fae781951146ff Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 15 Sep 2026 01:08:02 -0700
+Subject: [PATCH] DOS-PORT: patch 0069 -- fold SDL/0145's GUS voice-scan cost
+ diagnostic into AUDIOPRB.LOG (S7-GUS)
+
+Same rollup-of-rollups pattern as patch 0062's own regwrite fold-in:
+snapshots SDL_DOSGusGetStateDiagSnapshot() once per audio_core_entry_
+poll() call, discard-snapshotting first (same attribution-correctness
+reasoning as the OPL3 regwrite discard) so a GUS scan triggered outside
+this function's own slot loop is never misattributed. Adds a new
+gusscan(calls=... min_us=... mean_us=... max_us=...) field to the
+existing DOS-PORT audioprb log line, alongside the already-landed
+regwrite field -- the two are mutually exclusive per backend (OPL3
+populates regwrite, GUS populates gusscan) so seeing one at zero while
+the other has real data is expected, not a bug.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/media/audio/audio_core.cpp | 52 +++++++++++++++++++++++++++++--
+ 1 file changed, 50 insertions(+), 2 deletions(-)
+
+diff --git a/Engine/media/audio/audio_core.cpp b/Engine/media/audio/audio_core.cpp
+index 75a4e2dee..9ec711cef 100644
+--- a/Engine/media/audio/audio_core.cpp
++++ b/Engine/media/audio/audio_core.cpp
+@@ -212,6 +212,15 @@ extern uclock_t dos_port_engine_start_uclock;
+ extern "C" void SDL_DOSOpl3RegWriteDiagSnapshot(
+     uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us);
+ 
++// DOS-PORT (S7-GUS): same idiom, for SDL_DOSGusGetState() (SDL patches/
++// SDL/<NNNN>, vendor/SDL/src/audio/dos/SDL_dosaudio_gus.c). Real hardware
++// (tag GUST1) found slots_us under GUS averaging 102,962us with a
++// 6,890,560us (6.9s) max -- this determines whether that is call VOLUME
++// (many calls during a catch-up burst, each cheap) or a genuine
++// per-call stall. See PLAN.md's "S7-GUS" work-order item.
++extern "C" void SDL_DOSGusGetStateDiagSnapshot(
++    uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us);
++
+ // TEMPORARY DIAGNOSTIC (AUDIOPRB.LOG): S7's real-hardware ABBA
+ // (2026-09-13, tests/games/trilbysnotes/results/S7-abba-2026-09-13.md)
+ // found dos_run_tick_fixed()'s catch-up loop (patch 0047, game_run.cpp)
+@@ -295,6 +304,8 @@ struct AudioPollWindow
+     uint64_t pump_min_us, pump_mean_us, pump_max_us;
+     uint32_t regwrite_calls;
+     uint64_t regwrite_min_us, regwrite_mean_us, regwrite_max_us;
++    uint32_t gusscan_calls;
++    uint64_t gusscan_min_us, gusscan_mean_us, gusscan_max_us;
+ };
+ 
+ struct AudioPollDiag
+@@ -311,6 +322,10 @@ struct AudioPollDiag
+     // rollups, not raw per-write samples.
+     uint32_t regwrite_calls_sum = 0;
+     uint64_t regwrite_us_sum = 0, regwrite_min_us = UINT64_MAX, regwrite_max_us = 0;
++    // Same rollup-of-rollups shape as regwrite_*, for SDL_DOSGusGetState()
++    // (S7-GUS).
++    uint32_t gusscan_calls_sum = 0;
++    uint64_t gusscan_us_sum = 0, gusscan_min_us = UINT64_MAX, gusscan_max_us = 0;
+ 
+     AudioPollWindow windows[AUDIO_POLL_DIAG_MAX_WINDOWS];
+     uint32_t windows_recorded = 0;
+@@ -346,6 +361,10 @@ void dos_diag_close_window()
+         w.regwrite_min_us = (d.regwrite_min_us == UINT64_MAX ? 0 : d.regwrite_min_us);
+         w.regwrite_mean_us = (d.regwrite_calls_sum > 0) ? (d.regwrite_us_sum / d.regwrite_calls_sum) : 0;
+         w.regwrite_max_us = d.regwrite_max_us;
++        w.gusscan_calls = d.gusscan_calls_sum;
++        w.gusscan_min_us = (d.gusscan_min_us == UINT64_MAX ? 0 : d.gusscan_min_us);
++        w.gusscan_mean_us = (d.gusscan_calls_sum > 0) ? (d.gusscan_us_sum / d.gusscan_calls_sum) : 0;
++        w.gusscan_max_us = d.gusscan_max_us;
+     }
+     else
+     {
+@@ -356,6 +375,8 @@ void dos_diag_close_window()
+     d.pump_sum_us = 0; d.pump_min_us = UINT64_MAX; d.pump_max_us = 0;
+     d.regwrite_calls_sum = 0;
+     d.regwrite_us_sum = 0; d.regwrite_min_us = UINT64_MAX; d.regwrite_max_us = 0;
++    d.gusscan_calls_sum = 0;
++    d.gusscan_us_sum = 0; d.gusscan_min_us = UINT64_MAX; d.gusscan_max_us = 0;
+ }
+ 
+ void dos_diag_record_audio_poll(uint64_t slots_us, uint64_t pump_us)
+@@ -389,6 +410,20 @@ void dos_diag_record_regwrite(uint32_t calls, uint32_t min_us, uint32_t mean_us,
+     if ((uint64_t)max_us > d.regwrite_max_us) d.regwrite_max_us = max_us;
+ }
+ 
++// S7-GUS: same rollup-of-rollups shape as dos_diag_record_regwrite, for
++// SDL_DOSGusGetState() calls made during this call's slot Poll() loop
++// (gus_sink.c's reap_finished_voices(), called on every note-on).
++void dos_diag_record_gusscan(uint32_t calls, uint32_t min_us, uint32_t mean_us, uint32_t max_us)
++{
++    if (calls == 0)
++        return;
++    AudioPollDiag &d = g_audio_poll_diag;
++    d.gusscan_calls_sum += calls;
++    d.gusscan_us_sum += (uint64_t)mean_us * calls;
++    if ((uint64_t)min_us < d.gusscan_min_us) d.gusscan_min_us = min_us;
++    if ((uint64_t)max_us > d.gusscan_max_us) d.gusscan_max_us = max_us;
++}
++
+ } // anonymous namespace
+ 
+ // Declared in audio_core.h (DJGPP-gated); called from quit.cpp right
+@@ -413,12 +448,15 @@ void dos_diag_dump_audio_poll(FILE *fp)
+             "DOS-PORT audioprb total_calls=%lu window_calls=%lu "
+             "slots_us(min=%lu mean=%lu max=%lu) "
+             "pump_us(min=%lu mean=%lu max=%lu) "
+-            "regwrite(calls=%lu min_us=%lu mean_us=%lu max_us=%lu)\n",
++            "regwrite(calls=%lu min_us=%lu mean_us=%lu max_us=%lu) "
++            "gusscan(calls=%lu min_us=%lu mean_us=%lu max_us=%lu)\n",
+             (unsigned long)w.total_calls_at_close, (unsigned long)w.window_calls,
+             (unsigned long)w.slots_min_us, (unsigned long)w.slots_mean_us, (unsigned long)w.slots_max_us,
+             (unsigned long)w.pump_min_us, (unsigned long)w.pump_mean_us, (unsigned long)w.pump_max_us,
+             (unsigned long)w.regwrite_calls, (unsigned long)w.regwrite_min_us,
+-            (unsigned long)w.regwrite_mean_us, (unsigned long)w.regwrite_max_us);
++            (unsigned long)w.regwrite_mean_us, (unsigned long)w.regwrite_max_us,
++            (unsigned long)w.gusscan_calls, (unsigned long)w.gusscan_min_us,
++            (unsigned long)w.gusscan_mean_us, (unsigned long)w.gusscan_max_us);
+     }
+ }
+ #endif // __DJGPP__
+@@ -442,6 +480,11 @@ void audio_core_entry_poll()
+     // Reset here, before the slot loop, so only writes that happen
+     // DURING this call's own slot loop reach the real snapshot below.
+     SDL_DOSOpl3RegWriteDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
++    // S7-GUS: same discard-snapshot reasoning -- SDL_DOSGusGetState() can
++    // also run from outside this function (e.g. any future direct engine
++    // poll of GUS state), so reset before the slot loop for the same
++    // attribution-correctness reason as the OPL3 regwrite discard above.
++    SDL_DOSGusGetStateDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
+ #endif
+ 
+     for (auto &entry : g_acore.slots_) {
+@@ -461,6 +504,11 @@ void audio_core_entry_poll()
+         SDL_DOSOpl3RegWriteDiagSnapshot(&rw_calls, &rw_min_us, &rw_mean_us, &rw_max_us);
+         dos_diag_record_regwrite(rw_calls, rw_min_us, rw_mean_us, rw_max_us);
+     }
++    {
++        uint32_t gs_calls, gs_min_us, gs_mean_us, gs_max_us;
++        SDL_DOSGusGetStateDiagSnapshot(&gs_calls, &gs_min_us, &gs_mean_us, &gs_max_us);
++        dos_diag_record_gusscan(gs_calls, gs_min_us, gs_mean_us, gs_max_us);
++    }
+ #endif
+ 
+     // DOS-PORT (Sound milestone, S1): mix every active voice into the
+-- 
+2.47.3
+

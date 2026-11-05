@@ -1,0 +1,108 @@
+From 5bce1cb35b0c39f3a1af6a1e48d4a4896f5bdffc Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sat, 26 Sep 2026 22:33:22 -0700
+Subject: [PATCH] DOS-PORT: patch 0346 -- report the RTC pump's pre-roll on the
+ status line
+
+SDL 0268 adds pre-roll to the RTC pump (SDL_HINT_DOS_AUDIO_WB_PREROLL_MS,
+opt-in). A cell that sets it must be able to show, from its own manifest,
+that pre-roll ran and what it did. A pump cell reading late_writes=0
+proves nothing about pre-roll if the hint never took. And a cell that
+does not set it must show that it stayed off.
+
+So the pump's fields gain preroll=<irqs>/<moved>/<early_bytes>/<max>:
+- the pre-roll in SB IRQs (0 = off);
+- the messages moved ahead of other channels' notes;
+- the bytes written before their stamp's IRQ;
+- the most IRQs early any went.
+With the hint unset the field reads preroll=0/0/0/0. It appears only
+with midi_tick=rtc, like the rest of the pump's fields.
+
+The rtc fragment goes from 256 to 304 bytes, the midi fragment from 1088
+to 1136, and the status string and its copy from 1472 to 1520. The new
+field is at most 48 bytes.
+
+Reporting only; no behaviour changes.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/platform/dos/dos_audio_mixer.cpp  |  6 +++---
+ Engine/platform/dos/dos_midi_backend.cpp | 13 ++++++++++---
+ 2 files changed, 13 insertions(+), 6 deletions(-)
+
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index fe0da985e..3b3e1935b 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -170,7 +170,7 @@ uint32_t g_room_since = 0;
+ // shutdown_sound()) still reports the real final state instead of the
+ // "never opened" NA sentinel. Left at "NA" if the device was never
+ // opened at all, so that genuine case is still distinguishable.
+-char g_last_status[1472] = "NA"; // patch 0252: 512 -> 640, room for mixed=,...,inflight= beside 0213's fields; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280; patch 0341: -> 1472 (1443 B with the RTC pump's fields)
++char g_last_status[1520] = "NA"; // patch 0252: 512 -> 640, room for mixed=,...,inflight= beside 0213's fields; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280; patch 0341: -> 1472 (1443 B with the RTC pump's fields); patch 0346: -> 1520 (preroll=, <= 48 B)
+ 
+ void format_status_string(char *buf, size_t bufsize)
+ {
+@@ -178,7 +178,7 @@ void format_status_string(char *buf, size_t bufsize)
+     const int bits = static_cast<int>(SDL_AUDIO_BITSIZE(fmt));
+     const char chan_letter = (DOS_AUDIO_MIXER_CHANNELS == 1) ? 'm' : 's';
+     const char *device = g_gus_backend ? "gus" : "sb";
+-    char midi_fragment[1088]; // DOS-PORT (patch 0275): 320 -> 400, room for plan_behind_at=; patch 0331: -> 640; patch 0333: -> 768; patch 0341: -> 1088 (worst case 1060 B with the RTC pump's and 0330-0333's fields, LAB-JOURNEYS 8.37)
++    char midi_fragment[1136]; // DOS-PORT (patch 0275): 320 -> 400, room for plan_behind_at=; patch 0331: -> 640; patch 0333: -> 768; patch 0341: -> 1088 (worst case 1060 B with the RTC pump's and 0330-0333's fields, LAB-JOURNEYS 8.37); patch 0346: -> 1136 (preroll=, <= 48 B)
+     // DOS-PORT (Sound milestone, S4): dos_midi_backend owns the real
+     // "midi=<backend>,events=<n>" fragment now -- S1 hardcoded ";midi=none"
+     // here since no MIDI backend existed yet.
+@@ -642,7 +642,7 @@ const char *dos_audio_mixer_status_string()
+ {
+     if (!g_stream && !g_gus_open)
+         return g_last_status; // "NA" if never opened, else the shutdown-time snapshot
+-    static char buf[1472];   // patch 0252: 512 -> 640; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280; patch 0341: -> 1472 (see g_last_status)
++    static char buf[1520];   // patch 0252: 512 -> 640; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280; patch 0341: -> 1472; patch 0346: -> 1520 (see g_last_status)
+     format_status_string(buf, sizeof(buf));
+     return buf;
+ }
+diff --git a/Engine/platform/dos/dos_midi_backend.cpp b/Engine/platform/dos/dos_midi_backend.cpp
+index f156d3f06..7f5fe6bce 100644
+--- a/Engine/platform/dos/dos_midi_backend.cpp
++++ b/Engine/platform/dos/dos_midi_backend.cpp
+@@ -514,7 +514,7 @@ void dos_midi_backend_status_fragment(char *buf, size_t bufsize)
+         // DOS-PORT (patch 0341): the RTC pump's own fields (rate, byte gap,
+         // ticks, BIOS INT 15h/86h waits it serviced, longest release-to-write
+         // in us) and clk_uc= (song ms / uclock ms since the first plan).
+-        char rtc[256] = ""; // DOS-PORT (patch 0344): was 192 (0343), 144 (0342), 112 (0341)
++        char rtc[304] = ""; // DOS-PORT (patch 0346): was 256 (0344), 192 (0343), 144 (0342), 112 (0341)
+         if (g_defer_kind == 3)
+         {
+             Uint32 hz = 0, gap = 0, ticks = 0, waits = 0, lat = 0;
+@@ -540,18 +540,25 @@ void dos_midi_backend_status_fragment(char *buf, size_t bufsize)
+             if (g_st_seen)
+                 std::snprintf(st_at, sizeof(st_at), "%u@%u/%u/%u", (unsigned)g_st_song_ms, (unsigned)g_st_loop,
+                     (unsigned)g_st_irq, (unsigned)g_st_prev);
++            // DOS-PORT (patch 0346): pre-roll (SDL 0268, SDL_HINT_DOS_AUDIO_WB_PREROLL_MS): the pre-roll in SB IRQs
++            // (0 = off), messages moved ahead of other channels' notes, bytes written before their stamp, most
++            // IRQs early. Notes are never moved; preroll=0/0/0/0 with the hint unset.
++            Uint32 pr_irqs = 0, pr_moved = 0, pr_bytes = 0, pr_max = 0;
++            SDL_DOSMidiDeferPrerollStats(&pr_irqs, &pr_moved, &pr_bytes, &pr_max);
+             char rd_s[16];
+             if (rd_on)
+                 std::snprintf(rd_s, sizeof(rd_s), "%u", (unsigned)rd);
+             else
+                 std::snprintf(rd_s, sizeof(rd_s), "off");
+             std::snprintf(rtc, sizeof(rtc), ",rtc_hz=%u,gap_us=%u,rtc_ticks=%u,bios_waits=%u,lat_max_us=%u,rs=%s,rs_skipped=%u,"
+-                "rearm=%u/%u/%u/%u,c_redrain=%s,stuck_at=%s,stuckw=%u/%u/%u/%u/%u,stucksnap=%02x%02x%02x%02x%02x%02x%02x%02x",
++                "rearm=%u/%u/%u/%u,c_redrain=%s,stuck_at=%s,stuckw=%u/%u/%u/%u/%u,stucksnap=%02x%02x%02x%02x%02x%02x%02x%02x,"
++                "preroll=%u/%u/%u/%u",
+                 (unsigned)hz, (unsigned)gap, (unsigned)ticks, (unsigned)waits, (unsigned)lat, rs_on ? "on" : "off",
+                 (unsigned)rs_skipped, (unsigned)rp, (unsigned)rr, (unsigned)rm, (unsigned)rst, rd_s, st_at,
+                 (unsigned)sw[0], (unsigned)sw[1], (unsigned)sw[2], (unsigned)sw[3], (unsigned)sw[4],
+                 (unsigned)ss[0], (unsigned)ss[1], (unsigned)ss[2], (unsigned)ss[3], (unsigned)ss[4],
+-                (unsigned)ss[5], (unsigned)ss[6], (unsigned)ss[7]);
++                (unsigned)ss[5], (unsigned)ss[6], (unsigned)ss[7],
++                (unsigned)pr_irqs, (unsigned)pr_moved, (unsigned)pr_bytes, (unsigned)pr_max);
+         }
+         // DOS-PORT patch 0330: SDL 0250's per-IRQ budget, the IRQs it bound,
+         // and the drain's own time (us, the SB ISR's timer); per-write in ns
+-- 
+2.47.3
+

@@ -1,0 +1,370 @@
+# Trilby's Notes -- porting manifest, per PLAN.md's "Game porting
+# framework" section (`record` stage's own intent: id, verified source,
+# license, pinned hash, expected DataVersion/res/depth, audio policy,
+# driving recipe -- game data itself never enters git, only this file
+# plus results/ records). Original static fields (id/source/license/
+# audio/fonts/clib/driving_recipe/sound_toggle/expected_runmanifest_
+# dosbox_x) produced by hand, 2026-09-13, S7 (Sound milestone
+# acceptance-gate item 4), through tools/port-game/'s then-minimal slice
+# (inspect+convert+repack+layout) plus hand-typed run-dosbox.sh flags.
+# The `validate:` block and every `validated:` entry from 2026-09-15
+# onward are produced by that same tool's now-generalized `validate`/
+# `record` subcommands instead -- see tools/port-game/README.md.
+
+id: trilbysnotes
+title: "Trilby's Notes"
+source: see PIN (this directory) -- sha256 + download URL, never the game
+        archive itself
+
+# From tools/port-game/port_game.py inspect (see tests/games/trilbysnotes/
+# inspect-report.json, committed alongside this file):
+data_version: 27
+compiled_with_editor: "2.62"
+loadable: true              # DataVersion 27 >= kGameVersion_250 (18)
+legacy_audio_system: true   # DataVersion 27 < kGameVersion_320 (41) --
+                            # ScanOldStyleAudio's load-time compatibility
+                            # shim supplies audio clips from music*.*/
+                            # sound*.* naming, confirmed by source read
+                            # (no DOS-backend gap -- same load_sound_clip/
+                            # audio_core dispatch a modern game's clips use)
+
+# Resolution/color depth: NOT re-derived from GameSetupStructBase (a real
+# rabbit hole across DataVersion-gated field layouts -- see port_game.py's
+# own module docstring) -- taken from two independent, already-
+# authoritative sources instead, cross-checked against each other:
+resolution: "320x200"
+color_depth: 8
+resolution_source: "AGS games database listing (play/game/736) states
+  '320x200, 8-Bit (256 Colour)'; the game's own shipped acsetup.cfg (inside
+  notes.zip, not committed) states gamecolordepth=8 -- both agree."
+
+audio:
+  clip_count: 30            # 10 music*.mid + 20 sound*.wav (see
+                             # inspect-report.json's own audio_clips list)
+  formats: [midi, wav]
+  needs_host_transcode: false  # nothing OGG/MP3/tracker -- convert.py is a
+                                # verified no-op for this game (see
+                                # convert-report.json: all 78 non-vox
+                                # assets are "passthrough", none
+                                # "transcoded")
+  wav_note: "All 20 WAV clips are 8-bit mono at 24000/44100 Hz, i.e. above
+    this port's Tier-2 rate (11025 Hz) -- confirmed NOT to need host-side
+    resampling: dos_audio_decode.cpp's own loader already sniffs format
+    and resamples/downmixes every clip ONCE, at load time, to the mixer's
+    fixed device rate (patches/ags/0050's own header comment). This is a
+    real, source-verified correction to this framework's original design
+    (which assumed 'WAV/VOC resampled to the tier only if above it' meant
+    a HOST-side step) -- it does not, for this port's own engine build."
+  has_audio_vox: false
+  has_speech_vox: false
+fonts:
+  - {file: agsfnt0.wfn, kind: native bitmap (WFNFont)}
+  - {file: agsfnt1.wfn, kind: native bitmap (WFNFont)}
+  - {file: agsfnt2.wfn, kind: native bitmap (WFNFont)}
+  # no TTF -- does not exercise the alfont/FreeType text path
+
+clib:
+  original_lib_version: 15   # MFLUtil::kMFLVersion_MultiV15 ("unknown
+                              # differences" per the engine's own enum
+                              # comment; ReadV10's code path handles it,
+                              # confirmed by round-trip against the real
+                              # file -- see tools/port-game/clib.py)
+  repacked_lib_version: 30   # tools/port-game/port_game.py repack always
+                              # emits V30 (the only version multifilelib.cpp
+                              # itself can WRITE); the pinned engine's
+                              # ReadHeader() accepts any supported version
+                              # on load, so this is not a compatibility
+                              # concern for this port's own build.
+  asset_count: 78
+  repack_verified: "byte-for-byte identical to the original CLIB, asset
+    by asset (all 78), confirmed by an independent read-back + comparison
+    script before this manifest was written -- not assumed from the tool
+    running without error."
+
+driving_recipe: "No AutoPilot module (binary-only game, no script source
+  available) -- per PLAN.md's `validate` stage design, driving is limited
+  to DOSAGS_TAS_AUTO_EXIT_TICK (patches/ags/0044), independent of any
+  script. Title-screen music (room 1's own PlayMusic(1) call, confirmed
+  live via a real DOSBox-X run's own STDOUT.TXT) plus idle fps is the
+  Sound gate's own sound-on/off ABBA workload; auto-exit tick 200 (5s of
+  40Hz logic time) gives the engine time to load, transition into room 1,
+  and start music before quitting cleanly."
+
+sound_toggle: "acsetup.cfg's own [sound] enabled=0/1 (Engine/main/
+  config.cpp:416, CfgReadBoolInt) -- a real, already-shipping, zero-patch
+  engine feature (confirmed by source read), not a new lever. sound=on
+  additionally needs SDL_HINT_DOS_AUDIO_BACKEND=opl3 (RUN.BAT SET, per
+  the acceptance gate's own OPL3 pre-registered bar) to select the MIDI
+  backend; sound=off needs no MIDI backend hint at all.
+  tools/port-game/port_game.py layout emits both ACSETUP-ON.CFG/
+  ACSETUP-OFF.CFG variants; tests/harness/run-dosbox.sh's --include-extra
+  and run-rig.sh's --extra-file (both added alongside this tool) stage
+  whichever variant an ABBA arm needs as the target's actual ACSETUP.CFG."
+
+# Structured driving recipe for tools/port-game/port_game.py validate --
+# a machine-readable transcription of the driving_recipe/sound_toggle
+# prose above (added when validate/record were generalized from the
+# hand-typed run-dosbox.sh flags those sessions actually used; the prose
+# stays as the human-readable record of WHY these values were chosen).
+# pkg matches tests/harness/games/<pkg>/ (run-dosbox.sh's own convention).
+validate:
+  pkg: trilbysnotes
+  auto_exit_tick: 200   # 5s of 40Hz logic time -- see driving_recipe above
+  timeout_s: 180
+  # The fast conf with oplmode=opl3 (this port's own copy under tests/
+  # harness/confs/, passed through run-dosbox.sh --conf -> the hub's
+  # dosbox-run.sh --conf, both 2026-09-16). This is what the 2026-09-13
+  # TNSNDON2 hand-run used as an uncommitted scratch conf; with it the
+  # sound_on arm's expected midi=opl3 prefix below is reproducible from
+  # this manifest alone instead of failing honestly on the stock conf
+  # (the 2026-09-15 RCHKV_ON entry documents that pre-fix state).
+  dosbox_conf: tests/harness/confs/dosbox-x-fast-opl3.conf
+  arms:
+    sound_on:
+      cfg: ACSETUP-ON.CFG
+      env:
+        SDL_HINT_DOS_AUDIO_BACKEND: opl3
+    sound_off:
+      cfg: ACSETUP-OFF.CFG
+      env: {}
+
+expected_runmanifest_dosbox_x:
+  sound_on:
+    audio_vital_status_prefix: "pcm=sb@11025m16,voices=8,underruns=0;midi=opl3,events="
+    exit_code: 0
+  sound_off:
+    audio_vital_status: "NA"
+    exit_code: 0
+
+validated:
+  - environment: dosbox-x
+    date: 2026-09-13
+    sound_on: {tag: TNSNDON2, exit_code: 0, audio_vital_status: "pcm=sb@11025m16,voices=8,underruns=0;midi=opl3,events=64", fps_p50: 33.65, critical_count: 0, warn_count: 0}
+    sound_off: {tag: TNSNDOFF, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.00, critical_count: 0, warn_count: 0}
+    note: "correctness gate only (acceptance 1) -- oplmode=opl3 needed in a
+      scratch dosbox-x-fast.conf (stock hub confs ship oplmode=none by
+      design, same as S4's own precedent, PLAN.md line ~2252); no fps
+      claim taken from this environment."
+  - environment: HW-486-66
+    date: 2026-09-13
+    block: [A1, B1, B2, A2]
+    A1: {tag: TNA1C, exit_code: 0, audio_vital_status: "NA", fps_p50: 4.81, fps_p95: 5.71, tick_rate: 23.80}
+    B1: {tag: TNB1B, exit_code: 0, audio_vital_status: "pcm=sb@11025m16,voices=8,underruns=0;midi=opl3,events=5254", fps_p50: 0.57, fps_p95: 0.59, tick_rate: 3.27}
+    B2: {tag: TNB2, exit_code: 0, audio_vital_status: "pcm=sb@11025m16,voices=8,underruns=0;midi=opl3,events=5254", fps_p50: 0.57, fps_p95: 0.59, tick_rate: 3.27}
+    A2: {tag: TNA2, exit_code: 0, audio_vital_status: "NA", fps_p50: 5.17, fps_p95: 5.71, tick_rate: 23.86}
+    diagnostic_wb: {tag: TNWB1, exit_code: 0, audio_vital_status: "pcm=sb@11025m16,voices=8,underruns=0;midi=wb,events=5427", fps_p50: 0.55, fps_p95: 0.59, tick_rate: 3.22, note: "WaveBlaster in place of OPL3, same fixed-timestep config -- collapse reproduces (not OPL3-specific)"}
+    verdict: "FAIL -- 4.42 fps cost vs the <= 1.5 fps pre-registered bar
+      (baseline avg fps_p50 4.99, sound-on fps_p50 0.57). A-to-A spread
+      tight (0.36 fps_p50, 0.06 tick_rate), B-to-B byte-for-byte
+      reproducible -- block is valid, delta is real, not noise. Root
+      cause identified (source-verified, not fixed yet): dos_run_tick_
+      fixed()'s catch-up loop (patches 0047) re-invokes audio_core_entry_
+      poll() on every catch-up tick (up to 6x per GameTick() on hardware
+      this far behind the 40Hz target), multiplying real per-call audio-
+      service cost by up to 6x once a MIDI backend is active -- an
+      interaction between S0 (fixed timestep) and S1/S3/S5 (audio) never
+      exercised together at a sustained catch-up rate before this run.
+      Full writeup: results/S7-abba-2026-09-13.md."
+  - environment: HW-486-66
+    date: 2026-09-14
+    single_cell: {tag: AUDIOFX1, exit_code: 0, audio_vital_status: "pcm=sb@11025m16,voices=8,underruns=0;midi=opl3,events=639", fps_p50: 0.59, fps_p95: 0.61, tick_rate: 2.97, binary_sha12: cdf5cb19a6c9}
+    note: "NOT an ABBA -- a single operator-approved cell to confirm the
+      AUDIOPRB.LOG diagnostic sink fix (patch 0061) actually produces
+      data on real hardware, short tick cap (DOSAGS_TAS_AUTO_EXIT_
+      TICK=200) deliberately chosen to stay under wait_for_stable_
+      screen()'s 90s false-positive floor rather than fix that harness
+      bug. Confirmed: DOS-PORT audioprb total_calls=65 windows_
+      recorded=1 windows_dropped=0, slots_us(min=11 mean=1403 max=15270)
+      pump_us(min=6398 mean=11137 max=15133) -- real data, first time
+      ever from a real-hardware sound-on run in this investigation.
+      pump_us matches the DOSBox-X measurement; slots_us does not (over
+      10x DOSBox-X's own mean) -- a new, not yet confirmed lead for why
+      patch 0060 had ~zero real-hardware effect. Acceptance gate items
+      4/5 NOT re-attempted by this cell. Full writeup: results/
+      S7-audioprb-fix-realhw-2026-09-14.md."
+  - environment: dosbox-x
+    date: 2026-09-15
+    sound_on: {tag: RCHKV_ON, exit_code: 0, audio_vital_status: "pcm=sb@11025m16,voices=8,underruns=0;midi=none,events=0", fps_p50: 32.38, critical_count: 0, warn_count: 0}
+    sound_off: {tag: RCHKVOFF, exit_code: 0, audio_vital_status: "NA", fps_p50: 35.24, critical_count: 0, warn_count: 0}
+    note: "tools/port-game/port_game.py validate/record regression check (new generalized tooling, PLAN.md Game porting framework stages 5-6) against the existing hand-run S7 dosbox-x correctness gate above. sound_off: exact match (exit_code=0, audio_vital_status=NA, critical/warn=0). sound_on: exit_code/pcm-vitals match (pcm=sb@11025m16,voices=8,underruns=0) but midi=none not midi=opl3 -- reproduces a KNOWN, already-documented gap, not a regression: stock hub dosbox-x-fast.conf ships oplmode=none, and the original TNSNDON2 hand-run used an uncommitted scratch oplmode=opl3 conf that run-dosbox.sh/dosbox-run.sh have no passthrough for yet (a shared/ change, out of this repo's scope) -- see validate()'s own docstring for the full gap writeup. Full inspect/convert/repack stages also re-run this session from the same pinned notes.exe (PIN) and confirmed byte-identical to the committed inspect-report.json/convert-report.json and to tests/harness/games/trilbysnotes/NOTES.ags (sha256 61eaad21...)."
+  - environment: HW-486-66
+    date: 2026-09-15
+    block: [TN8A1, TN8A2]
+    TN8A1: {tag: TN8A1, exit_code: 0, audio_vital_status: "NA", fps_p50: 4.81, fps_p95: 5.71, tick_rate: 23.77, binary_sha12: b60f6e538323}
+    TN8A2: {tag: TN8A2, exit_code: 0, audio_vital_status: "NA", fps_p50: 5.17, fps_p95: 5.50, tick_rate: 23.71, binary_sha12: b60f6e538323}
+    note: "Fresh real-hardware baseline for the 8/16/32-bit color-depth KPI
+      comparison (PLAN.md's 32-bit display path KPI work) -- re-measured
+      on TODAY's build (patches/ags/0075/0076 included, though neither
+      affects an 8-bit-native game's behavior) rather than reusing the
+      2026-09-13 S7-abba A1/A2 numbers, so every depth in the comparison
+      shares one binary_sha12. Same DOSAGS_TAS_AUTO_EXIT_TICK=1000 +
+      DOSAGS_FIXED_TIMESTEP=1 + sound-off recipe as that campaign, and as
+      the shards/iowna cells alongside it. A-to-A spread: fps_p50 4.81 vs
+      5.17 (delta 0.36), tick_rate 23.77 vs 23.71 (delta 0.06) -- both
+      tight, both essentially identical to the 2026-09-13 campaign's own
+      A-to-A spread (0.36 fps_p50, 0.06 tick_rate) on a different day and
+      a different build. Average fps_p50 = 4.99, matching that campaign's
+      own average (4.99) to two decimal places. Passes the invalidity
+      check cleanly -- this is a stable, reproducible 8-bit KPI baseline,
+      not noise. Game identity confirmed each run via STDOUT.TXT (Game
+      title: 'Trilby's Notes') and mode-set log (Graphics mode set: 640
+      x 480 (8-bit) fullscreen desktop)."
+  - environment: dosbox-x
+    date: 2026-09-16
+    sound_on: {tag: F4TN_ON, exit_code: 0, audio_vital_status: "pcm=sb@11025m16,voices=8,underruns=0;midi=opl3,events=58", fps_p50: 24.04, fps_p95: 30.48, tick_rate: 27.78, frames_skipped: 66, critical_count: 0, warn_count: 0, binary_sha12: c9ee2b121d04}
+    sound_off: {tag: F4TNOFF, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.38, fps_p95: 40.38, tick_rate: 33.73, frames_skipped: 20, critical_count: 0, warn_count: 0, binary_sha12: c9ee2b121d04}
+    note: "Game porting framework F4 closed: first run where BOTH arms pass from this manifest alone, including the sound_on arm's midi=opl3 expectation -- validate: dosbox_conf now hands tests/harness/confs/dosbox-x-fast-opl3.conf through run-dosbox.sh --conf to the hub's new dosbox-run.sh --conf, reproducing the 2026-09-13 TNSNDON2 hand-run's scratch oplmode=opl3 conf (the 2026-09-15 RCHKV_ON entry above records the pre-fix honest midi=none failure). Fixed-timestep witness ENABLED in both arms; correctness gate only, no fps claim (DOSBox-X). See results/F4TN.json."
+  - environment: HW-486-66
+    date: 2026-09-15
+    sound_off: {tag: TN8A3, exit_code: 0, audio_vital_status: "NA", fps_p50: 5.22, fps_p95: 5.45, tick_rate: 14.16, frames_skipped: 165, critical_count: 0, warn_count: 0, binary_sha12: c9ee2b121d04}
+    note: "Game porting framework F3 -- single-cell real-hardware sanity record (not an ABBA, no fps claim) through run-rig.sh -> check -> record, closing the framework gate's real-hardware-record requirement for this game via the tool instead of the S7/S8 hand-recorded TN8A1/TN8A2 cells (whose raw collected dirs no longer exist on disk -- this is a genuine fresh cell, not a reuse). Identity independently confirmed: STDOUT.TXT's own 'Game title: Trilbys Notes' / data_version 27 / compiled_with 2.62 (matches this manifest), binary_sha12 c9ee2b121d04 matches the same build validated on DOSBox-X this session, RUNMANIFEST environment=realhw. Target C:\\DOSAGS was cleared of stale *.AGS/*.VOX/ACSETUP.CFG (found NOTES.AGS AND a stale SHARDS.AGS plus a 44MB AUDIO.VOX left over from prior sessions) and verified empty via DIR before staging. capture_hash in this record is NOT genuine PH0N.BMP output from this run -- trilbysnotes has no AutoPilot module and produces no screenshots; those three BMPs are stale leftovers from an old AGS Quest session that get_file's fixed name list happened to re-fetch. fps/tick_rate numbers present in the raw RUNMANIFEST are incidental to a sanity record, not a KPI claim -- no ABBA, no threshold."
+  - environment: HW-486-66
+    date: 2026-09-16
+    sound_off: {tag: TNFI1, exit_code: 0, audio_vital_status: "NA", fps_p50: 0.57, fps_p95: 0.59, tick_rate: 2.91, frames_skipped: 168, critical_count: 0, warn_count: 0, binary_sha12: c4cfbebf6f85}
+    note: "40fps push step 3 telemetry, priority 3 (optional fast/normal baseline for comparison against the Shards depth results, patch 0078 DOS-PORT-STARTUP block + DOSAGS_FLIP_INSTR=1). exit_code=0, real RUNMANIFEST, duration_s=81. NOT a clean apples-to-apples baseline against TN8A3 (the prior real-hardware sound_off record, fps_p50=5.22/tick_rate=14.16) -- this run measured fps_p50=0.57/tick_rate=2.91, an unexpected ~5x tick_rate REGRESSION, honestly flagged rather than glossed over. Investigated before concluding anything: (1) env_block_sha and memory_min_free_kb are IDENTICAL between TN8A3 and TNFI1 (aa0172bb39a4, 155008 both), ruling out an environment or memory-pressure difference; (2) frames_skipped is nearly identical (165 vs 168 of a 200-tick target), ruling out a change in the render/skip decision itself; (3) TNFI1SDL.LOG shows only ~5 total UpdateWindowFramebuffer calls in the whole run (never reaching the 100-flush aggregate block), each costing a normal 24-76ms -- flip/present cost is NOT elevated and cannot itself explain a slowdown this large, especially since it wouldn't touch the 165+ SKIPPED (non-rendering) ticks at all; (4) source-read the flip-instrumentation code (vendor/SDL/src/video/dos/SDL_dosframebuffer.c) -- the enable-check is cached after one getenv() read (not re-checked per call), per-call timing overhead is two SDL_GetTicksNS() reads into fixed-size arrays (cheap, O(1)), and the periodic emit-with-fsync block only fires every 100 flips, which never happened here -- no mechanism found in this code that would explain a per-tick slowdown, particularly not one affecting skipped ticks. MOST LIKELY EXPLANATION, not yet confirmed: binary_sha12 differs (TNFI1=c4cfbebf6f85, the post-patch-0078 build, vs TN8A3=c9ee2b121d04, a build from the day before patch 0078 landed) -- TN8A3 and TNFI1 are not actually running the same binary, so this is not a clean flip-instrumentation-on/off comparison; some other change in the intervening patch history (not necessarily patch 0078 itself, whose own new code is startup-only and one-time) may be responsible. Flagged as an open follow-up, not chased further this session -- this cell was explicitly the lowest-priority, optional item, and priorities 1 (S16FI1) and 2 (S32FI1) are the real deliverable. Full raw DOS-PORT-STARTUP block, RUNMANIFEST, STDOUT.TXT, and DOSAGS_FLIP_INSTR SDL debug log preserved verbatim in results/HW-486-66-2026-09-16-TNFI1{.LOG,-STDOUT.TXT,-SDLDBG.LOG}. Startup phase breakdown: subsystem_init=4ms, gamedata_asset_load=6447ms, script_vm_init=1613ms, gfxmode_init=612ms, sprite_index_init=768ms, sprite_precache=1514ms (1 view/10 frames, slowest1_ms=1100), first_room_load=4681ms, total_to_first_frame=20885ms -- a full 25.8% of this run's own 81s duration, a far larger startup fraction than either Shards depth arm saw (3.4%/1.5%), consistent with Trilby's Notes being a much SHORTER total run (auto_exit_tick=200 vs Shards' 1000) rather than evidence of a startup-specific regression."
+  - environment: HW-486-66
+    date: 2026-09-16
+    sound_off: {tag: TNP80A, exit_code: 0, audio_vital_status: "NA", fps_p50: 4.81, fps_p95: 5.77, tick_rate: 14.06, frames_skipped: 164, critical_count: 0, warn_count: 0, binary_sha12: cd8540625e54}
+    note: "8-bit optimization pass, step A: point patches 0079/0080's existing per-tick instrumentation at Trilby's Notes (sound_off) per operator request, verifying rather than assuming the AGS Quest finding (script VM dominant) transfers. exit_code=0, duration_s=22, fps_p50=4.81/tick_rate=14.06 -- matches TN8A3 (5.22/14.16) within normal variance, confirming patches 0079/0080 add negligible overhead here too. PHASE DATA: tickstats_script_vm calls=117 total_ms=3780 min_ms=1 max_ms=3615 mean_ms=32.31; tickstats_render_backbuffer calls=72 total_ms=0 (all zero, real hardware, not just DOSBox-X); tickstats_input_poll calls=201 total_ms=0; tickstats_audio_sync calls=200 total_ms=0 (audio confirmed disabled via ACSETUP-OFF.CFG + 'Audio is disabled' log line). CRITICAL FINDING, changes the framing of the whole 8-bit optimization question: patch 0078's own total_to_first_frame_ms=13082 -- LOAD TIME alone is 59.5% of this run's entire 22000ms duration, dwarfing script_vm's 17.2% and completely swamping render_backbuffer/input_poll/audio_sync's ~0%. Recomputing tick_rate's own denominator (get_runtime_ms(), same uclock anchor as total_to_first_frame_ms): internal engine runtime for the reported tick_rate=14.06 over 200 ticks implies runtime_ms=14225; subtracting the 13082ms load-time component leaves only ~1143ms of STEADY-STATE processing for those 200 ticks, i.e. a true steady-state tick rate of ~175 ticks/sec -- more than 4x the 40Hz target. This means tick_rate as currently computed (ticks / total-engine-runtime-including-load) severely UNDERSTATES steady-state gameplay speed for a SHORT test window like this one's 200-tick target, where load time is a large fraction of total measured time (Shards' own 1000-tick windows are far less affected: load time there was only 1.5-3.4% of total). The apparent '8-bit is slow relative to 40Hz' signal in the tick_rate KPI is substantially a measurement-window artifact for this game, not a per-frame rendering or script cost problem the way the original 'no dirty-rect tracking' milestone hypothesis assumed. See PLAN.md for the full writeup and the reframed recommendation for the 8-bit optimization pass."
+  - environment: HW-486-66
+    date: 2026-09-16
+    sound_off: {tag: TNP80B, exit_code: 0, audio_vital_status: "NA", fps_p50: 4.81, fps_p95: 5.45, tick_rate: 23.83, frames_skipped: 822, critical_count: 0, warn_count: 0, binary_sha12: cd8540625e54}
+    note: "8-bit optimization pass, reconciliation cell (coordinator caught a real methodological error in TNP80A's short-window extrapolation): same patches 0079/0080 instrumentation as TNP80A, but at DOSAGS_TAS_AUTO_EXIT_TICK=1000, matching the ESTABLISHED, ABBA-validated TN8A1/TN8A2 baseline (tick_rate 23.77/23.71, 2026-09-15 S7 campaign) exactly rather than the shorter, non-ABBA TN8A3 sanity cell (auto_exit_tick=200, same window length TNP80A used) this investigation had wrongly anchored against. exit_code=0, duration_s=49, fps_p50=4.81/tick_rate=23.83 -- reproduces the trusted TN8A1/TN8A2 number essentially exactly, confirming patches 0079/0080 add negligible overhead at this window length too. PHASE DATA: tickstats_script_vm calls=917 total_ms=4840 min_ms=1 max_ms=3600 mean_ms=5.28 (same ~3.6s one-time outlier magnitude as TNP80A, confirming it's a fixed one-time cost not a per-tick one); tickstats_render_backbuffer calls=214 total_ms=0; tickstats_input_poll calls=1001 total_ms=0; tickstats_audio_sync calls=1000 total_ms=0 (all real hardware, audio confirmed disabled). total_to_first_frame_ms=12917 (load time, consistent with TNP80A's 13082). RECONCILED STEADY-STATE CALCULATION: tick_rate=23.83 over 1000 ticks implies internal engine runtime=41964ms; subtracting load_ms=12917 leaves steady_state_ms=29047 for those 1000 ticks, i.e. a corrected steady-state tick rate of 34.43 ticks/sec -- 86.1% of the 40Hz target. This CONFIRMS the coordinator's own back-of-envelope ~35 estimate (computed independently, from the trusted 1000-tick baseline, catching a real error in this investigation's earlier 200-tick extrapolation which wrongly implied ~175 ticks/sec, a 4x-over-target artifact of comparing against too short a window). REAL FINDING: load-time optimization alone, even if total_to_first_frame_ms were reduced to zero, could only raise the ACHIEVABLE ceiling to ~34.43 ticks/sec -- still short of 40Hz. Worse: the 4 instrumented phases (script_vm+render_backbuffer+input_poll+audio_sync = 4840ms total) account for only 16.7% of the CORRECTED 29047ms steady-state window -- 83.3% (24207ms) of steady-state time is STILL completely unaccounted for by any of patches 0079/0080's instrumented phases. A genuine, still-unidentified per-tick cost remains the primary open question -- load-time optimization is necessary but clearly not sufficient, and a rendering/script fix per the original milestone hypothesis is not yet ruled in OR out, since the phases that would show it (construct_game_scene()'s draw-list building, Present()/flip cost via patch 0035's DOSAGS_FLIP_INSTR, WaitForNextFrame()'s pacing mechanism) remain uninstrumented. See PLAN.md for the full reconciliation writeup and recommended next diagnostic step."
+  - environment: HW-486-66
+    date: 2026-09-16
+    sound_off: {tag: TNP81B, exit_code: 0, audio_vital_status: "NA", fps_p50: 5.17, fps_p95: 5.50, tick_rate: 23.71, frames_skipped: 823, critical_count: 0, warn_count: 0, binary_sha12: fa03f2f223b4}
+    note: "8-bit optimization pass, closing round, CLEAN comparison (patches 0079/0080/0081 active, DOSAGS_FLIP_INSTR OFF -- same recipe as the trusted TNP80B/TN8A1/TN8A2 baseline). duration_s=49, tick_rate=23.71 -- matches TN8A2 (23.71) EXACTLY and TNP80B (23.83) closely, confirming all three tick-timing patches combined add negligible overhead when flip instrumentation is off. total_to_first_frame_ms=13082 (identical to TNP80A/TNP80B, confirming load time is a fixed, reproducible cost). FULL PHASE DATA (all 6 patches-0079/0080/0081 phases now measured together for the first time): tickstats_script_vm calls=917 total_ms=4864 max_ms=3625 (same outlier magnitude as before); tickstats_render_backbuffer calls=213 total_ms=0; tickstats_input_poll calls=1003 total_ms=0; tickstats_audio_sync calls=1000 total_ms=0; tickstats_scene_construct calls=177 total_ms=526 mean_ms=2.97 (real but small); tickstats_wait_next_frame calls=210 total_ms=232 mean_ms=1.10, wait_next_frame_sleep_calls=1 requested_ms=25 -- MEASURED cost (232ms) is consistent with REQUESTED sleep (25ms) plus small per-call overhead across 210 calls, i.e. no miscalibration signature when flip instrumentation is off (contrast with TNP81A below). FULL ACCOUNTING against the reconciled steady-state budget (internal runtime 1000/23.71*1000=42176ms minus load 13082ms = 29094ms steady-state for 1000 ticks): the 6 instrumented phases sum to only 5622ms = 19.3% of the steady-state budget. Even adding a generous estimate for flip/present cost (borrowed from TNP81A's own flip data, NOT directly co-measured this run to avoid contamination -- see that record's own note: 213 renders * ~25.68ms/flip mean =~5470ms), the combined total is only 11092ms = 38.1% of budget. 61.9% (18002ms) of the steady-state budget remains COMPLETELY UNACCOUNTED FOR even after instrumenting all 7 identified candidate phases (script_vm, render_backbuffer, input_poll, audio_sync, scene_construct, wait_next_frame, flip/present) across three full instrumentation rounds. This is an honest non-conclusion for the primary question, not rounded away: the dominant per-tick cost for Trilby's Notes remains unidentified. See PLAN.md for the full writeup, the TNP81A flip-instrumentation-pathology side-finding, and recommended next steps."
+  - environment: HW-486-66
+    date: 2026-09-16
+    sound_off: {tag: TNP81A, exit_code: 0, audio_vital_status: "NA", fps_p50: 0.57, fps_p95: 0.59, tick_rate: 3.29, frames_skipped: 834, critical_count: 0, warn_count: 0, binary_sha12: fa03f2f223b4}
+    note: "8-bit optimization pass, closing round, FLIP-INSTRUMENTED comparison (patches 0079/0080/0081 + DOSAGS_FLIP_INSTR=1). IMPORTANT SIDE-FINDING, not the primary result: enabling DOSAGS_FLIP_INSTR=1 for THIS game caused a 6.5x overall slowdown (duration_s=317, tick_rate=3.29) versus the clean TNP81B run (49s, tick_rate=23.71) with the exact same recipe otherwise -- reproduces and quantifies precisely the TNFI1 anomaly flagged earlier this session (81s vs TN8A3's 20s, cause then undetermined). THIS TIME the mechanism is directly visible: tickstats_wait_next_frame calls=198 total_ms=9577 mean_ms=48.37, but tickstats_wait_next_frame_requested sleep_calls=0 requested_ms=0 -- WaitForNextFrame() NEVER requested a positive sleep (correct: the game runs below its 40Hz target, so the 'jump ahead if lagging' clamp should always fire) yet still measured 48.37ms/call, ~44x the TNP81B clean run's own 1.10ms/call for the identical function. This is exactly the miscalibration signature patch 0081 was designed to detect (dos-hardware-validation's own busy-wait/BIOS-timer-starvation precedent) -- but the defect is NOT in WaitForNextFrame() itself (proven by TNP81B's own clean measurement of the same function); it is somewhere in DOSAGS_FLIP_INSTR's own instrumentation path (patch 0035, vendor/SDL/src/video/dos/SDL_dosframebuffer.c) that bleeds into unrelated per-tick cost, not yet identified. FLIP DATA (SDLDBG.LOG): mean=25.68ms/flip over one 100-flush block (100 of ~202 total render_backbuffer calls) -- a real, moderate per-flip cost, but the 6.5x OVERALL slowdown is far larger than flip cost alone could explain (202 calls * 25.68ms =~5187ms, only 1.6% of the 317000ms total). tickstats_script_vm's own outlier ballooned to max_ms=26578 (vs TNP81B's 3625) -- consistent with the re-entrant Wait()-during-GameTick() mechanism (patch 0079's own finding) inheriting whatever slowdown DOSAGS_FLIP_INSTR introduces elsewhere, not a separate script-side regression. Full raw data (RUNMANIFEST, STDOUT.TXT, SDLDBG.LOG) preserved. Real-hardware evidence that DOSAGS_FLIP_INSTR=1 itself has a serious, unquantified-until-now cost/measurement-distortion problem for at least this game -- flagged as a real, separate finding requiring its own follow-up, not investigated further this round. See PLAN.md and TNP81B's own record for the clean (uncontaminated) accounting this round's primary question rests on."
+  - environment: HW-486-66
+    date: 2026-09-16
+    sound_off: {tag: TNP82D, exit_code: 0, audio_vital_status: "NA", fps_p50: 4.81, fps_p95: 5.71, tick_rate: 23.83, frames_skipped: 822, critical_count: 0, warn_count: 0, binary_sha12: 4db9e6d17ae5}
+    note: "8-bit optimization pass, option (c): synthetic instrumentation-overhead test, per operator instruction. duration_s=49, tick_rate=23.83, matching the trusted baseline. Fourth real-hardware bracket-coverage addition (drawable_object_states, covering UpdateDrawableObjectStates()'s own UpdateRoomCameras()/update_cursor_over_location()/update_cursor_view() calls, inclusive of objects_scale's own nested cost): total_ms=0, adding NOTHING to the accounting -- same null result as rep_exec_vm and rep_exec_wrapper before it. FULL ACCOUNTING: named sub-phases (script_vm 4912 + scene_construct 530 + wait_next_frame 224 + input_handling 915 + room_check 3 + gui_context_cursor 4 + end_of_tick 3795 + rep_exec_wrapper 3001 [inclusive of rep_exec_vm] + drawable_object_states 0 [inclusive of objects_scale]) sum to 13384ms; update_game_once_total=39435ms; gap=26051ms (66.1% of update_game_once_total, 90.5% of the reconciled 28772ms steady-state budget for 1000 ticks) -- essentially IDENTICAL to every prior round despite four consecutive real, legitimate bracket-coverage fixes. SYNTHETIC OVERHEAD TEST (separate standalone probe, ovhtest.cpp, using the ACTUAL DosPortTickScope mechanism from dos_port_tick_timing.h, not a reimplementation): 19000 bracket invocations (matching the real ~18.6/tick average tallied from this run's own data) cost only 216.04ms total on real hardware (11.4 microseconds/call) -- nearly identical to DOSBox-X's own 200-216ms result. Scaled to this run's own ~18788 total bracket invocations, predicted pure instrumentation overhead is only ~214ms -- 0.82% of the 26051ms gap. CONCLUSION: the instrumentation mechanism itself is DEFINITIVELY RULED OUT as the explanation. NEW LEAD found while reviewing this data: rep_exec_vm/rep_exec_wrapper's own max_ms=3 (both) do NOT show the ~3669ms outlier that script_vm's own max_ms does -- meaning that outlier is reached via a DIFFERENT call path than the routine repeatedly_execute callbacks, almost certainly GameUpdateProcessEvents()/processallevents()'s own event-handler dispatch (RunScriptFunction() is also called from there, per earlier grep evidence) -- deliberately left unbracketed this whole investigation to avoid double-counting with script_vm, but its own WRAPPER overhead (event-vector copying, process_event()'s own dispatch logic before reaching RunScriptFunction) has never been measured. This is the strongest remaining lead, not yet tested. See PLAN.md for the full synthesis and recommended next step."
+  - environment: HW-486-66
+    date: 2026-09-16
+    sound_off: {tag: TNP82E, exit_code: 0, audio_vital_status: "NA", fps_p50: 4.81, fps_p95: 5.50, tick_rate: 23.58, frames_skipped: 820, critical_count: 0, warn_count: 0, binary_sha12: e08831dddb64}
+    note: "8-bit optimization pass, event-dispatch lead (per operator instruction). duration_s=49, tick_rate=23.58, matching trusted baseline. NEW BRACKET: process_events_dispatch (ac/event.cpp's processallevents(), whole-function, inclusive of script_vm's own nested cost -- every hotspot/region/room/on_event script this dispatches funnels through QueueScriptFunction()->RunScriptFunctionAuto()->RunScriptFunction(), already counted by script_vm; traced by reading the actual call chain, confirmed not assumed). RESULT: calls=1000 total_ms=7296 max_ms=3694 -- max_ms matches script_vm's own max_ms=3672 almost exactly, CONFIRMING the ~3.7s single-tick outlier reaches script_vm via THIS path (processallevents()'s event dispatch), not the routine repeatedly_execute path (rep_exec_vm/rep_exec_wrapper's own max_ms stays capped at 3ms, as found last round). process_events_dispatch's own total (7296ms) EXCEEDS script_vm's own total (4912ms) by 2384ms -- REAL, genuine wrapper overhead (the events vector copy, the dispatch loop, process_event()'s own routing logic before any script runs) that was never measured before, unlike the last four bracket additions (rep_exec_vm, rep_exec_wrapper, drawable_object_states -- all null results). FULL ACCOUNTING (process_events_dispatch and rep_exec_wrapper both inclusive of script_vm's own nested contribution, so raw script_vm is NOT separately summed to avoid double-counting): named phases sum to 15739ms (scene_construct 535 + wait_next_frame 222 + input_handling 917 + room_check 3 + gui_context_cursor 4 + end_of_tick 3761 + rep_exec_wrapper 3001 + drawable_object_states 0 + process_events_dispatch 7296); update_game_once_total=39847ms; gap=24108ms = 60.5% of update_game_once_total (82.5% of the reconciled 29217ms steady-state budget). This IS real, meaningful progress -- 1943ms (7.5% of the original 26051ms gap) newly explained, the first non-null result in five consecutive bracket additions -- but it does NOT close a large majority of the gap. 60.5%/82.5% remains genuinely unexplained even with this real, well-understood mechanism found and measured. Honest conclusion: real progress, not a complete answer. See PLAN.md for the full synthesis."
+  - environment: HW-486-66
+    date: 2026-09-16
+    sound_off: {tag: TNP83A, exit_code: 0, audio_vital_status: "NA", fps_p50: 5.17, fps_p95: 5.50, tick_rate: 23.52, frames_skipped: 821, critical_count: 0, warn_count: 0, binary_sha12: ca96f6c399c5}
+    note: "8-bit optimization pass, operator-directed catch-up-loop audit + a real fix found while checking it. HYPOTHESIS CHECKED (source-reading, no rig time needed for this part): does DOSAGS_FIXED_TIMESTEP's catch-up loop (patches 0047/0048, up to MAX_CATCHUP=5 extra UpdateGameOnce() calls per outer GameTick() iteration) cause a units mismatch between update_game_once_total and the sub-phase brackets? CLEANLY RULED OUT using TNP82E's own calls= data: update_game_once_total (calls=1000) matches auto_exit_tick's 1000 real logic ticks exactly, NOT GameTick()'s 180 outer render-frame iterations (frames_skipped=820 of 1000, ratio 5.56 catch-up ticks per outer iteration, confirmed); every named sub-phase bracket (script_vm, rep_exec_vm, rep_exec_wrapper, process_events_dispatch, game_objects_update, gui_poll, input_handling, room_check, ground_interactions, gui_context_cursor, persistent_anims, end_of_tick, objects_scale, drawable_object_states) scales 1:1 or 2:1 with the SAME 1000, never with 180 -- no bracket is bundling or under-sampling catch-up iterations. REAL BUG FOUND while tracing the full call graph to check that hypothesis: DosPortTickScope's destructor computed sample_ms via truncating integer division (uclock()-delta * 1000 / UCLOCKS_PER_SEC) BEFORE summing -- UCLOCKS_PER_SEC=1193180 is a genuinely fine-grained PIT clock (~0.84us/tick), but any single call under 1000us of real duration truncated to a summed sample of exactly 0. Nine phases (input_poll, render_backbuffer, audio_sync, game_objects_update, ground_interactions, persistent_anims, drawable_object_states, gui_poll, objects_scale) had been reporting EXACTLY total_ms=0 across 10000+ real calls every round this whole investigation -- this bug, not genuinely free code, is why. Distinct failure mode from the synthetic overhead test already run and ruled out (that measured the RAII mechanism's own CPU cost via an external wall-clock wrapper, 11.4us/call, genuinely negligible -- never tested whether the mechanism's OWN recorded total reflects real sub-millisecond production work, which is a different question). FIX (patch 0083): DosPortTickPhaseStats now accumulates total_us (long long, no per-sample truncation); truncation to whole ms happens exactly once, at print time, over the aggregate. DOSBox-X-validated first (mean_ms now shows real sub-ms precision, e.g. 0.30/11.92, instead of flat 0.00 -- confirms the fix works, though DOSBox-X's fast host CPU keeps real magnitudes small there). REAL-HARDWARE RESULT: exit_code=0, duration_s=49, tick_rate=23.52 (matches trusted baseline). The 9 previously-zero phases are now genuinely nonzero: input_poll 0->471ms, render_backbuffer 0->65ms, audio_sync 0->35ms, game_objects_update 0->168ms, ground_interactions 0->48ms, persistent_anims 0->8ms, drawable_object_states 0->139ms (confirms these were real, if individually small, per-call costs silently discarded by the truncation bug, not free code). FULL ACCOUNTING (same formula as TNP82E, avoiding double-counting nested phases): named phases now sum to 18340ms (was 15739ms); update_game_once_total=40277ms; gap=21937ms = 54.5% of update_game_once_total (was 60.5%). Gap closed by this fix: 2171ms = 9.0% of TNP82E's own 24108ms remaining gap. HONEST CONCLUSION: the catch-up-loop hypothesis was cleanly ruled out, but checking it surfaced a real, separate, now-fixed measurement bug that recovers real signal -- genuine progress, confirmed on real hardware, not rounded away. It is NOT a large-majority closure: 54.5% of update_game_once_total (21937ms) remains genuinely unaccounted for even with the truncation fix in place. See PLAN.md for the full writeup and open next steps."
+  - environment: HW-486-66
+    date: 2026-09-16
+    sound_off: {tag: TNP84A, exit_code: 0, audio_vital_status: "NA", fps_p50: 4.81, fps_p95: 5.71, tick_rate: 23.55, frames_skipped: 819, critical_count: 0, warn_count: 0, binary_sha12: dd910babcfc2}
+    note: "8-bit optimization pass, inline-code audit (per operator instruction: rule out substantial undelegated work in UpdateGameOnce()'s own body before committing to a DPMI/interrupt investigation). Read the complete literal source top to bottom, statement by statement -- the function is essentially just a dispatcher; every substantial call already funnels into a named bracket. Confirmed trivial (no loop, no allocation, only rare state-transition branches that do not fire in a normal run): set_our_eip() calls, mouse-position caching, the event-count snapshot, GameTimer.RenderCounter++, GameUpdateCheckProblems(), check_debug_keys(), ccNotifyScriptStillAlive(), update_gui_disabled_status() (all read fresh this round, not assumed). ONE real exception found: audio_core_entry_poll() on the catch-up/fast-forward early-return path (skip_render_and_wait branch) -- a genuinely substantial function (audio-slot poll loop + dos_audio_mixer_pump() + SDL_DOSAudioPump()), called on every catch-up tick (most ticks, when the game runs behind 40Hz), completely unbracketed; WaitForNextFrame() is its only other call site and that one is already inside wait_next_frame. Bracketed as catchup_audio_poll (patch 0084). DOSBox-X sanity first (62 calls, mean 11.74ms/call -- real, non-negligible even on the fast host, a good sign). REAL-HARDWARE RESULT: exit_code=0, duration_s=49, tick_rate=23.55 (matches trusted baseline). catchup_audio_poll: calls=819 total_ms=150 mean_ms=0.18 -- much smaller on real hardware than the DOSBox-X sanity run or my own earlier indirect cross-reference estimate (~1287ms, derived from wait_next_frame's numbers) suggested; direct measurement beats inference. FULL ACCOUNTING: named phases (adding catchup_audio_poll to TNP83A's own formula) sum to 18564ms; update_game_once_total=40375ms; gap=21811ms = 54.0% of update_game_once_total (was 54.5%). Gap closed by this patch: only 126ms = 0.6% of TNP83A's own 21937ms gap -- negligible. CONCLUSION: the inline-code check is CLEAN per the operator's own pre-registered branching -- no substantial undelegated work exists in UpdateGameOnce()'s own body; the one real exception found and fixed closes essentially nothing. 54.0% of update_game_once_total (21811ms) remains genuinely unaccounted for by anything reachable via a C-level function bracket. Per the operator's own instruction, proceeding to the DPMI/interrupt investigation next. See PLAN.md for the full writeup."
+  - environment: HW-486-66
+    date: 2026-09-16
+    sound_off: {tag: TNP85A, exit_code: 0, audio_vital_status: "NA", fps_p50: 4.81, fps_p95: 5.50, tick_rate: 23.86, frames_skipped: 823, critical_count: 0, warn_count: 0, binary_sha12: 35361bda6a67}
+    note: "8-bit optimization pass, DPMI/interrupt investigation, first real-hardware cell (per operator instruction: after the inline-code audit came back clean, proceed to DPMI). Read render_graphics() (ac/draw.cpp) fully: after scene_construct's bracketed block, it calls render_to_screen() -- completely unbracketed until now. render_to_screen() calls gfxDriver->Render(xoff,yoff,flip), which calls RenderToBackBuffer() (already bracketed as render_backbuffer) THEN Present() (ali3dsw.cpp) -- Present()'s own cost (a format-converting blit plus SDL_UpdateWindowSurface(), reaching the DOS framebuffer driver's flush mechanism) had never been measured. Bracketed as render_to_screen (whole function, patch 0085). Also added real-mode-callback visibility per operator suggestion: SDL_DOSVideoIsBankedMode()/SDL_DOSVideoGetBankSwitchCount() (SDL patch 0148), logged as video_banked_mode/bank_switches. DOSBox-X sanity: render_to_screen mean_ms=19.36 vs render_backbuffer's 0.02 -- immediately promising. REAL-HARDWARE RESULT: exit_code=0, duration_s=49, tick_rate=23.86. render_to_screen: calls=210 total_ms=25486 mean_ms=121.37 -- vs render_backbuffer's total_ms=65. video_banked_mode=0 bank_switches=0: this hardware/mode uses the LFB flush path, NOT banked VESA -- DPMI real-mode bank-switching is CLEANLY RULED OUT as the mechanism (zero switches occurred). NAIVE ACCOUNTING ANOMALY, investigated not glossed over: summing render_to_screen's whole total against the established formula gives sum=43835ms > update_game_once_total=39649ms -- IMPOSSIBLE for a true subset. Root cause found by reading every render_to_screen() call site: it has many callers beyond render_graphics() (ac/screen.cpp's fade-transition state machine -- exercised by this exact game's one-time room-transition fade at startup -- plus global_screen.cpp/video.cpp/engine.cpp). render_to_screen's own bracket is a whole-process accumulator, not a pure per-tick subset. Fix (patch 0086, next round): isolate the ONE call site actually reached from the per-tick path. See TNP86A for the clean result. See PLAN.md for full writeup."
+  - environment: HW-486-66
+    date: 2026-09-16
+    sound_off: {tag: TNP86A, exit_code: 0, audio_vital_status: "NA", fps_p50: 4.81, fps_p95: 5.50, tick_rate: 23.65, frames_skipped: 822, critical_count: 0, warn_count: 0, binary_sha12: 3ff4c2d741e5}
+    note: "8-bit optimization pass, DPMI/interrupt investigation, CLOSING ROUND. Isolated render_to_screen's own per-tick call site (patch 0086: render_to_screen_pertick, a second bracket at ac/draw.cpp's render_graphics()->render_to_screen() call specifically, excluding the fade-transition and other call sites TNP85A found were contaminating the whole-process total). DOSBox-X sanity: render_to_screen_pertick(128 calls)<render_to_screen(161 calls) as expected -- confirms the isolation works. REAL-HARDWARE RESULT: exit_code=0, duration_s=49, tick_rate=23.65 (matches trusted baseline). render_to_screen_pertick: calls=178 total_ms=21629 mean_ms=121.51 -- matches game_tick_outer's own 180 calls almost exactly, confirming this IS the clean per-tick slice. FULL, METHODOLOGICALLY CLEAN ACCOUNTING: named phases (using render_to_screen_pertick, not the whole-process render_to_screen) sum to 40144ms; update_game_once_total=40388ms; GAP=244ms = ONLY 0.6% OF UPDATE_GAME_ONCE_TOTAL. 21567ms closed vs TNP84A's own 21811ms gap (98.9%). CUMULATIVE: 25807ms of the ORIGINAL 26051ms gap from the very start of this diagnostic chain is now explained -- 99.1%. THE GAP IS EFFECTIVELY CLOSED. video_banked_mode=0/bank_switches=0 again -- confirms DPMI VESA bank-switching is definitively NOT the mechanism on this hardware; the real, dominant, previously-invisible per-tick cost is Present()'s own CPU-bound work (a format-converting SDL_BlitSurfaceScaled at SDL_SCALEMODE_NEAREST plus SDL_UpdateWindowSurface(), per ali3dsw.cpp's own comments), not a DPMI/interrupt mechanism at all. This is a genuine, source-grounded fix candidate for step C of the original 8-bit optimization mandate: eliminating or cheapening Present()'s own format-conversion/scaling blit. See PLAN.md for the full writeup and recommended next step."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNFIXA1, exit_code: 0, audio_vital_status: "NA", fps_p50: 5.22, fps_p95: 5.45, tick_rate: 23.71, frames_skipped: 821, critical_count: 0, warn_count: 0, binary_sha12: 3ff4c2d741e5}
+    note: "8-bit optimization pass, step C ABBA (patch 0087, corrected), cell A1 (baseline binary, sha12=3ff4c2d741e5). exit_code=0, duration_s=49, fps_p50=5.22, tick_rate=23.71 -- matches trusted baseline. render_to_screen_pertick mean_ms=119.97, confirming the slow generic-blit path ran. Fresh tag (never reused) to avoid the ABBAA1/ABBAB1 stale-target-file gotcha found during bring-up (see PLAN.md). Part of the pre-registered A/B/B/A sequence: TNFIXA1/TNFIXB1/TNFIXB2/TNFIXA2."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNFIXB1, exit_code: 0, audio_vital_status: "NA", fps_p50: 7.27, fps_p95: 7.69, tick_rate: 27.84, frames_skipped: 780, critical_count: 0, warn_count: 0, binary_sha12: 8a2d3a032833}
+    note: "8-bit optimization pass, step C ABBA (patch 0087, corrected), cell B1 (patched binary, sha12=8a2d3a032833). exit_code=0, duration_s=43, fps_p50=7.27, tick_rate=27.84. render_to_screen_pertick mean_ms=74.62 -- real ~38% reduction vs A's 119.97. Part of the pre-registered A/B/B/A sequence."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNFIXB2, exit_code: 0, audio_vital_status: "NA", fps_p50: 7.62, fps_p95: 7.69, tick_rate: 27.72, frames_skipped: 778, critical_count: 0, warn_count: 0, binary_sha12: 8a2d3a032833}
+    note: "8-bit optimization pass, step C ABBA (patch 0087, corrected), cell B2 (patched binary, sha12=8a2d3a032833). exit_code=0, duration_s=43, fps_p50=7.62, tick_rate=27.72 -- confirms B1 (tight B-to-B spread of 0.35, matching the established noise-floor magnitude). render_to_screen_pertick mean_ms=73.98. Part of the pre-registered A/B/B/A sequence."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNFIXA2, exit_code: 0, audio_vital_status: "NA", fps_p50: 4.81, fps_p95: 5.50, tick_rate: 23.67, frames_skipped: 822, critical_count: 0, warn_count: 0, binary_sha12: 3ff4c2d741e5}
+    note: "8-bit optimization pass, step C ABBA (patch 0087, corrected), cell A2 (baseline binary, sha12=3ff4c2d741e5) -- CLOSING cell. exit_code=0, duration_s=49, fps_p50=4.81, tick_rate=23.67 -- confirms A1 (A-to-A spread 0.41, matching the established 0.36 historical noise floor). render_to_screen_pertick mean_ms=121.03. FULL ABBA RESULT: fps_p50 A avg=5.015, B avg=7.445, DELTA=+2.43 -- clears the pre-registered >=1.0 threshold by 6.75x the noise floor. A REAL, DECISIVE WIN. tick_rate A avg=23.69 (59.2% of 40Hz target) -> B avg=27.78 (69.5% of target). All invalidity conditions checked clean (matching binary_sha12 pairing, env_block_sha, memory_min_free_kb; exit_code=0/critical=0/warn=0 throughout). See PLAN.md for the full writeup including the real bug caught and fixed during bring-up."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNP89A, exit_code: 0, audio_vital_status: "NA", fps_p50: 6.73, fps_p95: 7.27, tick_rate: 26.74, frames_skipped: 785, critical_count: 0, warn_count: 0, binary_sha12: 318c0b35f3b5}
+    note: "8-bit optimization pass, patch 0089 sub-phase breakdown of render_to_screen_pertick's remaining ~74-80ms/call (per operator instruction: instrument before guessing a second fix, same discipline that found patch 0087). exit_code=0, duration_s matches recipe, tick_rate=26.74. render_to_screen_pertick mean_ms=80.92 (215 calls, this run's own value; the established ~74ms average from the ABBA is consistent within normal run-to-run variance). SUB-PHASE BREAKDOWN (mean_ms, 248 calls -- note this call count is higher than render_to_screen_pertick's own 215 because these brackets sit inside Present()/render_to_screen(), which has other call sites too per patch 0086's own finding; per-call MEANS are the correct comparison, not raw totals, and they sum consistently: 0.07+0.18+0.29+0.01+57.70+24.66=82.91 vs render_to_screen_pertick's own 80.92, matching within noise): screen_overlay_vsync=0.07 (negligible, confirmed not assumed), present_get_win_surface=0.18 (negligible), present_sync_palette=0.29 (negligible), present_flip_handling=0.01 (negligible, confirms flip is inactive as expected), present_blit=57.70 (the dominant Present()-level cost), present_update_window=24.66 (SDL_UpdateWindowSurface itself -- a real, substantial cost, likely the necessary system-RAM-to-VRAM copy for this LFB-backed surface, not yet investigated further this round). present_blit's OWN internal breakdown: fastblit_lock=0.01 (negligible), fastblit_hreplicate=45.86 (THE SINGLE LARGEST remaining cost -- patch 0087's own horizontal-replication loop, even after removing the per-byte memcpy call, still pays real per-iteration loop overhead for the inner for-r-less-than-scale_x loop), fastblit_vmemcpy=9.74 (real but much smaller -- confirms the vertical memcpy-per-row approach is already efficient). CONCLUSION: fastblit_hreplicate is the clear next fix target (45.86ms of ~80ms, the single largest named cost); present_update_window (24.66ms) is real but likely a more fundamental system-RAM-to-VRAM copy cost requiring separate investigation, not addressed this round. See PLAN.md for the full writeup and next fix design."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNP90A, exit_code: 0, audio_vital_status: "NA", fps_p50: 8.57, fps_p95: 8.65, tick_rate: 31.50, frames_skipped: 769, critical_count: 0, warn_count: 0, binary_sha12: 7762d0ac915e}
+    note: "8-bit optimization pass, patch 0090 bring-up validation (branch-free 16-bit word-store fix for the 2x horizontal replicate, targeting fastblit_hreplicate, the largest cost patch 0089 identified). NOT an official ABBA cell -- correctness already confirmed separately via byte-identical screenshot hash against the pre-patch baseline; this cell exists to confirm the fix works on real hardware before designing a proper pre-registered ABBA. exit_code=0, fps_p50=8.57, tick_rate=31.50 (up from TNP89A's 26.74). fastblit_hreplicate mean_ms=21.96 -- down from TNP89A's 45.86, a real ~52% reduction, matching the fix's own design intent (half the store operations, no inner loop). render_to_screen_pertick mean_ms=56.43 -- down from TNP89A's 80.92. See PLAN.md for the full writeup and the fresh ABBA pre-registration against the current (patch 0087-only) baseline this fix will be measured against next."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNP2A1, exit_code: 0, audio_vital_status: "NA", fps_p50: 7.27, fps_p95: 7.69, tick_rate: 27.46, frames_skipped: 777, critical_count: 0, warn_count: 0, binary_sha12: 8a2d3a032833}
+    note: "8-bit optimization pass, patch 0090 ABBA (fresh, against the CURRENT patch-0087 baseline), cell A1 (patch-0087-only binary, sha12=8a2d3a032833, the SAME binary the prior ABBA validated as B, reused not rebuilt). exit_code=0, fps_p50=7.27, tick_rate=27.46 -- matches the prior ABBA's own B average (7.445/27.78) closely. Fresh tag, never reused. Part of the pre-registered A/B/B/A sequence: TNP2A1/TNP2B1/TNP2B2/TNP2A2."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNP2B1, exit_code: 0, audio_vital_status: "NA", fps_p50: 8.26, fps_p95: 8.65, tick_rate: 32.05, frames_skipped: 780, critical_count: 0, warn_count: 0, binary_sha12: 7762d0ac915e}
+    note: "8-bit optimization pass, patch 0090 ABBA, cell B1 (patch-0090 binary, sha12=7762d0ac915e, includes 0087+0089's instrumentation+0090's fastblit_hreplicate fix). exit_code=0, fps_p50=8.26, tick_rate=32.05. Part of the pre-registered A/B/B/A sequence."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNP2B2, exit_code: 0, audio_vital_status: "NA", fps_p50: 8.57, fps_p95: 8.65, tick_rate: 31.72, frames_skipped: 774, critical_count: 0, warn_count: 0, binary_sha12: 7762d0ac915e}
+    note: "8-bit optimization pass, patch 0090 ABBA, cell B2 (patch-0090 binary, sha12=7762d0ac915e). exit_code=0, fps_p50=8.57, tick_rate=31.72 -- confirms B1 (B-to-B spread 0.31, matching the established noise-floor magnitude). Part of the pre-registered A/B/B/A sequence."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNP2A2, exit_code: 0, audio_vital_status: "NA", fps_p50: 7.27, fps_p95: 7.69, tick_rate: 27.67, frames_skipped: 781, critical_count: 0, warn_count: 0, binary_sha12: 8a2d3a032833}
+    note: "8-bit optimization pass, patch 0090 ABBA, cell A2 (patch-0087-only binary, sha12=8a2d3a032833) -- CLOSING cell. exit_code=0, fps_p50=7.27, tick_rate=27.67 -- confirms A1 exactly (A-to-A spread 0.00). FULL ABBA RESULT: fps_p50 A avg=7.270, B avg=8.415, DELTA=+1.145 -- clears the pre-registered >=1.0 threshold, a real win by a narrower margin than patch 0087's own +2.43. tick_rate A avg=27.57 (68.9% of 40Hz target) -> B avg=31.88 (79.7% of target). All invalidity conditions checked clean. See PLAN.md for the full writeup."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNP91A, exit_code: 0, audio_vital_status: "NA", fps_p50: 22.12, fps_p95: 23.08, tick_rate: 33.47, frames_skipped: 464, critical_count: 0, warn_count: 0, binary_sha12: 2baf55f31095}
+    note: "8-bit optimization pass, patch 0091 bring-up validation (skip Present() entirely when the frame is unchanged since last presented, per operator instruction to investigate present_update_window's real cost rather than assume it is a hardware bandwidth ceiling). Read the actual mechanism: SDL_UpdateWindowSurface() (SDL_video.c) always wraps SDL_UpdateWindowSurfaceRects() with a single full-window rect; the DOS LFB path (SDL_dosframebuffer.c) already had dirty-rect dispatch from an earlier DOSKUTSU wave but always took the full-frame SDL_memcpy branch since AGS never provided a real partial rect list -- 307200 bytes copied every call regardless of what changed. Rather than build full sub-window dirty-rect tracking, cached the last-presented frame and skip the blit+update entirely when byte-identical (palette/xoff/yoff/flip also checked). NOT an official ABBA cell -- correctness already confirmed via byte-identical screenshot hash against the original baseline. exit_code=0, duration_s=37 (down from 43-49), fps_p50=22.12 (up from 8.57 -- more than DOUBLE), tick_rate=33.47 (up from ~31.7-32.0). present_skip_unchanged: calls=546 of present_dirty_check's 569 (95.9% skip rate) -- confirms this specific game/scene (room 1, no player input injected, a TAS-style auto-exit benchmark) is genuinely near-static almost the entire run. present_update_window dropped to calls=23 (down from ~248-264). render_to_screen_pertick mean_ms=16.25 -- down from ~74-80ms pre-0087, ~56ms after 0090. SECONDARY FINDING, not chased this round: present_dirty_check itself costs mean_ms=14.69/call, higher than a rough bandwidth estimate for a 76800-byte memcmp would suggest (~4-5ms at naive per-byte rates) -- possibly a non-word-optimized libc memcmp, a legitimate future target, but already vastly cheaper than the ~34-52ms it replaces for the 546 skipped calls. See PLAN.md for the full writeup and the fresh ABBA pre-registration against the current (patch-0090) baseline."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNP3A1, exit_code: 0, audio_vital_status: "NA", fps_p50: 8.57, fps_p95: 8.65, tick_rate: 32.00, frames_skipped: 775, critical_count: 0, warn_count: 0, binary_sha12: 7762d0ac915e}
+    note: "8-bit optimization pass, patch 0091 ABBA (fresh, against the CURRENT patch-0090 baseline), cell A1 (patch-0090-only binary, sha12=7762d0ac915e, the SAME binary the prior ABBA validated as B, reused not rebuilt). exit_code=0, fps_p50=8.57, tick_rate=32.00 -- matches the prior ABBA's own B average (8.415/31.88) closely. Part of the pre-registered A/B/B/A sequence: TNP3A1/TNP3B1/TNP3B2/TNP3A2."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNP3B1, exit_code: 0, audio_vital_status: "NA", fps_p50: 21.90, fps_p95: 22.12, tick_rate: 33.72, frames_skipped: 469, critical_count: 0, warn_count: 0, binary_sha12: 2baf55f31095}
+    note: "8-bit optimization pass, patch 0091 ABBA, cell B1 (patch-0091 binary, sha12=2baf55f31095, adds skip-Present-when-unchanged). exit_code=0, fps_p50=21.90, tick_rate=33.72. memory_min_free_kb=154880 (64KB lower than the A cells -- the new persistent frame-cache buffer, a real and expected property of this binary, confirmed consistent with B2). Part of the pre-registered A/B/B/A sequence."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNP3B2, exit_code: 0, audio_vital_status: "NA", fps_p50: 20.19, fps_p95: 22.86, tick_rate: 33.72, frames_skipped: 474, critical_count: 0, warn_count: 0, binary_sha12: 2baf55f31095}
+    note: "8-bit optimization pass, patch 0091 ABBA, cell B2 (patch-0091 binary, sha12=2baf55f31095). exit_code=0, fps_p50=20.19, tick_rate=33.72 -- confirms B1 (B-to-B spread 1.71, wider than prior rounds but still tiny relative to the +12.475 delta this ABBA measures). memory_min_free_kb=154880, matching B1 exactly. Part of the pre-registered A/B/B/A sequence."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNP3A2, exit_code: 0, audio_vital_status: "NA", fps_p50: 8.57, fps_p95: 8.65, tick_rate: 31.39, frames_skipped: 770, critical_count: 0, warn_count: 0, binary_sha12: 7762d0ac915e}
+    note: "8-bit optimization pass, patch 0091 ABBA, cell A2 (patch-0090-only binary, sha12=7762d0ac915e) -- CLOSING cell. exit_code=0, fps_p50=8.57, tick_rate=31.39 -- confirms A1 exactly on fps_p50 (A-to-A spread 0.00). FULL ABBA RESULT: fps_p50 A avg=8.570, B avg=21.045, DELTA=+12.475 -- clears the pre-registered >=1.0 threshold by 34.7x the historical noise floor, the largest win of this entire optimization pass. tick_rate A avg=31.70 (79.2% of 40Hz target) -> B avg=33.72 (84.3% of target). memory_min_free_kb differs between A(154944)/B(154880) by exactly 64KB but is IDENTICAL within each binary's own pair -- a real, explained property of patch 0091's new persistent cache buffer, not a confound. See PLAN.md for the full writeup."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNP4A1, exit_code: 0, audio_vital_status: "NA", fps_p50: 21.90, fps_p95: 22.86, tick_rate: 33.72, frames_skipped: 464, critical_count: 0, warn_count: 0, binary_sha12: 2baf55f31095}
+    note: "8-bit optimization pass, patch 0092 ABBA (closing round, against the CURRENT patch-0091 baseline), cell A1 (patch-0091-only binary, sha12=2baf55f31095, the SAME binary the prior ABBA validated as B, reused not rebuilt). exit_code=0, fps_p50=21.90, tick_rate=33.72 -- matches the prior ABBA's own B average (21.045/33.72) closely. Part of the pre-registered A/B/B/A sequence: TNP4A1/TNP4B1/TNP4B2/TNP4A2."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNP4B1, exit_code: 0, audio_vital_status: "NA", fps_p50: 34.62, fps_p95: 36.54, tick_rate: 33.77, frames_skipped: 166, critical_count: 0, warn_count: 0, binary_sha12: 123d6d53a911}
+    note: "8-bit optimization pass, patch 0092 ABBA, cell B1 (patch-0092 binary, sha12=123d6d53a911, word-sized frame comparison replacing memcmp). exit_code=0, fps_p50=34.62, tick_rate=33.77 -- far larger jump than the conservative pre-registered threshold (>=3.0) anticipated. frames_skipped=166, down from A1's 464. Part of the pre-registered A/B/B/A sequence."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNP4B2, exit_code: 0, audio_vital_status: "NA", fps_p50: 34.62, fps_p95: 36.54, tick_rate: 33.78, frames_skipped: 152, critical_count: 0, warn_count: 0, binary_sha12: 123d6d53a911}
+    note: "8-bit optimization pass, patch 0092 ABBA, cell B2 (patch-0092 binary, sha12=123d6d53a911). exit_code=0, fps_p50=34.62, tick_rate=33.78 -- confirms B1 exactly (B-to-B spread 0.00). Part of the pre-registered A/B/B/A sequence."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNP4A2, exit_code: 0, audio_vital_status: "NA", fps_p50: 22.12, fps_p95: 23.08, tick_rate: 33.72, frames_skipped: 474, critical_count: 0, warn_count: 0, binary_sha12: 2baf55f31095}
+    note: "8-bit optimization pass, patch 0092 ABBA, cell A2 (patch-0091-only binary, sha12=2baf55f31095) -- CLOSING cell for the whole 40fps push / 8-bit optimization pass. exit_code=0, fps_p50=22.12, tick_rate=33.72 -- confirms A1 closely (A-to-A spread 0.22). FULL ABBA RESULT: fps_p50 A avg=22.010, B avg=34.620, DELTA=+12.610 -- clears the pre-registered >=3.0 threshold by over 4x, essentially tied with patch 0091 as the largest single win of this pass. tick_rate flat (33.72->33.78, +0.06) -- tick_rate and fps_p50 now measure genuinely different bottlenecks; tick_rate is gated by the still-unoptimized per-logic-tick budget (script VM, event dispatch), fps_p50 by the render/present pipeline this whole pass targeted. memory_min_free_kb identical across all 4 cells (154880), confirming the pre-registration's own prediction (patch 0092 adds no persistent buffer, unlike patch 0091). CLOSING PASS SUMMARY: fps_p50 went from 5.015 (pre-step-C baseline) to 34.62 across patches 0087/0090/0091/0092 -- a 6.9x improvement, tick_rate plateauing at ~84.4% of the 40Hz target. See PLAN.md for the full writeup and closing summary table."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNY94A, exit_code: 0, audio_vital_status: "NA", fps_p50: 34.62, fps_p95: 36.54, tick_rate: 33.52, frames_skipped: 145, presents_real: 23, presents_skipped: 865, tick_rate_steady: 40.50, tick_stalls: [{"index": 1, "ms": 1132}, {"index": 2, "ms": 734}], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 23 of 888 presents real (2.6%), 865 skipped as unchanged -- STATIC-SCREEN figure, not a gameplay fps", critical_count: 0, warn_count: 0, binary_sha12: 621d9a024f97}
+    note: "40/40 plan P0 -- Gate 1's baseline under the new yardstick (patches 0093/0094, instrumentation only; same idle recipe as every TNP cell). Whole-run tick_rate=33.52; tick_rate_steady=40.50 (998 ticks in 24.64 s), INSIDE the 40 +/- 2% band. Decomposition, measured with exclusive tick self-time: preloop 3130 ms (placeholder-room fade-out + game_start + room load, all post-anchor) + loop 26507 ms + ~200 ms shutdown = the 29.83 s runtime; 2 stall ticks (index 1: 1132 ms, index 2: 734 ms -- the blocking fade-in and its nested tick). fps_p50=34.62 is render passes/s on a STATIC screen: 23 of 888 presents real, 865 skipped as unchanged; blit path fast=23 generic=0 at 1 B/px. NOT an ABBA -- a single yardstick cell, no performance claim. Also the cell that exposed an arithmetic error of mine (inclusive brackets double-count nested ticks) -- see PLAN.md 40/40 plan, P0 item 1."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNC96A7, exit_code: 0, audio_vital_status: "NA", fps_p50: 34.62, fps_p95: 35.58, tick_rate: 33.53, frames_skipped: 155, presents_real: 23, presents_skipped: 855, tick_rate_steady: 40.51, tick_rate_window: 40.03, clock_crosscheck_ratio: 0.99997, hw_recovered: false, tick_stalls: [{"index": 1, "ms": 1146}, {"index": 2, "ms": 733}], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 23 of 878 presents real (2.6%), 855 skipped as unchanged -- STATIC-SCREEN figure, not a gameplay fps", critical_count: 0, warn_count: 0, binary_sha12: a2d632e0ef4c}
+    note: "40/40 plan P1 item 2, pre-registered ABBA (A B B A = TNC96A7 B5 B6 A8), Trilby's Notes idle 1000 ticks, fixed timestep, RTC cross-check on. A arm, patches 0095+0097+0098, old gettimeofday clock and sleep_for pacer. Result: fps_p50 34.62 to 40.00 (WIN, threshold +3.0), tick_rate_window 40.00, whole-run tick_rate unchanged within 0.5 as predicted, clock_crosscheck ratio 0.99997 in all four cells. See PLAN.md."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNC96B5, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.00, fps_p95: 40.04, tick_rate: 33.73, frames_skipped: 20, presents_real: 23, presents_skipped: 990, tick_rate_steady: 40.57, tick_rate_window: 40.00, clock_crosscheck_ratio: 0.99997, hw_recovered: false, tick_stalls: [{"index": 1, "ms": 1139}, {"index": 2, "ms": 620}], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 23 of 1013 presents real (2.3%), 990 skipped as unchanged -- STATIC-SCREEN figure, not a gameplay fps", critical_count: 0, warn_count: 0, binary_sha12: 7e00e95d8c41}
+    note: "40/40 plan P1 item 2, pre-registered ABBA (A B B A = TNC96A7 B5 B6 A8), Trilby's Notes idle 1000 ticks, fixed timestep, RTC cross-check on. B arm, adds patch 0096: uclock-backed Clock and FastClock plus deadline pacer. Result: fps_p50 34.62 to 40.00 (WIN, threshold +3.0), tick_rate_window 40.00, whole-run tick_rate unchanged within 0.5 as predicted, clock_crosscheck ratio 0.99997 in all four cells. See PLAN.md."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNC96B6, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.00, fps_p95: 40.04, tick_rate: 33.75, frames_skipped: 20, presents_real: 23, presents_skipped: 990, tick_rate_steady: 40.57, tick_rate_window: 40.00, clock_crosscheck_ratio: 0.99997, hw_recovered: false, tick_stalls: [{"index": 1, "ms": 1139}, {"index": 2, "ms": 620}], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 23 of 1013 presents real (2.3%), 990 skipped as unchanged -- STATIC-SCREEN figure, not a gameplay fps", critical_count: 0, warn_count: 0, binary_sha12: 7e00e95d8c41}
+    note: "40/40 plan P1 item 2, pre-registered ABBA (A B B A = TNC96A7 B5 B6 A8), Trilby's Notes idle 1000 ticks, fixed timestep, RTC cross-check on. B arm, adds patch 0096: uclock-backed Clock and FastClock plus deadline pacer. Result: fps_p50 34.62 to 40.00 (WIN, threshold +3.0), tick_rate_window 40.00, whole-run tick_rate unchanged within 0.5 as predicted, clock_crosscheck ratio 0.99997 in all four cells. See PLAN.md."
+  - environment: HW-486-66
+    date: 2026-09-17
+    sound_off: {tag: TNC96A8, exit_code: 0, audio_vital_status: "NA", fps_p50: 34.62, fps_p95: 36.19, tick_rate: 33.47, frames_skipped: 150, presents_real: 23, presents_skipped: 860, tick_rate_steady: 40.47, tick_rate_window: 40.02, clock_crosscheck_ratio: 0.99997, hw_recovered: false, tick_stalls: [{"index": 1, "ms": 1128}, {"index": 2, "ms": 720}], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 23 of 883 presents real (2.6%), 860 skipped as unchanged -- STATIC-SCREEN figure, not a gameplay fps", critical_count: 0, warn_count: 0, binary_sha12: a2d632e0ef4c}
+    note: "40/40 plan P1 item 2, pre-registered ABBA (A B B A = TNC96A7 B5 B6 A8), Trilby's Notes idle 1000 ticks, fixed timestep, RTC cross-check on. A arm, patches 0095+0097+0098, old gettimeofday clock and sleep_for pacer. Result: fps_p50 34.62 to 40.00 (WIN, threshold +3.0), tick_rate_window 40.00, whole-run tick_rate unchanged within 0.5 as predicted, clock_crosscheck ratio 0.99997 in all four cells. See PLAN.md."
+
+compat_sweep:
+  date: 2026-09-15
+  auto_exit_tick: 200
+  boots: {ok: true, exit_code: 0}
+  title: {ok: true, evidence: "STDOUT.TXT: '(room:1) Now in room 1', no crash, exit_code=0"}
+  first_room: {ok: false, failure_reason: "only room 1 was ever loaded during the drive window -- this game's title/start screen waits for player input to advance and none was injected this pass; not a defect, an honest scope limit"}
+  playable: {ok: false, attempted: false, failure_reason: "no input-injection automation exists for binary-only games this pass (no AutoPilot module, no generic DOSBox-X input harness proven yet)"}
+  complete: {ok: false, attempted: false, failure_reason: "not attempted, same reason as playable"}
+  screenshot: attempted via run-dosbox.sh --interactive + import -window root (the same mechanism AGS Quest's own 2026-09-10 title-screen capture used) at t=5s/11s then a retry at t=3s; all three misses (DOSBox-X boot menu bar over black, then the post-quit C:\> prompt) because the entire run -- boot, engine init, 200-tick logic window, clean shutdown -- completes in ~7s wall-clock under the fast conf, leaving no reliably hittable window for a blind-timed screenshot. Not repeated for the other four games -- title is grounded in the STDOUT.TXT room-line evidence instead, which is deterministic where screenshot timing was not. See PLAN.md's Compatibility sweep section.

@@ -1,0 +1,176 @@
+From 610e4aa15128da1449a025323b292b9b20c5025d Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 16:57:11 -0700
+Subject: [PATCH] [AGS] ali3dsw: sync the window surface's palette from
+ Allegro's, 8-bit path
+
+Follows patch 0029's window-surface rewrite: for an 8-bit game,
+_vscreenSurface is INDEX8, so index values presented to the window
+surface are meaningless without a matching palette -- this had no fix
+yet (0029 attached only a placeholder palette).
+
+Located every AGS call site that sets the palette (a tree-wide grep for
+set_palette/set_palette_range across Engine/ and Common/, 17 real
+sites: ac/screen.cpp x8, ac/global_palette.cpp x3, main/engine.cpp x1,
+media/video/flic_player.cpp x2, plugin/agsplugin.cpp x1, ac/draw.cpp
+x1, per PATCH-SEQUENCE.md's own open item on this) -- every one of them
+calls Allegro's own set_palette()/set_palette_range() directly, which
+only ever touches Allegro's single global palette state (color.c).
+There is no graphics-driver call in that chain to hook, and none of
+these 17 sites need to change: reading Allegro's global palette once
+per present (get_palette(), already used the same way elsewhere in this
+engine, e.g. screen.cpp's own fade code) is sufficient and needs no
+new call site anywhere else in the engine.
+
+The real design decision is how to get that palette into SDL correctly,
+not where to read it from. Read SDL_pixels.c's SDL_MapSurface()/Map1to1()
+directly (not assumed): two INDEX8 surfaces with merely equal-content
+but distinct SDL_Palette objects are not guaranteed SDL's fast identity
+blit path -- SDL_IsSamePalette()'s identity check can otherwise fall
+back to building a nearest-color remap table between them. So
+SyncPaletteIfNeeded() makes _vscreenSurface share the exact same
+SDL_Palette object as the window surface (attached once, cheap pointer
+check every other frame) rather than keeping two independently-updated
+palettes in sync by content -- the _flipScratch surface inherits the
+same shared object for free, since patch 0029's own lazy-creation code
+already copies whatever palette _vscreenSurface has at that point.
+
+Colors are only re-pushed to SDL when Allegro's palette has actually
+changed since the last present (a 256-entry memcmp against a cached
+copy), not unconditionally every frame -- this port's whole point is a
+486, and syncing 256 unchanged colors every single frame is pure waste.
+RGB::a (color.h: "alpha if available, otherwise a filler") is
+discarded in favor of forcing full opacity: this engine's 8-bit palette
+never carries meaningful per-color alpha, transparency is a reserved
+mask index instead.
+
+Verified: ali3dsw.cpp.obj compiles clean in isolation against the real
+DJGPP build flags (same scratch-stub isolation from gfxfilter_sdl_renderer.h
+as patch 0029, not landed).
+---
+ Engine/gfx/ali3dsw.cpp | 63 ++++++++++++++++++++++++++++++++++++++++++
+ Engine/gfx/ali3dsw.h   | 13 +++++++++
+ 2 files changed, 76 insertions(+)
+
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index 9b83f2416..8b67e05d3 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -13,6 +13,7 @@
+ //=============================================================================
+ #include "gfx/ali3dsw.h"
+ #include <algorithm>
++#include <cstring>
+ #include <stack>
+ #include "ac/sys_events.h"
+ #include "gfx/ali3dexception.h"
+@@ -609,6 +610,66 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+   return from;
+ }
+ 
++void SDLRendererGraphicsDriver::SyncPaletteIfNeeded(SDL_Surface *win_surface)
++{
++    if (!SDL_ISPIXELFORMAT_INDEXED(_vscreenSurface->format))
++        return; // 16-bit game, no palette involved
++
++    // DOS-PORT: AGS calls Allegro's own set_palette()/set_palette_range()
++    // directly (Engine/ac/screen.cpp, global_palette.cpp, main/engine.cpp,
++    // media/video/flic_player.cpp, plugin/agsplugin.cpp, ac/draw.cpp --
++    // located via a tree-wide grep, 17 real call sites) rather than
++    // through any graphics-driver call -- there is no call site to hook
++    // here, by design, not because they weren't found. Instead, read
++    // Allegro's single global palette once per present and push it into
++    // the SAME SDL_Palette object shared by the window surface,
++    // _vscreenSurface and _flipScratch: sharing one object (not merely
++    // matching contents) makes SDL_pixels.c's SDL_IsSamePalette() identity
++    // check trivially true, so SDL's blit-mapping code treats this as an
++    // exact index passthrough rather than building a nearest-color remap
++    // table between two independently-changing palettes (confirmed by
++    // reading SDL_pixels.c's Map1to1()/SDL_MapSurface() directly -- two
++    // INDEX8 surfaces with merely equal-content-but-distinct palette
++    // objects are not guaranteed the fast identity path).
++    SDL_Palette *pal = SDL_GetSurfacePalette(win_surface);
++    if (!pal)
++        pal = SDL_CreateSurfacePalette(win_surface);
++    if (!pal)
++    {
++        Debug::Printf(kDbgMsg_Error, "SDLRenderer: failed to create window surface palette: %s", SDL_GetError());
++        return;
++    }
++    if (SDL_GetSurfacePalette(_vscreenSurface) != pal)
++        SDL_SetSurfacePalette(_vscreenSurface, pal);
++    // _flipScratch (if it exists yet) picks up this same shared palette
++    // object when Present() lazily creates it, since that happens after
++    // this call and copies _vscreenSurface's (by-then-updated) palette.
++
++    PALETTE al_pal;
++    get_palette(al_pal);
++    if (_lastAllegroPaletteSynced && std::memcmp(al_pal, _lastAllegroPalette, sizeof(PALETTE)) == 0)
++        return; // unchanged since last present, nothing to push
++
++    // DOS-PORT: Allegro's RGB::a is "alpha if available, otherwise a
++    // filler" (color.h) -- this engine's own 8-bit palette entries never
++    // carry a meaningful alpha (transparency is expressed as a reserved
++    // mask *index*, not a low-alpha palette color), so every synced color
++    // is forced fully opaque here rather than passed through unchanged.
++    SDL_Color sdl_colors[PAL_SIZE];
++    for (int i = 0; i < PAL_SIZE; ++i)
++    {
++        sdl_colors[i].r = al_pal[i].r;
++        sdl_colors[i].g = al_pal[i].g;
++        sdl_colors[i].b = al_pal[i].b;
++        sdl_colors[i].a = SDL_ALPHA_OPAQUE;
++    }
++    if (!SDL_SetPaletteColors(pal, sdl_colors, 0, PAL_SIZE))
++        Debug::Printf(kDbgMsg_Error, "SDLRenderer: SDL_SetPaletteColors failed: %s", SDL_GetError());
++
++    std::memcpy(_lastAllegroPalette, al_pal, sizeof(PALETTE));
++    _lastAllegroPaletteSynced = true;
++}
++
+ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+ {
+     SDL_Window *window = sys_get_window();
+@@ -621,6 +682,8 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+         return;
+     }
+ 
++    SyncPaletteIfNeeded(win_surface);
++
+     // DOS-PORT: AGS's own screen-shake / mirror-display script features
+     // (play.shake_screen_yoff / play.screen_flipped -- see Engine/ac/draw.cpp's
+     // render_to_screen(), the real caller of this 3-arg overload) still need
+diff --git a/Engine/gfx/ali3dsw.h b/Engine/gfx/ali3dsw.h
+index 526ce067c..556b275dc 100644
+--- a/Engine/gfx/ali3dsw.h
++++ b/Engine/gfx/ali3dsw.h
+@@ -337,6 +337,12 @@ private:
+     // Blits the virtual screen (via _vscreenSurface) onto the window surface
+     // and presents it.
+     void Present(int xoff = 0, int yoff = 0, Common::GraphicFlip flip = Common::kFlip_None);
++    // For the 8-bit path: pushes Allegro's current global palette into the
++    // SDL_Palette shared by the window surface and _vscreenSurface, if it
++    // has changed since the last present. See Present()'s own comment for
++    // why AGS's set_palette()/set_palette_range() call sites don't need a
++    // hook of their own.
++    void SyncPaletteIfNeeded(SDL_Surface *win_surface);
+ 
+ 
+     PSDLRenderFilter _filter;
+@@ -360,6 +366,13 @@ private:
+     // returns false) and may rely on unredrawn regions persisting.
+     // Lazily allocated on first use, same lifecycle as _vscreenSurface.
+     SDL_Surface *_flipScratch = nullptr;
++    // Cached copy of Allegro's global palette (color.h's PALETTE, RGB[256]),
++    // compared each present so an unchanged palette isn't re-pushed to SDL
++    // every frame. _lastAllegroPaletteSynced stays false until the first
++    // real sync, so an all-black initial palette (a legitimate state, e.g.
++    // fade-to-black) is never mistaken for "nothing to sync yet".
++    PALETTE _lastAllegroPalette{};
++    bool _lastAllegroPaletteSynced = false;
+ 
+     // Original virtual screen created and managed by the renderer.
+     std::unique_ptr<Bitmap> _origVirtualScreen;
+-- 
+2.47.3
+

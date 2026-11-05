@@ -1,0 +1,42 @@
+[menu]
+menuitem=PGSB, PicoGUS Sound Blaster
+menuitem=PGADLIB, PicoGUS AdLib
+menuitem=PGGUS, PicoGUS Ultrasound
+menuitem=VIBRA, Vibra16 + PicoGUS USB (CD on D:)
+menuitem=NET, Networking (ODI + mTCP) -- transfers only, NOT measured runs
+menuitem=CLEAN, Recovery boot -- no sound, no video init, no TSRs
+menudefault=PGSB,5
+
+[COMMON]
+DOS=HIGH,UMB
+FILES=30
+BUFFERS=20
+LASTDRIVE=M
+STACKS=0,0
+SHELL=C:\DOS\COMMAND.COM C:\DOS\ /P /E:1024
+DEVICE=C:\DOS\HIMEM.SYS /TESTMEM:OFF
+DEVICE=C:\DOS\EMM386.EXE NOEMS I=B000-B7FF I=C800-EFFF
+REM real ATAPI optical drive (device OPTICAL = drive E:); present in EVERY profile
+DEVICEHIGH=C:\DRIVERS\VIDECDD.SYS /D:OPTICAL
+REM --- DOSAGS TEMPORARY, 2026-09-20: 2 MB RAM disk for the stall
+REM --- investigation's different-medium cell. Operator-approved, one-time.
+REM --- REMOVE THIS LINE AND RESTORE FROM CONFIG.SYS.original WHEN DONE.
+DEVICEHIGH=C:\WINDOWS\RAMDRIVE.SYS 2048 512 128 /E
+
+
+[PGSB]
+
+[PGADLIB]
+
+[PGGUS]
+
+[VIBRA]
+REM PicoGUS USB-mode CD-ROM emulation (device MSCD000 = drive D:); USB mode only
+DEVICEHIGH=C:\PICOGUS\CDMKE.SYS /P:250 /Q
+
+[NET]
+
+[CLEAN]
+REM Deliberately empty. [COMMON] above still loads HIMEM, EMM386 and the
+REM optical driver, so this is NOT a driverless boot -- it is a boot where
+REM nothing in AUTOEXEC.BAT can hang. See the :CLEAN block there.

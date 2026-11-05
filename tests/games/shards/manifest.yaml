@@ -1,0 +1,263 @@
+# Shards of God -- porting manifest, per PLAN.md's "Game porting
+# framework" section. Produced 2026-09-15 alongside the 32-bit display
+# path's real-game validation and the 8/16/32-bit KPI comparison --
+# see tests/games/shards/PIN for source/license, inspect-report.json for
+# the tool's raw output.
+
+id: shards
+title: "Shards of God"
+source: see PIN (this directory) -- sha256 + download URL, never the game
+        archive itself
+
+data_version: 3060203
+compiled_with_editor: "3.6.2.10"
+loadable: true
+legacy_audio_system: false
+
+resolution: "320x200"
+color_depth: 32   # native -- this is one of the two real 32-bit games
+                  # used to validate patches/ags/0075 (native 32-bit
+                  # display path) and patches/ags/0076
+                  # (DOSAGS_FORCE_COLOR_DEPTH benchmarking override)
+
+audio:
+  embedded_clip_count: 124   # in the main .ags CLIB itself; mostly OGG
+                              # (123 transcoded, 1 already WAV) -- see
+                              # convert-report.json
+  sibling_vox: true           # audio.vox, NOT embedded -- a real gap in
+                               # this framework found and fixed while
+                               # porting this game (tools/port-game/
+                               # README.md, 2026-09-15). 21 clips, all
+                               # OGG, all transcoded.
+  needs_host_transcode: true
+fonts:
+  - {file: agsfnt0.ttf, kind: TrueType (alfont/FreeType path)}
+  - {file: agsfnt1.ttf, kind: TrueType (alfont/FreeType path)}
+  - {file: agsfnt3.ttf, kind: TrueType (alfont/FreeType path)}
+  - {file: agsfnt4.ttf, kind: TrueType (alfont/FreeType path)}
+  - {file: AGSFNT2.WFN, kind: native bitmap (WFNFont)}
+
+clib:
+  original_lib_version: 30
+  repacked_lib_version: 30
+  asset_count: 142
+
+driving_recipe: "No AutoPilot module (binary-only game). Same recipe as
+  the 8/16/32-bit KPI comparison's other cells: DOSAGS_TAS_AUTO_EXIT_TICK=
+  1000 + DOSAGS_FIXED_TIMESTEP=1 (decouples game-speed from render fps,
+  see PLAN.md's 'Fixed timestep and the fps KPI' section), sound disabled
+  (ACSETUP-OFF.CFG) to remove the audio confound entirely since the
+  variable under test is color depth, not audio. The 16-bit arm adds
+  DOSAGS_FORCE_COLOR_DEPTH=16 (patches/ags/0076) on top of the same
+  recipe -- confirmed via each run's own 'Graphics mode set: ... (N-bit)'
+  log line, never trusted from the requested env var alone."
+
+sibling_vox_note: "audio.vox must be staged alongside SHARDS.ags for the
+  engine to log audio.vox found and initialized -- tools/port-game/
+  port_game.py layout now copies it automatically (2026-09-15 fix), no
+  manual step needed."
+
+# Structured driving recipe for tools/port-game/port_game.py validate
+# (added 2026-09-16 so this game runs from its manifest alone -- the
+# Game porting framework milestone's own gate -- instead of the hand-
+# typed run-dosbox.sh flags the 2026-09-15 cells used). Arms are the
+# color-depth comparison's own two DOSBox-X cells; DOSAGS_FIXED_TIMESTEP=1
+# is applied by validate itself (its default, checked against patch
+# 0047's own "DOS-PORT fixed-timestep: ENABLED" log line), and each arm's
+# depth is witnessed from the engine's own "Graphics mode set" line, not
+# trusted from the env var -- the same rule the driving_recipe above
+# states in prose.
+validate:
+  pkg: shards
+  auto_exit_tick: 1000
+  timeout_s: 300
+  arms:
+    depth_32_native:
+      cfg: ACSETUP-OFF.CFG
+      env: {}
+    depth_16_forced:
+      cfg: ACSETUP-OFF.CFG
+      env:
+        DOSAGS_FORCE_COLOR_DEPTH: "16"
+
+expected_runmanifest_dosbox_x:
+  depth_32_native:
+    exit_code: 0
+    audio_vital_status: "NA"
+    stdout_contains:
+      - "Graphics mode set: 640 x 480 (32-bit) fullscreen desktop"
+  depth_16_forced:
+    exit_code: 0
+    audio_vital_status: "NA"
+    stdout_contains:
+      - "Graphics mode set: 640 x 480 (16-bit) fullscreen desktop"
+
+# validated: -- one entry per environment. DOSBox-X entries confirm
+# MECHANISM only (never a performance number, per this hub's hard rule).
+# Real-hardware entries are the actual KPI data.
+validated:
+  - environment: dosbox-x
+    date: 2026-09-15
+    note: "mechanism confirmation only, not a performance claim"
+    depth_32_native: {tag: S32A, exit_code: 0, fps_p50: 40.00, fps_p95: 40.38, tick_rate: 37.85, graphics_mode_log: "Graphics mode set: 640 x 480 (32-bit) fullscreen desktop"}
+    depth_16_forced: {tag: S16A, exit_code: 0, fps_p50: 32.69, fps_p95: 35.24, tick_rate: 37.62, graphics_mode_log: "Graphics mode set: 640 x 480 (16-bit) fullscreen desktop"}
+  - environment: HW-486-66
+    date: 2026-09-15
+    depth_32_native: {tag: S32B7, exit_code: 0, fps_p50: 0.05, fps_p95: 0.05, tick_rate: 0.32, duration_s: 3147, binary_sha12: b60f6e538323, graphics_mode_log: "Graphics mode set: 640 x 480 (32-bit) fullscreen desktop"}
+    note: "REAL RESULT, after a long real-hardware investigation across
+      7 attempts (S32B1-S32B7) -- see git history for the full account,
+      condensed here.
+
+      Attempts 1-3 (S32B1/B2/B3) never reached RUN.BAT at all -- send-file
+      failed to verify SHARDS.AGS (2x) or RUN.BAT (1x) after ~180-190s
+      each, before vcctrl's REFUSE_BYTES had been raised enough AND
+      before its TRANSFER_TIMEOUT_S fix (see below). A real run-rig.sh
+      bug was found and fixed along the way (wait_for_job_done masking a
+      real send-file failure as UNKNOWN, hanging 30 min instead of
+      failing fast) -- orthogonal to the transfer itself succeeding.
+
+      vcctrl's diagnosis (docs/lab/OPEN-FAULTS.md sec. 26-27): a flat
+      TRANSFER_TIMEOUT_S=180.0 never scaled to file size, never touched
+      when REFUSE_BYTES moved 64->150MB -- SHARDS.AGS's real round trip
+      needed ~221-255s, past the fixed window every time. Fixed properly
+      (scales with file size, commit b5f4e37) rather than a one-off bump.
+
+      Attempt 4 (S32B4) transferred and ran cleanly but measured the
+      WRONG GAME: a stale NOTES.AGS (Trilby's Notes, left over from an
+      earlier cell) sorted before SHARDS.AGS in AGS's own directory-scan
+      game-file lookup, since RUN.BAT invoked AGS.EXE with no explicit
+      path. Fixed in run-rig.sh (explicit $AGS_PKG_NAME argument, a
+      strict narrowing of main.cpp's own cmdline parsing) -- a real,
+      general correctness gap for any campaign testing more than one
+      game against the same target directory, not specific to this
+      incident.
+
+      Attempt 5 (S32B7's first launch) ran the correct game and rendered
+      its real 32-bit title screen correctly, then appeared to hang after
+      ~20 minutes -- confirmed genuinely wedged (PS/2 dead, vcctrl's own
+      verify_input failed) via unresponsive mouse-move over 45s and flat
+      screen brightness. Power-cycled (operator go-ahead); root cause not
+      identified (not this rig's own RDTSC/EMM386 class per vcctrl's own
+      read -- a real, separate open question, filed but not chased
+      further here since a clean retry was the more useful next step).
+
+      Attempt 6 (S32B7 retry): a NEW run-rig.sh safety check (round-trip
+      vc verify-input after the wait, before collecting -- added directly
+      in response to attempt 5) itself had a bug (missing --as, refused
+      due to lock contention with the script's own held lock, not a real
+      hardware fault) -- fixed. Manual relaunch under a directly-held lock
+      confirmed the REAL finding this whole investigation was chasing:
+      the game was never hung at all past this point -- it was running
+      correctly at an extraordinarily low real frame rate. Confirmed via
+      mouse hover-highlight changes on the QUIT menu item appearing only
+      after multi-minute gaps, and confirmed conclusively by the final
+      RUNMANIFEST above: fps_p50=0.05 (~1 frame per 20s), tick_rate=0.32.
+
+      Getting a clean quit for real RUNMANIFEST data needed a further
+      real-input-mechanics finding: `mouse click` (an instantaneous
+      press+release) can fall entirely between two of the game's own
+      widely-spaced input polls and never be observed, since a discrete
+      edge needs to overlap an actual poll to be seen -- unlike cursor
+      POSITION, which is always current whenever the game does poll.
+      `mouse down` held for a full poll interval, then `mouse up`
+      (the release edge, not the press, is what AGS's GUI button click
+      handling reacted to here) reliably registered. Confirmed live in
+      STDOUT.TXT: 'Mouse click over GUI 2' appears three times, followed
+      by a clean 'Quitting the game...' / '***** ENGINE HAS SHUTDOWN'.
+
+      Also found and worked around: the rig's own analog capture stick
+      (vcctrl_shot) cannot reliably judge frames while this game's 32-bit
+      VESA mode is active (returned a stuck frame, then explicit
+      no-picture errors) -- vcctrl_camera_shot (the physical webcam)
+      confirmed ground truth throughout when the analog capture couldn't.
+      Filed as a separate, not-yet-diagnosed vcctrl-side finding
+      (docs/lab/OPEN-FAULTS.md sec. 28).
+
+      BOTTOM LINE: native 32-bit color depth rendering (patches/ags/0075)
+      is real and correct on real HW-486-66 hardware -- title screen
+      renders with correct colors/content, GUI hover and click both work
+      -- but at native depth this specific scene's complexity runs at
+      roughly 0.05 fps, ~100x slower than Trilby's Notes' native 8-bit
+      4.99 fps on the same hardware tier. This is a real, severe,
+      measured performance finding for the 40fps KPI push: native 32-bit
+      is not viable on 486-class hardware at this content complexity
+      without significant optimization work, independent of whether the
+      display PATH itself is correct (it is)."
+  - environment: dosbox-x
+    date: 2026-09-16
+    depth_32_native: {tag: VSHAIVE, exit_code: 0, audio_vital_status: "NA", fps_p50: 39.42, fps_p95: 40.38, tick_rate: 37.94, frames_skipped: 53, critical_count: 0, warn_count: 0, binary_sha12: b60f6e538323}
+    depth_16_forced: {tag: VSHACED, exit_code: 0, audio_vital_status: "NA", fps_p50: 32.38, fps_p95: 35.58, tick_rate: 37.47, frames_skipped: 231, critical_count: 0, warn_count: 0, binary_sha12: b60f6e538323}
+    note: "Game porting framework gate check: first run driven ENTIRELY by this manifest's own validate: block (added 2026-09-16) via tools/port-game/port_game.py validate -- no hand-typed run-dosbox.sh flags. Mechanism confirmation only, never a performance claim. Both depth arms pass every check including the two new engine-log witnesses: patch 0047's 'DOS-PORT fixed-timestep: ENABLED' line (validate now sets DOSAGS_FIXED_TIMESTEP=1 by default) and each arm's own 'Graphics mode set: ... (N-bit)' line (stdout_contains). tick_rate/frames_skipped are now parsed by the tool from patch 0048's DOS-PORT line rather than typed by hand. See results/FW16SHA.json."
+
+# Real-hardware depth_16_forced attempt, 2026-09-16 (40fps push step 2):
+# NOT added as a validated: entry -- no valid measurement was obtained,
+# and this schema's own validated: entries represent completed records,
+# not attempts. Two real cells on HW-486-66 (tags S16FRC1, S16FRC2):
+# the first hit a real run-rig.sh bug (REFUSED on "input verification
+# failed", later confirmed to be a genuinely-reached, correctly-
+# rendered title screen via screenshot, not a wedge -- the loop-counter-
+# driven auto_exit_tick=1000 simply hadn't fired within the DOSBox-X-
+# sized 300s timeout); the second hit a follow-on bug (the first run's
+# own exit path never released its input lock, blocking the retry's
+# reboot). Both real bugs; the second is fixed (run-rig.sh commit
+# 48f3948). The underlying question -- how long 16-bit-forced actually
+# takes on this hardware -- is still open: ~20 real minutes elapsed
+# with the title screen unchanged (two screenshots ~2 min apart were
+# byte-size-identical) before the rig was powered off rather than left
+# running unattended indefinitely. See PLAN.md's "40fps push" section,
+# "Step 2 result, 2026-09-16" for the full writeup, the source-checked
+# reasoning for why this was NOT expected (patch 0076 converts depth
+# once at load, not per-frame), and the recommended next-round approach.
+
+# Real-hardware depth_16_forced follow-up investigation, 2026-09-16
+# (40fps push step 2 follow-up): confirmed NOT a wedge via dual-channel
+# (vcctrl_shot + vcctrl_camera_shot) observation of a multi-minute title
+# fade transition, both channels agreeing throughout (brightness climbed
+# 1.07->35.9 over ~350 real seconds, then held steady, matching the
+# earlier session's own steady-state reading exactly). Root cause of the
+# REFUSED symptom identified by source: SDL_dosevents.c's
+# DOSVESA_InitKeyboard() replaces the BIOS IRQ-1 handler, so vcctrl's
+# LED-based verify-input/reboot-chord check cannot succeed against ANY
+# running SDL3-DOS game, healthy or not. Fetched STDOUT.TXT shows this
+# specific run ended via "Quitting the game..." with NO RUNMANIFEST block
+# -- almost certainly caused by this investigation's own health-check
+# keystrokes reaching the game's raw-scancode handler, not a natural
+# tick-1000 completion. Real fps_p50/tick_rate for this arm STILL not
+# obtained. New real data point: STDOUT.TXT's own "DOS-PORT
+# room_transition t_ms=38960" line shows room 0 took 39 real seconds to
+# become ready before any per-frame loop even starts -- load-time cost
+# (1387 sprites, 72MB package) is a real, separate contributor from
+# per-frame Present() cost. See PLAN.md's "40fps push" section, "Step 2
+# follow-up, 2026-09-16" for the full writeup and next-attempt
+# recommendation (no verify-input/get-file/reboot-chord calls against a
+# cell left intentionally running).
+  - environment: HW-486-66
+    date: 2026-09-16
+    depth_16_forced: {tag: S16FRC5, exit_code: 0, audio_vital_status: "NA", fps_p50: 0.16, fps_p95: 0.17, tick_rate: 0.94, frames_skipped: 833, critical_count: 0, warn_count: 0, binary_sha12: c9ee2b121d04}
+    note: "40fps push step 2 -- the missing same-content 16-bit-forced real-hardware datum, finally obtained after two prior real-hardware faults this session (run-rig.sh's own false-REFUSED bug, fixed commit 1f9790d/b5ef69a; a genuine PS/2-link death mid-attempt, recovered via power cycle). Ran to genuine natural completion (auto_exit_tick=1000 reached, exit_code=0, RUNMANIFEST emitted) -- NOT a manual quit, NOT a truncated collection. duration_s=1085 (18.1 real minutes). Identity confirmed: STDOUT.TXT 'Game title: Shards of God', data_version 3060203, compiled_with 3.6.2.10, binary_sha12 c9ee2b121d04 matches the same build as the depth_32_native/depth_16_forced DOSBox-X records. fps_p50=0.16 is ~3.2x faster than native 32-bit (0.05) but ~31x slower than native 8-bit Trilby's Notes (4.99) -- NOT close to native-8-bit-like performance the load-time-only depth-conversion mechanism (patch 0076) predicted; something beyond per-pixel byte count still dominates the real-hardware cost at this depth. See PLAN.md's 40fps push section for the full step-2 closing writeup."
+  - environment: HW-486-66
+    date: 2026-09-16
+    depth_16_forced: {tag: S16FI1, exit_code: 0, audio_vital_status: "NA", fps_p50: 0.14, fps_p95: 0.16, tick_rate: 0.87, frames_skipped: 833, critical_count: 0, warn_count: 0, binary_sha12: c4cfbebf6f85}
+    note: "40fps push step 3 pre-decision telemetry (patch 0078 DOS-PORT-STARTUP block + DOSAGS_FLIP_INSTR=1), re-run of the S16FRC5 depth_16_forced cell with structured phase timing added -- same binary_sha12 family (c4cfbebf6f85), aggregate fps_p50=0.14/tick_rate=0.87 essentially matches S16FRC5's 0.16/0.94 (same content, normal run-to-run variance). duration_s=1173 (19.55 real minutes). Full raw DOS-PORT-STARTUP-BEGIN/END block, RUNMANIFEST, STDOUT.TXT, and DOSAGS_FLIP_INSTR SDL debug log (S16FISDL.LOG on-target, DOS-8.3-truncated from the tag) preserved verbatim in results/HW-486-66-2026-09-16-S16FI1{.LOG,-STDOUT.TXT,-SDLDBG.LOG}. PHASE BREAKDOWN (ms, from the STARTUP block): subsystem_init=3, gamedata_asset_load=2210, script_vm_init=3449, gfxmode_init=935, sprite_index_init=70, sprite_precache=10008 (1 view/68 frames precached, all cost concentrated in one slow view: slowest1_view=1 slowest1_ms=6740), first_room_load=16123, total_to_first_frame=40399ms (40.4s). So load/startup phases sum to ~40.4s out of 1173s total (~3.4% of run time) -- real but NOT the dominant cost. FLIP/PRESENT COST (from SDLDBG.LOG): engine takes the SLOW UpdateWindowFramebuffer path, not the fast direct-VESA path (DOSVESA-FB-NORMAL: entered normal-path (fast-path guard failed), despite LFB being available: LFB-decision use_lfb=1) -- confirms ali3dsw.cpp's fast-path guard is not satisfied at 16-bit-forced depth on real hardware, matching what was already known from source. But the measured per-flip cost is cheap: [uwfb-stat n=100 ... mean=33.71 p95=40.41 max=67.37 ms], i.e. ~34ms average across the one 100-flush block that completed in the whole run. CRITICAL FINDING: only ~100 UpdateWindowFramebuffer calls happened across the entire 1173s run (the flip-instr-counters/uwfb-stat block only reaches one full 100-count aggregate; no second block appears), yet fps_p50=0.14 implies roughly ~170 total rendered frames over the run -- at ~34ms/flip, total flip cost across the whole run is on the order of 3-6 seconds out of 1173. This means flip/present cost, despite using the slow path, is NOT the bottleneck -- something else (per-tick game logic / script VM execution, or RenderToBackBuffer's own CPU-side sprite compositing before Present() is even called, neither of which patch 0078 or patch 0035 instrument) consumes the overwhelming majority of each tick's real time. This redirects the earlier step-4 hypothesis (dirty-rect-free full-frame present as the dominant cost) -- the present step itself is cheap; the bottleneck is upstream of it, in per-tick logic/compositing, not in the framebuffer flip. Needs new instrumentation (a tick-logic/RenderToBackBuffer bracket) to localize further, not yet added this session."
+  - environment: HW-486-66
+    date: 2026-09-16
+    depth_32_native: {tag: S32FI1, exit_code: 0, audio_vital_status: "NA", fps_p50: 0.04, fps_p95: 0.04, tick_rate: 0.24, frames_skipped: 833, critical_count: 0, warn_count: 0, binary_sha12: c4cfbebf6f85}
+    note: "40fps push step 3 pre-decision telemetry (patch 0078 DOS-PORT-STARTUP block + DOSAGS_FLIP_INSTR=1), same-content depth_32_native counterpart to S16FI1 (depth_16_forced). Ran to genuine natural completion: exit_code=0, real RUNMANIFEST, duration_s=4245 (70.75 real minutes), fps_p50=0.04/tick_rate=0.24. run-rig.sh's own retry loop falsely reported REFUSED at t+5502s despite STDOUT.TXT and the RUNMANIFEST log both having fetched and size-verified cleanly by t+4245s -- root cause: its success check required ALL 7 named get-file targets to succeed, but 5 of them (AUTOPLT.LOG/AGSSAVE.001/PH0N.BMP) are AutoPilot-only artifacts that do not exist for any binary-only game, so that check could never pass for this game regardless of outcome. The actual data was recovered from vcctrl's own pulled-file store (already fetched, never lost) rather than re-running. Fixed at the source (tests/harness/run-rig.sh, checking only the two files this script actually needs). Full raw DOS-PORT-STARTUP block, RUNMANIFEST, STDOUT.TXT, and DOSAGS_FLIP_INSTR SDL debug log preserved verbatim in results/HW-486-66-2026-09-16-S32FI1{.LOG,-STDOUT.TXT,-SDLDBG.LOG}. PHASE BREAKDOWN (ms): subsystem_init=3, gamedata_asset_load=2210 (IDENTICAL to the 16-bit run -- same asset load regardless of depth), script_vm_init=3420 (~identical), gfxmode_init=1124 (+189ms / +20% vs 16-bit's 935), sprite_index_init=70 (identical), sprite_precache=10401 (+393ms / +4% vs 16-bit's 10008, slowest1_ms=7310 vs 6740 -- counterintuitively 32-bit-native precache is slightly SLOWER than 16-bit-forced despite the latter doing extra depth-conversion work, likely because copying/handling more bytes-per-pixel outweighs the conversion arithmetic saved), first_room_load=35071 (+18948ms / +117% vs 16-bit's 16123 -- BY FAR the largest startup-phase delta between the two depths), total_to_first_frame=62443ms (1.55x the 16-bit run's 40399ms). But this entire ~22s startup delta is a rounding error against the ~3072s (51 min) steady-state duration delta (4245s vs 1173s) -- the real depth cost lives in steady state, not load time. FLIP/PRESENT COST (SDLDBG.LOG): same slow UpdateWindowFramebuffer path (fast-path guard failed, use_lfb=1) as 16-bit. Mean flip cost 160.26ms (vs 33.71ms at 16-bit, a 4.75x increase -- MORE than the 2x raw byte-count difference between 32bpp and 16bpp would predict, a real secondary depth-dependent cost in the blit path itself). Only ~100 flushes occurred in the whole 4245s run, so total flip cost is ~16s of 4245s (0.38%) -- an even smaller fraction than at 16-bit (0.3%). CONCLUSION: the 16-bit vs 32-bit difference is NOT concentrated in flip/present cost (cheap and a shrinking fraction at both depths) and NOT concentrated in load-time depth conversion (patch 0076's mechanism adds essentially nothing measurable to sprite_precache). It is concentrated in per-tick, non-flip, non-startup cost -- almost certainly RenderToBackBuffer()'s own CPU-side sprite compositing and/or AGS script VM tick execution, neither instrumented by patch 0078/0035 -- which scales by roughly the same ~3.5-3.6x factor as the overall tick_rate ratio (0.87/0.24=3.6x) between the two depths. See PLAN.md's 40fps push section for the full step-3 comparison writeup."
+  - environment: HW-486-66
+    date: 2026-09-16
+    depth_16_forced: {tag: S16TV1, exit_code: 0, audio_vital_status: "NA", fps_p50: 0.16, fps_p95: 0.17, tick_rate: 0.94, frames_skipped: 833, critical_count: 0, warn_count: 0, binary_sha12: 96729c73fc14}
+    note: "40fps push step 3, round 2 (patch 0079 per-tick script-VM/RenderToBackBuffer timing), depth_16_forced. exit_code=0, duration_s=1084 -- matches S16FRC5 (1085s, no instrumentation) almost exactly, confirming patch 0079's own overhead is negligible (unlike patch 0035's flip instrumentation, which added ~8% -- this uses only cheap uclock() reads, no per-call disk logging). PHASE DATA: tickstats_script_vm calls=1424 total_ms=391430 min_ms=22 max_ms=297486 mean_ms=274.88; tickstats_render_backbuffer calls=194 total_ms=19071 min_ms=0 max_ms=184 mean_ms=98.30. CRITICAL CAVEAT, found not assumed (see patch 0079's own commit message): script_vm's max_ms=297486 (297.5s, 27% of the whole 1084s run) is almost certainly a single blocking script call (Wait() or an animation/cutscene wait) that recursively re-enters the ENTIRE game tick -- including nested render_backbuffer calls -- via ac/global_game.cpp's scrWait() -> GameLoopUntilValueIsZero() -> GameLoopUntilState::Run() -> GameTick(), confirmed by reading that call chain directly. This means script_vm's own total_ms is NOT cleanly additive with render_backbuffer's or with 'the rest of the tick' -- real wall-clock time inside that one outer call includes time already counted separately as its own nested render_backbuffer/script_vm samples. Excluding that single outlier, the remaining 1423 script_vm calls sum to ~93944ms (~66ms/call average) -- still a real, substantial per-call cost, comparable in magnitude to render_backbuffer's own 98.30ms mean. See PLAN.md for the full interpretation once the depth_32_native counterpart (in progress) is in hand."
+  - environment: HW-486-66
+    date: 2026-09-16
+    depth_32_native: {tag: S32TV1, exit_code: 0, audio_vital_status: "NA", fps_p50: 0.05, fps_p95: 0.05, tick_rate: 0.32, frames_skipped: 833, critical_count: 0, warn_count: 0, binary_sha12: 96729c73fc14}
+    note: "40fps push step 3, round 2 (patch 0079 per-tick script-VM/RenderToBackBuffer timing), depth_32_native, same-content counterpart to S16TV1. exit_code=0, duration_s=3170, fps_p50=0.05/tick_rate=0.32 -- matches the historical S32B7 baseline (3147s/0.05/0.32) almost exactly, confirming patch 0079's own overhead is negligible here too. ANOMALY, noted honestly not hidden: STDOUT.TXT came back genuinely empty (0 bytes) on the target this run -- get-file's own per-file check correctly refused to treat that as a real arrival ('a zero-byte arrival cannot be told from no arrival at all'), which is why run-rig.sh's retry loop ran to its full --timeout and reported REFUSED even though S32TV1.LOG (the RUNMANIFEST log, written via a separate direct fopen()/fprintf() path, not stdout redirection) had already arrived intact with real content -- recovered from vcctrl's own pulled-file store rather than re-running. check's own stdout_present/stdout_contains checks correctly FAIL against the empty STDOUT.TXT (pass=false in this record, honestly) -- this is a collection-completeness gap (no Graphics-mode-line witness this round), not a run failure; exit_code=0 and every RUNMANIFEST/DOS-PORT field came through intact. Cause not investigated further this round (a DOS/FAT flush timing quirk on a very long-running redirect is the leading guess, not confirmed). PHASE DATA: tickstats_script_vm calls=1439 total_ms=943348 min_ms=1 max_ms=938075 mean_ms=655.56; tickstats_render_backbuffer calls=193 total_ms=21942 min_ms=0 max_ms=220 mean_ms=113.69. INTERPRETATION (paired with S16TV1): render_backbuffer's mean cost rises only ~15.7% from 16-bit to 32-bit (98.30ms -> 113.69ms) -- nowhere near the ~2.9-3.6x overall tick_rate/duration scaling between the two arms, ruling it out as the dominant driver. script_vm is dominated by one blocking call per run (almost certainly the title screen's own scripted fade-in Wait(), matching this session's earlier real-hardware finding of a multi-minute title fade) whose own share of the total run is nearly IDENTICAL in both arms (27.4% at 16-bit: 297486/1084000; 29.6% at 32-bit: 938075/3170000) -- consistent with a FIXED TICK-COUNT wait whose real-world duration is proportional to whatever the per-tick cost already is, meaning this outlier is not independent evidence that script execution itself is the bottleneck; it inherits the same scaling everything else in the tick does, confirmed by reading ac/global_game.cpp's scrWait() -> GameLoopUntilValueIsZero() -> GameTick() re-entrancy chain (patch 0079's own commit). Excluding that one outlier, script_vm's remaining ~1423-1438 calls sum to a small fraction of the run (93944ms at 16-bit, 5273ms at 32-bit) -- too small and, on this data alone, not consistently ordered between depths to be the dominant driver either. CONCLUSION: neither RenderToBackBuffer's own CPU-side compositing NOR script VM bytecode execution (excluding the re-entrant outlier) is large enough on its own to explain the ~3x per-depth scaling -- the real cost must be concentrated in the surrounding, still-uninstrumented parts of the per-tick loop (input polling, audio sync, GUI bookkeeping, or the fixed-timestep catch-up/pacing mechanism itself), which both of patch 0079's brackets sit around but do not cover. See PLAN.md for the full writeup."
+
+compat_sweep:
+  date: 2026-09-15
+  auto_exit_tick: 1000
+  boots: {ok: true, exit_code: 0}
+  title: {ok: true, evidence: "STDOUT.TXT: '(room:0) Now in room 0', no crash, exit_code=0"}
+  first_room: {ok: false, failure_reason: "only room 0 was ever loaded during the drive window -- this game's title/start screen waits for player input to advance and none was injected this pass; not a defect, an honest scope limit"}
+  playable: {ok: false, attempted: false, failure_reason: "no input-injection automation exists for binary-only games this pass (no AutoPilot module, no generic DOSBox-X input harness proven yet)"}
+  complete: {ok: false, attempted: false, failure_reason: "not attempted, same reason as playable"}
+  screenshot: not attempted -- see trilbysnotes' own compat_sweep entry for why

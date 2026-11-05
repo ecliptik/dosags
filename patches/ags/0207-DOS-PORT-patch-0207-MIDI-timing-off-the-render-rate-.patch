@@ -1,0 +1,384 @@
+From fb01d9635b3152add1427d355ee24f2456dc5397 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 06:41:12 -0700
+Subject: [PATCH] DOS-PORT: patch 0207 -- MIDI timing off the render rate: plan
+ ahead on the main loop, play from the SB IRQ
+
+WHY: the 8.3 re-run on HW-486-66 (PLAN.md, SB4O/SB4W, 2026-09-23): the 640x480 intro renders at
+~6 fps, the fixed-timestep loop runs its catch-up ticks back to back, and MidiPoll -> midi_sched_tick
+dispatched every event due since the last render in one batch: 465 of 483 lateness records were
+regular 150-200 ms gaps, 72% of events more than 50 ms late -- the operator heard "music speeds up
+randomly". The scheduler and sinks (hub shared code, FPU + unlocked state) cannot run in an ISR.
+
+WHAT: with SDL patch 0193, the player keeps running the same scheduler and sinks on the main loop but
+AHEAD of time. At song start (MidiInit, and MidiPlay after a stop) MidiIsrBegin() takes the ISR replay
+when the backend maps to a capture kind (OPL3 -> 1, WaveBlaster -> 2), the SB IRQ has fired at least
+once, no other MIDI player owns the replay, SDL_DOSMidiDeferEnable() accepts (SB open; for WB only the
+blind direct transport) and DOSAGS_MIDI_TICK is not "poll"; otherwise the main-loop poll stays, as
+before. In isr mode each MidiPoll plans from the last planned slot (never earlier than two IRQs out: an entry
+stamped for the very next IRQ can miss it if that IRQ fires while the plan is being written) to now + lookahead (default 2 s,
+DOSAGS_MIDI_LOOKAHEAD_MS), one IRQ period (512 frames, 46.44 ms at 11025 Hz) at a time: set the
+stamp to that slot's IRQ index, midi_sched_tick() to that slot's song time; the sink's port writes
+are captured and the SB ISR writes them out at that IRQ, whatever the main loop is doing. Song time is
+plan time minus skipped gaps: if the plan ever falls behind the device (a stall longer than the
+lookahead, or a resume from pause) the gap is skipped in song time rather than replayed late in one
+burst, and counted (plan_behind; not after a resume). Stop and destruction drop the planned-ahead
+writes, queue the sink's note-offs for the next IRQ, then disable the replay (which writes out what
+is left at once) so the next song's chip detection is direct. Pause stops planning; up to the
+lookahead already queued still plays, then notes hold, as the poll's pause did.
+
+Status: "DosMidiBackend: MIDI tick isr|poll" at song start; the MIDI fragment gains midi_tick=isr|poll.
+In isr mode it reports period_us, lookahead, isr_writes, late_writes (written >= 1 IRQ after their
+stamp), late_max_ms, isr_burst (most writes in one IRQ), qfull, qsync / qdropped (entries a disable wrote
+out / discarded), plan_behind and clk (device-clock
+song ms against the RTC); in poll mode the 0206 fields as before. The mixer's MIDI fragment buffer
+grows 192 -> 320 bytes and the status buffers 384 -> 512 (the isr fragment is ~260 characters; a
+first build truncated it at clk=).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/media/audio/audioplayer.cpp       | 111 ++++++++++++++++++++++-
+ Engine/media/audio/audioplayer.h         |  16 +++-
+ Engine/platform/dos/dos_audio_mixer.cpp  |   6 +-
+ Engine/platform/dos/dos_midi_backend.cpp |  47 +++++++++-
+ Engine/platform/dos/dos_midi_backend.h   |  10 ++
+ 5 files changed, 183 insertions(+), 7 deletions(-)
+
+diff --git a/Engine/media/audio/audioplayer.cpp b/Engine/media/audio/audioplayer.cpp
+index 324b524a6..725f47cc5 100644
+--- a/Engine/media/audio/audioplayer.cpp
++++ b/Engine/media/audio/audioplayer.cpp
+@@ -17,6 +17,9 @@
+ #include <cstdlib> // std::getenv -- DOS-PORT (S7) DOSAGS_MIDI_SILENT_CHIP
+ #include <time.h> // uclock(), UCLOCKS_PER_SEC -- DOS-PORT (S4) MIDI wall clock
+ #include "util/memory_compat.h"
++#include <cstring> // DOS-PORT (patch 0207)
++#include <SDL3/SDL.h>
++#include <SDL3/SDL_dosmidi_tick.h> // DOS-PORT (patch 0207): ISR-replayed MIDI
+ 
+ // DOS-PORT (S4): declared at GLOBAL scope deliberately, matching where
+ // Engine/main/main.cpp actually defines it (also global scope, no
+@@ -87,10 +90,84 @@ AudioPlayer::AudioPlayer(int handle, const AGS::Common::String &midi_path, bool
+     }
+ }
+ 
++// DOS-PORT (patch 0207): the one MIDI player that owns the ISR replay (the
++// queue is global); any other plays on the main-loop poll.
++static AudioPlayer *s_midiIsrOwner = nullptr;
++
++void AudioPlayer::MidiIsrBegin()
++{
++    _midiIsr = false;
++    uint32_t lookahead = 0;
++    const int kind = dos_midi_backend_defer_kind(_midiBackendKind);
++    const char *force = std::getenv("DOSAGS_MIDI_TICK");
++    const bool force_poll = force && std::strcmp(force, "poll") == 0;
++    int period = 0;
++    if (!force_poll && kind != 0 && s_midiIsrOwner == nullptr && SDL_DOSMidiDeferIrqNow() > 0
++        && (period = SDL_DOSMidiDeferIrqPeriodUs()) > 0 && SDL_DOSMidiDeferEnable(kind))
++    {
++        const char *la = std::getenv("DOSAGS_MIDI_LOOKAHEAD_MS");
++        const long la_ms = (la && la[0]) ? std::strtol(la, nullptr, 10) : 2000;
++        lookahead = (uint32_t)((la_ms > 0 ? la_ms : 2000) * 1000 / period);
++        if (lookahead < 4)
++            lookahead = 4;
++        _midiIsr = true;
++        s_midiIsrOwner = this;
++        _midiPeriodUs = (uint32_t)period;
++        _midiLookIrqs = lookahead;
++        _midiLastIrq = SDL_DOSMidiDeferIrqNow();
++        _midiPlanUs = (uint64_t)(_midiLastIrq + 2) * _midiPeriodUs;
++        _midiShiftUs = _midiPlanUs;
++        _midiResumed = false;
++    }
++    dos_midi_backend_set_tick_mode(_midiIsr, _midiIsr ? _midiPeriodUs : 0, lookahead);
++}
++
++void AudioPlayer::MidiIsrEnd(bool flush)
++{
++    if (!_midiIsr)
++        return;
++    if (flush)
++        SDL_DOSMidiDeferFlush(); // drop the writes planned ahead of now
++    SDL_DOSMidiDeferSetStamp(SDL_DOSMidiDeferIrqNow()); // what follows goes out at once
++}
++
++// Plan the song ahead to now + lookahead, one IRQ slot at a time; every
++// port write the sink makes in a slot is stamped for that slot's IRQ.
++void AudioPlayer::MidiIsrPlan()
++{
++    const uint32_t now = SDL_DOSMidiDeferIrqNow();
++    // The first plannable slot is two IRQs out: an entry stamped now + 1 can
++    // miss its IRQ if that IRQ fires while the plan is still being written.
++    const uint64_t floor_us = (uint64_t)(now + 2) * _midiPeriodUs;
++    if (_midiPlanUs < floor_us)
++    {
++        // Fell behind the device (a stall longer than the lookahead) or
++        // resumed from a pause: skip the gap in SONG time instead of
++        // replaying it late, all at once.
++        if (!_midiResumed)
++            dos_midi_backend_note_plan_behind();
++        _midiShiftUs += floor_us - _midiPlanUs;
++        _midiPlanUs = floor_us;
++    }
++    _midiResumed = false;
++    const uint64_t horizon = (uint64_t)(now + _midiLookIrqs) * _midiPeriodUs;
++    while (_midiPlanUs + _midiPeriodUs <= horizon && SDL_DOSMidiDeferFree() > 512)
++    {
++        _midiPlanUs += _midiPeriodUs;
++        SDL_DOSMidiDeferSetStamp((uint32_t)(_midiPlanUs / _midiPeriodUs));
++        midi_sched_tick(_midiSched, MidiSongMs());
++    }
++    SDL_DOSMidiDeferSetStamp(now); // anything written outside the plan goes out at once
++    dos_midi_backend_note_tick(0, (uint32_t)((uint64_t)(now - _midiLastIrq) * _midiPeriodUs / 1000u),
++        get_loop_counter());
++    _midiLastIrq = now;
++}
++
+ AudioPlayer::~AudioPlayer()
+ {
+     if (!_isMidi)
+         return;
++    MidiIsrEnd(true); // DOS-PORT (patch 0207)
+     if (_midiSched) midi_sched_close(_midiSched);
+     // DOS-PORT (S5): dos_midi_backend_end_song(), not a direct close --
+     // for opl3 this closes and nulls the handle exactly as the old direct
+@@ -99,6 +176,14 @@ AudioPlayer::~AudioPlayer()
+     // once at engine shutdown, not per AudioPlayer instance). See
+     // dos_midi_backend.h's own doc comment.
+     dos_midi_backend_end_song(_midiSink, _midiBackendKind);
++    // DOS-PORT (patch 0207): write out the note-offs just queued, then
++    // release the replay for the next song.
++    if (_midiIsr)
++    {
++        SDL_DOSMidiDeferEnable(0);
++        s_midiIsrOwner = nullptr;
++        _midiIsr = false;
++    }
+ }
+ 
+ uint64_t AudioPlayer::MidiNowMsRaw()
+@@ -161,7 +246,8 @@ void AudioPlayer::MidiInit()
+             const char *silent = std::getenv("DOSAGS_MIDI_SILENT_CHIP");
+             if (!(silent && silent[0] == '1' && silent[1] == '\0'))
+             {
+-                midi_sched_start(_midiSched, MidiNowMs());
++                MidiIsrBegin(); // DOS-PORT (patch 0207)
++                midi_sched_start(_midiSched, _midiIsr ? MidiSongMs() : MidiNowMs());
+             }
+         }
+     }
+@@ -248,6 +334,17 @@ void AudioPlayer::MidiPoll()
+     if (!_midiSched || !_midiSink)
+         return;
+ 
++    if (_midiIsr) // DOS-PORT (patch 0207): planned ahead, replayed by the SB IRQ
++    {
++        MidiIsrPlan();
++        const uint64_t total_isr = midi_sched_dispatched(_midiSched);
++        if (total_isr > _midiLastDispatched)
++        {
++            dos_midi_backend_add_dispatched(total_isr - _midiLastDispatched);
++            _midiLastDispatched = total_isr;
++        }
++        return;
++    }
+     {
+         const uclock_t t0 = uclock(); /* TEMPORARY DIAGNOSTIC, see above */
+         midi_sched_tick(_midiSched, MidiNowMs());
+@@ -326,7 +423,9 @@ void AudioPlayer::MidiPlay()
+             // DOS-PORT (S5 GUS architecture): same ordering requirement as
+             // MidiInit() above -- see that call site's own comment.
+             dos_midi_backend_prepare_song(_midiSink, _midiBackendKind, _midiSched);
+-            midi_sched_start(_midiSched, MidiNowMs());
++            MidiIsrBegin(); // DOS-PORT (patch 0207)
++            _midiLastDispatched = 0;
++            midi_sched_start(_midiSched, _midiIsr ? MidiSongMs() : MidiNowMs());
+         }
+         _playState = (_midiSched && _midiSink) ? PlayStatePlaying : PlayStateError;
+         break;
+@@ -343,6 +442,7 @@ void AudioPlayer::MidiPlay()
+             _midiPauseStartedMs = 0;
+         }
+         _playState = PlayStatePlaying;
++        _midiResumed = true; // DOS-PORT (patch 0207): the next plan rebases, not "behind"
+         break;
+     default:
+         break;
+@@ -421,7 +521,14 @@ void AudioPlayer::MidiStop()
+         // opl3_sink_close() call (MidiPlay() reopens and rebinds on the
+         // next Stopped -> Playing transition, unchanged). For wb this is
+         // silence-only and the handle survives -- see dos_midi_backend.h.
++        MidiIsrEnd(true); // DOS-PORT (patch 0207): drop the planned-ahead writes first
+         dos_midi_backend_end_song(_midiSink, _midiBackendKind);
++        if (_midiIsr) // then write the note-offs out now and release the replay
++        {
++            SDL_DOSMidiDeferEnable(0);
++            s_midiIsrOwner = nullptr;
++            _midiIsr = false;
++        }
+         _midiPauseOffsetMs = 0;
+         _midiPauseStartedMs = 0;
+         break;
+diff --git a/Engine/media/audio/audioplayer.h b/Engine/media/audio/audioplayer.h
+index 1bede147f..71f0d51c8 100644
+--- a/Engine/media/audio/audioplayer.h
++++ b/Engine/media/audio/audioplayer.h
+@@ -163,7 +163,21 @@ private:
+     uint64_t _midiPauseOffsetMs = 0;   // total ms spent paused so far
+     uint64_t _midiPauseStartedMs = 0;  // MidiNowMsRaw() at the last Pause()
+     uint64_t _midiLastDispatched = 0;
+-    uint64_t _midiLastPollMs = 0;      // DOS-PORT (patch 0206): MidiNowMs() at the last MidiPoll()  // midi_sched_dispatched() as of the last MidiPoll()
++    uint64_t _midiLastPollMs = 0;
++    // DOS-PORT (patch 0207): ISR-replayed MIDI (SDL patch 0193). The planner
++    // runs the scheduler ahead in device-IRQ slots; song time = plan time
++    // minus the gaps skipped when the plan fell behind (pause, long stall).
++    bool _midiIsr = false;
++    uint64_t _midiPlanUs = 0;
++    uint64_t _midiShiftUs = 0;
++    uint32_t _midiPeriodUs = 0;
++    uint32_t _midiLookIrqs = 0;
++    uint32_t _midiLastIrq = 0;
++    bool _midiResumed = false;
++    uint64_t MidiSongMs() const { return (_midiPlanUs - _midiShiftUs) / 1000u + 1000u; }
++    void MidiIsrBegin();
++    void MidiIsrEnd(bool flush);
++    void MidiIsrPlan();      // DOS-PORT (patch 0206): MidiNowMs() at the last MidiPoll()  // midi_sched_dispatched() as of the last MidiPoll()
+ };
+ 
+ } // namespace Engine
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index 22c45d3d2..fceefe328 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -153,7 +153,7 @@ uint32_t g_room_since = 0;
+ // shutdown_sound()) still reports the real final state instead of the
+ // "never opened" NA sentinel. Left at "NA" if the device was never
+ // opened at all, so that genuine case is still distinguishable.
+-char g_last_status[384] = "NA";
++char g_last_status[512] = "NA";
+ 
+ void format_status_string(char *buf, size_t bufsize)
+ {
+@@ -161,7 +161,7 @@ void format_status_string(char *buf, size_t bufsize)
+     const int bits = static_cast<int>(SDL_AUDIO_BITSIZE(fmt));
+     const char chan_letter = (DOS_AUDIO_MIXER_CHANNELS == 1) ? 'm' : 's';
+     const char *device = g_gus_backend ? "gus" : "sb";
+-    char midi_fragment[192];
++    char midi_fragment[320];
+     // DOS-PORT (Sound milestone, S4): dos_midi_backend owns the real
+     // "midi=<backend>,events=<n>" fragment now -- S1 hardcoded ";midi=none"
+     // here since no MIDI backend existed yet.
+@@ -576,7 +576,7 @@ const char *dos_audio_mixer_status_string()
+ {
+     if (!g_stream && !g_gus_open)
+         return g_last_status; // "NA" if never opened, else the shutdown-time snapshot
+-    static char buf[384];
++    static char buf[512];
+     format_status_string(buf, sizeof(buf));
+     return buf;
+ }
+diff --git a/Engine/platform/dos/dos_midi_backend.cpp b/Engine/platform/dos/dos_midi_backend.cpp
+index 0842a4c81..193202f89 100644
+--- a/Engine/platform/dos/dos_midi_backend.cpp
++++ b/Engine/platform/dos/dos_midi_backend.cpp
+@@ -18,6 +18,7 @@
+ #include "debug/out.h"
+ #include <time.h> // uclock(), UCLOCKS_PER_SEC -- TEMPORARY DIAGNOSTIC (S7-GUS), see dos_midi_backend_prepare_song() below
+ #include <pc.h> // inportb() -- DOS-PORT (patch 0205), the OPL status read
++#include <SDL3/SDL_dosmidi_tick.h> // DOS-PORT (patch 0207): the ISR replay's stats
+ 
+ using namespace AGS::Common;
+ 
+@@ -44,6 +45,11 @@ uint32_t g_burst_max = 0;
+ uint32_t g_burst_tick = 0;
+ uint64_t g_song_ms = 0;
+ int g_rtc_first_s = -1;
++// DOS-PORT (patch 0207): which MIDI tick mode ran last, and plan misses.
++bool g_tick_isr = false;
++uint32_t g_tick_period_us = 0;
++uint32_t g_tick_lookahead = 0;
++uint32_t g_plan_behind = 0;
+ int g_rtc_last_s = -1;
+ 
+ // Seconds since midnight from the CMOS RTC (BCD or binary per status B),
+@@ -356,6 +362,29 @@ void dos_midi_backend_add_dispatched(uint64_t delta)
+     g_events_dispatched += delta;
+ }
+ 
++int dos_midi_backend_defer_kind(DosMidiBackendKind kind)
++{
++    if (kind == DOS_MIDI_BACKEND_OPL3)
++        return 1;
++    if (kind == DOS_MIDI_BACKEND_WB)
++        return 2;
++    return 0;
++}
++
++void dos_midi_backend_set_tick_mode(bool isr, uint32_t period_us, uint32_t lookahead_irqs)
++{
++    g_tick_isr = isr;
++    g_tick_period_us = period_us;
++    g_tick_lookahead = lookahead_irqs;
++    Debug::Printf(kDbgMsg_Info, "DosMidiBackend: MIDI tick %s%s", isr ? "isr" : "poll",
++        isr ? " (writes planned ahead, replayed by the SB IRQ)" : " (main loop)");
++}
++
++void dos_midi_backend_note_plan_behind()
++{
++    g_plan_behind++;
++}
++
+ void dos_midi_backend_note_tick(uint32_t events, uint32_t gap_ms, uint32_t loop_tick)
+ {
+     const int now_s = rtc_seconds_of_day();
+@@ -393,7 +422,23 @@ void dos_midi_backend_status_fragment(char *buf, size_t bufsize)
+     // gaps > 50 ms, the biggest single-tick burst@tick, and song-clock ms over
+     // RTC seconds (RTC wraps at midnight: then the second number is negative).
+     int rtc_s = (g_rtc_first_s >= 0 && g_rtc_last_s >= 0) ? (g_rtc_last_s - g_rtc_first_s) : -1;
+-    std::snprintf(buf, bufsize, "midi=%s,events=%llu%s,late_max_ms=%u,late_hist=%llu/%llu/%llu/%llu/%llu/%llu,"
++    // DOS-PORT (patch 0207): in isr mode the lateness is the ISR's own --
++    // entries written at least one IRQ after their stamp, the most IRQs
++    // late (in ms), the most entries in one IRQ, queue-full refusals -- and
++    // how often the plan fell behind the device.
++    if (g_tick_isr)
++    {
++        Uint32 wr = 0, late = 0, late_max = 0, burst = 0, full = 0, dropped = 0, sync = 0;
++        SDL_DOSMidiDeferStats(&wr, &late, &late_max, &burst, &full);
++        SDL_DOSMidiDeferStats2(&dropped, &sync);
++        std::snprintf(buf, bufsize, "midi=%s,events=%llu%s,midi_tick=isr,period_us=%u,lookahead=%u,isr_writes=%u,"
++            "late_writes=%u,late_max_ms=%u,isr_burst=%u,qfull=%u,qsync=%u,qdropped=%u,plan_behind=%u,clk=%llu/%ds",
++            kind_name(g_last_kind), (unsigned long long)g_events_dispatched, chip, g_tick_period_us, g_tick_lookahead,
++            (unsigned)wr, (unsigned)late, (unsigned)((uint64_t)late_max * g_tick_period_us / 1000u), (unsigned)burst,
++            (unsigned)full, (unsigned)sync, (unsigned)dropped, g_plan_behind, (unsigned long long)g_song_ms, rtc_s);
++        return;
++    }
++    std::snprintf(buf, bufsize, "midi=%s,events=%llu%s,midi_tick=poll,late_max_ms=%u,late_hist=%llu/%llu/%llu/%llu/%llu/%llu,"
+         "late50=%llu,burst=%u@%u,clk=%llu/%ds",
+         kind_name(g_last_kind), (unsigned long long)g_events_dispatched, chip, g_late_max_ms,
+         (unsigned long long)g_late_hist[0], (unsigned long long)g_late_hist[1], (unsigned long long)g_late_hist[2],
+diff --git a/Engine/platform/dos/dos_midi_backend.h b/Engine/platform/dos/dos_midi_backend.h
+index d7451d633..a7cf59d05 100644
+--- a/Engine/platform/dos/dos_midi_backend.h
++++ b/Engine/platform/dos/dos_midi_backend.h
+@@ -157,6 +157,16 @@ void dos_midi_backend_add_dispatched(uint64_t delta);
+ // with gap > 100 ms and events > 0 also logs one "DOS-PORT midilate" line.
+ void dos_midi_backend_note_tick(uint32_t events, uint32_t gap_ms, uint32_t loop_tick);
+ 
++// DOS-PORT (patch 0207): MIDI timing off the render rate. The SB ISR can
++// replay port writes on time (SDL patch 0193); these tell the player which
++// capture kind a backend maps to (1 OPL3, 2 WaveBlaster, 0 none: GUS and
++// anything else stay on the main-loop poll), record which mode is in use for
++// the status line, and count how often the ahead-of-time plan fell behind
++// the device (a main-loop stall longer than the lookahead).
++int dos_midi_backend_defer_kind(DosMidiBackendKind kind);
++void dos_midi_backend_set_tick_mode(bool isr, uint32_t period_us, uint32_t lookahead_irqs);
++void dos_midi_backend_note_plan_behind();
++
+ // Builds "midi=<backend>,events=<n>" (e.g. "midi=wb,events=42") into buf.
+ // Reports the LAST backend kind dos_midi_backend_open() resolved this
+ // session -- persists after that handle is torn down (opl3) or silenced
+-- 
+2.47.3
+

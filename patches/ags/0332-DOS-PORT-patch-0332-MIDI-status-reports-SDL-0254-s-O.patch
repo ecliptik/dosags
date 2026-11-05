@@ -1,0 +1,65 @@
+From dd1fba2bd6ed0dd44363ad451dfc0ffb02fd63c6 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 17:10:41 -0700
+Subject: [PATCH 332/333] DOS-PORT: patch 0332 -- MIDI status reports SDL
+ 0254's OPL pacing choice
+
+WHY: SDL 0254 paces OPL writes per backend -- 4 + 4 status reads on a
+positively detected PicoGUS, 6 + 6 elsewhere -- and raises the ISR
+replay's budget to 448 on the PicoGUS. Which choice a run made must be in
+its manifest, or a hardware cell cannot show it ran the arm it claims
+(lab CAP3c VOIDs a cell whose reported choice is not the arm's).
+
+WHAT: the isr-mode part of audio_vital_status gains pgdetect= (1 when the
+PicoGUS answered its control port as SB mode with its OPL at 0x388) and
+opl_reads= (the dummy reads after each address and data write), from
+SDL_DOSOplPacing. budget= already reports the per-IRQ budget in force.
+
+RE-CUT 2026-09-25 onto main's ags 0275: fields appended after 0331's, and
+0275's plan_behind_at= keeps its place; the fragment's worst case (0331's
+message) includes these two.
+Renumbered from 0256 to 0332: it must apply after 0275, and the series applies in
+number order. 0256 never landed on main; its slot is retired on lab/journeys.
+
+SDL references renumbered 2026-09-25 with the SDL series (0223 -> 0250,
+0224 -> 0251, 0228 -> 0254, 0229 -> 0255). This is the pump-free cut: it
+lands on main before the RTC pump series (ags 0277-0282), which re-applies on
+top and then owns the combined buffer sizing (the max of every need).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/platform/dos/dos_midi_backend.cpp | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/Engine/platform/dos/dos_midi_backend.cpp b/Engine/platform/dos/dos_midi_backend.cpp
+index 3836fe5c5..504d24147 100644
+--- a/Engine/platform/dos/dos_midi_backend.cpp
++++ b/Engine/platform/dos/dos_midi_backend.cpp
+@@ -466,6 +466,8 @@ void dos_midi_backend_status_fragment(char *buf, size_t bufsize)
+         // DOS-PORT patch 0331: SDL 0251's skip of writes that change nothing
+         Uint32 dd_on = 0, dd_skip = 0;
+         SDL_DOSMidiDeferStats4(&dd_on, &dd_skip);
++        Uint32 pg_detect = 0, opl_reads = 0; // DOS-PORT patch 0332: SDL 0254's pacing choice
++        SDL_DOSOplPacing(&pg_detect, &opl_reads);
+         // DOS-PORT (patch 0275): plan_behind_at=<song_ms>@<loop>/<gap>irq/<first|later>, empty when no event.
+         char pb_at[48] = "";
+         if (g_pb_seen)
+@@ -474,12 +476,12 @@ void dos_midi_backend_status_fragment(char *buf, size_t bufsize)
+         std::snprintf(buf, bufsize, "midi=%s,events=%llu%s,midi_tick=isr,period_us=%u,lookahead=%u,isr_writes=%u,"
+             "late_writes=%u,late_max_ms=%u,isr_burst=%u,qfull=%u,qsync=%u,qdropped=%u,plan_behind=%u,plan_behind_at=%s,"
+             "clk=%llu/%ds,real_period_us=%u,budget=%u,cap_hits=%u,isr_max_us=%u,isr_mean_us=%u,isr_ns_per_write=%u,"
+-            "dedupe=%u,skipped=%u",
++            "dedupe=%u,skipped=%u,pgdetect=%u,opl_reads=%u",
+             kind_name(g_last_kind), (unsigned long long)g_events_dispatched, chip, g_tick_period_us, g_tick_lookahead,
+             (unsigned)wr, (unsigned)late, (unsigned)((uint64_t)late_max * g_tick_period_us / 1000u), (unsigned)burst,
+             (unsigned)full, (unsigned)sync, (unsigned)dropped, g_plan_behind, pb_at, (unsigned long long)g_song_ms, rtc_s,
+             (unsigned)g_real_period_us, (unsigned)budget, (unsigned)cap_hits, isr_max_us, isr_mean_us, isr_ns_per_write,
+-            (unsigned)dd_on, (unsigned)dd_skip);
++            (unsigned)dd_on, (unsigned)dd_skip, (unsigned)pg_detect, (unsigned)opl_reads);
+         return;
+     }
+     std::snprintf(buf, bufsize, "midi=%s,events=%llu%s,midi_tick=poll,late_max_ms=%u,late_hist=%llu/%llu/%llu/%llu/%llu/%llu,"
+-- 
+2.47.3
+

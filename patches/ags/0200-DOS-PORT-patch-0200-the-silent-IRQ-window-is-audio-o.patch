@@ -1,0 +1,208 @@
+From 3739d6c06390eb8ffd8ede9e8f727f2faf9f8871 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 22 Sep 2026 16:48:20 -0700
+Subject: [PATCH] DOS-PORT: patch 0200 -- the silent-IRQ window is "audio owed
+ to the device", and pcm_irqs witnesses PCM consumed
+
+WHY: 0199 counted SB IRQs and silent IRQs only over pump intervals that began with a voice "still
+playing" (active and not yet fully mixed out). On DOSBox-X with the SB actually emulated (DSPV2,
+PLAN.md: 1105 IRQ-5 fires, 21 Hz throughout) that window still read play_irqs=0. Reason, from UR1's
+own event log: audio_core_entry_poll() -- and so the mixer -- runs many times per tick, and each
+pump hands the driver another chunk without waiting for the device (see PLAN.md (c)), so a clip is
+mixed out within a few milliseconds of wall time while its sound then plays out of the driver's
+ring for up to ~743 ms. The window 0199 measured was therefore nearly empty by construction, and
+play_irqs=0 could not distinguish "no IRQ ever fired" from "fired, just not in that sliver" -- the
+exact confusion the field was added to prevent.
+
+WHAT: two fields replace play_irqs/silent_irqs' definitions (the silent_irqs name is kept):
+- pcm_irqs: the driver's dos_port_audio_sfx_active_count since the mixer opened -- the ISR's
+  ring_had_audio branch, i.e. IRQs that found at least one half-buffer and played it. The direct
+  witness that the device consumed PCM at all; independent of any window.
+- silent_irqs: silent IRQs over pump intervals that began with audio still OWED to the device --
+  mixed PCM still queued in the SDL stream, or a voice not yet fully mixed out -- evaluated after
+  SDL_DOSAudioPump() so it describes the interval that starts then. A silent IRQ in such an
+  interval means the device played silence while sound it should have been playing was still
+  upstream: a dropout. Once everything is in the driver's ring, silence after it drains is the end
+  of the sound. (With the pump able to overwrite the ring, the owed window is still short; once
+  the pump stops at a full ring, upstream holds the data and the window covers the clip.)
+The unused dos_port_audio_irq_count extern is dropped. Status shape: ",pcm_irqs=<n>,silent_irqs=<n>"
+(NA under GUS, unchanged).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/platform/dos/dos_audio_mixer.cpp | 87 +++++++++++++------------
+ Engine/platform/dos/dos_audio_mixer.h   | 13 ++--
+ 2 files changed, 53 insertions(+), 47 deletions(-)
+
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index 3736ec1c0..4a183d5d0 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -33,11 +33,12 @@ extern "C" {
+ // DOS-PORT (patch 0199): the SB driver's own per-IRQ counters (vendor/SDL
+ // src/core/dos/SDL_dos_audio_synth.c; incremented in SoundBlasterIRQHandler,
+ // src/audio/dos/SDL_dosaudio_sb.c). Plain monotonic 32-bit globals with no
+-// public accessor; read-only here. dos_port_audio_irq_count counts every
+-// SB IRQ; dos_port_audio_silent_irq_count counts the IRQs that found fewer
+-// than one DMA half-buffer of data in the driver's ring and played silence.
+-extern "C" volatile uint32_t dos_port_audio_irq_count;
++// public accessor; read-only here. dos_port_audio_silent_irq_count counts
++// the IRQs that found fewer than one DMA half-buffer of data in the driver's
++// ring and played silence; dos_port_audio_sfx_active_count (read since patch
++// 0200) counts the IRQs that found at least one and played it.
+ extern "C" volatile uint32_t dos_port_audio_silent_irq_count;
++extern "C" volatile uint32_t dos_port_audio_sfx_active_count;
+ 
+ using namespace AGS::Common;
+ 
+@@ -107,17 +108,19 @@ int g_underruns = 0;
+ // Gate 3 fixture was one of these). SB path only.
+ int g_drains = 0;
+ 
+-// DOS-PORT (patch 0199): SB IRQs, and silent SB IRQs, counted only over pump
+-// intervals that began with a voice still playing (active, and not a clip
+-// that has ended and been fully mixed out). Outside those intervals a silent
+-// IRQ is just the device idling between sounds -- music on OPL3/WaveBlaster
+-// never goes through this ring -- so the raw counter says nothing about
+-// dropouts. SB path only; reported as NA under GUS.
+-uint32_t g_play_irqs = 0;
+-uint32_t g_play_silent_irqs = 0;
+-uint32_t g_irq_snap = 0;
++// DOS-PORT (patch 0199, window corrected by 0200): silent SB IRQs counted only
++// over pump intervals that began with audio still OWED to the device -- a voice
++// not yet fully mixed out, or mixed PCM still waiting in the SDL stream. A
++// silent IRQ then means the device played silence while sound it should have
++// been playing was still upstream: a dropout. Outside those intervals a silent
++// IRQ is the device idling between sounds (music on OPL3/WaveBlaster never
++// goes through this ring). SB path only; reported as NA under GUS.
++// pcm_irqs (0200) is the whole-run count of IRQs that played ring data --
++// the direct witness that the device consumed PCM at all.
++uint32_t g_owed_silent_irqs = 0;
+ uint32_t g_silent_snap = 0;
+-bool g_playing_at_snap = false;
++bool g_owed_at_snap = false;
++uint32_t g_pcm_irq_base = 0;
+ 
+ // A snapshot of the status string taken at dos_audio_mixer_shutdown(),
+ // so RUNMANIFEST's audio_vital_status (built by quit.cpp's own manifest
+@@ -141,10 +144,10 @@ void format_status_string(char *buf, size_t bufsize)
+     dos_midi_backend_status_fragment(midi_fragment, sizeof(midi_fragment));
+     char irq_fragment[48];
+     if (g_gus_backend)
+-        std::snprintf(irq_fragment, sizeof(irq_fragment), "play_irqs=NA,silent_irqs=NA");
++        std::snprintf(irq_fragment, sizeof(irq_fragment), "pcm_irqs=NA,silent_irqs=NA");
+     else
+-        std::snprintf(irq_fragment, sizeof(irq_fragment), "play_irqs=%u,silent_irqs=%u",
+-            (unsigned)g_play_irqs, (unsigned)g_play_silent_irqs);
++        std::snprintf(irq_fragment, sizeof(irq_fragment), "pcm_irqs=%u,silent_irqs=%u",
++            (unsigned)(dos_port_audio_sfx_active_count - g_pcm_irq_base), (unsigned)g_owed_silent_irqs);
+     std::snprintf(buf, bufsize, "pcm=%s@%d%c%d,voices=%d,underruns=%d,drains=%d,%s;%s",
+         device, DOS_AUDIO_MIXER_RATE, chan_letter, bits, DOS_AUDIO_MIXER_MAX_VOICES, g_underruns,
+         g_drains, irq_fragment, midi_fragment);
+@@ -169,9 +172,10 @@ bool dos_audio_mixer_init()
+         v = Voice();
+     g_underruns = 0;
+     g_drains = 0;
+-    g_play_irqs = 0;
+-    g_play_silent_irqs = 0;
+-    g_playing_at_snap = false;
++    g_owed_silent_irqs = 0;
++    g_owed_at_snap = false;
++    g_silent_snap = dos_port_audio_silent_irq_count;
++    g_pcm_irq_base = dos_port_audio_sfx_active_count;
+ 
+     if (g_gus_backend)
+     {
+@@ -441,16 +445,12 @@ void dos_audio_mixer_pump()
+ 
+     if (g_stream)
+     {
+-        // DOS-PORT (patch 0199): charge the IRQs since the last pump to the
+-        // play counters only if a voice was playing when that interval began.
+-        const uint32_t irq_now = dos_port_audio_irq_count;
++        // DOS-PORT (patch 0199/0200): charge the silent IRQs since the last
++        // pump only if audio was still owed to the device when that interval
++        // began (evaluated at the end of the previous pump, below).
+         const uint32_t silent_now = dos_port_audio_silent_irq_count;
+-        if (g_playing_at_snap)
+-        {
+-            g_play_irqs += irq_now - g_irq_snap;
+-            g_play_silent_irqs += silent_now - g_silent_snap;
+-        }
+-        g_irq_snap = irq_now;
++        if (g_owed_at_snap)
++            g_owed_silent_irqs += silent_now - g_silent_snap;
+         g_silent_snap = silent_now;
+ 
+         for (int iter = 0; iter < MAX_PUMP_ITERS; iter++)
+@@ -462,24 +462,29 @@ void dos_audio_mixer_pump()
+             if (!any_active)
+                 break; // nothing playing; let the device underflow to silence
+         }
++    }
++    // Service the DOS SB ring/ISR regardless -- mandatory per frame, per
++    // the hub's own docs/audio.md convention (SDL_DOSAudioPump()).
++    SDL_DOSAudioPump();
+ 
+-        // A voice is still playing unless its clip has ended and been fully
+-        // mixed out; after that its tail is in the device ring, and the
+-        // silence once that drains is the end of the sound, not a dropout.
+-        bool playing = false;
++    if (g_stream)
++    {
++        // DOS-PORT (patch 0200): audio is owed to the device while mixed PCM
++        // waits in the SDL stream, or a voice is not yet fully mixed out (a
++        // clip that has ended AND been mixed out owes nothing: its tail is in
++        // the driver's ring, and the silence once that drains is the end of
++        // the sound). Evaluated after the pump so it describes the interval
++        // that starts now.
++        bool owed = SDL_GetAudioStreamQueued(g_stream) > 0;
+         for (const auto &v : g_voices)
+         {
+-            if (v.used && v.active && !(v.source_done && v.ring.size() == v.read_pos))
+-            {
+-                playing = true;
++            if (owed)
+                 break;
+-            }
++            if (v.used && v.active && !(v.source_done && v.ring.size() == v.read_pos))
++                owed = true;
+         }
+-        g_playing_at_snap = playing;
++        g_owed_at_snap = owed;
+     }
+-    // Service the DOS SB ring/ISR regardless -- mandatory per frame, per
+-    // the hub's own docs/audio.md convention (SDL_DOSAudioPump()).
+-    SDL_DOSAudioPump();
+ }
+ 
+ int dos_audio_mixer_underrun_count()
+diff --git a/Engine/platform/dos/dos_audio_mixer.h b/Engine/platform/dos/dos_audio_mixer.h
+index 81370da1e..c025cf7db 100644
+--- a/Engine/platform/dos/dos_audio_mixer.h
++++ b/Engine/platform/dos/dos_audio_mixer.h
+@@ -160,13 +160,14 @@ void dos_audio_mixer_pump();
+ // gus_pcm_stream's own missed-swap count, unchanged.
+ int dos_audio_mixer_underrun_count();
+ 
+-// SB path (patch 0199): play_irqs / silent_irqs are the SB driver's IRQ and
+-// silent-IRQ (ring short of one DMA half-buffer, silence played) counts over
+-// pump intervals that began with a voice still playing -- a device-side
+-// dropout while a sound should be audible. play_irqs is there so a zero
+-// silent_irqs can be told apart from an IRQ that never fired. NA under GUS.
++// SB path (patches 0199/0200): pcm_irqs is the SB driver's count of IRQs that
++// played ring data since the device opened -- the witness that the device
++// consumed PCM at all. silent_irqs is its silent-IRQ count (ring short of one
++// DMA half-buffer, silence played) over pump intervals that began with audio
++// still owed to the device (mixed PCM in the SDL stream, or a voice not yet
++// fully mixed out) -- a dropout. NA under GUS.
+ // Builds "pcm=<device>@<rate><ch><bits>,voices=<n>,underruns=<n>,drains=<n>,
+-// play_irqs=<n>,silent_irqs=<n>;midi=<backend>,
++// pcm_irqs=<n>,silent_irqs=<n>;midi=<backend>,
+ // events=<n>" into a static buffer -- the "midi=" fragment comes from
+ // platform/dos/dos_midi_backend.h (S4; S1 hardcoded "midi=none" here since
+ // no MIDI backend existed yet). Returns "NA" if the PCM device never opened.
+-- 
+2.47.3
+

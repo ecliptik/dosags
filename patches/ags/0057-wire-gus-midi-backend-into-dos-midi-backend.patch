@@ -1,0 +1,249 @@
+From ff498d6dcd4b0ee795713abfccd671a981817b41 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sun, 13 Sep 2026 13:34:17 -0700
+Subject: [PATCH 2/2] DOS-PORT: wire GUS MIDI backend into dos_midi_backend (S5
+ GUS architecture)
+
+Closes a real gap left after gus_sink.{c,h} was hoisted into shared/
+(hub commit feaa0c9) but never actually wired into this engine's own
+backend-selection dispatch -- SDL_HINT_DOS_AUDIO_BACKEND=gus would have
+kept failing CLOSED ("no such backend hoisted yet") even after the
+sink itself, and the mixer's own GUS PCM path, both existed.
+
+- dos_midi_backend_open() gains a "gus" branch, opening gus_sink lazily
+  as a session-lifetime singleton (same shape as wb, but with no
+  cold-init ordering constraint -- see gus_sink.h's own doc comment for
+  why GUS needs neither wb's early cold-init nor opl3's per-instance
+  open/close).
+- New dos_midi_backend_prepare_song(), a no-op for every backend except
+  GUS -- gus_sink's own per-song lazy .pat residency contract requires
+  gus_sink_prepare_song() to run, in main-loop context, before
+  midi_sched_start()/midi_sched_tick() on the same instance. Wired into
+  both of AudioPlayer's own midi_sched_start() call sites (MidiInit(),
+  MidiPlay()'s PlayStateStopped case) so every caller gets this
+  ordering right without needing to know GUS exists.
+- dos_midi_backend_end_song()/_shutdown() gain GUS cases mirroring wb's
+  own silence-not-close / true-teardown split, using the new
+  gus_sink_silence() (hub commit ec48968, added for exactly this).
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ Engine/media/audio/audioplayer.cpp       | 12 +++++
+ Engine/platform/dos/dos_midi_backend.cpp | 56 ++++++++++++++++++++++--
+ Engine/platform/dos/dos_midi_backend.h   | 41 +++++++++++------
+ 3 files changed, 93 insertions(+), 16 deletions(-)
+
+diff --git a/Engine/media/audio/audioplayer.cpp b/Engine/media/audio/audioplayer.cpp
+index 3bc5c90a9..5c3cee86d 100644
+--- a/Engine/media/audio/audioplayer.cpp
++++ b/Engine/media/audio/audioplayer.cpp
+@@ -95,7 +95,14 @@ void AudioPlayer::MidiInit()
+ {
+     bool success = (_midiSched != nullptr) && (_midiSink != nullptr);
+     if (success)
++    {
++        // DOS-PORT (S5 GUS architecture): a no-op for every backend except
++        // GUS (see dos_midi_backend.h's own doc comment) -- MUST run
++        // before midi_sched_start(), which is what gus_sink's own per-song
++        // lazy .pat residency contract requires.
++        dos_midi_backend_prepare_song(_midiSink, _midiBackendKind, _midiSched);
+         midi_sched_start(_midiSched, MidiNowMs());
++    }
+     _playState = success ? _onLoadPlayState : PlayStateError;
+ }
+ 
+@@ -193,7 +200,12 @@ void AudioPlayer::MidiPlay()
+                 midi_sched_set_sink(_midiSched, &sink);
+         }
+         if (_midiSched && _midiSink)
++        {
++            // DOS-PORT (S5 GUS architecture): same ordering requirement as
++            // MidiInit() above -- see that call site's own comment.
++            dos_midi_backend_prepare_song(_midiSink, _midiBackendKind, _midiSched);
+             midi_sched_start(_midiSched, MidiNowMs());
++        }
+         _playState = (_midiSched && _midiSink) ? PlayStatePlaying : PlayStateError;
+         break;
+     case PlayStatePaused:
+diff --git a/Engine/platform/dos/dos_midi_backend.cpp b/Engine/platform/dos/dos_midi_backend.cpp
+index bbff3d573..a73750add 100644
+--- a/Engine/platform/dos/dos_midi_backend.cpp
++++ b/Engine/platform/dos/dos_midi_backend.cpp
+@@ -30,12 +30,21 @@ uint64_t g_events_dispatched = 0;
+ waveblaster_sink *g_wb_sink = nullptr;
+ bool g_wb_cold_init_attempted = false;
+ 
++// DOS-PORT (S5 GUS architecture): gus_sink is ALSO a session-lifetime
++// singleton (its own header: "never close and reopen this between songs"
++// -- gus_sink_open()'s DRAM/voice-count sizing is comparatively expensive)
++// but, unlike wb, has no cold-init ordering constraint -- it may open
++// lazily, the first time it's actually needed, which is here rather than
++// in dos_midi_backend_cold_init().
++gus_sink *g_gus_sink = nullptr;
++
+ const char *kind_name(DosMidiBackendKind k)
+ {
+     switch (k)
+     {
+     case DOS_MIDI_BACKEND_OPL3: return "opl3";
+     case DOS_MIDI_BACKEND_WB:   return "wb";
++    case DOS_MIDI_BACKEND_GUS:  return "gus";
+     default:                    return "none";
+     }
+ }
+@@ -131,11 +140,31 @@ void *dos_midi_backend_open(DosMidiBackendKind *out_kind, midi_sched_sink *out_s
+                 "DosMidiBackend: SDL_HINT_DOS_AUDIO_BACKEND=%s, no OPL3/OPL2 chip detected", hint);
+         }
+     }
++    else if (SDL_strcasecmp(hint, "gus") == 0)
++    {
++        // Lazy, session-lifetime singleton -- see g_gus_sink's own comment
++        // above. Opened on first use (here), never per-song.
++        if (!g_gus_sink)
++            g_gus_sink = gus_sink_open();
++        if (g_gus_sink)
++        {
++            kind = DOS_MIDI_BACKEND_GUS;
++            handle = g_gus_sink;
++            if (out_sink)
++                gus_sink_bind(g_gus_sink, out_sink);
++            Debug::Printf(kDbgMsg_Info, "DosMidiBackend: native GF1 (Gravis Ultrasound) backend active");
++        }
++        else
++        {
++            Debug::Printf(kDbgMsg_Info,
++                "DosMidiBackend: SDL_HINT_DOS_AUDIO_BACKEND=gus requested, no GF1 detected -- MIDI disabled this session");
++        }
++    }
+     else
+     {
+-        // "adlib" / "gus": real semantics, but no such sink is hoisted
+-        // into shared/ yet. Fail closed rather than silently falling back
+-        // to a different backend the hint did not ask for.
++        // "adlib": real semantics, but no such sink is hoisted into
++        // shared/ yet. Fail closed rather than silently falling back to a
++        // different backend the hint did not ask for.
+         Debug::Printf(kDbgMsg_Info,
+             "DosMidiBackend: SDL_HINT_DOS_AUDIO_BACKEND=%s requested, no such backend hoisted yet -- MIDI disabled this session",
+             hint);
+@@ -147,6 +176,13 @@ void *dos_midi_backend_open(DosMidiBackendKind *out_kind, midi_sched_sink *out_s
+     return handle;
+ }
+ 
++void dos_midi_backend_prepare_song(void *handle, DosMidiBackendKind kind, const midi_sched *m)
++{
++    if (kind != DOS_MIDI_BACKEND_GUS || !handle || !m)
++        return; // no-op for every other backend, or a not-yet-open GUS sink
++    gus_sink_prepare_song((gus_sink *)handle, m);
++}
++
+ void dos_midi_backend_end_song(void *&handle, DosMidiBackendKind kind)
+ {
+     if (!handle)
+@@ -163,6 +199,15 @@ void dos_midi_backend_end_song(void *&handle, DosMidiBackendKind kind)
+         // function's own doc comment in the header for why.
+         waveblaster_sink_silence((waveblaster_sink *)handle);
+         break;
++    case DOS_MIDI_BACKEND_GUS:
++        // Same reasoning as wb: gus_sink is a session-lifetime singleton
++        // (see g_gus_sink's own comment) -- silence only, never close/
++        // reopen here. gus_sink_silence() stops every currently-active
++        // voice without touching DRAM residency; the next
++        // dos_midi_backend_prepare_song() call (before the next song's
++        // own midi_sched_start()) handles that separately.
++        gus_sink_silence((gus_sink *)handle);
++        break;
+     default:
+         break;
+     }
+@@ -175,6 +220,11 @@ void dos_midi_backend_shutdown()
+         waveblaster_sink_close(g_wb_sink);
+         g_wb_sink = nullptr;
+     }
++    if (g_gus_sink)
++    {
++        gus_sink_close(g_gus_sink);
++        g_gus_sink = nullptr;
++    }
+ }
+ 
+ void dos_midi_backend_add_dispatched(uint64_t delta)
+diff --git a/Engine/platform/dos/dos_midi_backend.h b/Engine/platform/dos/dos_midi_backend.h
+index b9cb184a6..c1d9ea2d0 100644
+--- a/Engine/platform/dos/dos_midi_backend.h
++++ b/Engine/platform/dos/dos_midi_backend.h
+@@ -22,11 +22,11 @@
+ // section) as a plain string passed to SDL_GetHint() -- same convention
+ // SDL_dosaudio_sb.c's own SDL_HINT_DOS_SILENCE_DETECT already uses (there
+ // is no SDL-core #define for either; both are engine/port-side policy
+-// knobs SDL itself never branches on). "opl3"/"auto" and, as of S5, "wb"
+-// can succeed -- AdLib/GUS sinks are not yet hoisted into shared/.
+-// Selecting one of those explicitly with no such sink available fails
+-// CLOSED (silent, no MIDI output) rather than silently substituting a
+-// different backend the game didn't ask for.
++// knobs SDL itself never branches on). "opl3"/"auto", "wb" (S5), and, as
++// of the S5 GUS architecture work, "gus" can succeed -- "adlib" has no
++// sink hoisted into shared/ yet. Selecting "adlib" explicitly fails CLOSED
++// (silent, no MIDI output) rather than silently substituting a different
++// backend the game didn't ask for.
+ //
+ // DOS-PORT (S5): the caller (AudioPlayer) no longer touches a
+ // backend-specific sink type directly -- every handle here is an opaque
+@@ -41,24 +41,26 @@
+ #include <cstddef>
+ #include <cstdint>
+ 
+-// midi_sched.h / opl3_sink.h / waveblaster_sink.h (shared/audio) are plain
+-// C with no extern "C" guard of their own -- wrap the includes here on the
+-// C++ consumer side rather than editing the shared headers, which is a
+-// hub-side change with its own review, not a dosags patch. audioplayer.cpp/
+-// .h (the only other DOS-PORT file needing the shared MIDI API) includes
+-// this header rather than any shared header directly, so this wrapper only
+-// has to exist in one place.
++// midi_sched.h / opl3_sink.h / waveblaster_sink.h / gus_sink.h (shared/
++// audio) are plain C with no extern "C" guard of their own -- wrap the
++// includes here on the C++ consumer side rather than editing the shared
++// headers, which is a hub-side change with its own review, not a dosags
++// patch. audioplayer.cpp/.h (the only other DOS-PORT file needing the
++// shared MIDI API) includes this header rather than any shared header
++// directly, so this wrapper only has to exist in one place.
+ extern "C" {
+ #include "midi_sched.h"
+ #include "opl3_sink.h"
+ #include "waveblaster_sink.h"
++#include "gus_sink.h"
+ }
+ 
+ enum DosMidiBackendKind
+ {
+     DOS_MIDI_BACKEND_NONE = 0,
+     DOS_MIDI_BACKEND_OPL3,
+-    DOS_MIDI_BACKEND_WB
++    DOS_MIDI_BACKEND_WB,
++    DOS_MIDI_BACKEND_GUS
+ };
+ 
+ // DOS-PORT (S5): call exactly once, as EARLY as possible in engine startup
+@@ -88,6 +90,19 @@ void dos_midi_backend_cold_init();
+ // collapse to midi=none).
+ void *dos_midi_backend_open(DosMidiBackendKind *out_kind, midi_sched_sink *out_sink);
+ 
++// DOS-PORT (S5 GUS architecture): gus_sink's own per-song lazy .pat
++// residency (see gus_sink.h's numbered lifecycle) needs a THIRD call this
++// generic backend interface never needed before -- gus_sink_prepare_song()
++// MUST run, in MAIN-LOOP context, before midi_sched_start()/
++// midi_sched_tick() on the SAME midi_sched instance that is about to
++// (re)start. A no-op for every backend except GUS (opl3/wb have no
++// per-song upload step at all), so every AudioPlayer call site can call
++// this unconditionally, right before its own midi_sched_start(), without
++// needing to know which backend is active. `handle`/`kind` are whatever
++// dos_midi_backend_open() most recently returned; `m` is the midi_sched
++// instance about to (re)start.
++void dos_midi_backend_prepare_song(void *handle, DosMidiBackendKind kind, const midi_sched *m);
++
+ // Ends a handle between songs (Stop(), a loop restart, this AudioPlayer's
+ // own destructor) -- the only safe way to guarantee no note is left
+ // physically sounding, per each backend's own contract:
+-- 
+2.47.3
+

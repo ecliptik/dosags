@@ -1,0 +1,36 @@
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index d11af2cfb..16258f760 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -47,6 +47,7 @@ extern "C" volatile uint32_t dos_port_audio_ring_overwrite_count;
+ extern uint32_t get_loop_counter();
+ extern int displayed_room;
+ 
++unsigned ur8_zero = 0, ur8_quiet = 0, ur8_total = 0; // THROWAWAY UR8
+ using namespace AGS::Common;
+ 
+ namespace
+@@ -173,6 +174,7 @@ void format_status_string(char *buf, size_t bufsize)
+         std::snprintf(ring_fragment, sizeof(ring_fragment), "overwrites=%u,ring_max_ms=%d/%d",
+             (unsigned)(dos_port_audio_ring_overwrite_count - g_overwrite_base), g_ring_max_ms,
+             SDL_DOSAudioRingCapacityMs());
++    { Debug::Printf(kDbgMsg_Info, "UR8 mixed_chunks=%u zero=%u quiet_lt128=%u", ::ur8_total, ::ur8_zero, ::ur8_quiet); } // THROWAWAY UR8
+     std::snprintf(buf, bufsize, "pcm=%s@%d%c%d,voices=%d,underruns=%d,drains=%d,%s,%s;%s",
+         device, DOS_AUDIO_MIXER_RATE, chan_letter, bits, DOS_AUDIO_MIXER_MAX_VOICES, g_underruns,
+         g_drains, irq_fragment, ring_fragment, midi_fragment);
+@@ -442,9 +444,15 @@ static void mix_one_chunk(bool &out_any_active)
+         if (sample < -32768) sample = -32768;
+         outbuf[s] = static_cast<int16_t>(sample);
+     }
++    { // THROWAWAY UR8: chunks that the device's silence gate will see as silence
++        int pk = 0; for (int k = 0; k < MIX_CHUNK_SAMPLES; k++) { int a = outbuf[k] < 0 ? -outbuf[k] : outbuf[k]; if (a > pk) pk = a; }
++        ::ur8_total++;
++        if (pk == 0) ::ur8_zero++; else if (pk < 128) ::ur8_quiet++;
++    }
+     SDL_PutAudioStreamData(g_stream, outbuf, MIX_CHUNK_BYTES);
+ }
+ 
++
+ void dos_audio_mixer_pump()
+ {
+     if (g_gus_backend)

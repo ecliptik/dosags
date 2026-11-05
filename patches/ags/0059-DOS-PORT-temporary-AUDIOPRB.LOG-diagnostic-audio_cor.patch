@@ -1,0 +1,184 @@
+From fcf803aa07e3827d173b7591dba6e57733be43f0 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 14 Sep 2026 06:54:54 -0700
+Subject: [PATCH] DOS-PORT: temporary AUDIOPRB.LOG diagnostic --
+ audio_core_entry_poll per-call cost (S7)
+
+WHY: S7's real-hardware ABBA on Trilby's Notes (2026-09-13,
+tests/games/trilbysnotes/results/S7-abba-2026-09-13.md) found
+dos_run_tick_fixed()'s catch-up loop (patch 0047) re-invokes
+audio_core_entry_poll() up to MAX_CATCHUP+1=6x per GameTick() call once a
+MIDI backend is active and the hardware falls behind the 40Hz target
+(which it always does on HW-486-66 -- backlog never clears), collapsing
+tick_rate ~86%. The root cause (the re-invocation itself) was already
+source-verified, but this function's own per-call cost was not measured
+-- per this hub's own "instrument the thing that produces the unexplained
+quantity, not its neighbors" rule (dos-hardware-validation skill), this
+measures exactly that rather than guessing at a fix.
+
+WHAT: brackets audio_core_entry_poll()'s two real components -- the slot
+Poll() loop (MIDI scheduling included) and dos_audio_mixer_pump() -- with
+uclock()-based microsecond timestamps, accumulates per-window (not
+cumulative-since-start, so a shift in behavior over a run stays visible)
+min/mean/max, and flushes to AUDIOPRB.LOG once every 200 calls. Same
+in-memory-accumulate-then-periodic-flush idiom as
+.sdl-dos-ports/shared/patches/sdl3-dos/0136 -- that investigation
+independently measured a per-call fopen/fprintf/fclose (even "every 20
+frames") to cost a real ~0.4-0.5fps, so this does no I/O on the hot path.
+DJGPP-only (__DJGPP__-gated), matching this hub's "DOS-specific behavior
+stays explicit" rule.
+
+Real result (DOSBox-X, --fast/cycles=max, Trilby's Notes title screen,
+OPL3 MIDI + SB PCM open): the slot Poll() loop costs tens of
+microseconds/call; dos_audio_mixer_pump() alone costs ~10-11ms/call
+(mean), ~3400x a sound-off call's ~3us -- dominated by SDL_DOSAudioPump()
+-> SDL_PlaybackAudioThreadIterate() -> DOSSOUNDBLASTER_WaitDevice(), a
+real-time-paced ring-drain wait. This is what patch 0060's fix targets.
+
+Temporary -- to be reverted once the S7 fix (patch 0060) lands and
+re-measures clean on real hardware, same convention as 0136 itself.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/media/audio/audio_core.cpp | 112 ++++++++++++++++++++++++++++++
+ 1 file changed, 112 insertions(+)
+
+diff --git a/Engine/media/audio/audio_core.cpp b/Engine/media/audio/audio_core.cpp
+index c7bc2504a..07351f569 100644
+--- a/Engine/media/audio/audio_core.cpp
++++ b/Engine/media/audio/audio_core.cpp
+@@ -187,8 +187,112 @@ void audio_core_slot_stop(int slot_handle)
+ // AUDIO PROCESSING
+ // -------------------------------------------------------------------------------------------------
+ 
++#ifdef __DJGPP__
++#include <cstdint> // UINT64_MAX -- TEMPORARY DIAGNOSTIC, see below
++#include <time.h> // uclock(), UCLOCKS_PER_SEC -- TEMPORARY DIAGNOSTIC, see below
++
++// DOS-PORT (S4): same global dos_port_engine_start_uclock every other
++// uclock() consumer in this engine uses (ac/event.cpp, ac/room.cpp,
++// ac/sys_events.cpp, audioplayer.cpp) -- extern'd at file scope, NOT from
++// inside a namespace block, per audioplayer.cpp's own comment on why a
++// namespace-scope extern here mangles to a different (unresolved) symbol.
++extern uclock_t dos_port_engine_start_uclock;
++
++// TEMPORARY DIAGNOSTIC (AUDIOPRB.LOG): S7's real-hardware ABBA
++// (2026-09-13, tests/games/trilbysnotes/results/S7-abba-2026-09-13.md)
++// found dos_run_tick_fixed()'s catch-up loop (patch 0047, game_run.cpp)
++// re-invokes audio_core_entry_poll() up to MAX_CATCHUP+1=6x per
++// GameTick() call whenever the hardware is behind the 40Hz target (which
++// it always is once a MIDI backend is active -- backlog never clears on
++// HW-486-66). Root cause is source-verified; what was NOT yet measured is
++// this function's own per-call cost, split into its two real components:
++// the slot Poll() loop (MIDI scheduling included) and dos_audio_mixer_
++// pump() (SB ring service / GUS voice pump). Per this hub's own
++// "instrument the thing that produces the unexplained quantity, not its
++// neighbors" rule (dos-hardware-validation skill), this measures exactly
++// that, directly at the two call sites named in the writeup's own "not
++// yet done" section.
++//
++// Same in-memory-accumulate, periodic-flush idiom as .sdl-dos-ports/
++// shared/patches/sdl3-dos/0136 -- that investigation independently
++// measured a per-call fopen/fprintf/fclose (even "every 20 frames") to
++// cost a real ~0.4-0.5fps, so this does no I/O on the hot path either.
++// Stats are per-window (reset every AUDIO_POLL_DIAG_WINDOW calls, not
++// cumulative-since-start) so a shift in behavior over the run (e.g. once
++// the fixed-timestep backlog maxes out) is visible rather than averaged
++// away; window size is a call count, not a time interval, since this
++// function's own call RATE is the thing under suspicion.
++//
++// Temporary -- to be reverted once S7's fix lands and re-measures clean,
++// same convention as 0136 itself.
++namespace {
++
++const uint32_t AUDIO_POLL_DIAG_WINDOW = 200;
++
++struct AudioPollDiag
++{
++    uint32_t total_calls = 0;   // cumulative, for correlating against RUNMANIFEST's own event counts
++    uint32_t window_calls = 0;
++    uint64_t slots_sum_us = 0, slots_min_us = UINT64_MAX, slots_max_us = 0;
++    uint64_t pump_sum_us = 0, pump_min_us = UINT64_MAX, pump_max_us = 0;
++};
++AudioPollDiag g_audio_poll_diag;
++
++uint64_t dos_diag_now_us()
++{
++    return (uint64_t)((uclock() - dos_port_engine_start_uclock) * 1000000ULL / UCLOCKS_PER_SEC);
++}
++
++void dos_diag_flush_audio_poll()
++{
++    AudioPollDiag &d = g_audio_poll_diag;
++    if (d.window_calls == 0)
++        return;
++    FILE *fp = fopen("AUDIOPRB.LOG", "a");
++    if (fp)
++    {
++        fprintf(fp,
++            "total_calls=%lu window_calls=%lu "
++            "slots_us(min=%lu mean=%lu max=%lu) "
++            "pump_us(min=%lu mean=%lu max=%lu)\n",
++            (unsigned long)d.total_calls, (unsigned long)d.window_calls,
++            (unsigned long)(d.slots_min_us == UINT64_MAX ? 0 : d.slots_min_us),
++            (unsigned long)(d.slots_sum_us / d.window_calls),
++            (unsigned long)d.slots_max_us,
++            (unsigned long)(d.pump_min_us == UINT64_MAX ? 0 : d.pump_min_us),
++            (unsigned long)(d.pump_sum_us / d.window_calls),
++            (unsigned long)d.pump_max_us);
++        fclose(fp);
++    }
++    d.window_calls = 0;
++    d.slots_sum_us = 0; d.slots_min_us = UINT64_MAX; d.slots_max_us = 0;
++    d.pump_sum_us = 0; d.pump_min_us = UINT64_MAX; d.pump_max_us = 0;
++}
++
++void dos_diag_record_audio_poll(uint64_t slots_us, uint64_t pump_us)
++{
++    AudioPollDiag &d = g_audio_poll_diag;
++    d.total_calls++;
++    d.window_calls++;
++    d.slots_sum_us += slots_us;
++    if (slots_us < d.slots_min_us) d.slots_min_us = slots_us;
++    if (slots_us > d.slots_max_us) d.slots_max_us = slots_us;
++    d.pump_sum_us += pump_us;
++    if (pump_us < d.pump_min_us) d.pump_min_us = pump_us;
++    if (pump_us > d.pump_max_us) d.pump_max_us = pump_us;
++    if (d.window_calls >= AUDIO_POLL_DIAG_WINDOW)
++        dos_diag_flush_audio_poll();
++}
++
++} // anonymous namespace
++#endif // __DJGPP__
++
+ void audio_core_entry_poll()
+ {
++#ifdef __DJGPP__
++    const uint64_t t_entry_us = dos_diag_now_us();
++#endif
++
+     for (auto &entry : g_acore.slots_) {
+         auto &slot = entry.second;
+ 
+@@ -199,6 +303,10 @@ void audio_core_entry_poll()
+         }
+     }
+ 
++#ifdef __DJGPP__
++    const uint64_t t_after_slots_us = dos_diag_now_us();
++#endif
++
+     // DOS-PORT (Sound milestone, S1): mix every active voice into the
+     // shared SDL3 stream and service the SB ring. This is the single
+     // choke point both of this function's own callers reach --
+@@ -211,6 +319,10 @@ void audio_core_entry_poll()
+     // here, rather than duplicating a dos_audio_mixer_pump() call at each
+     // caller, keeps there being exactly one place that drives the device.
+     dos_audio_mixer_pump();
++
++#ifdef __DJGPP__
++    dos_diag_record_audio_poll(t_after_slots_us - t_entry_us, dos_diag_now_us() - t_after_slots_us);
++#endif
+ }
+ 
+ #if !defined(AGS_DISABLE_THREADS)

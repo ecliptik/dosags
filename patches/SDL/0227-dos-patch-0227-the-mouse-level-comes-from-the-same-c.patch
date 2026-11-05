@@ -1,0 +1,79 @@
+From 735b8f0de6e93f353488dc5c3f3ed75510a71ce3 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 17:00:10 -0700
+Subject: [PATCH] dos: patch 0227 -- the mouse level comes from the same call
+ as the press count
+
+Patch 0221 reads the button level with INT 33h function 3 and each
+button's press count with function 5 -- separate driver calls. A press
+landing between them reads "up" in function 3 and counts 1 in function 5:
+0221 delivers it as a synthetic (down, up). On the next pump function 3
+shows the button held while the previous level says up, so the same press
+is delivered again as a level press -- a phantom click. On the 486 the
+driver's count fell short of the presses delivered in 4 of 7 runs (5 in
+~314 presses, 1.6%), one with sound off; anything that stretches the gap
+between the two calls (an ISR, the real-mode round trip) widens it.
+
+Function 5 returns, in AX, the button status at the moment it reads and
+zeroes that button's count. Taking each button's level from its own
+function 5 call makes the level and the count one observation, so they
+cannot disagree that way. The level drives level_press, the previous
+state and the level sent to SDL for left and right; the middle button
+and the position stay on function 3. No extra INT 33h call. 0222's
+level-only path (the pre-0221 behaviour, kept as a control) is unchanged.
+---
+ src/video/dos/SDL_dosevents.c | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/src/video/dos/SDL_dosevents.c b/src/video/dos/SDL_dosevents.c
+index e6b75c611..fda66c092 100644
+--- a/src/video/dos/SDL_dosevents.c
++++ b/src/video/dos/SDL_dosevents.c
+@@ -332,6 +332,10 @@ static Uint16 dos_mouse_prev_buttons = 0;
+ /* dosags patch 0221: presses the driver counted since the last read, per
+    button (0 = left, 1 = right), kept for the pump that reads them. */
+ static Uint16 dos_mouse_new_presses[2];
++/* dosags patch 0227: the button status function 5 returned (AX) in the call
++   that read each button's count -- that button's level AT the count, from
++   the same driver call. */
++static Uint16 dos_mouse_fn5_status[2];
+ 
+ static void DOS_ReadMousePressCounters(void)
+ {
+@@ -344,6 +348,7 @@ static void DOS_ReadMousePressCounters(void)
+         __dpmi_int(0x33, &regs);
+         dos_mouse_hw_presses += (Uint32)regs.x.bx;
+         dos_mouse_new_presses[b] = (Uint16)(dos_mouse_new_presses[b] + regs.x.bx);
++        dos_mouse_fn5_status[b] = (Uint16)regs.x.ax; /* dosags patch 0227 */
+     }
+     dos_mouse_press_checks++;
+ }
+@@ -497,7 +502,7 @@ void DOSVESA_PumpEvents(SDL_VideoDevice *device)
+ 
+         regs.x.ax = 0x3; // read mouse buttons and position.
+         __dpmi_int(0x33, &regs);
+-        const Uint16 buttons = (int)(Sint16)regs.x.bx;
++        Uint16 buttons = (int)(Sint16)regs.x.bx; /* dosags patch 0227: left/right replaced below */
+ 
+         /* dosags patch 0221 (on 0220's counters): read the driver's press
+            counts on EVERY pump and deliver the presses the level read
+@@ -534,6 +539,16 @@ void DOSVESA_PumpEvents(SDL_VideoDevice *device)
+             static const Uint8 sdl_button[2] = { SDL_BUTTON_LEFT, SDL_BUTTON_RIGHT };
+             int b;
+             DOS_ReadMousePressCounters();
++            /* dosags patch 0227: left/right level from each button's own
++               function 5 call, not from function 3. Function 3 and function 5
++               are separate driver calls; a press landing between them read
++               "up" in 3 and was counted by 5, was delivered as a synthetic
++               (down, up), and on the next pump -- function 3 now "down",
++               prev "up" -- was delivered AGAIN as a level press: a phantom
++               click (486: seen > hw in 4 of 7 runs, 1.6% of presses). Level
++               and count from one call cannot disagree that way. Middle
++               button and position stay on function 3. */
++            buttons = (Uint16)((buttons & ~3u) | (dos_mouse_fn5_status[0] & 1u) | (dos_mouse_fn5_status[1] & 2u));
+             for (b = 0; b < 2; b++) {
+                 const bool now_down = (buttons & (1 << b)) != 0;
+                 const bool was_down = (dos_mouse_prev_buttons & (1 << b)) != 0;
+-- 
+2.47.3
+

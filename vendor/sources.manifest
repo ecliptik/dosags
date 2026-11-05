@@ -1,0 +1,38 @@
+# vendor/sources.manifest -- pinned upstream sources for dosags.
+# Format: <name>  <url>  <ref>  <sha>
+# See .sdl-dos-ports/docs/patch-conventions.md.
+#
+# This port vendors its OWN copy of SDL source, AND its own copy of the
+# DOS patch series (patches/SDL -- real files, seeded once from the hub
+# at scaffold time, not symlinked -- see
+# .sdl-dos-ports/docs/patch-conventions.md).
+
+# SDL3, same pin as the shared sdl3-dos patch series in
+# .sdl-dos-ports/shared/patches/sdl3-dos/ was built against (verified
+# against doskutsu's own vendor/sources.manifest, which the shared patch
+# series was extracted from). Must be a post-PR-#15377 commit -- that PR
+# added the DOS backend.
+SDL            https://github.com/libsdl-org/SDL.git             main    74a746281f2208e07a7680560fcb7ec57565228e
+
+# NOTE: SDL_image is deliberately NOT vendored yet. AGS's own CMakeLists.txt
+# (read at the pin below) has no find_package(SDL_image) -- no evidence of
+# use. Do not add it back without a concrete reason found during porting.
+
+# NOTE: SDL_mixer is deliberately NOT vendored yet, and this needs its own
+# Milestone-0 research, not a guess either way. AGS's own CMakeLists.txt
+# (read at the pin below) does not find_package(SDL_mixer) -- its actual
+# audio-decode dependency is SDL2_sound (a different, unrelated library by
+# the same upstream author, Ryan C. Gordon/icculus -- decodes WAV/OGG/etc.
+# to raw PCM), plus separate Ogg/Vorbis/Theora requirements. Whether the
+# DOS port needs SDL2_sound ported, needs SDL3_mixer as a replacement, or
+# can go straight to core SDL3's audio device API (dossage's approach for
+# Passage's simpler needs) is exactly the SDL2->SDL3 strategy decision in
+# PLAN.md's open questions -- see plans/SDL_DOS_PORTING_PROGRAM.md section
+# 18 in the hub. Do not vendor SDL_mixer until that decision is made.
+
+# Adventure Game Studio -- v3.6.3.13, the current tip (2026-08-16) of the
+# actively-maintained `ags3` stable branch (not the newer, less-proven
+# `ags4` line -- see ports.yaml's notes in the hub for the full reasoning).
+# Artistic License 2.0, verified directly against this revision's own
+# License.txt + Copyright.txt (see LICENSE-REVIEW.md).
+ags            https://github.com/adventuregamestudio/ags.git    v3.6.3.13    94e271df9c14484d89f4861100f643d39555dae7

@@ -1,0 +1,2729 @@
+Adventure Game Studio v3.6 Interpreter
+Copyright (c) 1999-2011 Chris Jones and 2011-2026 others
+Engine version 3.6.3.13, 32-bit LE
+
+Initializing backend libs
+SDL Version: 3.5.0
+DOS-PORT: SDL_DOS_ALLOW_DIRECT_FRAMEBUFFER=1 (port default)
+DOS-PORT: SDL_DOS_PREFER_LFB=1 (port default)
+Initializing game data
+Looking for the game data.
+ Cwd: c:/
+ Path arg: 
+Searching in (cwd): c:/
+Found game config: c:/acsetup.cfg
+ Cfg: data file: 
+Searching for game data in: c:/
+Found game data pak: c:/notes.ags
+Located game data pak: c:/notes.ags
+Opened game data file: ac2game.dta
+Game data version: 27
+Compiled with: 2.62
+Startup directory: c:/
+Data directory: c:/
+Setting up game configuration
+User data directory: c:\
+Game : (room:-10) SetSaveGameDirectory: failed to create all subdirectories: c:/c:\
+Was not able to init voice pack 'speech.vox': file not found or of unknown format.
+Registered asset libraries:
+- LIB:	c:/notes.ags
+	Filters: ,audio
+- DIR:	c:/
+	Filters: ,audio,voice
+Initializing TTF renderer
+Initializing mouse: number of buttons reported is 3
+Initializing audio
+DOSAudioMixer: opened 11025 Hz mono S16, 8 voices
+DOS audio device opened: pcm=sb@11025m16,voices=8,underruns=0,drains=0,pcm_irqs=0,silent_irqs=0,overwrites=0,ring_max_ms=0/743,skipped_silent=0,idle_pauses=0,underflow_pads=0,partial_pulls=0,mixed=0,mixed_zero=0,mixed_quiet=0,inflight=0;midi=none,events=0,midi_tick=poll,late_max_ms=0,late_hist=0/0/0/0/0/0,late50=0,burst=0@0,clk=0/-1s
+AudioCore: DOS mixer status: pcm=sb@11025m16,voices=8,underruns=0,drains=0,pcm_irqs=0,silent_irqs=0,overwrites=0,ring_max_ms=0/743,skipped_silent=0,idle_pauses=0,underflow_pads=0,partial_pulls=0,mixed=0,mixed_zero=0,mixed_quiet=0,inflight=0;midi=none,events=0,midi_tick=poll,late_max_ms=0,late_hist=0/0/0/0/0/0,late50=0,burst=0@0,clk=0/-1s
+Sound cache set: 2048 KB
+Install exit handler
+Load game data
+Game title: 'Trilby's Notes'
+Game uid (old format): `1112392103`
+Game guid: ''
+Game GUI version: 105
+	WFN: item at off 116 -- pixel data overlaps next known item (at 120, +9)
+	WFN: item at off 1468 -- pixel data exceeds available data (at 1472, +0)
+WARNING: font 'agsfnt0.wfn' has mistakes in data format, some characters may be displayed incorrectly
+Loaded font 0: agsfnt0.wfn, req size: 0; nominal h: 9, real h: 9, vextent: 0,8, aabb: 0,0 - 16,8
+Loaded font 1: agsfnt1.wfn, req size: 0; nominal h: 7, real h: 8, vextent: 0,7, aabb: 0,0 - 7,7
+Loaded font 2: agsfnt2.wfn, req size: 0; nominal h: 9, real h: 10, vextent: 0,9, aabb: 0,0 - 17,9
+ERROR: Unable to load font 3 using available asset(s), file does not exist or no renderer could load a matching file.
+	WFN: item at off 116 -- pixel data overlaps next known item (at 120, +9)
+	WFN: item at off 1468 -- pixel data exceeds available data (at 1472, +0)
+WARNING: font 'agsfnt0.wfn' has mistakes in data format, some characters may be displayed incorrectly
+Loaded font 3: agsfnt0.wfn, req size: 0; nominal h: 9, real h: 9, vextent: 0,8, aabb: 0,0 - 16,8
+Set game text language: 
+Set locale: 
+Initializing resolution settings
+Game native resolution: 320 x 240 (8 bit) letterbox-by-design
+Mouse cursor graphic area: (0,0)-(319,239) (320x240)
+Created global script
+Checking for disk space
+Device display resolution: 640 x 480
+Graphic settings: driver: OGL, windowed: no, screen size: 512 x 384, game scale: round
+Graphic settings: refresh rate (optional): 0, vsync: 0
+Requested graphics driver 'OGL' not found, will try existing drivers instead
+Using graphics factory: Software
+Created graphics driver: SDL 2D Software renderer
+Supported gfx modes for display 0 (8-bit): 
+	1280x1024;1152x864;1024x768;800x600;640x480;640x400;512x384;400x300;
+	320x240;320x200;
+Attempt to find nearest supported resolution for screen size 512 x 384 (8-bit) fullscreen, on display 0
+Attempt to switch gfx mode to 512 x 384 (8-bit) fullscreen, on display 0
+Window surface pixel format: SDL_PIXELFORMAT_INDEX8
+Graphics driver set: SDL 2D Software renderer
+Graphics mode set: 512 x 384 (8-bit) fullscreen, on display 0
+Graphics mode set: refresh rate (optional): 0, vsync: 0
+Render frame set, render dest (96, 72, 415, 311 : 320 x 240)
+Requested gfx filter: StdScale
+Graphics filter set: 'StdScale', filter dest (96, 72, 415, 311 : 320 x 240)
+Using gfx filter: StdScale
+Mouse speed control: enabled, unit: 0.800000, user value: 1.000000
+Touch-to-mouse motion mode: absolute
+Mouse cursor graphic area: (96,72)-(415,311) (320x240)
+Multitasking mode set: 0
+Setting up window
+Multitasking mode set: 0
+Initialize sprites
+Sprite file info: compression: none, storage flags: 0x00000000, total sprites: 763
+Sprite cache set: 4096 KB
+Initialize game settings
+Game text encoding: ASCII, text language: not set
+Precache view 0 (loops 0-4) with 10 frames, total = 2 ms, average file->mem = 0 ms, bm->tx = 0 ms,
+		loaded 0 sounds = 0 ms
+	Sprite cache: 0 -> 8 KB, texture cache: 0 -> 0 KB
+Runtime behavior switches:
+	smooth_walk = 0
+	gui_text_direction = 0
+	dialog_opt_text_alignment = 0
+Prepare to start game
+Game : (room:-10) Cursor mode set to 0
+Engine initialization complete
+Starting game
+Game : (room:-10) Cursor mode set to 0
+Game : (room:-10) Playing music 0
+Game : (room:-10) [Global script:63] GlobalInt 6 set to 1
+Game : (room:-10) [Global script:64] GlobalInt 8 set to 1
+Game : (room:-10) [Global script:65] GlobalString 1 set to 'Matthew'
+Game : (room:-10) [Global script:66] GlobalInt 10 set to 5
+Game : (room:-10) [Global script:67] GUI 3 turned off
+Game : (room:-10) [Global script:68] GUI 4 turned off
+Game : (room:-10) [Global script:69] GUI 5 turned off
+Game : (room:-10) [Global script:70] GUI 2 turned off
+Game : (room:-10) [Global script:71] GUI 7 turned off
+Game : (room:-10) Transition-out in room -10 (DOS-PORT 0106: placeholder, animation skipped)
+Game : (room:-10) Loading room 16
+Game : (room:-10) DOSAGS_XT t_ms=85 phase=load_begin room=16
+Mouse cursor graphic area: (96,92)-(415,291) (320x200)
+Game : (room:16) Mouse bounds constrained to (0,0)-(319,199)
+Game : (room:16) DOSAGS_LIGHTTABLE call=1 action=skipped ms=0 rebuilt_total=0
+Initialize legacy path finder library
+Game : (room:16) Now in room 16
+Game : (room:16) DOSAGS_XT t_ms=245 phase=load_end room=16
+DOS-PORT fixed-timestep: ENABLED (logic decoupled from render)
+Game : (room:16) [Room script:6] GlobalInt 21 set to 3
+Game : (room:16) [Room script:7] GlobalInt 22 set to 4
+Game : (room:16) [Room script:8] Object 0 set to view 19
+Game : (room:16) [Room script:9] Obj 0 start anim view 19 loop 4, speed 2, repeat 1, frame 0
+Game : (room:16) [Room script:10] cRod moved to room 16, location 169,122, loop 0
+Game : (room:16) [Room script:11] cRod: Change view to 19
+DOS-PORT vscreen alias ON x=96 y=72 320x240 pitch=512
+Game : (room:16) Transition-in in room 16
+Game : (room:16) DOSAGS_XT t_ms=305 phase=fadein_begin room=16
+Game : (room:16) DOSAGS_XT t_ms=1003 phase=fadein_end room=16
+DOS-PORT stallwhat tick=1 self_ms=782 children_ms=0 script_us=3224 events_us=699091 scene_us=1080 rb_us=1220 present_us=594623
+DOS-PORT skipframe owed=30 prev_us total=782262 present=594623 rb=1220 scene=1080 script=3224 events=699091 sprite_px=3813 present_px=1075200 sprites=3 maxspr=30x58
+Game : (room:16) DOS-PORT room_transition t_ms=2767 event=ready room=16
+Game : (room:16) [DOS-PORT-STARTUP-BEGIN]
+Game : (room:16) schema_version=1
+Game : (room:16) subsystem_init_ms=16
+Game : (room:16) gamedata_asset_load_ms=600
+Game : (room:16) script_vm_init_ms=758
+Game : (room:16) gfxmode_init_ms=43
+Game : (room:16) sprite_index_init_ms=152
+Game : (room:16) sprite_precache_ms=9
+Game : (room:16) sprite_precache_view_count=1
+Game : (room:16) sprite_precache_frame_count=10
+Game : (room:16) sprite_precache_slowest1_view=0 sprite_precache_slowest1_ms=2
+Game : (room:16) sprite_precache_slowest2_view=-1 sprite_precache_slowest2_ms=-1
+Game : (room:16) sprite_precache_slowest3_view=-1 sprite_precache_slowest3_ms=-1
+Game : (room:16) first_room_load_ms=947
+Game : (room:16) preloop_game_start_script_ms=4
+Game : (room:16) preloop_restart_point_ms=79
+Game : (room:16) preloop_placeholder_fade_ms=0
+Game : (room:16) preloop_room_load_ms=160
+Game : (room:16) preloop_first_room_init_ms=0
+Game : (room:16) preloop_skipmissed_ms=0
+Game : (room:16) preloop_start_game_ms=245
+Game : (room:16) restart_diskcheck_ms=0
+Game : (room:16) restart_screenshot_ms=0
+Game : (room:16) restart_savegame_ms=79
+Game : (room:16) restart_total_ms=79
+Game : (room:16) roomload_loadroom_ms=109
+Game : (room:16) roomload_bgprep_ms=0
+Game : (room:16) roomload_maskprep_ms=38
+Game : (room:16) roomload_objsetup_ms=0
+Game : (room:16) roomload_script_ms=1
+Game : (room:16) roomload_lighttable_ms=7
+Game : (room:16) roomload_drawdata_ms=0
+Game : (room:16) roomload_total_ms=160
+Game : (room:16) total_to_first_frame_ms=2767
+Game : (room:16) [DOS-PORT-STARTUP-END]
+Game : (room:16) [Room script:21] Playing music 4
+DosMidiBackend: OPL3/OPL2 chip detected and initialized (status bits 1-2 say OPL3; driven as OPL3, 18 two-op voices)
+DosMidiBackend: MIDI tick isr (writes planned ahead, replayed by the SB IRQ)
+DOS-PORT skipframe owed=2 prev_us total=78947 present=40375 rb=1122 scene=1569 script=0 events=13 sprite_px=3817 present_px=5529 sprites=4 maxspr=30x58
+DOS-PORT skipframe owed=2 prev_us total=80340 present=41699 rb=1122 scene=1561 script=0 events=14 sprite_px=3817 present_px=5529 sprites=4 maxspr=30x58
+DOS-PORT skipframe owed=2 prev_us total=78824 present=40148 rb=1121 scene=1563 script=0 events=14 sprite_px=3817 present_px=5529 sprites=4 maxspr=30x58
+DOS-PORT skipframe owed=3 prev_us total=79196 present=40640 rb=1120 scene=1558 script=0 events=14 sprite_px=3817 present_px=5529 sprites=4 maxspr=30x58
+Game : (room:16) [Room script:23] cTrb: Change view to 17
+DOS-PORT skipframe owed=3 prev_us total=80764 present=40589 rb=2069 scene=1835 script=0 events=14 sprite_px=8538 present_px=25200 sprites=5 maxspr=209x24
+DOS-PORT skipframe owed=3 prev_us total=83168 present=40547 rb=4560 scene=1828 script=0 events=14 sprite_px=8538 present_px=25200 sprites=5 maxspr=209x24
+DOS-PORT skipframe owed=2 prev_us total=80761 present=40583 rb=2075 scene=1695 script=0 events=12 sprite_px=8538 present_px=25200 sprites=5 maxspr=209x24
+DOS-PORT skipframe owed=2 prev_us total=92668 present=40589 rb=2068 scene=1813 script=0 events=19 sprite_px=8538 present_px=25200 sprites=5 maxspr=209x24
+DOS-PORT skipframe owed=3 prev_us total=81463 present=41205 rb=2065 scene=1677 script=0 events=13 sprite_px=8538 present_px=25200 sprites=5 maxspr=209x24
+DOS-PORT skipframe owed=2 prev_us total=92553 present=40589 rb=2066 scene=1684 script=0 events=18 sprite_px=8538 present_px=25200 sprites=5 maxspr=209x24
+DOS-PORT skipframe owed=2 prev_us total=95216 present=40541 rb=2068 scene=1812 script=0 events=18 sprite_px=8538 present_px=25200 sprites=5 maxspr=209x24
+DOS-PORT skipframe owed=2 prev_us total=80662 present=40542 rb=2069 scene=1687 script=0 events=13 sprite_px=8538 present_px=25200 sprites=5 maxspr=209x24
+DOS-PORT skipframe owed=2 prev_us total=93324 present=40589 rb=2066 scene=1835 script=0 events=16 sprite_px=8538 present_px=25200 sprites=5 maxspr=209x24
+DOS-PORT skipframe owed=3 prev_us total=80449 present=40504 rb=1963 scene=1673 script=0 events=13 sprite_px=8058 present_px=22800 sprites=5 maxspr=189x24
+DOS-PORT skipframe owed=3 prev_us total=82280 present=42322 rb=1963 scene=1661 script=0 events=14 sprite_px=8058 present_px=22800 sprites=5 maxspr=189x24
+DOS-PORT skipframe owed=3 prev_us total=80832 present=40525 rb=1964 scene=1804 script=0 events=13 sprite_px=8058 present_px=22800 sprites=5 maxspr=189x24
+DOS-PORT skipframe owed=2 prev_us total=80549 present=40456 rb=1964 scene=1811 script=0 events=13 sprite_px=8058 present_px=22800 sprites=5 maxspr=189x24
+DOS-PORT skipframe owed=2 prev_us total=92756 present=40422 rb=1962 scene=1853 script=0 events=17 sprite_px=8058 present_px=22800 sprites=5 maxspr=189x24
+DOS-PORT skipframe owed=2 prev_us total=81999 present=40505 rb=1964 scene=1642 script=0 events=18 sprite_px=8058 present_px=22800 sprites=5 maxspr=189x24
+DOS-PORT skipframe owed=2 prev_us total=94387 present=42057 rb=1965 scene=1833 script=0 events=17 sprite_px=8058 present_px=22800 sprites=5 maxspr=189x24
+DOS-PORT skipframe owed=2 prev_us total=92499 present=40519 rb=1962 scene=1510 script=0 events=18 sprite_px=8058 present_px=22800 sprites=5 maxspr=189x24
+DOS-PORT skipframe owed=2 prev_us total=82659 present=40744 rb=1962 scene=1665 script=0 events=13 sprite_px=8058 present_px=22800 sprites=5 maxspr=189x24
+DOS-PORT skipframe owed=2 prev_us total=80866 present=40463 rb=1963 scene=1811 script=0 events=15 sprite_px=8058 present_px=22800 sprites=5 maxspr=189x24
+DOS-PORT skipframe owed=2 prev_us total=82227 present=40586 rb=1965 scene=1672 script=0 events=17 sprite_px=8058 present_px=22800 sprites=5 maxspr=189x24
+DOS-PORT skipframe owed=3 prev_us total=80744 present=40463 rb=1961 scene=1793 script=0 events=14 sprite_px=8058 present_px=22800 sprites=5 maxspr=189x24
+Game : (room:16) [Room script:26] MoveCharacter: request move cTrb: 160,160 to 65,92
+DOS-PORT skipframe owed=2 prev_us total=79699 present=40293 rb=1273 scene=1592 script=0 events=14 sprite_px=4432 present_px=6693 sprites=5 maxspr=30x58
+DOS-PORT skipframe owed=3 prev_us total=82940 present=40126 rb=1275 scene=1837 script=0 events=12 sprite_px=4432 present_px=6693 sprites=5 maxspr=30x58
+DOS-PORT skipframe owed=2 prev_us total=92296 present=40085 rb=1275 scene=2209 script=0 events=18 sprite_px=4432 present_px=6693 sprites=5 maxspr=30x58
+DOS-PORT skipframe owed=2 prev_us total=81423 present=42288 rb=1440 scene=1811 script=0 events=13 sprite_px=5257 present_px=9409 sprites=5 maxspr=30x58
+DOS-PORT skipframe owed=3 prev_us total=79331 present=40265 rb=1439 scene=1602 script=0 events=12 sprite_px=5257 present_px=9409 sprites=5 maxspr=30x58
+DOS-PORT skipframe owed=2 prev_us total=81847 present=40124 rb=4135 scene=1589 script=0 events=13 sprite_px=5257 present_px=9409 sprites=5 maxspr=30x58
+DOS-PORT skipframe owed=2 prev_us total=81574 present=40759 rb=1438 scene=1589 script=0 events=18 sprite_px=5257 present_px=9409 sprites=5 maxspr=30x58
+DOS-PORT skipframe owed=2 prev_us total=91406 present=40557 rb=1439 scene=1602 script=0 events=17 sprite_px=5257 present_px=9409 sprites=5 maxspr=30x58
+DOS-PORT skipframe owed=3 prev_us total=79502 present=40249 rb=1440 scene=1599 script=0 events=13 sprite_px=5257 present_px=9409 sprites=5 maxspr=30x58
+DOS-PORT skipframe owed=2 prev_us total=13654 present=0 rb=0 scene=0 script=0 events=4 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=91171 present=40212 rb=1049 scene=1553 script=0 events=16 sprite_px=3522 present_px=6111 sprites=4 maxspr=30x58
+DOS-PORT skipframe owed=2 prev_us total=71000 present=40743 rb=1049 scene=1547 script=0 events=12 sprite_px=3522 present_px=6111 sprites=4 maxspr=30x58
+DOS-PORT skipframe owed=3 prev_us total=79528 present=40212 rb=1046 scene=1537 script=0 events=13 sprite_px=3522 present_px=6111 sprites=4 maxspr=30x58
+DOS-PORT skipframe owed=3 prev_us total=83377 present=43600 rb=1494 scene=1754 script=0 events=14 sprite_px=5637 present_px=15762 sprites=5 maxspr=141x15
+DOS-PORT skipframe owed=2 prev_us total=79966 present=40456 rb=1493 scene=1765 script=0 events=14 sprite_px=5637 present_px=15762 sprites=5 maxspr=141x15
+DOS-PORT skipframe owed=2 prev_us total=93494 present=40630 rb=1496 scene=1616 script=0 events=16 sprite_px=5637 present_px=15762 sprites=5 maxspr=141x15
+DOS-PORT skipframe owed=2 prev_us total=82119 present=40496 rb=1496 scene=1625 script=0 events=16 sprite_px=5637 present_px=15762 sprites=5 maxspr=141x15
+DOS-PORT skipframe owed=2 prev_us total=91839 present=40413 rb=1493 scene=1615 script=0 events=18 sprite_px=5637 present_px=15762 sprites=5 maxspr=141x15
+DOS-PORT skipframe owed=1 prev_us total=37122 present=0 rb=0 scene=0 script=0 events=12 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=81781 present=42246 rb=1491 scene=1771 script=0 events=14 sprite_px=5547 present_px=15096 sprites=5 maxspr=135x15
+DOS-PORT skipframe owed=2 prev_us total=92117 present=40447 rb=1490 scene=1624 script=0 events=17 sprite_px=5547 present_px=15096 sprites=5 maxspr=135x15
+DOS-PORT skipframe owed=3 prev_us total=83968 present=40427 rb=1493 scene=1779 script=0 events=13 sprite_px=5547 present_px=15096 sprites=5 maxspr=135x15
+DOS-PORT skipframe owed=2 prev_us total=92673 present=40951 rb=1494 scene=1782 script=0 events=18 sprite_px=5547 present_px=15096 sprites=5 maxspr=135x15
+DOS-PORT skipframe owed=2 prev_us total=92564 present=40715 rb=1490 scene=1773 script=0 events=18 sprite_px=5547 present_px=15096 sprites=5 maxspr=135x15
+DOS-PORT skipframe owed=2 prev_us total=81631 present=42244 rb=1490 scene=1618 script=0 events=13 sprite_px=5547 present_px=15096 sprites=5 maxspr=135x15
+DOS-PORT skipframe owed=3 prev_us total=91645 present=40323 rb=1461 scene=1600 script=0 events=16 sprite_px=3522 present_px=15096 sprites=4 maxspr=30x58
+DOS-PORT skipframe owed=2 prev_us total=70024 present=40410 rb=1520 scene=1766 script=0 events=14 sprite_px=5667 present_px=15984 sprites=5 maxspr=143x15
+DOS-PORT skipframe owed=3 prev_us total=80697 present=40963 rb=1511 scene=1617 script=0 events=13 sprite_px=5667 present_px=15984 sprites=5 maxspr=143x15
+DOS-PORT skipframe owed=3 prev_us total=80539 present=40725 rb=1512 scene=1631 script=0 events=13 sprite_px=5667 present_px=15984 sprites=5 maxspr=143x15
+DOS-PORT skipframe owed=3 prev_us total=81633 present=42257 rb=1512 scene=1626 script=0 events=14 sprite_px=5667 present_px=15984 sprites=5 maxspr=143x15
+DOS-PORT skipframe owed=3 prev_us total=80344 present=40744 rb=1507 scene=1745 script=0 events=13 sprite_px=5667 present_px=15984 sprites=5 maxspr=143x15
+Game : (room:16) [Room script:33] cRod: Start anim view 19 loop 1, spd 3, repeat 0, frame: 0
+DOS-PORT skipframe owed=2 prev_us total=13820 present=0 rb=0 scene=0 script=0 events=4 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=81401 present=41955 rb=1311 scene=2029 script=0 events=14 sprite_px=4709 present_px=7931 sprites=5 maxspr=28x64
+DOS-PORT skipframe owed=2 prev_us total=80566 present=40681 rb=1318 scene=1612 script=0 events=15 sprite_px=4709 present_px=7931 sprites=5 maxspr=28x64
+DOS-PORT skipframe owed=2 prev_us total=79354 present=40156 rb=1313 scene=1620 script=0 events=13 sprite_px=4709 present_px=7931 sprites=5 maxspr=28x64
+DOS-PORT skipframe owed=3 prev_us total=79250 present=40243 rb=1261 scene=1606 script=0 events=14 sprite_px=4454 present_px=7004 sprites=5 maxspr=28x64
+DOS-PORT skipframe owed=3 prev_us total=80045 present=40202 rb=1264 scene=1618 script=0 events=13 sprite_px=4454 present_px=7004 sprites=5 maxspr=28x64
+DOS-PORT skipframe owed=3 prev_us total=80932 present=40203 rb=1264 scene=1754 script=0 events=12 sprite_px=4454 present_px=7004 sprites=5 maxspr=28x64
+DOS-PORT skipframe owed=3 prev_us total=90760 present=40215 rb=1275 scene=1453 script=0 events=18 sprite_px=4514 present_px=7210 sprites=5 maxspr=28x64
+DOS-PORT skipframe owed=3 prev_us total=82915 present=43513 rb=1276 scene=1602 script=0 events=13 sprite_px=4514 present_px=7210 sprites=5 maxspr=28x64
+Game : (room:16) [Room script:37] cRod: Start anim view 19 loop 2, spd 2, repeat 0, frame: 0
+DOS-PORT skipframe owed=1 prev_us total=53965 present=42696 rb=1152 scene=1613 script=0 events=13 sprite_px=3870 present_px=6111 sprites=4 maxspr=36x58
+DOS-PORT skipframe owed=1 prev_us total=50941 present=43071 rb=1149 scene=1536 script=0 events=8 sprite_px=3870 present_px=6111 sprites=4 maxspr=36x58
+DOS-PORT skipframe owed=2 prev_us total=80741 present=40254 rb=1149 scene=1535 script=0 events=16 sprite_px=3870 present_px=6111 sprites=4 maxspr=36x58
+Game : (room:16) [Room script:42] cRod: Start anim view 19 loop 1, spd 3, repeat 0, frame: 0
+DOS-PORT skipframe owed=2 prev_us total=79667 present=40185 rb=1049 scene=1758 script=0 events=12 sprite_px=3522 present_px=6111 sprites=4 maxspr=30x58
+DOS-PORT skipframe owed=3 prev_us total=81061 present=40229 rb=1040 scene=1563 script=0 events=13 sprite_px=3574 present_px=6489 sprites=4 maxspr=28x64
+Game : (room:16) [Room script:44] cRod: Start anim view 19 loop 2, spd 2, repeat 0, frame: 0
+DOS-PORT skipframe owed=3 prev_us total=86664 present=40456 rb=1149 scene=1751 script=0 events=12 sprite_px=3870 present_px=6489 sprites=4 maxspr=36x58
+Game : (room:16) [Room script:46] Playing ambient sound 18 on channel 1
+Game : (room:16) [Room script:47] Object 0 graphic changed to slot 237
+DOS-PORT silentirq tick=919 room=16 irqs=3 since_room=919
+DOS-PORT skipframe owed=1 prev_us total=49381 present=40251 rb=1382 scene=1482 script=0 events=9 sprite_px=5765 present_px=8736 sprites=4 maxspr=63x73
+DOS-PORT skipframe owed=1 prev_us total=49233 present=40299 rb=1382 scene=1479 script=0 events=8 sprite_px=5765 present_px=8736 sprites=4 maxspr=63x73
+DOS-PORT skipframe owed=1 prev_us total=49143 present=40258 rb=1382 scene=1481 script=0 events=8 sprite_px=5765 present_px=8736 sprites=4 maxspr=63x73
+DOS-PORT skipframe owed=1 prev_us total=49756 present=42120 rb=1382 scene=1483 script=0 events=8 sprite_px=5765 present_px=8736 sprites=4 maxspr=63x73
+DOS-PORT skipframe owed=2 prev_us total=56289 present=40966 rb=1382 scene=1533 script=0 events=12 sprite_px=5765 present_px=8736 sprites=4 maxspr=63x73
+DOS-PORT skipframe owed=1 prev_us total=48148 present=40538 rb=1382 scene=1475 script=0 events=8 sprite_px=5765 present_px=8736 sprites=4 maxspr=63x73
+Game : (room:16) [Room script:55] cRod: Start anim view 19 loop 3, spd 2, repeat 0, frame: 0
+DOS-PORT skipframe owed=1 prev_us total=2848 present=0 rb=0 scene=0 script=0 events=4 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+Game : (room:16) [Room script:57] cTrb: Change view to 1
+Game : (room:16) [Room script:58] GlobalInt 2 set to 1
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=4804 present=42475 rb=1248 scene=0 script=0 events=8 sprite_px=5233 present_px=76800 sprites=3 maxspr=59x69
+DOS-PORT skipframe owed=1 prev_us total=47787 present=40187 rb=1343 scene=1478 script=0 events=9 sprite_px=5532 present_px=8208 sprites=4 maxspr=59x69
+DOS-PORT skipframe owed=1 prev_us total=49982 present=40125 rb=1343 scene=1475 script=0 events=9 sprite_px=5532 present_px=8208 sprites=4 maxspr=59x69
+DOS-PORT skipframe owed=1 prev_us total=47718 present=40186 rb=1343 scene=1482 script=0 events=9 sprite_px=5532 present_px=8208 sprites=4 maxspr=59x69
+DOS-PORT skipframe owed=1 prev_us total=49196 present=41796 rb=1343 scene=1479 script=0 events=9 sprite_px=5532 present_px=8208 sprites=4 maxspr=59x69
+DOS-PORT skipframe owed=2 prev_us total=50473 present=44541 rb=1343 scene=1482 script=0 events=5 sprite_px=5532 present_px=8208 sprites=4 maxspr=59x69
+Game : (room:16) [Room script:66] Room change requested to room 5
+Game : (room:16) Room change requested to room 5
+Game : (room:16) DOS-PORT room_transition t_ms=29040 event=start room=5
+Game : (room:16) Transition-out in room 16
+Game : (room:16) DOSAGS_XT t_ms=27307 phase=fadeout_begin room=16
+Game : (room:16) DOSAGS_XT fade_steps=0
+Game : (room:16) Unloading room 16
+Game : (room:-10) Loading room 5
+Game : (room:-10) DOSAGS_XT t_ms=27972 phase=load_begin room=5
+Mouse cursor graphic area: (96,92)-(415,291) (320x200)
+Game : (room:5) Mouse bounds constrained to (0,0)-(319,199)
+Game : (room:5) DOSAGS_LIGHTTABLE call=1 action=skipped ms=0 rebuilt_total=0
+Game : (room:5) Now in room 5
+Game : (room:5) DOSAGS_XT t_ms=28164 phase=load_end room=5
+DOS-PORT stallwhat tick=2 self_ms=1635 children_ms=25510 script_us=26262249 events_us=27137308 scene_us=556331 rb_us=505338 present_us=14045406
+Game : (room:5) [Room script:119] GlobalInt 21 set to 1
+Game : (room:5) [Room script:119] GlobalInt 22 set to 2
+Game : (room:5) [Room script:16] Walk-behind 3 baseline changed to 0
+Game : (room:5) [Room script:21] Object 2 turned on
+Game : (room:5) [Room script:25] cCha: Change view to 8
+Game : (room:5) [Room script:27] cCha moved to room 5, location 200,121, loop 0
+Game : (room:5) [Room script:29] Object 0 turned on
+Game : (room:5) Transition-in in room 5
+Game : (room:5) DOSAGS_XT t_ms=28187 phase=fadein_begin room=5
+Game : (room:5) DOSAGS_XT t_ms=28885 phase=fadein_end room=5
+DOS-PORT stallwhat tick=1039 self_ms=720 children_ms=0 script_us=3632 events_us=699251 scene_us=0 rb_us=931 present_us=548135
+Game : (room:5) DOS-PORT room_transition t_ms=30634 event=ready room=5
+DOS-PORT skipframe owed=1 prev_us total=117896 present=42162 rb=959 scene=3552 script=0 events=26 sprite_px=2864 present_px=76800 sprites=7 maxspr=17x61
+DOS-PORT skipframe owed=2 prev_us total=81268 present=40386 rb=959 scene=3621 script=0 events=12 sprite_px=2864 present_px=13300 sprites=7 maxspr=17x61
+DOS-PORT skipframe owed=3 prev_us total=79582 present=40344 rb=972 scene=2210 script=0 events=14 sprite_px=2939 present_px=14000 sprites=7 maxspr=17x61
+DOS-PORT skipframe owed=2 prev_us total=91520 present=40344 rb=972 scene=2210 script=0 events=17 sprite_px=2939 present_px=14000 sprites=7 maxspr=17x61
+DOS-PORT skipframe owed=3 prev_us total=79555 present=40350 rb=972 scene=2213 script=0 events=14 sprite_px=2939 present_px=14000 sprites=7 maxspr=17x61
+DOS-PORT skipframe owed=3 prev_us total=80094 present=40504 rb=1392 scene=2163 script=0 events=13 sprite_px=5197 present_px=17784 sprites=7 maxspr=209x15
+DOS-PORT skipframe owed=2 prev_us total=80182 present=40496 rb=1392 scene=2249 script=0 events=12 sprite_px=5197 present_px=17784 sprites=7 maxspr=209x15
+DOS-PORT skipframe owed=2 prev_us total=80220 present=40496 rb=1393 scene=2245 script=0 events=14 sprite_px=5197 present_px=17784 sprites=7 maxspr=209x15
+DOS-PORT skipframe owed=2 prev_us total=91914 present=40504 rb=1392 scene=2165 script=0 events=17 sprite_px=5197 present_px=17784 sprites=7 maxspr=209x15
+DOS-PORT skipframe owed=3 prev_us total=82511 present=40544 rb=1715 scene=2297 script=0 events=14 sprite_px=6646 present_px=19890 sprites=7 maxspr=191x24
+DOS-PORT skipframe owed=3 prev_us total=80677 present=40608 rb=1714 scene=2298 script=0 events=12 sprite_px=6646 present_px=19125 sprites=7 maxspr=191x24
+DOS-PORT skipframe owed=2 prev_us total=70387 present=40608 rb=1714 scene=2293 script=0 events=12 sprite_px=6646 present_px=19125 sprites=7 maxspr=191x24
+DOS-PORT skipframe owed=3 prev_us total=80713 present=40608 rb=1714 scene=2290 script=0 events=13 sprite_px=6646 present_px=19125 sprites=7 maxspr=191x24
+DOS-PORT skipframe owed=2 prev_us total=80585 present=40601 rb=1714 scene=2215 script=0 events=13 sprite_px=6646 present_px=19125 sprites=7 maxspr=191x24
+DOS-PORT skipframe owed=3 prev_us total=80696 present=40609 rb=1713 scene=2300 script=0 events=12 sprite_px=6646 present_px=19125 sprites=7 maxspr=191x24
+DOS-PORT skipframe owed=2 prev_us total=92574 present=40608 rb=1714 scene=2298 script=0 events=19 sprite_px=6646 present_px=19125 sprites=7 maxspr=191x24
+DOS-PORT skipframe owed=2 prev_us total=69711 present=40609 rb=1020 scene=2340 script=0 events=13 sprite_px=3262 present_px=19125 sprites=7 maxspr=80x15
+DOS-PORT skipframe owed=2 prev_us total=91543 present=40428 rb=1021 scene=2172 script=0 events=17 sprite_px=3262 present_px=15920 sprites=7 maxspr=80x15
+DOS-PORT skipframe owed=2 prev_us total=79652 present=40427 rb=1020 scene=2169 script=0 events=12 sprite_px=3262 present_px=15920 sprites=7 maxspr=80x15
+DOS-PORT skipframe owed=2 prev_us total=79734 present=40427 rb=1020 scene=2184 script=0 events=12 sprite_px=3262 present_px=15920 sprites=7 maxspr=80x15
+DOS-PORT skipframe owed=3 prev_us total=81956 present=40427 rb=1021 scene=2372 script=0 events=13 sprite_px=3262 present_px=15920 sprites=7 maxspr=80x15
+DOS-PORT skipframe owed=2 prev_us total=69350 present=40427 rb=1021 scene=2169 script=0 events=12 sprite_px=3262 present_px=15920 sprites=7 maxspr=80x15
+DOS-PORT skipframe owed=2 prev_us total=13542 present=0 rb=0 scene=0 script=0 events=5 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=91838 present=40418 rb=1196 scene=2245 script=0 events=18 sprite_px=4117 present_px=15048 sprites=7 maxspr=137x15
+DOS-PORT skipframe owed=2 prev_us total=79915 present=40376 rb=1197 scene=2237 script=0 events=12 sprite_px=4117 present_px=15048 sprites=7 maxspr=137x15
+DOS-PORT skipframe owed=2 prev_us total=79892 present=40418 rb=1195 scene=2236 script=0 events=13 sprite_px=4117 present_px=15048 sprites=7 maxspr=137x15
+DOS-PORT skipframe owed=2 prev_us total=91713 present=40425 rb=1194 scene=2237 script=0 events=17 sprite_px=4117 present_px=15048 sprites=7 maxspr=137x15
+DOS-PORT skipframe owed=3 prev_us total=79918 present=40418 rb=1197 scene=2245 script=0 events=12 sprite_px=4117 present_px=15048 sprites=7 maxspr=137x15
+DOS-PORT skipframe owed=2 prev_us total=79902 present=40424 rb=1198 scene=2236 script=0 events=14 sprite_px=4117 present_px=15048 sprites=7 maxspr=137x15
+DOS-PORT skipframe owed=2 prev_us total=80080 present=40518 rb=1335 scene=2171 script=0 events=12 sprite_px=4942 present_px=19520 sprites=7 maxspr=192x15
+DOS-PORT skipframe owed=2 prev_us total=92105 present=40518 rb=1335 scene=2377 script=0 events=16 sprite_px=4942 present_px=19520 sprites=7 maxspr=192x15
+DOS-PORT skipframe owed=3 prev_us total=80715 present=40573 rb=1639 scene=2412 script=0 events=14 sprite_px=6670 present_px=21716 sprites=7 maxspr=192x24
+DOS-PORT skipframe owed=3 prev_us total=80703 present=40566 rb=1639 scene=2412 script=0 events=14 sprite_px=6670 present_px=21716 sprites=7 maxspr=192x24
+DOS-PORT rbstruct calls=500 batches=3224 clears=0 clear_px=0 sprites=2401 sprite_px=2500997 clipped=0 flagged=0 noflag=2401 notvs=0 novalid=0 isfull=0 guimiss=0 guihit=0 hitpx=0 fullpx=0 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT skipframe owed=2 prev_us total=80775 present=40573 rb=1638 scene=2509 script=0 events=13 sprite_px=6670 present_px=21716 sprites=7 maxspr=192x24
+DOS-PORT dirtypresent narrow=454 full=46 px_narrow=6652066 px_full=3532800 nocam=0 rej scaled=0 noscene=36 latched=10 norects=0 pal=0 clip=0 multi=454 px_multi=6049526 px_multi_bbox=6652066 boxes=916 out=0 whole=0 rowfr=454 px_bands=14671040 bands=454 mg0=914/6049508 mg2k=650/6231596 mg5k5=454/6652066 mg12k=454/6652066
+DOS-PORT skipframe owed=2 prev_us total=83676 present=40941 rb=1638 scene=2217 script=0 events=16 sprite_px=6670 present_px=21716 sprites=7 maxspr=192x24
+DOS-PORT skipframe owed=2 prev_us total=92483 present=40573 rb=1638 scene=2416 script=0 events=17 sprite_px=6670 present_px=21716 sprites=7 maxspr=192x24
+DOS-PORT skipframe owed=2 prev_us total=92544 present=40567 rb=1638 scene=2419 script=0 events=17 sprite_px=6670 present_px=21716 sprites=7 maxspr=192x24
+DOS-PORT skipframe owed=2 prev_us total=80729 present=40566 rb=1639 scene=2429 script=0 events=14 sprite_px=6670 present_px=21716 sprites=7 maxspr=192x24
+DOS-PORT skipframe owed=3 prev_us total=79675 present=40432 rb=977 scene=2168 script=0 events=12 sprite_px=3142 present_px=15600 sprites=7 maxspr=72x15
+DOS-PORT skipframe owed=2 prev_us total=81329 present=40378 rb=983 scene=2366 script=0 events=17 sprite_px=3142 present_px=15600 sprites=7 maxspr=72x15
+DOS-PORT skipframe owed=2 prev_us total=91663 present=40385 rb=978 scene=2370 script=0 events=18 sprite_px=3142 present_px=15600 sprites=7 maxspr=72x15
+DOS-PORT skipframe owed=3 prev_us total=80598 present=40537 rb=1738 scene=2281 script=0 events=12 sprite_px=6886 present_px=19550 sprites=7 maxspr=201x24
+DOS-PORT skipframe owed=3 prev_us total=80622 present=40544 rb=1730 scene=2283 script=0 events=13 sprite_px=6886 present_px=19550 sprites=7 maxspr=201x24
+DOS-PORT skipframe owed=2 prev_us total=92520 present=40537 rb=1728 scene=2281 script=0 events=18 sprite_px=6886 present_px=19550 sprites=7 maxspr=201x24
+DOS-PORT bgstruct calls=500 whole=9 px=3254617 slow_px=0
+DOS-PORT skipframe owed=2 prev_us total=92422 present=40502 rb=1731 scene=2288 script=0 events=16 sprite_px=6886 present_px=19550 sprites=7 maxspr=201x24
+DOS-PORT skipframe owed=3 prev_us total=80564 present=40543 rb=1688 scene=2337 script=0 events=13 sprite_px=6886 present_px=19550 sprites=7 maxspr=201x24
+DOS-PORT skipframe owed=3 prev_us total=80594 present=40542 rb=1689 scene=2290 script=0 events=13 sprite_px=6886 present_px=19550 sprites=7 maxspr=201x24
+DOS-PORT skipframe owed=2 prev_us total=80588 present=40543 rb=1689 scene=2292 script=0 events=13 sprite_px=6886 present_px=19550 sprites=7 maxspr=201x24
+DOS-PORT skipframe owed=2 prev_us total=80636 present=40542 rb=1689 scene=2286 script=0 events=15 sprite_px=6886 present_px=19550 sprites=7 maxspr=201x24
+DOS-PORT skipframe owed=2 prev_us total=92394 present=40495 rb=1688 scene=2339 script=0 events=19 sprite_px=6886 present_px=19550 sprites=7 maxspr=201x24
+DOS-PORT skipframe owed=2 prev_us total=92366 present=40495 rb=1689 scene=2333 script=0 events=16 sprite_px=6886 present_px=19550 sprites=7 maxspr=201x24
+DOS-PORT skipframe owed=2 prev_us total=92423 present=40542 rb=1689 scene=2287 script=0 events=19 sprite_px=6886 present_px=19550 sprites=7 maxspr=201x24
+DOS-PORT skipframe owed=2 prev_us total=81644 present=40542 rb=1285 scene=2329 script=0 events=17 sprite_px=4597 present_px=19550 sprites=7 maxspr=169x15
+DOS-PORT skipframe owed=2 prev_us total=91854 present=40459 rb=1283 scene=2246 script=0 events=18 sprite_px=4597 present_px=16264 sprites=7 maxspr=169x15
+DOS-PORT skipframe owed=3 prev_us total=79958 present=40460 rb=1284 scene=2167 script=0 events=14 sprite_px=4597 present_px=16264 sprites=7 maxspr=169x15
+DOS-PORT skipframe owed=2 prev_us total=80099 present=40459 rb=1286 scene=2243 script=0 events=13 sprite_px=4597 present_px=16264 sprites=7 maxspr=169x15
+DOS-PORT skipframe owed=2 prev_us total=91949 present=40418 rb=1285 scene=2288 script=0 events=19 sprite_px=4597 present_px=16264 sprites=7 maxspr=169x15
+DOS-PORT skipframe owed=2 prev_us total=79958 present=40460 rb=1285 scene=2167 script=0 events=13 sprite_px=4597 present_px=16264 sprites=7 maxspr=169x15
+DOS-PORT skipframe owed=2 prev_us total=80049 present=40460 rb=1286 scene=2243 script=0 events=13 sprite_px=4597 present_px=16264 sprites=7 maxspr=169x15
+DOS-PORT skipframe owed=2 prev_us total=79798 present=40486 rb=1065 scene=2194 script=0 events=13 sprite_px=3457 present_px=17120 sprites=7 maxspr=93x15
+DOS-PORT skipframe owed=2 prev_us total=79750 present=40396 rb=1065 scene=2168 script=0 events=12 sprite_px=3457 present_px=16480 sprites=7 maxspr=93x15
+DOS-PORT skipframe owed=3 prev_us total=79691 present=40355 rb=1065 scene=2165 script=0 events=12 sprite_px=3457 present_px=16480 sprites=7 maxspr=93x15
+DOS-PORT skipframe owed=2 prev_us total=83242 present=40395 rb=1066 scene=2163 script=0 events=16 sprite_px=3457 present_px=16480 sprites=7 maxspr=93x15
+DOS-PORT skipframe owed=2 prev_us total=91789 present=40396 rb=1065 scene=2372 script=0 events=17 sprite_px=3457 present_px=16480 sprites=7 maxspr=93x15
+DOS-PORT skipframe owed=3 prev_us total=79937 present=40395 rb=1066 scene=2368 script=0 events=12 sprite_px=3457 present_px=16480 sprites=7 maxspr=93x15
+DOS-PORT skipframe owed=1 prev_us total=24582 present=0 rb=0 scene=0 script=0 events=8 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=91809 present=40444 rb=1090 scene=2231 script=0 events=18 sprite_px=3637 present_px=13832 sprites=7 maxspr=105x15
+DOS-PORT skipframe owed=3 prev_us total=79801 present=40388 rb=1092 scene=2236 script=0 events=12 sprite_px=3637 present_px=13832 sprites=7 maxspr=105x15
+DOS-PORT skipframe owed=2 prev_us total=79791 present=40382 rb=1092 scene=2236 script=0 events=13 sprite_px=3637 present_px=13832 sprites=7 maxspr=105x15
+DOS-PORT skipframe owed=3 prev_us total=79814 present=40387 rb=1093 scene=2233 script=0 events=12 sprite_px=3637 present_px=13832 sprites=7 maxspr=105x15
+DOS-PORT skipframe owed=2 prev_us total=79782 present=40387 rb=1092 scene=2244 script=0 events=12 sprite_px=3637 present_px=13832 sprites=7 maxspr=105x15
+DOS-PORT skipframe owed=2 prev_us total=91436 present=40387 rb=1093 scene=2154 script=0 events=17 sprite_px=3637 present_px=13832 sprites=7 maxspr=105x15
+DOS-PORT skipframe owed=2 prev_us total=69022 present=40566 rb=1752 scene=2430 script=0 events=8 sprite_px=7126 present_px=21716 sprites=7 maxspr=211x24
+DOS-PORT skipframe owed=2 prev_us total=92643 present=40532 rb=1751 scene=2421 script=0 events=19 sprite_px=7126 present_px=21716 sprites=7 maxspr=211x24
+DOS-PORT skipframe owed=2 prev_us total=92388 present=40573 rb=1752 scene=2212 script=0 events=18 sprite_px=7126 present_px=21716 sprites=7 maxspr=211x24
+DOS-PORT skipframe owed=2 prev_us total=80598 present=40573 rb=1752 scene=2212 script=0 events=14 sprite_px=7126 present_px=21716 sprites=7 maxspr=211x24
+DOS-PORT skipframe owed=2 prev_us total=92606 present=40532 rb=1752 scene=2461 script=0 events=16 sprite_px=7126 present_px=21716 sprites=7 maxspr=211x24
+DOS-PORT skipframe owed=2 prev_us total=80802 present=40532 rb=1752 scene=2456 script=0 events=14 sprite_px=7126 present_px=21716 sprites=7 maxspr=211x24
+DOS-PORT skipframe owed=2 prev_us total=91572 present=40574 rb=749 scene=2174 script=0 events=19 sprite_px=2062 present_px=21716 sprites=6 maxspr=14x57
+DOS-PORT skipframe owed=2 prev_us total=79188 present=40333 rb=748 scene=2086 script=0 events=13 sprite_px=2062 present_px=11550 sprites=6 maxspr=14x57
+DOS-PORT skipframe owed=2 prev_us total=91000 present=40340 rb=749 scene=2086 script=0 events=17 sprite_px=2062 present_px=11550 sprites=6 maxspr=14x57
+DOS-PORT skipframe owed=2 prev_us total=79206 present=40340 rb=748 scene=2082 script=0 events=14 sprite_px=2062 present_px=11550 sprites=6 maxspr=14x57
+DOS-PORT skipframe owed=2 prev_us total=70339 present=40596 rb=1672 scene=2294 script=0 events=13 sprite_px=6982 present_px=19720 sprites=7 maxspr=205x24
+DOS-PORT skipframe owed=2 prev_us total=80640 present=40596 rb=1671 scene=2297 script=0 events=14 sprite_px=6982 present_px=19720 sprites=7 maxspr=205x24
+DOS-PORT skipframe owed=2 prev_us total=92497 present=40596 rb=1672 scene=2304 script=0 events=18 sprite_px=6982 present_px=19720 sprites=7 maxspr=205x24
+DOS-PORT skipframe owed=2 prev_us total=80702 present=40589 rb=1670 scene=2294 script=0 events=13 sprite_px=6982 present_px=19720 sprites=7 maxspr=205x24
+DOS-PORT skipframe owed=3 prev_us total=80800 present=40625 rb=1739 scene=2298 script=0 events=13 sprite_px=7006 present_px=19720 sprites=7 maxspr=206x24
+DOS-PORT skipframe owed=2 prev_us total=70464 present=40624 rb=1739 scene=2301 script=0 events=14 sprite_px=7006 present_px=19720 sprites=7 maxspr=206x24
+DOS-PORT skipframe owed=3 prev_us total=80752 present=40625 rb=1739 scene=2308 script=0 events=14 sprite_px=7006 present_px=19720 sprites=7 maxspr=206x24
+DOS-PORT skipframe owed=3 prev_us total=80749 present=40625 rb=1739 scene=2306 script=0 events=13 sprite_px=7006 present_px=19720 sprites=7 maxspr=206x24
+DOS-PORT skipframe owed=3 prev_us total=80748 present=40625 rb=1739 scene=2309 script=0 events=13 sprite_px=7006 present_px=19720 sprites=7 maxspr=206x24
+DOS-PORT skipframe owed=3 prev_us total=80750 present=40617 rb=1737 scene=2309 script=0 events=13 sprite_px=7006 present_px=19720 sprites=7 maxspr=206x24
+DOS-PORT skipframe owed=2 prev_us total=70512 present=40584 rb=1780 scene=2299 script=0 events=13 sprite_px=7006 present_px=19720 sprites=7 maxspr=206x24
+DOS-PORT skipframe owed=2 prev_us total=80605 present=40507 rb=1755 scene=2206 script=0 events=13 sprite_px=7054 present_px=19805 sprites=7 maxspr=208x24
+DOS-PORT skipframe owed=3 prev_us total=80543 present=40548 rb=1710 scene=2210 script=0 events=12 sprite_px=7054 present_px=19805 sprites=7 maxspr=208x24
+DOS-PORT skipframe owed=3 prev_us total=80557 present=40547 rb=1715 scene=2216 script=0 events=13 sprite_px=7054 present_px=19805 sprites=7 maxspr=208x24
+DOS-PORT skipframe owed=3 prev_us total=80656 present=40547 rb=1712 scene=2288 script=0 events=14 sprite_px=7054 present_px=19805 sprites=7 maxspr=208x24
+DOS-PORT skipframe owed=2 prev_us total=70245 present=40500 rb=1755 scene=2210 script=0 events=12 sprite_px=7054 present_px=19805 sprites=7 maxspr=208x24
+DOS-PORT skipframe owed=3 prev_us total=80638 present=40541 rb=1714 scene=2306 script=0 events=13 sprite_px=7054 present_px=19805 sprites=7 maxspr=208x24
+DOS-PORT skipframe owed=2 prev_us total=92621 present=40547 rb=1715 scene=2286 script=0 events=19 sprite_px=7054 present_px=19805 sprites=7 maxspr=208x24
+DOS-PORT skipframe owed=3 prev_us total=80037 present=40445 rb=1067 scene=2367 script=0 events=13 sprite_px=3517 present_px=16640 sprites=7 maxspr=97x15
+DOS-PORT skipframe owed=2 prev_us total=91799 present=40445 rb=1067 scene=2370 script=0 events=17 sprite_px=3517 present_px=16640 sprites=7 maxspr=97x15
+DOS-PORT skipframe owed=2 prev_us total=69405 present=40445 rb=1067 scene=2167 script=0 events=12 sprite_px=3517 present_px=16640 sprites=7 maxspr=97x15
+DOS-PORT skipframe owed=3 prev_us total=79801 present=40444 rb=1067 scene=2164 script=0 events=13 sprite_px=3517 present_px=16640 sprites=7 maxspr=97x15
+DOS-PORT skipframe owed=2 prev_us total=91799 present=40444 rb=1067 scene=2370 script=0 events=18 sprite_px=3517 present_px=16640 sprites=7 maxspr=97x15
+DOS-PORT skipframe owed=2 prev_us total=79718 present=40445 rb=1067 scene=2167 script=0 events=12 sprite_px=3517 present_px=16640 sprites=7 maxspr=97x15
+DOS-PORT skipframe owed=3 prev_us total=80693 present=40630 rb=1718 scene=2219 script=0 events=13 sprite_px=7006 present_px=19720 sprites=7 maxspr=206x24
+DOS-PORT skipframe owed=2 prev_us total=80714 present=40625 rb=1718 scene=2304 script=0 events=13 sprite_px=7006 present_px=19720 sprites=7 maxspr=206x24
+DOS-PORT skipframe owed=3 prev_us total=80727 present=40624 rb=1718 scene=2308 script=0 events=13 sprite_px=7006 present_px=19720 sprites=7 maxspr=206x24
+DOS-PORT skipframe owed=2 prev_us total=80745 present=40624 rb=1718 scene=2294 script=0 events=14 sprite_px=7006 present_px=19720 sprites=7 maxspr=206x24
+DOS-PORT skipframe owed=2 prev_us total=80706 present=40625 rb=1718 scene=2296 script=0 events=13 sprite_px=7006 present_px=19720 sprites=7 maxspr=206x24
+DOS-PORT skipframe owed=2 prev_us total=92541 present=40618 rb=1714 scene=2301 script=0 events=17 sprite_px=7006 present_px=19720 sprites=7 maxspr=206x24
+DOS-PORT skipframe owed=2 prev_us total=80748 present=40617 rb=1718 scene=2301 script=0 events=13 sprite_px=7006 present_px=19720 sprites=7 maxspr=206x24
+DOS-PORT skipframe owed=2 prev_us total=92539 present=40630 rb=1718 scene=2296 script=0 events=17 sprite_px=7006 present_px=19720 sprites=7 maxspr=206x24
+DOS-PORT skipframe owed=2 prev_us total=91810 present=40489 rb=1192 scene=2246 script=0 events=17 sprite_px=4072 present_px=14896 sprites=7 maxspr=134x15
+DOS-PORT skipframe owed=3 prev_us total=79987 present=40482 rb=1192 scene=2270 script=0 events=12 sprite_px=4072 present_px=14896 sprites=7 maxspr=134x15
+DOS-PORT skipframe owed=2 prev_us total=79992 present=40489 rb=1191 scene=2250 script=0 events=13 sprite_px=4072 present_px=14896 sprites=7 maxspr=134x15
+DOS-PORT rbstruct calls=1000 batches=6724 clears=0 clear_px=0 sprites=5886 sprite_px=7013041 clipped=0 flagged=0 noflag=5886 notvs=0 novalid=0 isfull=0 guimiss=0 guihit=0 hitpx=0 fullpx=0 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT skipframe owed=2 prev_us total=79988 present=40482 rb=1192 scene=2254 script=0 events=14 sprite_px=4072 present_px=14896 sprites=7 maxspr=134x15
+DOS-PORT dirtypresent narrow=949 full=51 px_narrow=15399602 px_full=3916800 nocam=0 rej scaled=0 noscene=36 latched=15 norects=0 pal=0 clip=0 multi=949 px_multi=13773812 px_multi_bbox=15399602 boxes=2970 out=0 whole=0 rowfr=949 px_bands=27118080 bands=949 mg0=2968/13773794 mg2k=1773/14668093 mg5k5=949/15399602 mg12k=949/15399602
+DOS-PORT skipframe owed=3 prev_us total=81560 present=40857 rb=1191 scene=2171 script=0 events=12 sprite_px=4072 present_px=14896 sprites=7 maxspr=134x15
+DOS-PORT skipframe owed=3 prev_us total=79985 present=40489 rb=1191 scene=2250 script=0 events=12 sprite_px=4072 present_px=14896 sprites=7 maxspr=134x15
+DOS-PORT skipframe owed=3 prev_us total=79726 present=40400 rb=962 scene=2158 script=0 events=13 sprite_px=3007 present_px=15280 sprites=7 maxspr=63x15
+DOS-PORT skipframe owed=2 prev_us total=79871 present=40392 rb=962 scene=2362 script=0 events=14 sprite_px=3007 present_px=15280 sprites=7 maxspr=63x15
+DOS-PORT skipframe owed=2 prev_us total=79842 present=40392 rb=962 scene=2368 script=0 events=14 sprite_px=3007 present_px=15280 sprites=7 maxspr=63x15
+DOS-PORT skipframe owed=2 prev_us total=80823 present=40632 rb=1693 scene=2432 script=0 events=13 sprite_px=6718 present_px=21716 sprites=7 maxspr=194x24
+DOS-PORT skipframe owed=2 prev_us total=92775 present=40625 rb=1693 scene=2431 script=0 events=16 sprite_px=6718 present_px=21716 sprites=7 maxspr=194x24
+DOS-PORT skipframe owed=2 prev_us total=80599 present=40632 rb=1693 scene=2223 script=0 events=13 sprite_px=6718 present_px=21716 sprites=7 maxspr=194x24
+DOS-PORT skipframe owed=2 prev_us total=92748 present=40632 rb=1693 scene=2432 script=0 events=18 sprite_px=6718 present_px=21716 sprites=7 maxspr=194x24
+DOS-PORT skipframe owed=2 prev_us total=80854 present=40635 rb=1700 scene=2424 script=0 events=14 sprite_px=6718 present_px=21716 sprites=7 maxspr=194x24
+DOS-PORT bgstruct calls=1000 whole=14 px=7979444 slow_px=0
+DOS-PORT skipframe owed=2 prev_us total=91908 present=40483 rb=1135 scene=2376 script=0 events=17 sprite_px=3862 present_px=17520 sprites=7 maxspr=120x15
+DOS-PORT skipframe owed=3 prev_us total=80117 present=40483 rb=1135 scene=2376 script=0 events=12 sprite_px=3862 present_px=17520 sprites=7 maxspr=120x15
+DOS-PORT skipframe owed=3 prev_us total=80147 present=40475 rb=1136 scene=2376 script=0 events=13 sprite_px=3862 present_px=17520 sprites=7 maxspr=120x15
+DOS-PORT skipframe owed=2 prev_us total=91889 present=40483 rb=1135 scene=2376 script=0 events=17 sprite_px=3862 present_px=17520 sprites=7 maxspr=120x15
+DOS-PORT skipframe owed=2 prev_us total=69813 present=40483 rb=1135 scene=2376 script=0 events=13 sprite_px=3862 present_px=17520 sprites=7 maxspr=120x15
+DOS-PORT skipframe owed=3 prev_us total=80151 present=40442 rb=1176 scene=2376 script=0 events=13 sprite_px=3862 present_px=17520 sprites=7 maxspr=120x15
+DOS-PORT skipframe owed=2 prev_us total=79714 present=40395 rb=947 scene=2238 script=0 events=12 sprite_px=2947 present_px=13300 sprites=7 maxspr=59x15
+DOS-PORT skipframe owed=2 prev_us total=79538 present=40388 rb=950 scene=2150 script=0 events=13 sprite_px=2947 present_px=13300 sprites=7 maxspr=59x15
+DOS-PORT skipframe owed=3 prev_us total=79710 present=40388 rb=950 scene=2233 script=0 events=14 sprite_px=2947 present_px=13300 sprites=7 maxspr=59x15
+DOS-PORT skipframe owed=2 prev_us total=69577 present=40463 rb=1112 scene=2254 script=0 events=13 sprite_px=3727 present_px=14060 sprites=7 maxspr=111x15
+DOS-PORT skipframe owed=2 prev_us total=79883 present=40464 rb=1112 scene=2243 script=0 events=12 sprite_px=3727 present_px=14060 sprites=7 maxspr=111x15
+DOS-PORT skipframe owed=2 prev_us total=91706 present=40456 rb=1112 scene=2246 script=0 events=18 sprite_px=3727 present_px=14060 sprites=7 maxspr=111x15
+DOS-PORT skipframe owed=3 prev_us total=79876 present=40423 rb=1112 scene=2295 script=0 events=14 sprite_px=3727 present_px=14060 sprites=7 maxspr=111x15
+DOS-PORT skipframe owed=2 prev_us total=91632 present=40457 rb=1119 scene=2163 script=0 events=17 sprite_px=3727 present_px=14060 sprites=7 maxspr=111x15
+Game : (room:5) [Room script:85] MoveCharacter: request move cCha: 200,121 to 174,111
+DOS-PORT skipframe owed=2 prev_us total=51340 present=40400 rb=855 scene=2573 script=0 events=13 sprite_px=2746 present_px=11550 sprites=6 maxspr=22x57
+DOS-PORT skipframe owed=1 prev_us total=68104 present=40416 rb=874 scene=2548 script=0 events=10 sprite_px=2746 present_px=11550 sprites=6 maxspr=22x57
+DOS-PORT skipframe owed=2 prev_us total=67766 present=40307 rb=879 scene=2327 script=0 events=8 sprite_px=2461 present_px=12250 sprites=6 maxspr=17x57
+Game : (room:5) [Room script:87] GlobalInt 3 set to 1
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT stallwhat tick=1040 self_ms=10373 children_ms=46604 script_us=56964363 events_us=56973943 scene_us=1688498 rb_us=1290516 present_us=29704018
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80910 present=40157 rb=538 scene=1823 script=1719 events=2411 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93512 present=40205 rb=537 scene=1775 script=2332 events=3225 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80887 present=40205 rb=538 scene=1774 script=1725 events=2408 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93937 present=40212 rb=537 scene=1775 script=2488 events=3460 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80933 present=40198 rb=538 scene=1775 script=1736 events=2410 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80888 present=40198 rb=538 scene=1774 script=1726 events=2409 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80973 present=40205 rb=538 scene=1775 script=1727 events=2417 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80933 present=40205 rb=538 scene=1775 script=1734 events=2406 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80929 present=40205 rb=538 scene=1774 script=1723 events=2405 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=70818 present=40206 rb=538 scene=1775 script=1903 events=2593 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93477 present=40205 rb=538 scene=1783 script=2293 events=3190 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93595 present=40205 rb=538 scene=1776 script=2358 events=3305 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=82951 present=40205 rb=538 scene=1781 script=1716 events=2407 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80933 present=40157 rb=538 scene=1778 script=1746 events=2418 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80952 present=40205 rb=538 scene=1776 script=1777 events=2458 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80971 present=40205 rb=538 scene=1781 script=1743 events=2436 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80897 present=40164 rb=538 scene=1778 script=1778 events=2449 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=94050 present=40198 rb=538 scene=1776 script=2410 events=3676 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93604 present=40205 rb=538 scene=1781 script=2347 events=3274 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80897 present=40164 rb=538 scene=1819 script=1739 events=2409 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93559 present=40206 rb=538 scene=1776 script=2335 events=3239 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=83276 present=40205 rb=538 scene=1781 script=2287 events=3212 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80881 present=40198 rb=538 scene=1778 script=1730 events=2402 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=81259 present=40573 rb=538 scene=1776 script=1724 events=2406 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80965 present=40205 rb=538 scene=1781 script=1735 events=2428 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80897 present=40205 rb=538 scene=1778 script=1742 events=2412 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=81006 present=40199 rb=537 scene=1775 script=1801 events=2483 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80948 present=40198 rb=538 scene=1781 script=1732 events=2421 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93513 present=40206 rb=538 scene=1778 script=2294 events=3193 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93559 present=40206 rb=538 scene=1776 script=2344 events=3249 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93565 present=40198 rb=538 scene=1787 script=2268 events=3194 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80967 present=40198 rb=538 scene=1785 script=1734 events=2407 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93592 present=40206 rb=537 scene=1776 script=2405 events=3309 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=83243 present=40206 rb=538 scene=1781 script=2291 events=3216 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80897 present=40205 rb=538 scene=1779 script=1736 events=2408 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=81025 present=40158 rb=538 scene=1816 script=1863 events=2545 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80932 present=40158 rb=538 scene=1780 script=1720 events=2411 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93720 present=40219 rb=538 scene=1778 script=2293 events=3252 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=83151 present=40205 rb=538 scene=1773 script=2299 events=3192 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93484 present=40199 rb=538 scene=1773 script=2323 events=3204 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93474 present=40164 rb=538 scene=1819 script=2312 events=3208 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93462 present=40164 rb=538 scene=1773 script=2307 events=3200 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93535 present=40205 rb=538 scene=1774 script=2329 events=3209 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80879 present=40205 rb=538 scene=1778 script=1732 events=2406 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=81429 present=40198 rb=538 scene=1773 script=1842 events=2852 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80905 present=40205 rb=538 scene=1774 script=1750 events=2415 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80880 present=40205 rb=537 scene=1778 script=1732 events=2405 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93459 present=40199 rb=538 scene=1773 script=2311 events=3202 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=81275 present=40566 rb=537 scene=1774 script=1760 events=2421 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93457 present=40206 rb=538 scene=1778 script=2295 events=3193 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=83246 present=40205 rb=538 scene=1773 script=2360 events=3253 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80955 present=40205 rb=538 scene=1774 script=1763 events=2425 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80885 present=40198 rb=538 scene=1778 script=1742 events=2422 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93867 present=40206 rb=538 scene=1772 script=2711 events=3604 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93470 present=40205 rb=537 scene=1774 script=2303 events=3186 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80898 present=40205 rb=538 scene=1778 script=1750 events=2424 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93460 present=40199 rb=538 scene=1772 script=2315 events=3207 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93575 present=40211 rb=538 scene=1774 script=2365 events=3246 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80933 present=40211 rb=538 scene=1778 script=1736 events=2410 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80878 present=40164 rb=538 scene=1772 script=1742 events=2412 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=81062 present=40206 rb=537 scene=1774 script=1912 events=2574 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80878 present=40198 rb=538 scene=1778 script=1737 events=2411 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=70570 present=40205 rb=538 scene=1773 script=1736 events=2405 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80887 present=40205 rb=538 scene=1774 script=1725 events=2388 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=81057 present=40213 rb=538 scene=1777 script=1720 events=2438 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80966 present=40157 rb=538 scene=1776 script=1779 events=2468 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93608 present=40205 rb=538 scene=1780 script=2351 events=3264 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80879 present=40205 rb=538 scene=1778 script=1729 events=2408 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93568 present=40205 rb=537 scene=1775 script=2336 events=3254 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93516 present=40198 rb=537 scene=1780 script=2297 events=3211 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80902 present=40198 rb=538 scene=1778 script=1756 events=2434 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=81420 present=40205 rb=538 scene=1776 script=1816 events=2850 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80952 present=40205 rb=538 scene=1780 script=1727 events=2411 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=81242 present=40573 rb=538 scene=1778 script=1722 events=2402 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=70593 present=40198 rb=537 scene=1775 script=1728 events=2417 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80955 present=40198 rb=538 scene=1780 script=1732 events=2416 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93521 present=40205 rb=538 scene=1777 script=2312 events=3214 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80915 present=40205 rb=538 scene=1776 script=1725 events=2415 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=94066 present=40198 rb=538 scene=1780 script=2412 events=3670 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=83315 present=40206 rb=537 scene=1778 script=2379 events=3284 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80897 present=40205 rb=538 scene=1775 script=1722 events=2410 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80941 present=40164 rb=538 scene=1780 script=1742 events=2426 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=81234 present=40206 rb=538 scene=1776 script=2045 events=2722 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80897 present=40198 rb=538 scene=1776 script=1733 events=2420 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80937 present=40164 rb=537 scene=1822 script=1735 events=2420 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80902 present=40206 rb=537 scene=1776 script=1745 events=2424 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80896 present=40206 rb=538 scene=1776 script=1727 events=2415 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93511 present=40157 rb=538 scene=1780 script=2333 events=3245 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93518 present=40206 rb=537 scene=1777 script=2315 events=3219 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80933 present=40206 rb=537 scene=1775 script=1728 events=2416 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93540 present=40205 rb=538 scene=1781 script=2286 events=3200 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=83551 present=40205 rb=538 scene=1778 script=2681 events=3587 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=93548 present=40199 rb=538 scene=1775 script=2282 events=3199 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80953 present=40205 rb=538 scene=1780 script=1746 events=2431 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80906 present=40205 rb=537 scene=1777 script=1746 events=2428 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80897 present=40164 rb=578 scene=1775 script=1722 events=2411 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=81008 present=40198 rb=538 scene=1781 script=1736 events=2418 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT rbstruct calls=1500 batches=10224 clears=0 clear_px=0 sprites=8593 sprite_px=8035389 clipped=0 flagged=0 noflag=8593 notvs=0 novalid=0 isfull=0 guimiss=0 guihit=0 hitpx=0 fullpx=0 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93551 present=40205 rb=538 scene=1778 script=2296 events=3201 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT dirtypresent narrow=1448 full=52 px_narrow=21638472 px_full=3993600 nocam=0 rej scaled=0 noscene=36 latched=16 norects=0 pal=0 clip=0 multi=1448 px_multi=15737094 px_multi_bbox=21638472 boxes=5040 out=0 whole=0 rowfr=1448 px_bands=38083200 bands=1448 mg0=5038/15737076 mg2k=3323/17050085 mg5k5=1555/21038844 mg12k=1448/21638472
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=95232 present=40573 rb=538 scene=1776 script=2332 events=3249 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93640 present=40205 rb=538 scene=1780 script=2383 events=3296 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93516 present=40158 rb=537 scene=1777 script=2354 events=3256 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80863 present=40158 rb=538 scene=1775 script=1738 events=2425 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=81008 present=40205 rb=538 scene=1780 script=1763 events=2447 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=70629 present=40206 rb=538 scene=1777 script=1749 events=2426 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80898 present=40205 rb=538 scene=1775 script=1722 events=2410 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80918 present=40199 rb=537 scene=1780 script=1727 events=2412 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80926 present=40198 rb=538 scene=1777 script=1747 events=2426 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80950 present=40205 rb=538 scene=1776 script=1735 events=2423 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT bgstruct calls=1500 whole=15 px=9005673 slow_px=0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80962 present=40206 rb=538 scene=1780 script=1761 events=2445 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93525 present=40198 rb=538 scene=1778 script=2364 events=3267 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93548 present=40205 rb=537 scene=1775 script=2312 events=3230 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93886 present=40206 rb=538 scene=1780 script=2661 events=3573 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93540 present=40205 rb=537 scene=1777 script=2289 events=3191 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80932 present=40205 rb=537 scene=1775 script=1730 events=2418 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80936 present=40198 rb=538 scene=1781 script=1743 events=2427 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=70601 present=40206 rb=537 scene=1777 script=1750 events=2430 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80916 present=40206 rb=538 scene=1776 script=1737 events=2426 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=82919 present=40164 rb=537 scene=1780 script=1772 events=2455 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80916 present=40199 rb=538 scene=1777 script=1770 events=2448 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93536 present=40205 rb=538 scene=1775 script=2300 events=3217 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=83259 present=40205 rb=538 scene=1781 script=2306 events=3217 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93600 present=40206 rb=538 scene=1776 script=2387 events=3291 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80920 present=40157 rb=538 scene=1776 script=1752 events=2440 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=81290 present=40567 rb=538 scene=1780 script=1728 events=2411 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80967 present=40206 rb=538 scene=1777 script=1814 events=2491 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80938 present=40165 rb=537 scene=1776 script=1768 events=2459 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93589 present=40198 rb=538 scene=1780 script=2294 events=3248 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=83352 present=40206 rb=538 scene=1776 script=2444 events=3347 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93834 present=40206 rb=537 scene=1775 script=2605 events=3523 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93518 present=40206 rb=538 scene=1780 script=2288 events=3200 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80902 present=40205 rb=538 scene=1778 script=1750 events=2428 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93864 present=40199 rb=537 scene=1775 script=2632 events=3550 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=70624 present=40205 rb=538 scene=1781 script=1728 events=2411 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80902 present=40205 rb=538 scene=1777 script=1740 events=2419 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80950 present=40206 rb=537 scene=1775 script=1746 events=2435 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=81006 present=40205 rb=538 scene=1780 script=1809 events=2491 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80885 present=40157 rb=538 scene=1818 script=1741 events=2419 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80968 present=40206 rb=538 scene=1775 script=1753 events=2442 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93565 present=40205 rb=538 scene=1780 script=2298 events=3211 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93540 present=40199 rb=538 scene=1777 script=2375 events=3278 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93494 present=40199 rb=538 scene=1776 script=2300 events=3218 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=93587 present=40164 rb=538 scene=1780 script=2330 events=3243 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80902 present=40164 rb=538 scene=1777 script=1750 events=2428 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=93567 present=40205 rb=538 scene=1775 script=2341 events=3258 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=70627 present=40199 rb=538 scene=1786 script=1735 events=2416 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80890 present=40199 rb=538 scene=1778 script=1742 events=2421 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80898 present=40205 rb=538 scene=1776 script=1723 events=2410 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=80936 present=40205 rb=537 scene=1780 script=1731 events=2416 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=3 prev_us total=81291 present=40573 rb=538 scene=1778 script=1771 events=2450 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=80909 present=40198 rb=538 scene=1776 script=1740 events=2430 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+DOS-PORT skipframe owed=2 prev_us total=95588 present=40206 rb=538 scene=1780 script=2341 events=3253 sprite_px=1492 present_px=11550 sprites=5 maxspr=14x57
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Game : (room:5) [Global script:309] Cursor mode set to 0
+Quitting the game...
+Set game text language: 
+Set locale: 
+***** ENGINE HAS SHUTDOWN
+DOS-PORT bgstruct_final calls=1675 whole=15 px=9295648 slow_px=0
+DOS-PORT bgspans n=249186 lt16=192655 lt64=29538 ge64=26993 mean_px=37
+DOS-PORT evtype none n=0 us=0
+DOS-PORT evtype script n=2093 us=1460313
+DOS-PORT evtype object n=4181 us=84260016
+DOS-PORT evtype fadein n=2 us=1398200
+DOS-PORT evtype gui n=0 us=0
+DOS-PORT evtype newroom n=0 us=0
+DOS-PORT evobj room n=2087 us=84179785
+DOS-PORT evobj hotspot n=2094 us=80231
+DOS-PORT afterfadein gui_n=2 gui_us=10 log_n=2 log_us=10976 line_n=2 line_us=950
+DOS-PORT afterfadein_script us=0
+DOS-PORT afterfadein onevent_n=2 onevent_us=1026 nested_us=0
+DOS-PORT dirtysrc other n=0 px=0
+DOS-PORT dirtysrc roomsprite n=7102 px=4112875
+DOS-PORT dirtysrc uisprite n=923 px=4776981
+DOS-PORT dirtysrc cursor n=1668 px=15012
+DOS-PORT dirtysrc screen n=0 px=0
+DOS-PORT dirtysrc carry n=5909 px=16191498
+DOS-PORT vblank vsync_leg=0 dac_leg=0 called=0 skipped=0
+DOS-PORT vblank2 vsync_leg=0 dac_leg=0 called=0 skipped=0
+DOS-PORT fade8 steps=43 interp_us=14255 setpal_us=1558
+DOS-PORT flushpath banked=0 lfb=0 vblank_entered=0 fb_created=1
+DOS-PORT objsetup setview_n=0 setview_us=0 animate_n=0 animate_us=0 visible_n=0 visible_us=0
+DOS-PORT scfile open_n=0 open_us=0 write_n=0 write_us=0 close_n=0 close_us=0
+DOS-PORT dirtycarry presents=1674 boxes=5909 full=0
+DOS-PORT presentverify frames=1712 stale_frames=0 stale_px=0 stale_px_max=0 first_stale_frame=-1 bbox=1073741824,1073741824..-1,-1
+DOS-PORT guiskip flushed=0 late=0 hidden=0 props=0 flag=0
+DOS-PORT bigguiopaque opaque=0 masked=0
+DOS-PORT biggui_final n=0 unchanged=0 changed=0 pct=0
+DOS-PORT screenshot n=0 us=0
+DOS-PORT evinteraction n=4181 us=84115279
+DOS-PORT evroom firstenter n=2 us=72
+DOS-PORT evroom beforefadein n=2 us=8167
+DOS-PORT evroom repexec n=2081 us=73901
+DOS-PORT evroom afterfadein n=2 us=84097645
+DOS-PORT blackfill skipped=1660 done=15 px=1152000 rects=15 whole=15

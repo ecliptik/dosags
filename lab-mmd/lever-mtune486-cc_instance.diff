@@ -1,0 +1,12 @@
+diff --git a/Engine/CMakeLists.txt b/Engine/CMakeLists.txt
+index 399962195..9cbe6b786 100644
+--- a/Engine/CMakeLists.txt
++++ b/Engine/CMakeLists.txt
+@@ -787,3 +787,7 @@ if (MACOS)
+             "Created by Adventure Game Studio"
+     )
+ endif()
++
++# LAB-MMD 25 (LAB ONLY, never in patches/): the script VM's translation unit alone scheduled for the
++# i486 (the target machine), everything else unchanged. A codegen flag, no semantic change.
++set_source_files_properties(script/cc_instance.cpp PROPERTIES COMPILE_OPTIONS "-mtune=i486")

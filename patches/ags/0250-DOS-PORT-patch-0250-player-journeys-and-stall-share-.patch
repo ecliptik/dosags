@@ -1,0 +1,1120 @@
+From 5558b8bf927d01f09c47eb94ead34b06ce5831c2 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 13:40:24 -0700
+Subject: [PATCH 250/251] DOS-PORT: patch 0250 -- player journeys and stall
+ share, next to fps
+
+WHY: every figure this port gates on is a rate (fps_p50, tick_rate), and a
+rate is an average: it cannot see a two-second room load, a slow save, a
+click that took half a second to show, or one bad minute inside a good
+run. The operator chose four journeys to watch beside fps (2026-09-23):
+room transitions, save and load, click/key response, boot to title; plus
+"stall share", the fraction of 1 s windows below 39 fps, and stalls over
+100 ms per minute. Each has to be a real start and a real end the player
+would recognise, on one clock, and it has to say when a journey FAILED
+rather than quietly leaving it out of a percentile -- a p95 that improves
+because the slow cases stopped finishing is worse than no p95.
+
+WHAT: Engine/platform/dos/dos_journeys.{h,cpp}. Clock: uclock() from the
+engine-start anchor (patch 0042). Every journey ends at a present ATTEMPT
+(a scope guard on SDLRendererGraphicsDriver::Present, every exit: pixels
+pushed, palette only, or skipped as unchanged). Starts: engine start
+(boot; DOSAGS_JOURNEY_TITLE_ROOM picks the room that counts as the title);
+NewRoom()/new_room() (room; ends after that room's fade-in); SaveGameSlot()
+or save_game() (save; "written" is marked before GameSaved, whose script
+work is not write time); RestoreGameSlot() or try_restore_save() (load;
+ends at the first present not faded out and not fading in); the SDL
+event's own timestamp (click/key; ends at the first present after the
+engine dequeues it, with SDL 0220's upper bound on the unseen wait before
+the poll). Failure is printed, not dropped: failed= (a failed or refused
+save/load), unfinished=, superseded=, rerequested=, cleared=, and the
+driver-vs-poll lost_clicks and IRQ-vs-drained keyboard bytes in
+journey_input. Stall share counts present attempts per whole 1 s window
+(floor DOSAGS_JOURNEY_FPS_FLOOR, default 39; empty seconds count as below;
+a variant without windows that had a boot/room/save/load pending);
+stalls100 lists present gaps over 100 ms and the tail from the last present
+to quit. Nothing prints while the game runs; the record goes to
+RUNMANI.LOG at quit. Cost: one uclock() and a flag test per present, O(1)
+work per start/end event, 7 KB of .bss for 256 records. Permanent
+reporting, not a probe: it has no switch.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/CMakeLists.txt                |   2 +
+ Engine/ac/game.cpp                   |  22 +
+ Engine/ac/global_game.cpp            |  10 +
+ Engine/ac/global_room.cpp            |   4 +
+ Engine/ac/room.cpp                   |   2 +
+ Engine/ac/screen.cpp                 |   3 +
+ Engine/ac/sys_events.cpp             |  16 +
+ Engine/gfx/ali3dsw.cpp               |   7 +
+ Engine/main/quit.cpp                 |   2 +
+ Engine/platform/dos/dos_journeys.cpp | 665 +++++++++++++++++++++++++++
+ Engine/platform/dos/dos_journeys.h   |  88 ++++
+ 11 files changed, 821 insertions(+)
+ create mode 100644 Engine/platform/dos/dos_journeys.cpp
+ create mode 100644 Engine/platform/dos/dos_journeys.h
+
+diff --git a/Engine/CMakeLists.txt b/Engine/CMakeLists.txt
+index d11a6f462..399962195 100644
+--- a/Engine/CMakeLists.txt
++++ b/Engine/CMakeLists.txt
+@@ -473,6 +473,8 @@ target_sources(engine
+     platform/dos/dos_audio_decode.h
+     platform/dos/dos_audio_mixer.cpp
+     platform/dos/dos_audio_mixer.h
++    platform/dos/dos_journeys.cpp
++    platform/dos/dos_journeys.h
+     platform/dos/dos_midi_backend.cpp
+     platform/dos/dos_midi_backend.h
+ 
+diff --git a/Engine/ac/game.cpp b/Engine/ac/game.cpp
+index 61febe5f8..e080a48f2 100644
+--- a/Engine/ac/game.cpp
++++ b/Engine/ac/game.cpp
+@@ -15,6 +15,7 @@
+ #include <stdio.h>
+ #ifdef __DJGPP__
+ #include "main/dos_port_startup_timing.h" // DosPortStartupTiming, patch 0078
++#include "platform/dos/dos_journeys.h" // DOS-PORT patch 0250
+ #endif
+ #include "ac/common.h"
+ #include "ac/view.h"
+@@ -1304,6 +1305,9 @@ static std::unique_ptr<Common::Bitmap> create_savegame_screenshot()
+ 
+ void save_game(int slotn, const String &descript, std::unique_ptr<Bitmap> &&image)
+ {
++#ifdef __DJGPP__
++    dos_journey_save_exec(slotn);   // patch 0250: write time starts here
++#endif
+     pl_run_plugin_hooks(kPluginEvt_PreSaveGame, 0);
+ 
+     String nametouse = get_save_game_path(slotn);
+@@ -1366,6 +1370,9 @@ void save_game(int slotn, const String &descript, std::unique_ptr<Bitmap> &&imag
+         // FIXME: left this original Display call for the time being,
+         // but this is wrong. Figure out how to use event callback for this instead:
+         // either pass error code to kScriptEvent_GameSaved, or have a separate event for errors
++#ifdef __DJGPP__
++        dos_journey_save_done(slotn, false);   // patch 0250
++#endif
+         Display("ERROR: Unable to open savegame file for writing!");
+         Debug::Printf(kDbgMsg_Error, "Save game failed: %s", err->FullMessage().GetCStr());
+         return;
+@@ -1377,6 +1384,11 @@ void save_game(int slotn, const String &descript, std::unique_ptr<Bitmap> &&imag
+             (long)((uclock() - _dp_t) * 1000 / UCLOCKS_PER_SEC);
+ #endif
+ 
++#ifdef __DJGPP__
++    // patch 0250: written. Before the event: run_on_event() runs on_event at
++    // once here, and whatever the game does in it is not write time.
++    dos_journey_save_done(slotn, true);
++#endif
+     // call "After Save" event callback
+     run_on_event(kScriptEvent_GameSaved, slotn);
+ }
+@@ -1522,6 +1534,9 @@ HSaveError load_game(const String &path, int slotNumber, bool startup, bool &dat
+     set_our_eip(oldeip);
+     // ensure input queue is reset
+     ags_clear_input_queue();
++#ifdef __DJGPP__
++    dos_journey_load_done(slotNumber, true);   // patch 0250: restored; the event's work is not restore time
++#endif
+     // call "After Restore" event callback
+     run_on_event(kScriptEvent_GameRestored, slotNumber);
+     return HSaveError::None();
+@@ -1536,7 +1551,14 @@ bool try_restore_save(const Common::String &path, int slot, bool startup)
+ {
+     bool data_overwritten;
+     Debug::Printf(kDbgMsg_Info, "Restoring saved game '%s'", path.GetCStr());
++#ifdef __DJGPP__
++    dos_journey_load_exec(slot);   // patch 0250
++#endif
+     HSaveError err = load_game(path, slot, startup, data_overwritten);
++#ifdef __DJGPP__
++    if (!err)
++        dos_journey_load_done(slot, false);   // patch 0250 (success is marked inside load_game)
++#endif
+     if (!err)
+     {
+         String error = String::FromFormat("Unable to restore the saved game.\n%s",
+diff --git a/Engine/ac/global_game.cpp b/Engine/ac/global_game.cpp
+index e319528ce..d067f7c6a 100644
+--- a/Engine/ac/global_game.cpp
++++ b/Engine/ac/global_game.cpp
+@@ -12,6 +12,7 @@
+ //
+ //=============================================================================
+ #include "ac/global_game.h"
++#include "platform/dos/dos_journeys.h" // DOS-PORT patch 0250
+ #ifdef __DJGPP__
+ #include <time.h>
+ #include "main/dos_port_startup_timing.h"
+@@ -142,6 +143,9 @@ void RestoreGameSlot(int slnum)
+         quit("!RestoreGameSlot: a game cannot be restored from within game_start");
+ 
+     can_run_delayed_command();
++#ifdef __DJGPP__
++    dos_journey_load_request(slnum);   // patch 0250: before the deferral, so the script tail counts
++#endif
+     if (inside_script) {
+         curscript->QueueAction(PostScriptAction(ePSARestoreGame, slnum, "RestoreGameSlot"));
+         return;
+@@ -152,6 +156,9 @@ void RestoreGameSlot(int slnum)
+ void SaveGameSlot(int slotn, const char *descript, int spritenum)
+ {
+     VALIDATE_STRING(descript);
++#ifdef __DJGPP__
++    dos_journey_save_request(slotn);   // patch 0250
++#endif
+ 
+ #ifdef __DJGPP__
+     // patch 0107: the restart-point save's own internals, slot 999 only.
+@@ -167,6 +174,9 @@ void SaveGameSlot(int slotn, const char *descript, int spritenum)
+ #endif
+     if (_dp_free < 2)
+     {
++#ifdef __DJGPP__
++        dos_journey_save_done(slotn, false);   // patch 0250: refused, recorded as failed
++#endif
+         Display("ERROR: There is not enough disk space free to save the game. Clear some disk space and try again.");
+         return;
+     }
+diff --git a/Engine/ac/global_room.cpp b/Engine/ac/global_room.cpp
+index 1116c8f0f..ec0c49501 100644
+--- a/Engine/ac/global_room.cpp
++++ b/Engine/ac/global_room.cpp
+@@ -12,6 +12,7 @@
+ //
+ //=============================================================================
+ #include "ac/global_room.h"
++#include "platform/dos/dos_journeys.h" // DOS-PORT patch 0250
+ #include "ac/common.h"
+ #include "ac/character.h"
+ #include "ac/characterinfo.h"
+@@ -80,6 +81,9 @@ void NewRoom(int nrnum) {
+ 
+ 
+     debug_script_log("Room change requested to room %d", nrnum);
++#ifdef __DJGPP__
++    dos_journey_room_request(nrnum);   // patch 0250: the request is where the player's wait starts
++#endif
+     EndSkippingUntilCharStops();
+ 
+     can_run_delayed_command();
+diff --git a/Engine/ac/room.cpp b/Engine/ac/room.cpp
+index 5927bc9d2..fc7d9187a 100644
+--- a/Engine/ac/room.cpp
++++ b/Engine/ac/room.cpp
+@@ -16,6 +16,7 @@
+ #ifdef __DJGPP__
+ #include <time.h> // uclock(), UCLOCKS_PER_SEC -- DOS-PORT room-transition timestamps
+ #include "main/dos_port_startup_timing.h" // DosPortStartupTiming, patch 0078
++#include "platform/dos/dos_journeys.h" // DOS-PORT patch 0250
+ #endif
+ 
+ #include "platform/platform.h"
+@@ -1109,6 +1110,7 @@ void new_room(int newnum,CharacterInfo*forchar) {
+ 
+     debug_script_log("Room change requested to room %d", newnum);
+ #ifdef __DJGPP__
++    dos_journey_room_request(newnum);   // patch 0250: no-op if NewRoom() already started this one
+     // DOS-PORT: paired with current_fade_in_effect()'s own "ready"
+     // timestamp (screen.cpp) for room-transition-latency instrumentation
+     // -- see PLAN.md's "Test harness (AGS Quest)" section. Real ms
+diff --git a/Engine/ac/screen.cpp b/Engine/ac/screen.cpp
+index 77c0dcd61..2f479731f 100644
+--- a/Engine/ac/screen.cpp
++++ b/Engine/ac/screen.cpp
+@@ -16,6 +16,7 @@
+ #include "ac/draw.h"
+ #include "ac/gamesetupstruct.h"
+ #include "ac/gamestate.h"
++#include "platform/dos/dos_journeys.h" // DOS-PORT patch 0250
+ #include "ac/global_game.h"
+ #include "ac/global_screen.h"
+ #include "ac/screen.h"
+@@ -927,6 +928,7 @@ struct DosPortFadeInEndStamp
+     {
+         debug_script_log("DOSAGS_XT t_ms=%u phase=fadein_end room=%d",
+                          (unsigned)get_runtime_ms(), displayed_room);
++        dos_journey_fadein_end(displayed_room);   // patch 0250
+     }
+ };
+ #endif
+@@ -940,6 +942,7 @@ void current_fade_in_effect()
+ #ifdef __DJGPP__
+     debug_script_log("DOSAGS_XT t_ms=%u phase=fadein_begin room=%d", (unsigned)get_runtime_ms(), displayed_room);
+     DosPortFadeInEndStamp _dp_fade_in_end;   // patch 0139, all three exits
++    dos_journey_fadein_begin();              // patch 0250
+ #endif
+ 
+     // determine the transition style
+diff --git a/Engine/ac/sys_events.cpp b/Engine/ac/sys_events.cpp
+index 66fe4d464..cad648675 100644
+--- a/Engine/ac/sys_events.cpp
++++ b/Engine/ac/sys_events.cpp
+@@ -12,6 +12,7 @@
+ //
+ //=============================================================================
+ #include "ac/sys_events.h"
++#include "platform/dos/dos_journeys.h" // DOS-PORT patch 0250
+ #include <chrono>
+ #include <deque>
+ #include <math.h>
+@@ -404,6 +405,9 @@ SDL_Event ags_get_next_inputevent()
+     {
+         const auto evt = g_inputEvtQueue.front();
+         g_inputEvtQueue.pop_front();
++#ifdef __DJGPP__
++        dos_journey_input_dequeued(evt, false);   // patch 0250
++#endif
+         return evt;
+     }
+     return {};
+@@ -411,6 +415,10 @@ SDL_Event ags_get_next_inputevent()
+ 
+ void ags_drop_next_inputevent()
+ {
++#ifdef __DJGPP__
++    if (!g_inputEvtQueue.empty())
++        dos_journey_input_dequeued(g_inputEvtQueue.front(), true);   // patch 0250
++#endif
+     if (!g_inputEvtQueue.empty())
+         g_inputEvtQueue.pop_front();
+ }
+@@ -1135,6 +1143,10 @@ static void on_sdl_touch_motion(const SDL_TouchFingerEvent &event)
+ void ags_clear_input_state()
+ {
+     // clear everything related to the input state
++#ifdef __DJGPP__
++    for (const auto &e : g_inputEvtQueue)
++        dos_journey_input_cleared(e);   // patch 0250: received, never handled
++#endif
+     g_inputEvtQueue.clear();
+     sys_keysdown.clear();
+     sys_modkeys = 0;
+@@ -1151,6 +1163,10 @@ void ags_clear_mouse_movement()
+ 
+ void ags_clear_input_queue()
+ {
++#ifdef __DJGPP__
++    for (const auto &e : g_inputEvtQueue)
++        dos_journey_input_cleared(e);   // patch 0250: received, never handled
++#endif
+     g_inputEvtQueue.clear();
+ }
+ 
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index cf2a2bd60..1dc761a87 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -12,6 +12,7 @@
+ //
+ //=============================================================================
+ #include "gfx/ali3dsw.h"
++#include "platform/dos/dos_journeys.h" // DOS-PORT patch 0250
+ #include "ac/draw_software.h"   // patch 0124
+ #include <algorithm>
+ #include <cstring>
+@@ -1410,6 +1411,12 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+         Debug::Printf(kDbgMsg_Error, "SDLRenderer: SDL_GetWindowSurface failed: %s", SDL_GetError());
+         return;
+     }
++#ifdef __DJGPP__
++    // patch 0250: every exit from here on is a present attempt -- pixels
++    // pushed, palette only, or skipped as unchanged (the right picture was
++    // already on screen). Journeys end, and stall share counts, here.
++    struct DosJourneyPresentHook { ~DosJourneyPresentHook() { dos_journey_present(); } } _dos_journey_present_hook;
++#endif
+ 
+     bool palette_changed = false;
+     {
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index f0024c6b9..20cc70ed1 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -56,6 +56,7 @@
+ #include "main/config.h"
+ #include "main/engine.h"
+ #include "main/game_run.h"
++#include "platform/dos/dos_journeys.h" // DOS-PORT patch 0250
+ #include "main/main.h"
+ #include "main/quit.h"
+ #include "ac/spritecache.h"
+@@ -793,6 +794,7 @@ void quit(const char *quitmsg)
+             // switching as a source of the remaining per-tick gap outright,
+             // rather than leaving it an assumption.
+             dos_port_yardstick_emit(run_manifest_log); // patch 0093
++            dos_journey_emit(run_manifest_log);        // patch 0250
+ 
+             // DOS-PORT patch 0095: the cross-check's end edge and verdict.
+             // ratio = uclock span / RTC span over the same two RTC second
+diff --git a/Engine/platform/dos/dos_journeys.cpp b/Engine/platform/dos/dos_journeys.cpp
+new file mode 100644
+index 000000000..3d9039a55
+--- /dev/null
++++ b/Engine/platform/dos/dos_journeys.cpp
+@@ -0,0 +1,665 @@
++//=============================================================================
++//
++// Adventure Game Studio (AGS)
++//
++// Copyright (C) 1999-2011 Chris Jones and 2011-2026 various contributors
++// The full list of copyright holders can be found in the Copyright.txt
++// file, which is part of this source code distribution.
++//
++// The AGS source code is provided under the Artistic License 2.0.
++// A copy of this license can be found in the file License.txt and at
++// https://opensource.org/license/artistic-2-0/
++//
++//=============================================================================
++//
++// DOS-PORT patch 0250: player journeys and stall share. See dos_journeys.h
++// for the definitions; this file is the bookkeeping and the report.
++//
++//=============================================================================
++#include "platform/dos/dos_journeys.h"
++
++#ifdef __DJGPP__
++#include <stdint.h>
++#include <stdlib.h>
++#include <time.h>          // uclock, uclock_t, UCLOCKS_PER_SEC
++#include <algorithm>
++#include <SDL3/SDL.h>
++#include <SDL3/SDL_dosinput_stats.h>   // SDL patch 0220
++#include "ac/gamestate.h"              // play.screen_is_faded_out
++#include "ac/runtime_defines.h"        // RESTART_POINT_SAVE_GAME_NUMBER
++
++extern uclock_t dos_port_engine_start_uclock;   // main.cpp, patch 0042
++extern int displayed_room;
++extern "C" {
++extern volatile uint32_t dos_port_kbd_irq_count;    // SDL_dosevents.c: bytes from IRQ 1
++extern volatile uint32_t dos_port_kbd_drain_count;  // SDL_dosevents.c: bytes the pump drained
++}
++
++namespace
++{
++
++enum JourneyKind
++{
++    kJ_Boot, kJ_Room, kJ_Save, kJ_SaveRestartPoint, kJ_Load,
++    kJ_Click, kJ_ClickSim, kJ_Key, kJ_Count
++};
++const char *const kJourneyName[kJ_Count] =
++    { "boot", "room", "save", "save_restartpoint", "load", "click", "click_sim", "key" };
++
++// flags on a finished record
++const unsigned kJF_Dropped      = 1u << 0; // input: dequeued by the drop path, not handled
++const unsigned kJF_TsFallback   = 1u << 1; // input: event carried no usable timestamp; poll time = dequeue time
++const unsigned kJF_RoomChanged  = 1u << 2; // load: first unfaded present showed a room other than the restored one
++const unsigned kJF_Failed       = 1u << 3; // load: restore failed (ms = request -> failure)
++const unsigned kJF_Retargeted   = 1u << 4; // room: the target changed before the fade-in (leaves-screen redirect)
++const unsigned kJF_EndedInFade  = 1u << 5; // room/boot: left before any present after the fade-in; end = the fade's last present
++
++struct JRec
++{
++    unsigned char kind;
++    unsigned char flags;
++    short a, b;       // room: from/to; save/load: slot/room; boot: -/room
++    long t_ms;        // start, engine-start-relative
++    long ms;          // start -> end present
++    long sub1_ms;     // room: start -> fade-in end; save: write; load: restore; input: poll -> dequeue
++    long sub2_ms;     // input: dequeue -> present; boot/room: fade-in end -> present
++    long bound_ms;    // input: upper bound on the unseen wait before the poll (SDL 0220); else 0
++};
++
++// 256 records x 28 bytes: DJGPP stores .bss in the image, so the cap is file
++// size; a run with more journeys than this counts them in overflow=.
++const int kRecCap = 256;
++JRec g_rec[kRecCap];
++int g_nrec = 0;
++long g_rec_overflow[kJ_Count];
++long g_superseded[kJ_Count];
++long g_retargeted[kJ_Count];
++long g_cleared[kJ_Count];
++long g_rerequested[kJ_Count];   // save/load: a request while an earlier one had not yet run
++
++struct Pend
++{
++    bool active;
++    bool armed;       // waiting for its end present
++    uclock_t start;
++    uclock_t mid;     // fade-in end / save done / restore done
++    int a, b;
++    long sub1_us;
++    unsigned flags;
++    uclock_t exec;    // save_game() / try_restore_save() entry
++};
++Pend p_boot = { true, false, 0, 0, -1, -1, 0, 0, 0 };
++Pend p_room, p_save, p_load;
++int g_armed = 0;      // number of armed Pend entries (fast test in the present hook)
++bool g_boot_done = false;
++bool g_in_fadein = false;
++uclock_t g_fadein_begin_u = 0;
++uclock_t g_last_present_u = -1;   // last present attempt, any
++bool g_fade_presented = false;    // the last fade-in presented at least one frame
++int g_title_room = -2; // -2: env not read yet; -1: first room
++
++struct PendIn
++{
++    unsigned char kind;
++    unsigned char flags;
++    uclock_t recv, deq;
++    long bound_ms;
++};
++const int kPendInCap = 16;
++PendIn p_in[kPendInCap];
++int p_in_n = 0;
++long g_in_pend_overflow = 0;
++
++// ---- stall share / stalls > 100 ms (present-attempt basis) ----
++bool s_have = false;
++uclock_t s_first = 0, s_last = 0;
++int s_floor = -1;                 // DOSAGS_JOURNEY_FPS_FLOOR, default 39
++long s_win_idx = 0, s_win_count = 0;
++bool s_win_busy = false;
++long s_windows = 0, s_below = 0, s_windows_nj = 0, s_below_nj = 0;
++long s_win_min_nj = -1;
++long s_presents = 0;
++long s_stalls = 0, s_stalls_busy = 0;
++uclock_t s_stall_sum = 0, s_stall_sum_busy = 0, s_stall_max = 0;
++const int kStallListCap = 48;
++struct StallRec { long t_ms; long ms; bool busy; };
++StallRec s_list[kStallListCap];
++int s_list_n = 0;
++
++inline uclock_t now_u() { return uclock() - dos_port_engine_start_uclock; }
++inline long u2ms(uclock_t u) { return (long)(u * 1000 / UCLOCKS_PER_SEC); }
++inline long us2ms(long us) { return us / 1000; }
++
++bool journey_busy()
++{
++    return p_boot.active || p_room.active || p_save.active || p_load.active;
++}
++
++JRec *add_rec(int kind, unsigned flags, int a, int b, uclock_t start, uclock_t end,
++              long sub1_ms, long sub2_ms)
++{
++    if (g_nrec >= kRecCap)
++    {
++        g_rec_overflow[kind]++;
++        return nullptr;
++    }
++    JRec &r = g_rec[g_nrec++];
++    r.kind = (unsigned char)kind;
++    r.flags = (unsigned char)flags;
++    r.a = (short)a;
++    r.b = (short)b;
++    r.t_ms = u2ms(start);
++    r.ms = u2ms(end - start);
++    r.sub1_ms = sub1_ms;
++    r.sub2_ms = sub2_ms;
++    r.bound_ms = 0;
++    return &r;
++}
++
++void arm(Pend &p, uclock_t t)
++{
++    if (!p.armed)
++    {
++        p.armed = true;
++        g_armed++;
++    }
++    p.mid = t;
++}
++
++void disarm(Pend &p)
++{
++    if (p.armed)
++        g_armed--;
++    p.armed = false;
++    p.active = false;
++}
++
++void close_window(long count, bool busy)
++{
++    s_windows++;
++    if (count < s_floor)
++        s_below++;
++    if (!busy)
++    {
++        s_windows_nj++;
++        if (count < s_floor)
++            s_below_nj++;
++        if (s_win_min_nj < 0 || count < s_win_min_nj)
++            s_win_min_nj = count;
++    }
++}
++
++void stall_account(uclock_t t)
++{
++    const bool busy = journey_busy();
++    s_presents++;
++    if (!s_have)
++    {
++        if (s_floor < 0)
++        {
++            const char *e = getenv("DOSAGS_JOURNEY_FPS_FLOOR");
++            s_floor = (e && atoi(e) > 0) ? atoi(e) : 39;
++        }
++        s_have = true;
++        s_first = s_last = t;
++        s_win_idx = 0;
++        s_win_count = 1;
++        s_win_busy = busy;
++        return;
++    }
++    const uclock_t gap = t - s_last;
++    if (gap > UCLOCKS_PER_SEC / 10)
++    {
++        s_stalls++;
++        s_stall_sum += gap;
++        if (gap > s_stall_max)
++            s_stall_max = gap;
++        if (busy)
++        {
++            s_stalls_busy++;
++            s_stall_sum_busy += gap;
++        }
++        if (s_list_n < kStallListCap)
++        {
++            StallRec &sr = s_list[s_list_n++];
++            sr.t_ms = u2ms(t);
++            sr.ms = u2ms(gap);
++            sr.busy = busy;
++        }
++    }
++    const long idx = (long)((t - s_first) / UCLOCKS_PER_SEC);
++    if (idx != s_win_idx)
++    {
++        close_window(s_win_count, s_win_busy || busy);
++        const long empty = idx - s_win_idx - 1;   // whole seconds with no present at all
++        if (empty > 0)
++        {
++            s_windows += empty;
++            s_below += empty;                     // 0 presents < any floor
++            if (!busy)
++            {
++                s_windows_nj += empty;
++                s_below_nj += empty;
++                s_win_min_nj = 0;
++            }
++        }
++        s_win_idx = idx;
++        s_win_count = 0;
++        s_win_busy = false;
++    }
++    s_win_count++;
++    if (busy)
++        s_win_busy = true;
++    s_last = t;
++}
++
++int input_kind(const SDL_Event &evt)
++{
++    if (evt.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
++        return (evt.button.which == SDL_TOUCH_MOUSEID) ? kJ_ClickSim : kJ_Click;
++    if (evt.type == SDL_EVENT_KEY_DOWN && !evt.key.repeat)
++        return kJ_Key;
++    return -1;
++}
++
++// upper = true: ms + the input wait bound (a record with an unknown bound
++// counts its bare ms, and is counted in the summary's bound_unknown=)
++void percentiles(int kind, bool upper, long &n, long &p50, long &p95, long &mx)
++{
++    long v[kRecCap];   // 1 KB of stack, once, at exit
++    n = 0;
++    for (int i = 0; i < g_nrec; ++i)
++        if (g_rec[i].kind == kind && !(g_rec[i].flags & kJF_Failed))
++            v[n++] = g_rec[i].ms + ((upper && g_rec[i].bound_ms > 0) ? g_rec[i].bound_ms : 0);
++    p50 = p95 = mx = -1;
++    if (n == 0)
++        return;
++    std::sort(v, v + n);
++    // nearest rank: the smallest value with at least p of the sample at or below it
++    p50 = v[(n * 50 + 99) / 100 - 1];
++    p95 = v[(n * 95 + 99) / 100 - 1];
++    mx = v[n - 1];
++}
++
++// A room (or the title) faded in, and the game left it before any present
++// followed. If the fade itself presented frames, the room WAS on screen:
++// end at the fade's last present, flagged. If not (instant transition), it
++// never showed: superseded.
++void end_armed_without_present(Pend &p, int kind)
++{
++    if (g_fade_presented && g_last_present_u >= g_fadein_begin_u)
++    {
++        if (kind == kJ_Boot)
++        {
++            add_rec(kJ_Boot, kJF_EndedInFade, -1, p.b, 0, g_last_present_u, u2ms(p.mid), 0);
++            g_boot_done = true;
++        }
++        else
++            add_rec(kind, p.flags | kJF_EndedInFade, p.a, p.b, p.start, g_last_present_u,
++                    u2ms(p.mid - p.start), 0);
++    }
++    else
++        g_superseded[kind]++;
++    disarm(p);
++}
++
++} // namespace
++
++void dos_journey_present()
++{
++    const uclock_t t = now_u();
++    stall_account(t);
++    g_last_present_u = t;
++    if (g_armed == 0 && p_in_n == 0)
++        return;
++
++    if (p_boot.armed)
++    {
++        add_rec(kJ_Boot, 0, -1, p_boot.b, 0, t, u2ms(p_boot.mid), u2ms(t - p_boot.mid));
++        disarm(p_boot);
++        g_boot_done = true;
++    }
++    if (p_room.armed)
++    {
++        add_rec(kJ_Room, p_room.flags, p_room.a, p_room.b, p_room.start, t,
++                u2ms(p_room.mid - p_room.start), u2ms(t - p_room.mid));
++        disarm(p_room);
++    }
++    if (p_save.armed)
++    {
++        add_rec(p_save.a == RESTART_POINT_SAVE_GAME_NUMBER ? kJ_SaveRestartPoint : kJ_Save, 0,
++                p_save.a, displayed_room, p_save.start, t, us2ms(p_save.sub1_us), u2ms(t - p_save.mid));
++        disarm(p_save);
++    }
++    // a restored game is on screen only once it is not faded out and no fade-in is running
++    if (p_load.armed && !play.screen_is_faded_out && !g_in_fadein)
++    {
++        const unsigned f = p_load.flags | (displayed_room != p_load.b ? kJF_RoomChanged : 0);
++        add_rec(kJ_Load, f, p_load.a, displayed_room, p_load.start, t,
++                us2ms(p_load.sub1_us), u2ms(t - p_load.mid));
++        disarm(p_load);
++    }
++    for (int i = 0; i < p_in_n; ++i)
++    {
++        const PendIn &pi = p_in[i];
++        JRec *r = add_rec(pi.kind, pi.flags, -1, displayed_room, pi.recv, t,
++                          u2ms(pi.deq - pi.recv), u2ms(t - pi.deq));
++        if (r)
++            r->bound_ms = pi.bound_ms;
++    }
++    p_in_n = 0;
++}
++
++void dos_journey_room_request(int to_room)
++{
++    const uclock_t t = now_u();
++    if (p_room.active && !p_room.armed)
++    {
++        // NewRoom() then new_room() for one change, or a leaves-screen
++        // redirect: one journey, from the FIRST request
++        if (to_room != p_room.b)
++        {
++            p_room.b = to_room;
++            p_room.flags |= kJF_Retargeted;
++            g_retargeted[kJ_Room]++;
++        }
++        return;
++    }
++    if (p_boot.armed)
++        end_armed_without_present(p_boot, kJ_Boot);
++    if (p_room.active && p_room.armed)
++        end_armed_without_present(p_room, kJ_Room);
++    else if (p_room.active)
++        disarm(p_room);
++    p_room.active = true;
++    p_room.armed = false;
++    p_room.start = t;
++    p_room.a = displayed_room;
++    p_room.b = to_room;
++    p_room.flags = 0;
++}
++
++void dos_journey_fadein_begin()
++{
++    g_in_fadein = true;
++    g_fadein_begin_u = now_u();
++}
++
++void dos_journey_fadein_end(int room)
++{
++    const uclock_t t = now_u();
++    g_in_fadein = false;
++    g_fade_presented = (g_last_present_u >= g_fadein_begin_u);
++    if (g_title_room == -2)
++    {
++        const char *e = getenv("DOSAGS_JOURNEY_TITLE_ROOM");
++        g_title_room = (e && *e) ? atoi(e) : -1;
++    }
++    if (p_boot.active && (g_title_room < 0 || room == g_title_room))
++    {
++        p_boot.b = room;
++        arm(p_boot, t);
++    }
++    if (p_room.active)
++    {
++        p_room.b = room;   // the room actually faded in
++        arm(p_room, t);
++    }
++}
++
++void dos_journey_save_request(int slot)
++{
++    const uclock_t t = now_u();
++    if (p_save.active && !p_save.armed)
++    {
++        g_rerequested[kJ_Save]++;   // the journey keeps the FIRST request's start
++        return;   // already requested, not yet written
++    }
++    if (p_save.active)
++    {
++        g_superseded[kJ_Save]++;
++        disarm(p_save);
++    }
++    p_save.active = true;
++    p_save.armed = false;
++    p_save.start = t;
++    p_save.exec = 0;
++    p_save.a = slot;
++    p_save.flags = 0;
++}
++
++void dos_journey_save_exec(int slot)
++{
++    const uclock_t t = now_u();
++    if (!p_save.active || p_save.armed)   // no script request (a save dialog)
++    {
++        dos_journey_save_request(slot);
++        p_save.start = t;
++    }
++    p_save.a = slot;
++    p_save.exec = t;
++}
++
++void dos_journey_save_done(int slot, bool ok)
++{
++    if (!p_save.active || p_save.armed)
++        return;
++    const uclock_t t = now_u();
++    p_save.a = slot;
++    // exec == 0: refused before save_game() ran (SaveGameSlot's disk-space check)
++    p_save.sub1_us = p_save.exec ? (long)((t - p_save.exec) * 1000000LL / UCLOCKS_PER_SEC) : 0;
++    if (!ok)
++    {
++        add_rec(slot == RESTART_POINT_SAVE_GAME_NUMBER ? kJ_SaveRestartPoint : kJ_Save, kJF_Failed,
++                slot, displayed_room, p_save.start, t, us2ms(p_save.sub1_us), 0);
++        disarm(p_save);
++        return;
++    }
++    arm(p_save, t);
++}
++
++void dos_journey_load_request(int slot)
++{
++    const uclock_t t = now_u();
++    if (p_load.active && !p_load.armed)
++    {
++        g_rerequested[kJ_Load]++;   // the journey keeps the FIRST request's start
++        return;
++    }
++    if (p_load.active)
++    {
++        g_superseded[kJ_Load]++;
++        disarm(p_load);
++    }
++    p_load.active = true;
++    p_load.armed = false;
++    p_load.start = t;
++    p_load.exec = 0;
++    p_load.a = slot;
++    p_load.flags = 0;
++}
++
++void dos_journey_load_exec(int slot)
++{
++    const uclock_t t = now_u();
++    if (!p_load.active || p_load.armed)   // no script request (dialog, startup, restart)
++    {
++        dos_journey_load_request(slot);
++        p_load.start = t;
++    }
++    p_load.a = slot;
++    p_load.exec = t;
++    // the restore replaces the game state: a room change requested before it
++    // can no longer finish (one requested DURING the restore, by the restored
++    // game's own scripts, is a new journey and is kept)
++    if (p_room.active)
++    {
++        g_superseded[kJ_Room]++;
++        disarm(p_room);
++    }
++}
++
++void dos_journey_load_done(int slot, bool ok)
++{
++    if (!p_load.active || p_load.armed)
++        return;   // already marked (the GameRestored point runs before the caller's check)
++    const uclock_t t = now_u();
++    p_load.a = slot;
++    p_load.b = displayed_room;
++    p_load.sub1_us = (long)((t - p_load.exec) * 1000000LL / UCLOCKS_PER_SEC);
++    if (!ok)
++    {
++        add_rec(kJ_Load, kJF_Failed, slot, displayed_room, p_load.start, t, us2ms(p_load.sub1_us), 0);
++        disarm(p_load);
++        return;
++    }
++    arm(p_load, t);
++}
++
++void dos_journey_input_dequeued(const SDL_Event &evt, bool dropped)
++{
++    const int kind = input_kind(evt);
++    if (kind < 0)
++        return;
++    if (p_in_n >= kPendInCap)
++    {
++        g_in_pend_overflow++;
++        return;
++    }
++    const uclock_t t = now_u();
++    PendIn &pi = p_in[p_in_n++];
++    pi.kind = (unsigned char)kind;
++    pi.flags = dropped ? kJF_Dropped : 0;
++    pi.deq = t;
++    // SDL stamps every event with SDL_GetTicksNS() when the backend's pump
++    // produces it (the poll); the DOS performance counter is uclock(), so the
++    // event's age converts straight back onto this clock
++    const Uint64 ts = evt.common.timestamp;
++    const Uint64 now_ns = SDL_GetTicksNS();
++    pi.bound_ms = -1;
++    if (ts != 0 && ts <= now_ns && now_ns - ts < 60000000000ULL)
++    {
++        pi.recv = t - (uclock_t)((now_ns - ts) * (Uint64)UCLOCKS_PER_SEC / 1000000000ULL);
++        // SDL 0220: the press may have waited up to this long for the poll
++        // that stamped it; 0 from SDL means unknown, reported as -1
++        const Uint64 b = SDL_DOSInputWaitBoundNS(ts);
++        if (b > 0)
++            pi.bound_ms = (long)(b / 1000000ULL);
++    }
++    else
++    {
++        pi.recv = t;
++        pi.flags |= kJF_TsFallback;
++    }
++}
++
++void dos_journey_input_cleared(const SDL_Event &evt)
++{
++    const int kind = input_kind(evt);
++    if (kind >= 0)
++        g_cleared[kind]++;
++}
++
++void dos_journey_emit(FILE *log)
++{
++    if (!log)
++        return;
++    fprintf(log, "DOS-PORT journey_basis clock=uclock end=present_attempt t_ms=start_since_engine_start"
++        " percentile=nearest_rank\n");
++    for (int i = 0; i < g_nrec; ++i)
++    {
++        const JRec &r = g_rec[i];
++        switch (r.kind)
++        {
++        case kJ_Boot:
++            fprintf(log, "DOS-PORT journey kind=boot room=%d t_ms=0 ms=%ld to_fadein_end_ms=%ld fadein_end_to_present_ms=%ld ended_in_fade=%d\n",
++                r.b, r.ms, r.sub1_ms, r.sub2_ms, (r.flags & kJF_EndedInFade) ? 1 : 0);
++            break;
++        case kJ_Room:
++            fprintf(log, "DOS-PORT journey kind=room from=%d to=%d t_ms=%ld ms=%ld to_fadein_end_ms=%ld fadein_end_to_present_ms=%ld retargeted=%d ended_in_fade=%d\n",
++                r.a, r.b, r.t_ms, r.ms, r.sub1_ms, r.sub2_ms, (r.flags & kJF_Retargeted) ? 1 : 0,
++                (r.flags & kJF_EndedInFade) ? 1 : 0);
++            break;
++        case kJ_Save:
++        case kJ_SaveRestartPoint:
++            fprintf(log, "DOS-PORT journey kind=%s slot=%d room=%d t_ms=%ld ms=%ld write_ms=%ld done_to_present_ms=%ld failed=%d\n",
++                kJourneyName[r.kind], r.a, r.b, r.t_ms, r.ms, r.sub1_ms, r.sub2_ms, (r.flags & kJF_Failed) ? 1 : 0);
++            break;
++        case kJ_Load:
++            fprintf(log, "DOS-PORT journey kind=load slot=%d room=%d t_ms=%ld ms=%ld restore_ms=%ld done_to_present_ms=%ld room_changed=%d failed=%d\n",
++                r.a, r.b, r.t_ms, r.ms, r.sub1_ms, r.sub2_ms,
++                (r.flags & kJF_RoomChanged) ? 1 : 0, (r.flags & kJF_Failed) ? 1 : 0);
++            break;
++        default:
++            fprintf(log, "DOS-PORT journey kind=%s room=%d t_ms=%ld ms=%ld poll_to_dequeue_ms=%ld dequeue_to_present_ms=%ld wait_bound_ms=%ld dropped=%d ts_fallback=%d\n",
++                kJourneyName[r.kind], r.b, r.t_ms, r.ms, r.sub1_ms, r.sub2_ms, r.bound_ms,
++                (r.flags & kJF_Dropped) ? 1 : 0, (r.flags & kJF_TsFallback) ? 1 : 0);
++            break;
++        }
++    }
++    // unfinished = started, never reached its end present before exit
++    long unfinished[kJ_Count] = {};
++    if (p_boot.active) unfinished[kJ_Boot]++;
++    if (p_room.active) unfinished[kJ_Room]++;
++    if (p_save.active)
++        unfinished[p_save.a == RESTART_POINT_SAVE_GAME_NUMBER ? kJ_SaveRestartPoint : kJ_Save]++;
++    if (p_load.active) unfinished[kJ_Load]++;
++    for (int i = 0; i < p_in_n; ++i)
++        unfinished[p_in[i].kind]++;
++    for (int k = 0; k < kJ_Count; ++k)
++    {
++        long n, p50, p95, mx, un, u50, u95, umx;
++        percentiles(k, false, n, p50, p95, mx);
++        percentiles(k, true, un, u50, u95, umx);
++        long failed = 0, bound_unknown = 0;
++        for (int i = 0; i < g_nrec; ++i)
++        {
++            if (g_rec[i].kind != k)
++                continue;
++            if (g_rec[i].flags & kJF_Failed)
++                failed++;
++            if (k >= kJ_Click && g_rec[i].bound_ms < 0)
++                bound_unknown++;
++        }
++        fprintf(log, "DOS-PORT journey_summary kind=%s n=%ld p50_ms=%ld p95_ms=%ld max_ms=%ld p95_upper_ms=%ld max_upper_ms=%ld"
++            " failed=%ld unfinished=%ld superseded=%ld retargeted=%ld rerequested=%ld cleared=%ld overflow=%ld bound_unknown=%ld\n",
++            kJourneyName[k], n, p50, p95, mx, u95, umx, failed, unfinished[k], g_superseded[k], g_retargeted[k],
++            g_rerequested[k], g_cleared[k], g_rec_overflow[k], bound_unknown);
++    }
++    // lost input: presses the mouse driver counted that the level poll never
++    // saw (SDL 0220), and keyboard bytes IRQ 1 delivered that the pump never
++    // drained (still in the ring at exit, or overwritten by a full ring)
++    Uint32 hw = 0, seen = 0, checks = 0;
++    SDL_DOSMouseClickStats(&hw, &seen, &checks);
++    const long lost_clicks = (long)hw - (long)seen;
++    const long kbd_undrained = (long)(dos_port_kbd_irq_count - dos_port_kbd_drain_count);
++    fprintf(log, "DOS-PORT journey_input mouse_presses_hw=%lu mouse_presses_seen=%lu lost_clicks=%ld hw_checks=%lu"
++        " kbd_bytes_irq=%lu kbd_bytes_drained=%lu kbd_bytes_undrained=%ld pending_overflow=%ld\n",
++        (unsigned long)hw, (unsigned long)seen, lost_clicks, (unsigned long)checks,
++        (unsigned long)dos_port_kbd_irq_count, (unsigned long)dos_port_kbd_drain_count,
++        kbd_undrained, g_in_pend_overflow);
++    // stall share: whole 1 s windows (from the first present; the last partial
++    // window is not counted) with fewer present attempts than the floor.
++    // "nojourney" drops every window in which a boot/room/save/load journey
++    // was pending at any present, or at the present that closed the window.
++    const long span_ms = s_have ? u2ms(s_last - s_first) : 0;
++    fprintf(log, "DOS-PORT stallshare basis=present_attempts floor=%d windows=%ld below=%ld share=%.4f"
++        " windows_nojourney=%ld below_nojourney=%ld share_nojourney=%.4f min_nojourney=%ld presents=%ld span_ms=%ld\n",
++        s_floor, s_windows, s_below, s_windows ? (double)s_below / (double)s_windows : 0.0,
++        s_windows_nj, s_below_nj, s_windows_nj ? (double)s_below_nj / (double)s_windows_nj : 0.0,
++        s_win_min_nj, s_presents, span_ms);
++    const double minutes = span_ms / 60000.0;
++    const long nj = s_stalls - s_stalls_busy;
++    // tail_ms: last present -> this report (quit). Not folded into the
++    // figures above, because quit() itself takes time before it gets here;
++    // a freeze that ends in the auto-exit shows up here and nowhere else.
++    const long tail_ms = s_have ? u2ms(now_u() - s_last) : -1;
++    fprintf(log, "DOS-PORT stalls100 basis=present_gap n=%ld per_min=%.2f total_ms=%ld max_ms=%ld"
++        " n_nojourney=%ld per_min_nojourney=%.2f total_ms_nojourney=%ld listed=%d tail_ms=%ld\n",
++        s_stalls, minutes > 0 ? s_stalls / minutes : 0.0, u2ms(s_stall_sum), u2ms(s_stall_max),
++        nj, minutes > 0 ? nj / minutes : 0.0, u2ms(s_stall_sum - s_stall_sum_busy), s_list_n, tail_ms);
++    for (int i = 0; i < s_list_n; ++i)
++        fprintf(log, "DOS-PORT stall100 t_ms=%ld ms=%ld journey=%d\n",
++            s_list[i].t_ms, s_list[i].ms, s_list[i].busy ? 1 : 0);
++}
++#endif // __DJGPP__
+diff --git a/Engine/platform/dos/dos_journeys.h b/Engine/platform/dos/dos_journeys.h
+new file mode 100644
+index 000000000..d57425901
+--- /dev/null
++++ b/Engine/platform/dos/dos_journeys.h
+@@ -0,0 +1,88 @@
++//=============================================================================
++//
++// Adventure Game Studio (AGS)
++//
++// Copyright (C) 1999-2011 Chris Jones and 2011-2026 various contributors
++// The full list of copyright holders can be found in the Copyright.txt
++// file, which is part of this source code distribution.
++//
++// The AGS source code is provided under the Artistic License 2.0.
++// A copy of this license can be found in the file License.txt and at
++// https://opensource.org/license/artistic-2-0/
++//
++//=============================================================================
++//
++// DOS-PORT patch 0250: player journeys and stall share, next to fps.
++//
++// A journey runs from a start event (the player's input, or the game's own
++// request) to the first present that can show its result. Every end is a
++// present ATTEMPT (SDLRendererGraphicsDriver::Present, any exit: pixels
++// pushed, palette only, or skipped because the frame was unchanged -- in the
++// last case the right picture was already on screen). One clock throughout:
++// uclock(), the engine-start anchor every DOS-PORT t_ms uses, EXCEPT the
++// DOSAGS_XT lines, which are get_runtime_ms() and run ~0.8 s behind it.
++//
++//   boot   engine start (main_init) -> first present after the first fade-in
++//          ends (or after the fade-in of room DOSAGS_JOURNEY_TITLE_ROOM).
++//          Does NOT include the DOS loader, the DPMI host or static init.
++//   room   NewRoom()/new_room() request -> first present after the new
++//          room's fade-in ends.
++//   save   SaveGameSlot() request -> file written -> next present.
++//   load   RestoreGameSlot() request -> state restored -> first present with
++//          the screen not faded out and no fade-in running.
++//   "written" / "restored" are marked BEFORE the GameSaved / GameRestored
++//   script events: run_on_event() runs on_event at once when no script is
++//   running, so anything the game does in response (AGS Quest restores
++//   inside its save, and changes room inside its restore) is nested in the
++//   same call and must not be counted as write or restore time.
++//   click / key   the SDL event's own timestamp (the poll that produced it)
++//          -> dequeued by the engine -> first present after the dequeue.
++//          The press itself is not timestamped anywhere on DOS: it may have
++//          waited up to one pump gap for that poll. wait_bound_ms (SDL 0220)
++//          is the upper bound on that wait, and p95_upper_ms in the summary
++//          is the percentile of ms + wait_bound_ms. A press the poll never
++//          saw has no journey at all: it is counted in journey_input
++//          lost_clicks (driver presses - seen presses), never in a p95.
++//
++// What a FAILED journey prints (read this before trusting a figure):
++//   never ends before exit     -> unfinished=1 in its summary, no record
++//   save/load failed or refused-> a record with failed=1, counted in the
++//                                 summary's failed=, excluded from n and p95
++//   room left before a present-> superseded= (not in n), or ended_in_fade=1
++//   a second save/load request while one is pending -> rerequested=; the
++//                                 journey keeps the first request's start
++//   input discarded by a queue clear -> cleared= (not in n)
++//   a click the poll never saw -> nothing here; journey_input lost_clicks
++// n=0 with p95_ms=-1 is "no journey", never "fast". Check n (and, for
++// inputs, the host's own count of what it injected) before any p95.
++//
++// Nothing is printed while the game runs; the record goes to RUNMANI.LOG at
++// exit (dos_journey_emit). Cost while running: one uclock() per present, a
++// flag test per present, and O(1) work at each start/end event.
++//
++//=============================================================================
++#ifndef __AGS_EE_PLATFORM_DOS__DOS_JOURNEYS_H
++#define __AGS_EE_PLATFORM_DOS__DOS_JOURNEYS_H
++
++#ifdef __DJGPP__
++#include <stdio.h>
++
++union SDL_Event;
++
++void dos_journey_present();                   // every Present() exit
++void dos_journey_room_request(int to_room);   // NewRoom() / new_room()
++void dos_journey_fadein_begin();              // current_fade_in_effect() entry
++void dos_journey_fadein_end(int room);        // current_fade_in_effect(), every exit
++void dos_journey_save_request(int slot);      // SaveGameSlot() entry
++void dos_journey_save_exec(int slot);         // save_game() entry
++void dos_journey_save_done(int slot, bool ok);// save_game(): written (before GameSaved) or failed;
++                                              // SaveGameSlot(): refused (no disk space)
++void dos_journey_load_request(int slot);      // RestoreGameSlot() entry
++void dos_journey_load_exec(int slot);         // try_restore_save() entry
++void dos_journey_load_done(int slot, bool ok);// load_game(): restored (before GameRestored) or failed
++void dos_journey_input_dequeued(const SDL_Event &evt, bool dropped);
++void dos_journey_input_cleared(const SDL_Event &evt);
++void dos_journey_emit(FILE *log);
++#endif
++
++#endif // __AGS_EE_PLATFORM_DOS__DOS_JOURNEYS_H
+-- 
+2.47.3
+

@@ -1,0 +1,261 @@
+From a97531958e4835361a0e8e938af3482f6d5b0d44 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 14:48:27 -0700
+Subject: [PATCH] [AGS] Cast every remaining plain-int
+ Stream::(Read|Write)ArrayOfInt32 site
+
+Found while confirming patch 0018's build result: with cc_serializer.h
+fixed, make build-ags immediately hit 5 more identical-shaped errors in
+Engine/ac/gamestate.cpp alone. Patch 0013's own commit claimed "grepped
+every ReadArrayOfInt32/WriteArrayOfInt32 call site in the tree, 8
+total" -- that grep was incomplete. Redone fresh here (not assumed):
+grep -rn "ReadArrayOfInt32\|WriteArrayOfInt32" across the whole Engine/
+and Common/ tree finds 18 real call sites needing a cast, not 4.
+
+The pattern in what 0013 missed: every site it did catch passes a
+.data()-returning container (std::vector/std::array); every site it
+missed passes a bare C-style int[] array name, which decays to a
+pointer without an explicit call to inspect -- 0013's own grep likely
+matched .data() call shapes specifically, not bare array-name
+arguments. Common/script/cc_script.cpp's 4 .data() sites needed no
+cast at all: code/fixups are already std::vector<int32_t>, confirmed
+by reading cc_script.h directly rather than assuming from the .data()
+shape alone.
+
+Same DJGPP-divergence category and same fix shape as patch 0013
+throughout: reinterpret_cast<int32_t*>/const int32_t* at each site,
+safe because both types are genuinely 4-byte two's-complement on this
+platform. Touches:
+- Engine/ac/gamestate.cpp (5 sites: globalvars, globalscriptvars,
+  old_script_timers, both read and write directions)
+- Engine/ac/roomstatus.cpp (2: interactionVariableValues)
+- Common/ac/view.cpp (1: loopflags)
+- Common/ac/gamesetupstruct.cpp (2: options, GameSetupStruct's own
+  savegame read/write)
+- Common/ac/gamesetupstructbase.cpp (4: options, reserved -- this file
+  already had ONE site fixed by patch 0013, HasMessages via .data();
+  these are the two plain-array sites in the same file that patch's
+  own grep missed)
+- Common/game/interactions.cpp (2: types, load_response)
+- Common/game/room_file_deprecated.cpp (2: PolyPoints::x/y)
+- Common/ac/inventoryiteminfo.cpp (2: reserved)
+
+Verified: make build-ags gets past every one of these files cleanly.
+The only two remaining errors anywhere in the build are
+Engine/media/audio/openal.h:18 and Engine/media/audio/sdldecoder.h:22
+-- both already documented Phase D stubs (mojoAL/OpenAL, SDL2_sound
+decode), neither a new surprise.
+---
+ Common/ac/gamesetupstruct.cpp        |  4 ++--
+ Common/ac/gamesetupstructbase.cpp    |  8 ++++----
+ Common/ac/inventoryiteminfo.cpp      |  4 ++--
+ Common/ac/view.cpp                   |  2 +-
+ Common/game/interactions.cpp         |  4 ++--
+ Common/game/room_file_deprecated.cpp |  4 ++--
+ Engine/ac/gamestate.cpp              | 12 +++++++-----
+ Engine/ac/roomstatus.cpp             |  4 ++--
+ 8 files changed, 22 insertions(+), 20 deletions(-)
+
+diff --git a/Common/ac/gamesetupstruct.cpp b/Common/ac/gamesetupstruct.cpp
+index 6d0b6b9bb..ed87f0466 100644
+--- a/Common/ac/gamesetupstruct.cpp
++++ b/Common/ac/gamesetupstruct.cpp
+@@ -390,7 +390,7 @@ void ConvertOldGameStruct (OldGameSetupStruct *ogss, GameSetupStruct *gss) {
+ void GameSetupStruct::ReadFromSavegame(Stream *in)
+ {
+     // of GameSetupStruct
+-    in->ReadArrayOfInt32(options, OPT_HIGHESTOPTION_321 + 1);
++    in->ReadArrayOfInt32(reinterpret_cast<int32_t*>(options), OPT_HIGHESTOPTION_321 + 1); // DOS-PORT: see patch 0013
+     options[OPT_LIPSYNCTEXT] = in->ReadInt32();
+     // of GameSetupStructBase
+     playercharacter = in->ReadInt32();
+@@ -404,7 +404,7 @@ void GameSetupStruct::ReadFromSavegame(Stream *in)
+ void GameSetupStruct::WriteForSavegame(Stream *out)
+ {
+     // of GameSetupStruct
+-    out->WriteArrayOfInt32(options, OPT_HIGHESTOPTION_321 + 1);
++    out->WriteArrayOfInt32(reinterpret_cast<const int32_t*>(options), OPT_HIGHESTOPTION_321 + 1); // DOS-PORT: see patch 0013
+     out->WriteInt32(options[OPT_LIPSYNCTEXT]);
+     // of GameSetupStructBase
+     out->WriteInt32(playercharacter);
+diff --git a/Common/ac/gamesetupstructbase.cpp b/Common/ac/gamesetupstructbase.cpp
+index 489dca306..31cd52a8d 100644
+--- a/Common/ac/gamesetupstructbase.cpp
++++ b/Common/ac/gamesetupstructbase.cpp
+@@ -93,7 +93,7 @@ void GameSetupStructBase::ReadFromFile(Stream *in, GameDataVersion game_ver, Ser
+     // here we mark the padding bytes, as they do not belong to actual data.
+     gamename.ReadCount(in, LEGACY_GAME_NAME_LENGTH);
+     in->ReadInt16(); // alignment padding to int32 (gamename: 50 -> 52 bytes)
+-    in->ReadArrayOfInt32(options, MAX_OPTIONS);
++    in->ReadArrayOfInt32(reinterpret_cast<int32_t*>(options), MAX_OPTIONS); // DOS-PORT: see patch 0013
+     if (game_ver < kGameVersion_340_4)
+     { // TODO: this should probably be possible to deduce script API level
+       // using game data version and other options like OPT_STRICTSCRIPTING
+@@ -131,7 +131,7 @@ void GameSetupStructBase::ReadFromFile(Stream *in, GameDataVersion game_ver, Ser
+ 
+     default_lipsync_frame = in->ReadInt32();
+     inv_hot_sprite = in->ReadInt32();
+-    in->ReadArrayOfInt32(reserved, NUM_INTS_RESERVED);
++    in->ReadArrayOfInt32(reinterpret_cast<int32_t*>(reserved), NUM_INTS_RESERVED); // DOS-PORT: see patch 0013
+ 
+     info.ExtensionOffset = static_cast<uint32_t>(in->ReadInt32());
+     // DOS-PORT: int32_t is `long int` under DJGPP, distinct from `int`
+@@ -153,7 +153,7 @@ void GameSetupStructBase::WriteToFile(Stream *out, const SerializeInfo &info) co
+     // here we mark the padding bytes, as they do not belong to actual data.
+     gamename.WriteCount(out, LEGACY_GAME_NAME_LENGTH);
+     out->WriteInt16(0); // alignment padding to int32
+-    out->WriteArrayOfInt32(options, MAX_OPTIONS);
++    out->WriteArrayOfInt32(reinterpret_cast<const int32_t*>(options), MAX_OPTIONS); // DOS-PORT: see patch 0013
+     out->Write(&paluses[0], sizeof(paluses));
+     // colors are an array of chars
+     out->Write(&defpal[0], sizeof(defpal));
+@@ -182,7 +182,7 @@ void GameSetupStructBase::WriteToFile(Stream *out, const SerializeInfo &info) co
+     }
+     out->WriteInt32(default_lipsync_frame);
+     out->WriteInt32(inv_hot_sprite);
+-    out->WriteArrayOfInt32(reserved, NUM_INTS_RESERVED);
++    out->WriteArrayOfInt32(reinterpret_cast<const int32_t*>(reserved), NUM_INTS_RESERVED); // DOS-PORT: see patch 0013
+     for (int i = 0; i < MAXGLOBALMES; ++i)
+     {
+         out->WriteInt32(!messages[i].IsEmpty() ? 1 : 0);
+diff --git a/Common/ac/inventoryiteminfo.cpp b/Common/ac/inventoryiteminfo.cpp
+index 67dbf3fb4..70b8252a4 100644
+--- a/Common/ac/inventoryiteminfo.cpp
++++ b/Common/ac/inventoryiteminfo.cpp
+@@ -25,7 +25,7 @@ void InventoryItemInfo::ReadFromFile(Stream *in)
+     cursorPic = in->ReadInt32();
+     hotx = in->ReadInt32();
+     hoty = in->ReadInt32();
+-    in->ReadArrayOfInt32(reserved, 5);
++    in->ReadArrayOfInt32(reinterpret_cast<int32_t*>(reserved), 5); // DOS-PORT: see patch 0013
+     flags = in->ReadInt8();
+     in->Seek(3); // alignment padding to int32
+ }
+@@ -38,7 +38,7 @@ void InventoryItemInfo::WriteToFile(Stream *out)
+     out->WriteInt32(cursorPic);
+     out->WriteInt32(hotx);
+     out->WriteInt32(hoty);
+-    out->WriteArrayOfInt32(reserved, 5);
++    out->WriteArrayOfInt32(reinterpret_cast<const int32_t*>(reserved), 5); // DOS-PORT: see patch 0013
+     out->WriteInt8(flags);
+     out->WriteByteCount(0, 3); // alignment padding to int32
+ }
+diff --git a/Common/ac/view.cpp b/Common/ac/view.cpp
+index 3d8dcfeca..5de52fc2e 100644
+--- a/Common/ac/view.cpp
++++ b/Common/ac/view.cpp
+@@ -162,7 +162,7 @@ void ViewStruct272::ReadFromFile(Stream *in)
+         numframes[i] = in->ReadInt16();
+     }
+     in->ReadInt16(); // alignment padding to int32
+-    in->ReadArrayOfInt32(loopflags, 16);
++    in->ReadArrayOfInt32(reinterpret_cast<int32_t*>(loopflags), 16); // DOS-PORT: see patch 0013
+     for (int j = 0; j < 16; ++j)
+     {
+         for (int i = 0; i < 20; ++i)
+diff --git a/Common/game/interactions.cpp b/Common/game/interactions.cpp
+index 9324e34b9..b36bc4c59 100644
+--- a/Common/game/interactions.cpp
++++ b/Common/game/interactions.cpp
+@@ -353,8 +353,8 @@ std::unique_ptr<Interaction> Interaction::CreateFromStream(Stream *in, HError &e
+ 
+     int types[MAX_NEWINTERACTION_EVENTS];
+     int load_response[MAX_NEWINTERACTION_EVENTS];
+-    in->ReadArrayOfInt32(types, evt_count);
+-    in->ReadArrayOfInt32(load_response, evt_count);
++    in->ReadArrayOfInt32(reinterpret_cast<int32_t*>(types), evt_count); // DOS-PORT: see patch 0013
++    in->ReadArrayOfInt32(reinterpret_cast<int32_t*>(load_response), evt_count); // DOS-PORT: see patch 0013
+ 
+     inter->Events.resize(evt_count);
+     for (size_t i = 0; i < evt_count; ++i)
+diff --git a/Common/game/room_file_deprecated.cpp b/Common/game/room_file_deprecated.cpp
+index c8f558bfe..8822416ff 100644
+--- a/Common/game/room_file_deprecated.cpp
++++ b/Common/game/room_file_deprecated.cpp
+@@ -86,8 +86,8 @@ void PolyPoints::add_point(int x, int y)
+ 
+ void PolyPoints::Read(Stream *in)
+ {
+-    in->ReadArrayOfInt32(x, MAXPOINTS);
+-    in->ReadArrayOfInt32(y, MAXPOINTS);
++    in->ReadArrayOfInt32(reinterpret_cast<int32_t*>(x), MAXPOINTS); // DOS-PORT: see patch 0013
++    in->ReadArrayOfInt32(reinterpret_cast<int32_t*>(y), MAXPOINTS); // DOS-PORT: see patch 0013
+     numpoints = in->ReadInt32();
+ }
+ 
+diff --git a/Engine/ac/gamestate.cpp b/Engine/ac/gamestate.cpp
+index e6310e083..1058912a3 100644
+--- a/Engine/ac/gamestate.cpp
++++ b/Engine/ac/gamestate.cpp
+@@ -562,7 +562,9 @@ void GamePlayState::ReadFromSavegame(Stream *in, GameDataVersion data_ver, GameS
+     disabled_user_interface = in->ReadInt32();
+     gscript_timer = in->ReadInt32();
+     debug_mode = in->ReadInt32();
+-    in->ReadArrayOfInt32(globalvars, MAXGLOBALVARS);
++    // DOS-PORT: DJGPP int32_t is long int, distinct from int in C++ even
++    // though both are 4 bytes here -- see patch 0013's own rationale.
++    in->ReadArrayOfInt32(reinterpret_cast<int32_t*>(globalvars), MAXGLOBALVARS);
+     messagetime = in->ReadInt32();
+     usedinv = in->ReadInt32();
+     inv_top = in->ReadInt32();
+@@ -656,7 +658,7 @@ void GamePlayState::ReadFromSavegame(Stream *in, GameDataVersion data_ver, GameS
+     mbounds.Bottom = in->ReadInt16();
+     fade_effect = in->ReadInt32();
+     bg_frame_locked = in->ReadInt32();
+-    in->ReadArrayOfInt32(globalscriptvars, MAXGSVALUES);
++    in->ReadArrayOfInt32(reinterpret_cast<int32_t*>(globalscriptvars), MAXGSVALUES); // DOS-PORT: see patch 0013
+     cur_music_number = in->ReadInt32();
+     music_repeat = in->ReadInt32();
+     music_master_volume = in->ReadInt32();
+@@ -678,7 +680,7 @@ void GamePlayState::ReadFromSavegame(Stream *in, GameDataVersion data_ver, GameS
+     if (svg_ver < kGSSvgVersion_363_04)
+     {
+         int old_script_timers[LEGACY_MAX_TIMERS];
+-        in->ReadArrayOfInt32(old_script_timers, LEGACY_MAX_TIMERS);
++        in->ReadArrayOfInt32(reinterpret_cast<int32_t*>(old_script_timers), LEGACY_MAX_TIMERS); // DOS-PORT: see patch 0013
+         for (int timer_id = 1; timer_id < LEGACY_MAX_TIMERS; ++timer_id)
+         {
+             if (old_script_timers[timer_id] > 0)
+@@ -831,7 +833,7 @@ void GamePlayState::WriteForSavegame(Stream *out) const
+     out->WriteInt32(disabled_user_interface);
+     out->WriteInt32(gscript_timer);
+     out->WriteInt32(debug_mode);
+-    out->WriteArrayOfInt32(globalvars, MAXGLOBALVARS);
++    out->WriteArrayOfInt32(reinterpret_cast<const int32_t*>(globalvars), MAXGLOBALVARS); // DOS-PORT: see patch 0013
+     out->WriteInt32(messagetime);
+     out->WriteInt32(usedinv);
+     out->WriteInt32(inv_top);
+@@ -920,7 +922,7 @@ void GamePlayState::WriteForSavegame(Stream *out) const
+     out->WriteInt16(mbounds.Bottom);
+     out->WriteInt32( fade_effect);
+     out->WriteInt32( bg_frame_locked);
+-    out->WriteArrayOfInt32(globalscriptvars, MAXGSVALUES);
++    out->WriteArrayOfInt32(reinterpret_cast<const int32_t*>(globalscriptvars), MAXGSVALUES); // DOS-PORT: see patch 0013
+     out->WriteInt32( cur_music_number);
+     out->WriteInt32( music_repeat);
+     out->WriteInt32( music_master_volume);
+diff --git a/Engine/ac/roomstatus.cpp b/Engine/ac/roomstatus.cpp
+index a6352e4c2..8573a5cb4 100644
+--- a/Engine/ac/roomstatus.cpp
++++ b/Engine/ac/roomstatus.cpp
+@@ -111,7 +111,7 @@ void RoomStatus::ReadFromSavegame(Stream *in, GameDataVersion data_ver, RoomStat
+     if (data_ver <= kGameVersion_272)
+     {
+         SavegameComponents::ReadInteraction272(intrRoom, in);
+-        in->ReadArrayOfInt32(interactionVariableValues, MAX_INTERACTION_VARIABLES);
++        in->ReadArrayOfInt32(reinterpret_cast<int32_t*>(interactionVariableValues), MAX_INTERACTION_VARIABLES); // DOS-PORT: see patch 0013
+     }
+ 
+     tsdatasize = static_cast<uint32_t>(in->ReadInt32());
+@@ -164,7 +164,7 @@ void RoomStatus::WriteToSavegame(Stream *out, GameDataVersion data_ver) const
+     if (data_ver <= kGameVersion_272)
+     {
+         SavegameComponents::WriteInteraction272(intrRoom, out);
+-        out->WriteArrayOfInt32(interactionVariableValues, MAX_INTERACTION_VARIABLES);
++        out->WriteArrayOfInt32(reinterpret_cast<const int32_t*>(interactionVariableValues), MAX_INTERACTION_VARIABLES); // DOS-PORT: see patch 0013
+     }
+ 
+     out->WriteInt32(static_cast<int32_t>(tsdatasize));
+-- 
+2.47.3
+

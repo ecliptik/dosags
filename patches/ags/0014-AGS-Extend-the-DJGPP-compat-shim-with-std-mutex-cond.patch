@@ -1,0 +1,125 @@
+From 865bb7eeddcf75d8a32bf9ebd8ada00a796d3510 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 14:10:19 -0700
+Subject: [PATCH] [AGS] Extend the DJGPP compat shim with
+ std::mutex/condition_variable
+
+DJGPP's libstdc++ is built without _GLIBCXX_HAS_GTHREADS (confirmed:
+tests/probes/djgpp-runtime/) -- <mutex>/<condition_variable> compile
+without error but declare no std::mutex, std::condition_variable, or
+std::cv_status at all. AGS_DISABLE_THREADS (patch 0001) only guards
+actual thread *creation*: Common/debug/debugmanager.cpp/.h and
+Engine/media/audio/audio_core.cpp/.h keep std::mutex and
+std::condition_variable as unconditional struct/class members and lock
+or notify them outside any AGS_DISABLE_THREADS guard (e.g.
+audio_core.cpp's audio_core_slot_stop() and AudioPlayerLock's
+destructor both call notify_all() unconditionally), so the types have
+to exist for real, not just be stubbed where threading would have run.
+
+Standalone probes against the real toolchain (not assumed) before
+writing this: std::lock_guard<T> and std::unique_lock<T> already exist
+as generic templates under DJGPP (they only require T to provide
+lock()/unlock()), so only std::mutex, std::condition_variable and
+std::cv_status -- concrete types DJGPP's headers never declare at all
+-- are added. A second probe, mimicking the exact usage shapes in
+debugmanager.h/.cpp and audio_core.h/.cpp (lock_guard<mutex>,
+unique_lock<mutex> moved into a wrapper and unlocked on destruction,
+condition_variable::notify_all, the wait_for/cv_status signature),
+compiled clean against the candidate shim before it was added here.
+
+This build is single-threaded by construction (AGS_DISABLE_THREADS),
+so every operation is a correct no-op, not just an expedient one --
+there is never a second thread that could be waiting on a lock or a
+condition variable.
+
+Extends Common/platform/dos_compat.h (patch 0012) rather than adding a
+second DOS-compat file, per that patch's own stated intent.
+---
+ Common/platform/dos_compat.h | 71 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 71 insertions(+)
+
+diff --git a/Common/platform/dos_compat.h b/Common/platform/dos_compat.h
+index a0b67a62d..0ff07e02c 100644
+--- a/Common/platform/dos_compat.h
++++ b/Common/platform/dos_compat.h
+@@ -120,6 +120,77 @@ namespace std {
+     inline long double atanh(long double x) { return ::atanhl(x); }
+ }
+ 
++// --- std::mutex / std::condition_variable: absent under DJGPP ---
++//
++// DJGPP's libstdc++ is built without _GLIBCXX_HAS_GTHREADS (confirmed:
++// tests/probes/djgpp-runtime/) -- <mutex>/<condition_variable> compile
++// (they're #included without error) but declare no std::mutex,
++// std::condition_variable, or std::cv_status at all. AGS_DISABLE_THREADS
++// (patch 0001) only guards actual thread *creation* -- Common/debug/debugmanager.cpp/.h
++// and Engine/media/audio/audio_core.cpp/.h keep std::mutex and
++// std::condition_variable as unconditional struct/class members and lock
++// them unconditionally (e.g. audio_core.cpp's audio_core_slot_stop() and
++// AudioPlayerLock's destructor call notify_all() outside any
++// AGS_DISABLE_THREADS guard), so this has to be a real, always-present
++// type, not something stubbed out only where threading would have been
++// used.
++//
++// This build is single-threaded by construction (AGS_DISABLE_THREADS),
++// so every operation below is a correct no-op, not just an expedient one
++// -- there is never a second thread that could be waiting on a lock or a
++// condition variable.
++//
++// std::lock_guard<T> and std::unique_lock<T> do NOT need to be defined
++// here -- confirmed by a standalone probe (scratch, not committed) that
++// both already exist as generic templates under DJGPP (they only require
++// T to provide lock()/unlock(), which the std::mutex below does), so
++// defining them again here would be a duplicate-definition error. Only
++// the concrete std::mutex/std::condition_variable/std::cv_status types
++// that DJGPP's headers never declare are added.
++#include <mutex>
++#include <condition_variable>
++#include <chrono>
++
++namespace std {
++
++class mutex {
++public:
++    mutex() noexcept = default;
++    ~mutex() = default;
++    mutex(const mutex &) = delete;
++    mutex &operator=(const mutex &) = delete;
++
++    void lock() {}
++    void unlock() {}
++    bool try_lock() { return true; }
++};
++
++enum class cv_status { no_timeout, timeout };
++
++class condition_variable {
++public:
++    condition_variable() noexcept = default;
++    ~condition_variable() = default;
++    condition_variable(const condition_variable &) = delete;
++    condition_variable &operator=(const condition_variable &) = delete;
++
++    void notify_one() noexcept {}
++    void notify_all() noexcept {}
++
++    template <class Lock>
++    void wait(Lock &) {}
++
++    template <class Lock, class Predicate>
++    void wait(Lock &, Predicate pred) { while (!pred()) {} }
++
++    template <class Lock, class Rep, class Period>
++    cv_status wait_for(Lock &, const chrono::duration<Rep, Period> &) {
++        return cv_status::no_timeout;
++    }
++};
++
++} // namespace std
++
+ #endif // __cplusplus
+ 
+ #endif // __AGS_DOS_COMPAT_H
+-- 
+2.47.3
+

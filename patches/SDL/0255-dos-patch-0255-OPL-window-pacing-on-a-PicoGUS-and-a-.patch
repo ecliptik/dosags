@@ -1,0 +1,277 @@
+From 74bb5a4810493646d6d9ccc235a6cfb929279e70 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 25 Sep 2026 13:03:30 -0700
+Subject: [PATCH 255/255] dos: patch 0255 -- OPL window pacing on a PicoGUS,
+ and a peak-arrival witness
+
+WHY: a PicoGUS (the 486 target's card) takes OPL writes into a 256-entry
+command buffer that its core 1 drains about every 2.57 ms (128 OPL samples
+at 49716 Hz). The buffer has no full check: a lapped entry is overwritten
+silently, and at 256 pending it reads as empty (PicoGUS 74f57e5,
+picogus.cpp:908, cmd_buffers.h:6-13; opl_dbopl.cpp:59-80 for the drain).
+Patch 0254's 4 + 4 status reads were sized for >= 20 us per write, which
+keeps a drain window at <= 128 arrivals (half the buffer, a margin for drain
+jitter nobody has measured). With the IRQ-safe PIT read, the 486 measures
+16.5 us per write: ~156 arrivals per window at the mean, the whole margin
+(dosags LAB-JOURNEYS 8.34, CAP3d). No host counter can see the card drop a
+write, so the margin must hold by construction, not by the CPU's speed: a
+faster CPU only writes faster.
+
+WHAT: in the ISR MIDI drain, on the OPL path only:
+- Pacing: before the (K+1)-th write of a block, wait until the block began
+  win_us ago (the SB ISR's own timer), then start the next block. No window
+  of win_us then carries more than ~K writes. Default K = 128, win_us = 2570
+  on a detected PicoGUS (0254's pgdetect); K = 0 (off) on every other card,
+  whose OPL has no such buffer. SDL_HINT_DOS_OPL_PACE_K=0 turns it off, N
+  (16..1024) sets K on any OPL; SDL_HINT_DOS_OPL_PACE_WINDOW_US (500..20000)
+  sets the window. A block written slower than win_us never waits.
+- Witness: every 8th write and at the drain's end the drain samples the
+  timer; the writes since the latest sample at least one window before the
+  previous sample bound every window from above (at most 16 over). The run's
+  largest is reported, with the waits, their total and longest time.
+SDL_DOSOplPaceStats() reports them. Every timer read inside the drain is
+done with interrupts off (a PIT latch and two byte reads). The new state is
+DPMI-locked with the rest of the drain's. A 486 burst of 390 writes takes
+~7.8 ms paced (3 waits), a 448-write budget ~8.8 ms: under the 10 ms bound.
+
+RENUMBERED 2026-09-25 from 0229 to 0255 (the coordinator's SDL block 0250-0259),
+so the series sorts after main's SDL 0240. It lands on main ahead of the RTC
+pump series (SDL 0230-0237), which re-applies on top. 0229 never landed on
+main; its slot is retired on lab/journeys.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ include/SDL3/SDL_dosmidi_tick.h |  11 +++
+ src/audio/dos/SDL_dosaudio_sb.c | 148 ++++++++++++++++++++++++++++++++
+ 2 files changed, 159 insertions(+)
+
+diff --git a/include/SDL3/SDL_dosmidi_tick.h b/include/SDL3/SDL_dosmidi_tick.h
+index fd646c90a..3593ab909 100644
+--- a/include/SDL3/SDL_dosmidi_tick.h
++++ b/include/SDL3/SDL_dosmidi_tick.h
+@@ -295,6 +295,17 @@ extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferStats4(Uint32 *dedupe_on, Uint3
+    PicoGUS (SB mode, OPL at 0x388, control protocol 4) answered its control port,
+    reads = dummy status reads after each address and data write. */
+ extern SDL_DECLSPEC void SDLCALL SDL_DOSOplPacing(Uint32 *pgdetect, Uint32 *reads);
++/* DOS-PORT patch 0255: OPL arrival pacing and its witness. k = writes allowed per
++   window (0 = off; 128 by default on a detected PicoGUS, else 0;
++   SDL_HINT_DOS_OPL_PACE_K), win_us = the window (default 2570, one PicoGUS
++   drain period; SDL_HINT_DOS_OPL_PACE_WINDOW_US), waits and wait_us / wait_max_us
++   = the pacing waits taken and their time (included in 0250's isr_sum),
++   peak_arrivals = an upper bound (at most 16 over) on the OPL writes the ISR
++   issued within any window of win_us, over the run, and peak_overruns = drains
++   whose sample ring could not hold one window (then the bound is not kept). */
++extern SDL_DECLSPEC void SDLCALL SDL_DOSOplPaceStats(Uint32 *k, Uint32 *win_us, Uint32 *waits, Uint32 *wait_us,
++                                                     Uint32 *wait_max_us, Uint32 *peak_arrivals,
++                                                     Uint32 *peak_overruns);
+ /* DOS-PORT patch 0195: pause (true) holds the replay, keeps the queue and
+    silences what it left sounding (OPL key-off / MPU All Notes Off); resume
+    (false) shifts the queued stamps by the pause's IRQs, releases the hold and
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index b306d1071..69bbb753f 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -1791,6 +1791,30 @@ static volatile Uint8 g_mdq_drain_sti = 1;
+ static volatile Uint8 g_mdq_draining = 0;
+ static volatile Uint32 g_mdq_isr_sum = 0;    /* all drains that wrote anything, us */
+ static volatile Uint32 g_mdq_isr_n = 0;      /* ... how many */
++/* DOS-PORT patch 0255: OPL arrival pacing and a peak-arrival witness.
++   A PicoGUS queues OPL data writes in a 256-entry buffer that its core 1
++   drains about every 2.57 ms (128 OPL samples at 49716 Hz), with no full
++   check: a lapped entry is overwritten silently and at 256 pending the
++   buffer reads as empty. A 486 writes one OPL register in ~16.5 us at 0254's
++   4 + 4 reads, so ~156 writes can land in one drain window: more than the
++   half-buffer margin (128) that was meant to absorb unmeasured drain jitter.
++   Pacing: before the (K+1)-th write of a block, wait until the block began
++   g_opl_pace_win_us ago, so no window of that length carries more than K
++   writes, on any CPU. K = 0 is off. The witness: every 8th write (and at the
++   drain's end) the drain samples the SB ISR's timer; the most writes between
++   the latest sample at least one window back and now is an UPPER BOUND on
++   the writes in any window of that length (at most 16 too many). */
++#define OPL_PACE_GRAN 8u                    /* writes per peak-witness sample */
++#define OPL_PACE_RING 128u                  /* samples kept (power of two) */
++static volatile Uint32 g_opl_pace_k = 0;        /* writes per window; 0 = no pacing */
++static volatile Uint32 g_opl_pace_win_us = 2570;/* the window, us */
++static volatile Uint32 g_opl_pace_waits = 0;    /* waits taken */
++static volatile Uint32 g_opl_pace_wait_us = 0;  /* their total, us (inside isr_sum) */
++static volatile Uint32 g_opl_pace_wait_max = 0; /* the longest, us */
++static volatile Uint32 g_opl_peak_arr = 0;      /* upper bound on writes in any window */
++static volatile Uint32 g_opl_peak_ovr = 0;      /* drains whose ring could not hold one window */
++static Uint32 g_opl_samp_us[OPL_PACE_RING];
++static Uint32 g_opl_samp_n[OPL_PACE_RING];
+ /* DOS-PORT patch 0195: OPL key-on state of the 18 voices as last written by
+    the replay (bit v = voice v keyed on), and each voice's last 0xB0-group
+    value (block + F-number high bits), so a pause can key off exactly what is
+@@ -1860,6 +1884,21 @@ static void MidiDeferDrain(Uint32 irq_now)
+         outportb(pic_imr, (Uint8)(inportb(pic_imr) | sb_bit));
+         __asm__ __volatile__("sti" ::: "memory"); /* DOS-PORT patch 0253 */
+     }
++    /* DOS-PORT patch 0255: pacing and the peak witness. Every timer read below is
++       done with interrupts off (a latch and two byte reads on the PIT). */
++    const Uint32 pace_k = (g_mdq_kind == 1) ? g_opl_pace_k : 0u;
++    const Uint32 pace_win = g_opl_pace_win_us;
++    const Uint8 witness = (g_mdq_kind == 1);
++    Uint64 blk_t = t0;
++    Uint32 blk_n = 0;
++    Uint32 s_i = 0, s_j = 0; /* samples taken; the oldest still needed */
++    Uint32 prev_us = 0;      /* the previous sample's time */
++    Uint32 peak = 0;
++    if (witness) {
++        g_opl_samp_us[0] = 0;
++        g_opl_samp_n[0] = 0;
++        s_i = 1;
++    }
+     while (g_mdq_head != g_mdq_tail && n < budget) {
+         __asm__ __volatile__("" ::: "memory"); /* read the entry after seeing the tail */
+         const Uint32 idx = g_mdq_head & (MIDI_DEFER_QUEUE - 1u);
+@@ -1867,9 +1906,65 @@ static void MidiDeferDrain(Uint32 irq_now)
+         if (late < 0) {
+             break; /* FIFO: the head is not due yet, nothing behind it is either */
+         }
++        if (pace_k && blk_n >= pace_k) { /* DOS-PORT patch 0255: the block is full */
++            Uint64 ws, now;
++            if (sti) __asm__ __volatile__("cli" ::: "memory");
++            ws = SDL_DOSAudioReadTimer();
++            if (sti) __asm__ __volatile__("sti" ::: "memory");
++            now = ws;
++            if (SDL_DOSAudioTimerDeltaUs(blk_t, ws) < pace_win) { /* faster than the card drains */
++                do {
++                    if (sti) __asm__ __volatile__("cli" ::: "memory");
++                    now = SDL_DOSAudioReadTimer();
++                    if (sti) __asm__ __volatile__("sti" ::: "memory");
++                } while (SDL_DOSAudioTimerDeltaUs(blk_t, now) < pace_win);
++                {
++                    const Uint32 w = SDL_DOSAudioTimerDeltaUs(ws, now);
++                    g_opl_pace_wait_us += w;
++                    if (w > g_opl_pace_wait_max) {
++                        g_opl_pace_wait_max = w;
++                    }
++                }
++                g_opl_pace_waits++;
++            }
++            blk_t = now;
++            blk_n = 0;
++        }
+         MidiDeferWriteOne(idx);
+         g_mdq_head = g_mdq_head + 1u;
+         g_mdq_written++;
++        blk_n++; /* DOS-PORT patch 0255 */
++        if (witness && ((n + 1u) & (OPL_PACE_GRAN - 1u)) == 0) {
++            Uint64 now;
++            if (sti) __asm__ __volatile__("cli" ::: "memory");
++            now = SDL_DOSAudioReadTimer();
++            if (sti) __asm__ __volatile__("sti" ::: "memory");
++            {
++                const Uint32 us = SDL_DOSAudioTimerDeltaUs(t0, now);
++                const Uint32 k = s_i & (OPL_PACE_RING - 1u);
++                g_opl_samp_us[k] = us;
++                g_opl_samp_n[k] = n + 1u;
++                s_i++;
++                /* Any window that ends in (prev_us, us] starts after prev_us - win,
++                   so it lies inside (latest sample <= prev_us - win, us]: the
++                   writes since that sample bound it from above (<= 16 too many). */
++                while (s_j + 1u < s_i &&
++                       g_opl_samp_us[(s_j + 1u) & (OPL_PACE_RING - 1u)] + pace_win <= prev_us) {
++                    s_j++;
++                }
++                prev_us = us;
++                if (s_i - s_j > OPL_PACE_RING) { /* the ring cannot hold one window */
++                    g_opl_peak_ovr++;
++                    s_j = s_i - OPL_PACE_RING;
++                }
++                {
++                    const Uint32 a = (n + 1u) - g_opl_samp_n[s_j & (OPL_PACE_RING - 1u)];
++                    if (a > peak) {
++                        peak = a;
++                    }
++                }
++            }
++        }
+         if (late >= 1) {
+             g_mdq_late++;
+             if ((Uint32)late > g_mdq_late_max) {
+@@ -1887,6 +1982,20 @@ static void MidiDeferDrain(Uint32 irq_now)
+     if (n > g_mdq_burst_max) {
+         g_mdq_burst_max = n;
+     }
++    if (witness && n > 0) { /* DOS-PORT patch 0255: the writes since the last sample */
++        while (s_j + 1u < s_i && g_opl_samp_us[(s_j + 1u) & (OPL_PACE_RING - 1u)] + pace_win <= prev_us) {
++            s_j++; /* the same rule for windows ending after the last sample */
++        }
++        {
++            const Uint32 a = n - g_opl_samp_n[s_j & (OPL_PACE_RING - 1u)];
++            if (a > peak) {
++                peak = a;
++            }
++        }
++        if (peak > g_opl_peak_arr) {
++            g_opl_peak_arr = peak;
++        }
++    }
+     if (n > 0) { /* patch 0250 */
+         const Uint32 us = SDL_DOSAudioTimerDeltaUs(t0, SDL_DOSAudioReadTimer());
+         g_mdq_isr_sum += us;
+@@ -2038,6 +2147,18 @@ void SDL_DOSMidiDeferStats3(Uint32 *budget, Uint32 *cap_hits, Uint32 *isr_max_us
+     if (isr_drains) *isr_drains = g_mdq_isr_n;
+ }
+ 
++void SDL_DOSOplPaceStats(Uint32 *k, Uint32 *win_us, Uint32 *waits, Uint32 *wait_us, Uint32 *wait_max_us,
++                         Uint32 *peak_arrivals, Uint32 *peak_overruns) /* DOS-PORT patch 0255 */
++{
++    if (k) *k = g_opl_pace_k;
++    if (win_us) *win_us = g_opl_pace_win_us;
++    if (waits) *waits = g_opl_pace_waits;
++    if (wait_us) *wait_us = g_opl_pace_wait_us;
++    if (wait_max_us) *wait_max_us = g_opl_pace_wait_max;
++    if (peak_arrivals) *peak_arrivals = g_opl_peak_arr;
++    if (peak_overruns) *peak_overruns = g_opl_peak_ovr;
++}
++
+ void SDL_DOSMidiDeferStats2(Uint32 *dropped, Uint32 *sync)
+ {
+     if (dropped) *dropped = g_mdq_dropped;
+@@ -2128,6 +2249,24 @@ bool SDL_DOSMidiDeferEnable(int kind)
+         const char *e = SDL_getenv("SDL_HINT_DOS_MIDI_DEFER_DRAIN_STI");
+         g_mdq_drain_sti = (e && e[0] == '0' && e[1] == 0) ? 0 : 1;
+     }
++    { /* DOS-PORT patch 0255: window pacing -- on for a detected PicoGUS, off elsewhere.
++         SDL_HINT_DOS_OPL_PACE_K=0 turns it off, N (16..1024) sets K on any OPL;
++         SDL_HINT_DOS_OPL_PACE_WINDOW_US (500..20000) sets the window. */
++        const char *e = SDL_getenv("SDL_HINT_DOS_OPL_PACE_K");
++        const char *w = SDL_getenv("SDL_HINT_DOS_OPL_PACE_WINDOW_US");
++        Uint32 k = (kind == 1 && g_dos_opl_pgdetect == 1) ? 128u : 0u;
++        Uint32 win = 2570u;
++        if (e && *e) {
++            const long v = SDL_strtol(e, NULL, 10);
++            k = (v <= 0) ? 0u : (v < 16) ? 16u : (v > 1024) ? 1024u : (Uint32)v;
++        }
++        if (w && *w) {
++            const long v = SDL_strtol(w, NULL, 10);
++            win = (v < 500) ? 500u : (v > 20000) ? 20000u : (Uint32)v;
++        }
++        g_opl_pace_k = (kind == 1) ? k : 0u;
++        g_opl_pace_win_us = win;
++    }
+     if (!g_mdq_locked) {
+         DOS_LockVariable(g_mdq_budget);   /* DOS-PORT patch 0250 */
+         DOS_LockVariable(g_mdq_drain_sti); /* DOS-PORT patch 0253 */
+@@ -2137,6 +2276,15 @@ bool SDL_DOSMidiDeferEnable(int kind)
+         DOS_LockVariable(g_mdq_isr_max);
+         DOS_LockVariable(g_mdq_isr_sum);
+         DOS_LockVariable(g_mdq_isr_n);
++        DOS_LockVariable(g_opl_pace_k);       /* DOS-PORT patch 0255 */
++        DOS_LockVariable(g_opl_pace_win_us);
++        DOS_LockVariable(g_opl_pace_waits);
++        DOS_LockVariable(g_opl_pace_wait_us);
++        DOS_LockVariable(g_opl_pace_wait_max);
++        DOS_LockVariable(g_opl_peak_arr);
++        DOS_LockVariable(g_opl_peak_ovr);
++        DOS_LockData(g_opl_samp_us, sizeof(g_opl_samp_us));
++        DOS_LockData(g_opl_samp_n, sizeof(g_opl_samp_n));
+         DOS_LockCode(MidiDeferWriteOne, MidiDeferDrain_End);
+         DOS_LockData(g_mdq_stamp, sizeof(g_mdq_stamp));
+         DOS_LockData(g_mdq_reg, sizeof(g_mdq_reg));
+-- 
+2.47.3
+

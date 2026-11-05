@@ -1,0 +1,65 @@
+From ea784c2b6bc61619b992bf2c7cbc1e90566292b8 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 22 Sep 2026 18:42:01 -0700
+Subject: [PATCH] DOS-PORT: patch 0202 -- log the loop tick and room of each
+ silent-IRQ interval
+
+WHY: slice 2 (PLAN.md step 8.3) judges SB dropouts on silent_irqs (patches 0199/0200). On this
+hardware a room load stalls the main loop 765-1000 ms (8.2), longer than the driver ring's 743 ms
+plus DMA cover, so a clip playing across a room change is expected to starve the device -- and a
+local run through 5 Days' own flow already showed silent_irqs=13 across the room 99 -> 3 change.
+A bare total cannot tell that known, separately tracked stall (the sound-on stall residual) from a
+dropout in steady play, so a bar of "silent_irqs = 0" would fail for a reason already known and say
+nothing else. With the tick and room of each interval, the bar becomes "silent_irqs = 0 outside
+room transitions", and the transition gaps become measured values for the stall item.
+
+WHAT: in dos_audio_mixer_pump(), whenever a pump interval that began with audio owed to the device
+is charged a nonzero number of silent IRQs, one line:
+  DOS-PORT silentirq tick=<loop tick at the closing pump> room=<displayed_room> irqs=<n>
+The tick is the pump that closed the interval, i.e. the first tick after any stall that caused it.
+Only intervals already counted by silent_irqs log, so a run with silent_irqs=0 prints nothing.
+SB path only (the GUS path returns before this code).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/platform/dos/dos_audio_mixer.cpp | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index 62125974d..dfffa1e04 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -43,6 +43,10 @@ extern "C" volatile uint32_t dos_port_audio_sfx_active_count;
+ // landed on ring bytes the IRQ handler had not played yet.
+ extern "C" volatile uint32_t dos_port_audio_ring_overwrite_count;
+ 
++// DOS-PORT (patch 0202): where a silent-IRQ run happened, for its log line.
++extern uint32_t get_loop_counter();
++extern int displayed_room;
++
+ using namespace AGS::Common;
+ 
+ namespace
+@@ -469,7 +473,17 @@ void dos_audio_mixer_pump()
+         // began (evaluated at the end of the previous pump, below).
+         const uint32_t silent_now = dos_port_audio_silent_irq_count;
+         if (g_owed_at_snap)
+-            g_owed_silent_irqs += silent_now - g_silent_snap;
++        {
++            const uint32_t d = silent_now - g_silent_snap;
++            g_owed_silent_irqs += d;
++            // DOS-PORT (patch 0202): one line per pump interval that played
++            // silence while audio was owed -- the loop tick of the pump that
++            // closed the interval (the first tick after any stall that caused
++            // it), the room at that point, and how many silent IRQs.
++            if (d > 0)
++                Debug::Printf(kDbgMsg_Info, "DOS-PORT silentirq tick=%u room=%d irqs=%u",
++                    (unsigned)get_loop_counter(), displayed_room, (unsigned)d);
++        }
+         g_silent_snap = silent_now;
+ 
+         for (int iter = 0; iter < MAX_PUMP_ITERS; iter++)
+-- 
+2.47.3
+

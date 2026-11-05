@@ -1,0 +1,689 @@
+From f8971fbe4099829e27cec62ad59d11cc150df06b Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 21 Sep 2026 11:17:30 -0700
+Subject: [PATCH] DOS-PORT: patch 0124 -- narrowed multi-rect present from an
+ engine dirty-box set
+
+Consolidates 0124, 0128, 0129, 0130, 0131, 0132, 0134 and the cursor half of 0175.
+
+Why. On AGS Quest present_update_window was 16.74 ms per frame: 460,800
+bytes to VRAM at 27.5 MB/s, which is this machine's own LFB near-pointer
+ceiling. A copy already at the bus limit cannot be made faster, only
+smaller, so the engine's own invalidation is accumulated in screen space and
+the present is narrowed to it. This needs no pixel comparison, so it
+sidesteps patch 0102's gate (which switches the unchanged-frame compare off
+above 100,000 bytes) and is why a 460,800-byte frame is narrowable at all.
+
+Default is FULL. A present narrows only on a positive signal
+(construct_game_scene() marks the frame as having come through the scene
+path) and anything that demands a full frame latches it. A contributor nobody
+accounted for then costs performance, never corruption. DOSAGS_DIRTY_PRESENT=0
+turns narrowing off.
+
+What each constituent is:
+- 0124: screen-space dirty bbox from invalidate_rect_ds / _global, the
+  scene_path signal, and the Present() narrowing itself.
+- 0128: the bbox is in game coordinates and dst is in window coordinates
+  (a letterboxed 640x360 in 640x480 differs by 60 rows), so the two were
+  compared in different spaces. Translate first, and only for a pure offset.
+  Per-cause rejection counters replace one latched string.
+- 0129: a SET of boxes. The single bbox degenerates to the whole screen once
+  two rects sit in opposite corners. Pushed through
+  SDL_UpdateWindowSurfaceRects, which already took a count.
+- 0130: per-row dirty accounting, to price a band design against the others
+  off one run. Accounting only.
+- 0131: clamp rects to the surface instead of rejecting them; the
+  accumulator is fed un-clipped rects.
+- 0132: the box cap is runtime (DOSAGS_DIRTY_BOXES, default 8, clamped to
+  1..32) rather than a constant, so the knee is measured.
+- 0134: a greedy pairwise merge priced at four thresholds. Accounting only;
+  nothing merged is pushed.
+- 0175 (part): dirty pixels attributed to the call site that asked for them
+  (dirtysrc counters); this patch tags the cursor. The room/UI sprite tags
+  share a hunk with the GUI skip and are in 0167.
+
+Behaviour change: narrowing and the multi-rect push are ON by default.
+
+Provenance of this export (2026-09-21): these edits sat uncommitted in the
+vendor tree from patch 0123 onward, which is why every gate cell since said
+build_dirty=1. They were made under one campaign-wide patch counter shared
+with vendor/SDL, and each hunk carries its number in an in-source comment.
+Intermediate states were never committed, so this patch is a hunk-level
+partition of the final tree by concern, attributed by those comments -- not a
+replay of the order the edits were made in, and its intermediate state was not
+built on its own. The numbers named below are the ones found in its hunks.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/ac/draw.cpp          |   9 ++
+ Engine/ac/draw_software.cpp | 205 ++++++++++++++++++++++++++++++++
+ Engine/ac/draw_software.h   |  90 ++++++++++++++
+ Engine/gfx/ali3dsw.cpp      | 227 +++++++++++++++++++++++++++++++++++-
+ 4 files changed, 529 insertions(+), 2 deletions(-)
+
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index 7d4cb4d67..089ed2961 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -2941,6 +2941,13 @@ static void construct_overlays()
+ void construct_game_scene(bool full_redraw)
+ {
+     set_our_eip(3);
++#ifdef __DJGPP__
++    // patch 0124: the POSITIVE signal. Only a frame that came through here
++    // may be narrowed; anything else presents full.
++    dos_port_dirty.scene_path = true;
++    if (full_redraw)
++        dos_port_dirty_set_full("full_redraw requested");
++#endif
+ 
+     // React to changes to viewports and cameras (possibly from script) just before the render
+     play.UpdateViewports();
+@@ -3019,7 +3026,9 @@ void construct_game_screen_overlay(bool draw_cursor)
+             // Exclusive sub-batch for mouse cursor, to let filter it out (CHECKME later?)
+             gfxDriver->BeginSpriteBatch(Rect(), SpriteTransform(), kFlip_None, nullptr, RENDER_BATCH_MOUSE_CURSOR);
+             gfxDriver->DrawSprite(mousex - mouse_hotx, mousey - mouse_hoty, cursor_tx.Ddb);
++            dos_port_dirty_source = kDirtySrc_Cursor;   // patch 0175
+             invalidate_sprite(mousex - mouse_hotx, mousey - mouse_hoty, cursor_tx.Ddb, false);
++            dos_port_dirty_source = kDirtySrc_Other;
+             gfxDriver->EndSpriteBatch();
+         }
+     }
+diff --git a/Engine/ac/draw_software.cpp b/Engine/ac/draw_software.cpp
+index 972c684f0..ba8a2ccf1 100644
+--- a/Engine/ac/draw_software.cpp
++++ b/Engine/ac/draw_software.cpp
+@@ -37,10 +37,15 @@
+ //=============================================================================
+ 
+ #include <string.h>
++#include <stdlib.h>
+ #include <vector>
+ #include "ac/draw_software.h"
+ #include "gfx/bitmap.h"
+ #include "util/scaling.h"
++#ifdef __DJGPP__
++#include "main/dos_port_tick_timing.h"
++#include "debug/out.h"
++#endif
+ 
+ using namespace AGS::Common;
+ using namespace AGS::Engine;
+@@ -373,6 +378,183 @@ void invalidate_rect_ds(DirtyRects &rects, int x1, int y1, int x2, int y2, bool
+     invalidate_rect_on_surf(x1, y1, x2, y2, rects);
+ }
+ 
++#ifdef __DJGPP__
++// DOS-PORT patch 0124: accumulate a SCREEN-SPACE dirty bbox so the present
++// can be narrowed to what actually changed.
++//
++// Measured on AGS Quest: present_update_window is 16.74 ms per frame,
++// 460,800 bytes to VRAM at 27.5 MB/s -- which matches this machine's own
++// LFB near-pointer ceiling, so the copy is already at the hardware limit.
++// It cannot be made faster; it can only be made SMALLER. That is what this
++// is for, and it is the one lever left on that term.
++//
++// Note this sidesteps patch 0102 entirely. That gate disables the
++// unchanged-frame pixel comparison above 100,000 bytes, which is why AGS
++// Quest reports presents_skipped=0 -- but engine-supplied invalidation
++// needs no comparison at all, so the 460,800-byte frame is narrowable even
++// though it is far past 0102's threshold.
++//
++// DEFAULT FULL, narrow only on a positive signal. A contributor nobody
++// accounted for costs performance, not corruption -- the DOSBox-X gate
++// cannot catch corruption on a path it never executes.
++DosPortDirtyState dos_port_dirty;
++int dos_port_dirty_source = kDirtySrc_Other;            // patch 0175
++long long dos_port_dirty_src_px[kDirtySrc_Count] = {0};
++long dos_port_dirty_src_n[kDirtySrc_Count] = {0};
++
++// patch 0132: read once, clamped to the array. 12 is the default because
++// it is what the four-design comparison was run at; the sweep decides
++// whether it stays.
++int dos_port_dirty_max_boxes = []() {
++    const char *h = getenv("DOSAGS_DIRTY_BOXES");
++    int n = h ? atoi(h) : 8;   // patch 0132: measured knee
++    if (n < 1) n = 1;
++    if (n > DOS_PORT_DIRTY_MAX_BOXES) n = DOS_PORT_DIRTY_MAX_BOXES;
++    return n;
++}();
++
++void dos_port_dirty_add_screen(int x1, int y1, int x2, int y2)
++{
++    dos_port_dirty.adds++;
++    {   // patch 0175: attribute this rect's area to whoever asked for it
++        const int _s = (dos_port_dirty_source >= 0 && dos_port_dirty_source < kDirtySrc_Count)
++                       ? dos_port_dirty_source : kDirtySrc_Other;
++        dos_port_dirty_src_px[_s] += (long long)(x2 - x1 + 1) * (y2 - y1 + 1);
++        dos_port_dirty_src_n[_s]++;
++    }
++    // TRAP GUARD: these callers iterate RoomCamRects, which is EMPTY
++    // between rooms. An accumulator placed inside that loop would silently
++    // never fire and read as "narrowing didn't help". Counted, not assumed.
++    if (RoomCamRects.empty())
++        dos_port_dirty.adds_no_camera++;
++    if (dos_port_dirty.is_full)
++        return;
++    // patch 0129: keep the single bbox too. It still gates correctness
++    // (valid/is_full) and it is the control the box set is scored against
++    // -- px_multi_bbox versus px_multi on the same frames is a within-run
++    // A/B that needs no second cell.
++    if (!dos_port_dirty.valid)
++    {
++        dos_port_dirty.x1 = x1; dos_port_dirty.y1 = y1;
++        dos_port_dirty.x2 = x2; dos_port_dirty.y2 = y2;
++        dos_port_dirty.valid = true;
++    }
++    else
++    {
++        if (x1 < dos_port_dirty.x1) dos_port_dirty.x1 = x1;
++        if (y1 < dos_port_dirty.y1) dos_port_dirty.y1 = y1;
++        if (x2 > dos_port_dirty.x2) dos_port_dirty.x2 = x2;
++        if (y2 > dos_port_dirty.y2) dos_port_dirty.y2 = y2;
++    }
++
++    // patch 0130: mark the rows this rect touches. Cheap, and it is the
++    // only extra data a band design needs.
++    {
++        int ry1 = y1 < 0 ? 0 : y1;
++        int ry2 = y2 > 1023 ? 1023 : y2;
++        if (ry2 >= ry1)
++        {
++            if (dos_port_dirty.row_max < dos_port_dirty.row_min)
++            { dos_port_dirty.row_min = ry1; dos_port_dirty.row_max = ry2; }
++            else
++            {
++                if (ry1 < dos_port_dirty.row_min) dos_port_dirty.row_min = ry1;
++                if (ry2 > dos_port_dirty.row_max) dos_port_dirty.row_max = ry2;
++            }
++            for (int r = ry1; r <= ry2; ++r)
++                dos_port_dirty.row_dirty[r] = 1;
++        }
++    }
++
++    // patch 0129: fold into the box set. Merge into any box this rect
++    // touches or overlaps; failing that take a free slot; failing that
++    // merge the pair whose union wastes the fewest pixels. "Touches" uses
++    // a one-pixel slack so adjacent rects coalesce instead of filling
++    // slots -- a sprite invalidated as several abutting pieces is the
++    // common case, not the exception.
++    for (int i = 0; i < dos_port_dirty.nbox; ++i)
++    {
++        DosPortDirtyBox &b = dos_port_dirty.box[i];
++        if (x1 <= b.x2 + 1 && x2 >= b.x1 - 1 && y1 <= b.y2 + 1 && y2 >= b.y1 - 1)
++        {
++            if (x1 < b.x1) b.x1 = x1;
++            if (y1 < b.y1) b.y1 = y1;
++            if (x2 > b.x2) b.x2 = x2;
++            if (y2 > b.y2) b.y2 = y2;
++            return;
++        }
++    }
++    if (dos_port_dirty.nbox < dos_port_dirty_max_boxes)
++    {
++        DosPortDirtyBox &b = dos_port_dirty.box[dos_port_dirty.nbox++];
++        b.x1 = x1; b.y1 = y1; b.x2 = x2; b.y2 = y2;
++        return;
++    }
++    // Full: merge the cheapest pair, counting the new rect as a candidate.
++    {
++        int best_i = 0, best_j = 1;
++        long long best_waste = -1;
++        DosPortDirtyBox cand; cand.x1 = x1; cand.y1 = y1; cand.x2 = x2; cand.y2 = y2;
++        for (int i = 0; i < dos_port_dirty.nbox; ++i)
++        {
++            for (int j = i + 1; j <= dos_port_dirty.nbox; ++j)
++            {
++                const DosPortDirtyBox &a = dos_port_dirty.box[i];
++                const DosPortDirtyBox &b = (j == dos_port_dirty.nbox) ? cand : dos_port_dirty.box[j];
++                const int ux1 = a.x1 < b.x1 ? a.x1 : b.x1;
++                const int uy1 = a.y1 < b.y1 ? a.y1 : b.y1;
++                const int ux2 = a.x2 > b.x2 ? a.x2 : b.x2;
++                const int uy2 = a.y2 > b.y2 ? a.y2 : b.y2;
++                const long long waste =
++                    (long long)(ux2 - ux1 + 1) * (uy2 - uy1 + 1)
++                    - (long long)(a.x2 - a.x1 + 1) * (a.y2 - a.y1 + 1)
++                    - (long long)(b.x2 - b.x1 + 1) * (b.y2 - b.y1 + 1);
++                if (best_waste < 0 || waste < best_waste)
++                { best_waste = waste; best_i = i; best_j = j; }
++            }
++        }
++        DosPortDirtyBox &a = dos_port_dirty.box[best_i];
++        const DosPortDirtyBox &b = (best_j == dos_port_dirty.nbox) ? cand : dos_port_dirty.box[best_j];
++        if (b.x1 < a.x1) a.x1 = b.x1;
++        if (b.y1 < a.y1) a.y1 = b.y1;
++        if (b.x2 > a.x2) a.x2 = b.x2;
++        if (b.y2 > a.y2) a.y2 = b.y2;
++        if (best_j < dos_port_dirty.nbox)
++        {
++            // the merged-away slot is now free for the new rect
++            dos_port_dirty.box[best_j].x1 = x1; dos_port_dirty.box[best_j].y1 = y1;
++            dos_port_dirty.box[best_j].x2 = x2; dos_port_dirty.box[best_j].y2 = y2;
++        }
++    }
++}
++
++void dos_port_dirty_set_full(const char *why)
++{
++    if (!dos_port_dirty.is_full)
++    {
++        dos_port_dirty.is_full = true;
++        dos_port_dirty.full_reason = why;
++        dos_port_dirty.full_latches++;
++    }
++}
++
++void dos_port_dirty_frame_reset()
++{
++    dos_port_dirty.valid = false;
++    dos_port_dirty.is_full = false;
++    dos_port_dirty.full_reason = nullptr;
++    dos_port_dirty.scene_path = false;
++    dos_port_dirty.nbox = 0;   // patch 0129
++    // patch 0130: clear only the range actually touched, not 1KB.
++    if (dos_port_dirty.row_max >= dos_port_dirty.row_min)
++    {
++        for (int r = dos_port_dirty.row_min; r <= dos_port_dirty.row_max; ++r)
++            dos_port_dirty.row_dirty[r] = 0;
++    }
++    dos_port_dirty.row_min = 0; dos_port_dirty.row_max = -1;
++}
++#endif
++
+ void invalidate_rect_ds(int x1, int y1, int x2, int y2, bool in_room)
+ {
+     if (!in_room)
+@@ -383,12 +565,35 @@ void invalidate_rect_ds(int x1, int y1, int x2, int y2, bool in_room)
+         y2 += GlobalOffs.Y;
+     }
+ 
++#ifdef __DJGPP__
++    if (!in_room)
++    {
++        dos_port_dirty_add_screen(x1, y1, x2, y2);
++    }
++    else if (!RoomCamRects.empty())
++    {
++        // Room coords -> screen, via the same PlaneScaling the per-camera
++        // path uses. Without this every in_room rect forces a full present,
++        // which is what an earlier revision of this measured: 100% of
++        // frames latched full with reason "in_room rect".
++        const DirtyRects &r0 = RoomCamRects[0];
++        dos_port_dirty_add_screen(r0.Room2Screen.X.ScalePt(x1), r0.Room2Screen.Y.ScalePt(y1),
++                                  r0.Room2Screen.X.ScalePt(x2), r0.Room2Screen.Y.ScalePt(y2));
++    }
++    else
++    {
++        dos_port_dirty_set_full("in_room rect with no camera");
++    }
++#endif
+     for (auto &rects : RoomCamRects)
+         invalidate_rect_ds(rects, x1, y1, x2, y2, in_room);
+ }
+ 
+ void invalidate_rect_global(int x1, int y1, int x2, int y2)
+ {
++#ifdef __DJGPP__
++    dos_port_dirty_add_screen(x1, y1, x2, y2);
++#endif
+     for (auto &rects : RoomCamRects)
+         invalidate_rect_ds(rects, x1, y1, x2, y2, false);
+ }
+diff --git a/Engine/ac/draw_software.h b/Engine/ac/draw_software.h
+index add2af80e..1afb3f271 100644
+--- a/Engine/ac/draw_software.h
++++ b/Engine/ac/draw_software.h
+@@ -39,6 +39,96 @@ void invalidate_all_rects();
+ // Mark the whole camera surface dirty
+ void invalidate_all_camera_rects(int view_index);
+ // Mark certain rectangle dirty; in_room tells if coordinates are room viewport or screen coords
++#ifdef __DJGPP__
++// DOS-PORT patch 0124: screen-space dirty bbox for a narrowed present.
++// DOS-PORT patch 0129: a SET of boxes, not one bounding box.
++// Patch 0124's single bbox was measured dead: it degenerates to the whole
++// screen the moment two dirty rects sit in opposite corners, and on AGS
++// Quest that happened permanently around frame 500 (narrow frozen at 376,
++// full climbing by 500 per report). AGS's own dirty system keeps 25
++// regions with per-row spans for exactly this reason. 12 boxes is a
++// compromise: enough that ordinary scattered sprites stay separate, few
++// enough that the per-rect cost of SDL_UpdateWindowSurfaceRects and the
++// merge scan stay small. The right value is an open question -- it is a
++// tunable, not a constant, until a sweep says otherwise.
++#define DOS_PORT_DIRTY_MAX_BOXES 32
++// patch 0132: the cap is a RUNTIME value (DOSAGS_DIRTY_BOXES), not a
++// constant, because the coordinator's point stands -- maximum fidelity is
++// not obviously best. 25 regions pay 25x the per-rect overhead for the
++// same pixels one bbox covers for none, so the knee gets measured.
++extern int dos_port_dirty_max_boxes;
++struct DosPortDirtyBox { int x1, y1, x2, y2; };
++struct DosPortDirtyState
++{
++    int  x1 = 0, y1 = 0, x2 = 0, y2 = 0;
++    bool valid = false;        // bbox holds a real union
++    // patch 0129
++    DosPortDirtyBox box[DOS_PORT_DIRTY_MAX_BOXES] = {};
++    int  nbox = 0;
++    long frames_multi = 0;      // frames pushed as >1 rect
++    long long px_multi = 0;     // area those pushes actually covered
++    long long px_multi_bbox = 0;// what the single bbox would have cost them
++    long rej_wholescreen = 0;   // patch 0129: box set covers the whole screen
++    long rej_outside = 0;       // ... versus genuinely outside dst
++    long boxes_pushed = 0;      // total rects handed to SDL
++    // patch 0130: full-width ROW BANDS, the coordinator's variant. A band
++    // at 640px is contiguous memory -- no stride penalty, no per-row
++    // address arithmetic, and very few rects by construction, so it
++    // sidesteps the per-rect overhead risk that arbitrary rects carry.
++    // Accounted here alongside the box set so ONE run prices all four
++    // designs (full / bbox / bands / rects) against each other, rather
++    // than a cell per candidate.
++    unsigned char row_dirty[1024] = {};
++    int  row_min = 0, row_max = -1;
++    long long px_bands = 0;     // rows touched x full width
++    long bands_count = 0;       // contiguous runs of dirty rows
++    long frames_rowacct = 0;    // frames the row accounting covered
++    // patch 0134: price a greedy pairwise merge at several thresholds,
++    // ACCOUNTING ONLY -- nothing merged is pushed. Same trick that priced
++    // four present designs off one run. The thresholds bracket the
++    // coordinator's ~5,500 px break-even (0.37 ms/rect at ~15,245 px/ms).
++    long long mg_px[4] = {0,0,0,0};
++    long      mg_rects[4] = {0,0,0,0};
++    bool is_full = false;      // something demands a full present
++    bool scene_path = false;   // this frame went through construct_game_scene()
++    // patch 0128: why a frame fell back to a full present, counted per
++    // cause. One latched string could not survive the per-frame reset.
++    long rej_scaled = 0;        // dst is not 1:1 with the virtual screen
++    long rej_no_scene = 0;      // frame never went through construct_game_scene()
++    long rej_latched_full = 0;  // something called dos_port_dirty_set_full()
++    long rej_no_rects = 0;      // no rect was invalidated at all
++    long rej_palette = 0;       // palette-only present
++    long rej_clip = 0;          // bbox fell outside dst after translation
++    const char *full_reason = nullptr;
++    long adds = 0, adds_no_camera = 0, full_latches = 0;
++    long frames_narrow = 0, frames_full = 0;
++    long long px_narrow = 0, px_full = 0;
++};
++extern DosPortDirtyState dos_port_dirty;
++// DOS-PORT patch 0175: which call site dirtied how many pixels.
++//
++// The dirty region is 80,514 px/frame after stage 1 halved it, and nothing
++// has explained the remainder. It is upstream of all three costly terms --
++// the restore repaints it, the present pushes it, and gCredits intersects
++// it every frame BECAUSE it is large. Arithmetic: clipping gCredits to the
++// 61% intersection leaves tail frames at 37.7 ms, still over the 25 ms
++// budget, so they keep skipping; removing gCredits entirely would give
++// 16.6 ms. The clip cannot reach budget but a smaller dirty region makes
++// the clip approach the removal.
++//
++// Same technique that found gCredits: one field, no cell, one question.
++enum DosPortDirtySource {
++    kDirtySrc_Other = 0, kDirtySrc_RoomSprite, kDirtySrc_UiSprite,
++    kDirtySrc_Cursor, kDirtySrc_Screen, kDirtySrc_Count
++};
++extern int dos_port_dirty_source;
++extern long long dos_port_dirty_src_px[kDirtySrc_Count];
++extern long dos_port_dirty_src_n[kDirtySrc_Count];
++void dos_port_dirty_add_screen(int x1, int y1, int x2, int y2);
++void dos_port_dirty_set_full(const char *why);
++void dos_port_dirty_frame_reset();
++#endif
++
+ void invalidate_rect_ds(int x1, int y1, int x2, int y2, bool in_room);
+ // Mark rectangle dirty, treat pos as global screen coords (not offset by legacy letterbox mode)
+ void invalidate_rect_global(int x1, int y1, int x2, int y2);
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index b0c662c8f..c28a50c0e 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -12,6 +12,7 @@
+ //
+ //=============================================================================
+ #include "gfx/ali3dsw.h"
++#include "ac/draw_software.h"   // patch 0124
+ #include <algorithm>
+ #include <cstring>
+ #include <stack>
+@@ -1375,6 +1376,221 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+         DosPortAliasTryActivate(win_surface, dst);
+ #endif
+ 
++#ifdef __DJGPP__
++    // patch 0124: narrow the push to the accumulated bbox when this frame
++    // demonstrably went through the scene path and nothing demanded full.
++    // DOSAGS_DIRTY_PRESENT=0 disables -- fastest by default, tunable off.
++    SDL_Rect _dp_push = dst;
++    bool _dp_narrowed = false;
++    SDL_Rect _dp_rects[DOS_PORT_DIRTY_MAX_BOXES];   // patch 0129
++    int _dp_nrects = 0;
++    {
++        static bool hint_read = false, hint_on = true;
++        if (!hint_read) { const char *h = getenv("DOSAGS_DIRTY_PRESENT");
++                          hint_on = !(h && h[0]=='0'); hint_read = true; }
++        // patch 0128: the bbox is accumulated in GAME coordinates
++        // (invalidate_rect_ds/_global, y in 0..gameh-1); dst is in WINDOW
++        // coordinates, and for a letterboxed 640x360 in 640x480 they differ
++        // by dst.y == 60. Comparing the two directly made "b.y >= dst.y"
++        // mean "is the dirty region below game row 60", so any frame
++        // touching the top of the viewport presented full -- permanently,
++        // once anything up there redrew every frame (measured: narrow
++        // froze at 376 while full reached 2124). And the frames that did
++        // pass pushed a rect 60 rows too high, refreshing the wrong strip.
++        // Translate first, and only when the mapping is a pure offset.
++        const bool _dp_one_to_one =
++            blit_src && dst.w == blit_src->w && dst.h == blit_src->h;
++        if (!_dp_one_to_one) dos_port_dirty.rej_scaled++;
++        else if (!hint_on) { /* switched off, not a rejection */ }
++        else if (!dos_port_dirty.scene_path) dos_port_dirty.rej_no_scene++;
++        else if (dos_port_dirty.is_full) dos_port_dirty.rej_latched_full++;
++        else if (!dos_port_dirty.valid) dos_port_dirty.rej_no_rects++;
++        else if (palette_only_present) dos_port_dirty.rej_palette++;
++        if (hint_on && _dp_one_to_one && dos_port_dirty.scene_path &&
++            !dos_port_dirty.is_full && dos_port_dirty.valid && !palette_only_present)
++        {
++            // patch 0131: CLAMP to the surface, do not reject. The
++            // accumulator takes rects straight from invalidate_rect_*,
++            // which are not pre-clipped -- AGS clips inside its own
++            // per-camera path, which my hook sits before. Measured: 2,837
++            // of 3,254 gate-passing frames were rejected as "outside dst"
++            // and ZERO as whole-screen, so the entire regression was an
++            // unclipped coordinate, not a degenerate bounding box.
++            int _bx1 = dos_port_dirty.x1, _by1 = dos_port_dirty.y1;
++            int _bx2 = dos_port_dirty.x2, _by2 = dos_port_dirty.y2;
++            if (_bx1 < 0) _bx1 = 0;
++            if (_by1 < 0) _by1 = 0;
++            if (_bx2 > dst.w - 1) _bx2 = dst.w - 1;
++            if (_by2 > dst.h - 1) _by2 = dst.h - 1;
++            SDL_Rect b;
++            b.x = dst.x + _bx1;   // patch 0128: game -> window
++            b.y = dst.y + _by1;
++            b.w = _bx2 - _bx1 + 1;
++            b.h = _by2 - _by1 + 1;
++            // clip to the presented rect; a bbox outside it is a bug, so
++            // fall back rather than push something unclipped.
++            const bool _dp_inside =
++                b.w > 0 && b.h > 0 && b.x >= dst.x && b.y >= dst.y &&
++                b.x + b.w <= dst.x + dst.w && b.y + b.h <= dst.y + dst.h;
++            const bool _dp_smaller = (long long)b.w * b.h < (long long)dst.w * dst.h;
++            if (_dp_inside && _dp_smaller)
++            {
++                _dp_push = b; _dp_narrowed = true;
++                dos_port_dirty.frames_narrow++;
++                dos_port_dirty.px_narrow += (long long)b.w * b.h;
++            }
++            else
++            {
++                // patch 0129: split what 0128 lumped into one counter. The
++                // falsification turned on which of these two it was, and
++                // 0128 could not tell them apart.
++                dos_port_dirty.rej_clip++;
++                if (!_dp_inside) dos_port_dirty.rej_outside++;
++                else             dos_port_dirty.rej_wholescreen++;
++            }
++
++            // patch 0134: price a greedy pairwise merge. For each
++            // threshold, repeatedly merge the pair whose union adds the
++            // fewest pixels, stopping when the cheapest merge would add
++            // more than the threshold. Accounting only -- what gets
++            // pushed is unchanged, so this costs a DOSBox run and no cell.
++            if (dos_port_dirty.nbox > 0)
++            {
++                static const long long THR[4] = { 0, 2000, 5500, 12000 };
++                for (int t = 0; t < 4; ++t)
++                {
++                    DosPortDirtyBox mb[DOS_PORT_DIRTY_MAX_BOXES];
++                    int n = dos_port_dirty.nbox;
++                    for (int i = 0; i < n; ++i) mb[i] = dos_port_dirty.box[i];
++                    for (;;)
++                    {
++                        long long best = -1; int bi = -1, bj = -1;
++                        for (int i = 0; i < n; ++i)
++                            for (int j = i + 1; j < n; ++j)
++                            {
++                                const int ux1 = mb[i].x1 < mb[j].x1 ? mb[i].x1 : mb[j].x1;
++                                const int uy1 = mb[i].y1 < mb[j].y1 ? mb[i].y1 : mb[j].y1;
++                                const int ux2 = mb[i].x2 > mb[j].x2 ? mb[i].x2 : mb[j].x2;
++                                const int uy2 = mb[i].y2 > mb[j].y2 ? mb[i].y2 : mb[j].y2;
++                                const long long add =
++                                    (long long)(ux2-ux1+1)*(uy2-uy1+1)
++                                    - (long long)(mb[i].x2-mb[i].x1+1)*(mb[i].y2-mb[i].y1+1)
++                                    - (long long)(mb[j].x2-mb[j].x1+1)*(mb[j].y2-mb[j].y1+1);
++                                if (best < 0 || add < best) { best = add; bi = i; bj = j; }
++                            }
++                        if (bi < 0 || best > THR[t]) break;
++                        if (mb[bj].x1 < mb[bi].x1) mb[bi].x1 = mb[bj].x1;
++                        if (mb[bj].y1 < mb[bi].y1) mb[bi].y1 = mb[bj].y1;
++                        if (mb[bj].x2 > mb[bi].x2) mb[bi].x2 = mb[bj].x2;
++                        if (mb[bj].y2 > mb[bi].y2) mb[bi].y2 = mb[bj].y2;
++                        mb[bj] = mb[n-1]; n--;
++                        if (n < 2) break;
++                    }
++                    long long a = 0;
++                    for (int i = 0; i < n; ++i)
++                        a += (long long)(mb[i].x2-mb[i].x1+1)*(mb[i].y2-mb[i].y1+1);
++                    dos_port_dirty.mg_px[t] += a;
++                    dos_port_dirty.mg_rects[t] += n;
++                }
++            }
++
++            // patch 0130: price the band design on the same frame, from
++            // the same rects, so full / bbox / bands / rects are four
++            // numbers off ONE run instead of four cells. Accounting only
++            // at this point -- nothing is pushed as bands yet, because
++            // which design wins is exactly what is not yet known.
++            if (dos_port_dirty.row_max >= dos_port_dirty.row_min)
++            {
++                long rows = 0, bands = 0;
++                int prev = 0;
++                int _r0 = dos_port_dirty.row_min, _r1 = dos_port_dirty.row_max;
++                if (_r0 < 0) _r0 = 0;                     // patch 0131: clamp
++                if (_r1 > dst.h - 1) _r1 = dst.h - 1;
++                for (int r = _r0; r <= _r1; ++r)
++                {
++                    const int cur = dos_port_dirty.row_dirty[r];
++                    if (cur) { rows++; if (!prev) bands++; }
++                    prev = cur;
++                }
++                dos_port_dirty.px_bands += (long long)rows * dst.w;
++                dos_port_dirty.bands_count += bands;
++                dos_port_dirty.frames_rowacct++;
++            }
++
++            // patch 0129: the box set. Built even when the single bbox
++            // already narrowed, so px_multi against px_multi_bbox is a
++            // within-run control on the same frames -- no second cell.
++            _dp_nrects = 0;
++            if (_dp_inside || _dp_smaller || true)
++            {
++                long long area = 0;
++                bool ok = dos_port_dirty.nbox > 0;
++                for (int i = 0; i < dos_port_dirty.nbox && ok; ++i)
++                {
++                    int cx1 = dos_port_dirty.box[i].x1, cy1 = dos_port_dirty.box[i].y1;
++                    int cx2 = dos_port_dirty.box[i].x2, cy2 = dos_port_dirty.box[i].y2;
++                    if (cx1 < 0) cx1 = 0;              // patch 0131: clamp
++                    if (cy1 < 0) cy1 = 0;
++                    if (cx2 > dst.w - 1) cx2 = dst.w - 1;
++                    if (cy2 > dst.h - 1) cy2 = dst.h - 1;
++                    if (cx2 < cx1 || cy2 < cy1)
++                        continue;                       // wholly off-surface
++                    SDL_Rect r;
++                    r.x = dst.x + cx1; r.y = dst.y + cy1;
++                    r.w = cx2 - cx1 + 1; r.h = cy2 - cy1 + 1;
++                    _dp_rects[_dp_nrects++] = r;
++                    area += (long long)r.w * r.h;
++                }
++                // Only worth it if the set really is smaller than the
++                // screen -- overlapping boxes could in principle sum past
++                // it, and a set that big should just be a full push.
++                if (!ok || area >= (long long)dst.w * dst.h)
++                    _dp_nrects = 0;
++                else
++                {
++                    dos_port_dirty.frames_multi++;
++                    dos_port_dirty.px_multi += area;
++                    dos_port_dirty.px_multi_bbox += (long long)b.w * b.h;
++                    dos_port_dirty.boxes_pushed += _dp_nrects;
++                }
++            }
++        }
++        if (!_dp_narrowed)
++        {
++            dos_port_dirty.frames_full++;
++            dos_port_dirty.px_full += (long long)dst.w * dst.h;
++        }
++        const long tot = dos_port_dirty.frames_narrow + dos_port_dirty.frames_full;
++        if ((tot % 500) == 0)
++            // patch 0128: a per-cause BREAKDOWN, not one latched string.
++            // The old "reason=" field printed "-" for every full present in
++            // RBB2 because full_reason is cleared by the per-frame reset
++            // while the counters accumulate -- the one field meant to
++            // explain the regression could not.
++            Debug::Printf("DOS-PORT dirtypresent narrow=%ld full=%ld px_narrow=%ld px_full=%ld nocam=%ld"
++                " rej scaled=%ld noscene=%ld latched=%ld norects=%ld pal=%ld clip=%ld"
++                " multi=%ld px_multi=%ld px_multi_bbox=%ld boxes=%ld out=%ld whole=%ld"
++                " rowfr=%ld px_bands=%ld bands=%ld"
++                " mg0=%ld/%ld mg2k=%ld/%ld mg5k5=%ld/%ld mg12k=%ld/%ld",
++                dos_port_dirty.frames_narrow, dos_port_dirty.frames_full,
++                (long)dos_port_dirty.px_narrow, (long)dos_port_dirty.px_full,
++                dos_port_dirty.adds_no_camera,
++                dos_port_dirty.rej_scaled, dos_port_dirty.rej_no_scene,
++                dos_port_dirty.rej_latched_full, dos_port_dirty.rej_no_rects,
++                dos_port_dirty.rej_palette, dos_port_dirty.rej_clip,
++                dos_port_dirty.frames_multi, (long)dos_port_dirty.px_multi,
++                (long)dos_port_dirty.px_multi_bbox, dos_port_dirty.boxes_pushed,
++                dos_port_dirty.rej_outside, dos_port_dirty.rej_wholescreen,
++                dos_port_dirty.frames_rowacct, (long)dos_port_dirty.px_bands,
++                dos_port_dirty.bands_count,
++                dos_port_dirty.mg_rects[0], (long)dos_port_dirty.mg_px[0],
++                dos_port_dirty.mg_rects[1], (long)dos_port_dirty.mg_px[1],
++                dos_port_dirty.mg_rects[2], (long)dos_port_dirty.mg_px[2],
++                dos_port_dirty.mg_rects[3], (long)dos_port_dirty.mg_px[3]);
++        dos_port_dirty_frame_reset();
++    }
++#endif
++
+     {
+ #ifdef __DJGPP__
+         DosPortTickScope _dos_port_updatewin_scope(dos_port_tick_timing.present_update_window);
+@@ -1389,10 +1605,17 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+         // is where ProgramVGADAC() lives) but has no pixels to move, so it
+         // asks for the smallest legal rect instead of dst or the window.
+         const SDL_Rect dac_rect = { dst.x, dst.y, 1, 1 };
++        const SDL_Rect &push_rect = _dp_push;   // patch 0124
++        // patch 0129: N rects when the box set produced them, else the
++        // single bbox, else the whole window. SDL_UpdateWindowSurfaceRects
++        // already took a count -- this was always one argument away.
++        const SDL_Rect *push_many = _dp_nrects > 0 ? _dp_rects : &push_rect;
++        const int push_count = _dp_nrects > 0 ? _dp_nrects : 1;
+         const bool pushed = palette_only_present
+                                 ? SDL_UpdateWindowSurfaceRects(window, &dac_rect, 1)
+-                                : (full_update ? SDL_UpdateWindowSurface(window)
+-                                               : SDL_UpdateWindowSurfaceRects(window, &dst, 1));
++                                : ((full_update && !_dp_narrowed)
++                                       ? SDL_UpdateWindowSurface(window)
++                                       : SDL_UpdateWindowSurfaceRects(window, push_many, push_count));
+         if (!pushed)
+             Debug::Printf(kDbgMsg_Warn, "SDLRenderer: SDL_UpdateWindowSurface failed: %s", SDL_GetError());
+     }
+-- 
+2.47.3
+

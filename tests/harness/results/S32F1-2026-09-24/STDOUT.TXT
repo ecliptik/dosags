@@ -1,0 +1,768 @@
+Adventure Game Studio v3.6 Interpreter
+Copyright (c) 1999-2011 Chris Jones and 2011-2026 others
+Engine version 3.6.3.13, 32-bit LE
+
+Initializing backend libs
+SDL Version: 3.5.0
+DOS-PORT: SDL_DOS_ALLOW_DIRECT_FRAMEBUFFER=1 (from environment)
+DOS-PORT: SDL_DOS_PREFER_LFB=1 (port default)
+Initializing game data
+Using provided game data path: AGSQUEST.AGS
+Opened game data file: game28.dta
+Game data version: 3060310
+Compiled with: 3.6.3.13
+Startup directory: ./
+Data directory: ./
+Setting up game configuration
+User data directory: C:\DOSAGS
+Game : (room:-10) SetSaveGameDirectory: failed to create all subdirectories: ./C:\DOSAGS
+Was not able to init voice pack 'speech.vox': file not found or of unknown format.
+Registered asset libraries:
+- LIB:	c:/dosags/AGSQUEST.AGS
+	Filters: ,audio
+- DIR:	c:/dosags/
+	Filters: ,audio,voice
+Initializing TTF renderer
+Initializing mouse: number of buttons reported is 3
+Initializing audio
+DOSAudioMixer: opened 11025 Hz mono S16, 8 voices
+DOS audio device opened: pcm=sb@11025m16,voices=8,underruns=0,drains=0,pcm_irqs=0,silent_irqs=0,overwrites=0,ring_max_ms=0/743,skipped_silent=0,idle_pauses=0,underflow_pads=0,partial_pulls=0,mixed=0,mixed_zero=0,mixed_quiet=0,inflight=0;midi=none,events=0,midi_tick=poll,late_max_ms=0,late_hist=0/0/0/0/0/0,late50=0,burst=0@0,clk=0/-1s
+AudioCore: DOS mixer status: pcm=sb@11025m16,voices=8,underruns=0,drains=0,pcm_irqs=0,silent_irqs=0,overwrites=0,ring_max_ms=0/743,skipped_silent=0,idle_pauses=0,underflow_pads=0,partial_pulls=0,mixed=0,mixed_zero=0,mixed_quiet=0,inflight=0;midi=none,events=0,midi_tick=poll,late_max_ms=0,late_hist=0/0/0/0/0/0,late50=0,burst=0@0,clk=0/-1s
+Sound cache set: 2048 KB
+Install exit handler
+Load game data
+Game title: 'AGS Quest'
+Game uid (old format): `235938609`
+Game guid: '{669a5bb5-a68a-46a3-b94a-63df5657b26e}'
+Game GUI version: 3060308
+Requested script API: v3.6.3 (3060300), compat level: v3.6.3 (3060300)
+Loaded font 0: agsfnt0.wfn, req size: 0; nominal h: 9, real h: 9, vextent: 0,8, aabb: 0,0 - 8,8
+Loaded font 1: agsfnt1.wfn, req size: 0; nominal h: 9, real h: 10, vextent: 0,9, aabb: 0,0 - 17,9
+Loaded font 2: agsfnt2.wfn, req size: 0; nominal h: 9, real h: 10, vextent: 0,9, aabb: 0,0 - 17,9
+Loaded font 3: agsfnt3.ttf, req size: 10; nominal h: 10, real h: 10, vextent: 0,14, aabb: -8,0 - 10,14
+Set game text language: 
+Set locale: 
+Initializing resolution settings
+Game native resolution: 640 x 360 (16 bit)
+Mouse cursor graphic area: (0,0)-(639,359) (640x360)
+Created script module (0) 'AutoPilot.asc'
+Created global script
+Created dialog script
+DOS-PORT: DOSAGS_FORCE_COLOR_DEPTH forcing game color depth 16 -> 32 bit (benchmarking override, not a shipped path)
+Checking for disk space
+Device display resolution: 640 x 480
+Graphic settings: driver: OGL, windowed: no, screen size: 0 x 0, game scale: proportional
+Graphic settings: refresh rate (optional): 0, vsync: 0
+Requested graphics driver 'OGL' not found, will try existing drivers instead
+Using graphics factory: Software
+Created graphics driver: SDL 2D Software renderer
+Supported gfx modes for display 0 (32-bit): none
+Attempt to find nearest supported resolution for screen size 640 x 480 (32-bit) fullscreen, on display 0
+Could not find compatible fullscreen mode. Will try to force-set mode requested by user and fallback to windowed mode if that fails.
+Attempt to switch gfx mode to 640 x 480 (32-bit) fullscreen, on display 0
+DOS-PORT pack24 engaged mode=0x0112 640x480 vram_pitch=1920 src_pitch=2560 path=lfb
+Window surface pixel format: SDL_PIXELFORMAT_XRGB8888
+Graphics driver set: SDL 2D Software renderer
+Graphics mode set: 640 x 480 (32-bit) fullscreen desktop, on display 0
+Graphics mode set: refresh rate (optional): 0, vsync: 0
+Render frame set, render dest (0, 60, 639, 419 : 640 x 360)
+Requested gfx filter: StdScale
+Graphics filter set: 'StdScale', filter dest (0, 60, 639, 419 : 640 x 360)
+Using gfx filter: StdScale
+Mouse speed control: enabled, unit: 1.000000, user value: 1.000000
+Touch-to-mouse motion mode: absolute
+Mouse cursor graphic area: (0,60)-(639,419) (640x360)
+Multitasking mode set: 0
+Setting up window
+Multitasking mode set: 0
+Initialize sprites
+Sprite file info: compression: none, storage flags: 0x00000001, total sprites: 92
+Sprite cache set: 4096 KB
+Initialize game settings
+Game text encoding: UTF-8, text language: not set
+Precache view 0 (loops 0-3) with 28 frames, total = 74 ms, average file->mem = 2 ms, bm->tx = 0 ms,
+		loaded 0 sounds = 0 ms
+	Sprite cache: 9 -> 146 KB, texture cache: 0 -> 0 KB
+Runtime behavior switches:
+	smooth_walk = 1
+	gui_text_direction = 1
+	dialog_opt_text_alignment = 1
+Prepare to start game
+Game : (room:-10) Cursor mode set to 0
+Engine initialization complete
+Starting game
+Game : (room:-10) Cursor mode set to 0
+Game : (room:-10) Playing music 0
+Game : (room:-10) [AutoPilot.asc:300] SkipSpeech style set to 2
+Script : AUTOPILOT phase=boot status=begin tick=0 room=0
+Game : (room:-10) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:-10) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Game : (room:-10) Transition-out in room -10 (DOS-PORT 0106: placeholder, animation skipped)
+Game : (room:-10) Loading room 1
+Game : (room:-10) DOSAGS_XT t_ms=482 phase=load_begin room=1
+Game : (room:1) Mouse bounds constrained to (0,0)-(639,359)
+Game : (room:1) Cursor mode set to 1
+Initialize path finder
+Game : (room:1) Now in room 1
+Game : (room:1) DOSAGS_XT t_ms=2327 phase=load_end room=1
+DOS-PORT fixed-timestep: ENABLED (logic decoupled from render)
+Game : (room:1) Transition-in in room 1
+Game : (room:1) DOSAGS_XT t_ms=2338 phase=fadein_begin room=1
+DOS-PORT vscreen alias ON x=0 y=60 640x360 pitch=2560
+Game : (room:1) DOSAGS_XT t_ms=9707 phase=fadein_end room=1
+Game : (room:1) DOS-PORT room_transition t_ms=14928 event=ready room=1
+Game : (room:1) [DOS-PORT-STARTUP-BEGIN]
+Game : (room:1) schema_version=1
+Game : (room:1) subsystem_init_ms=65
+Game : (room:1) gamedata_asset_load_ms=317
+Game : (room:1) script_vm_init_ms=2007
+Game : (room:1) gfxmode_init_ms=595
+Game : (room:1) sprite_index_init_ms=98
+Game : (room:1) sprite_precache_ms=125
+Game : (room:1) sprite_precache_view_count=1
+Game : (room:1) sprite_precache_frame_count=28
+Game : (room:1) sprite_precache_slowest1_view=0 sprite_precache_slowest1_ms=74
+Game : (room:1) sprite_precache_slowest2_view=-1 sprite_precache_slowest2_ms=-1
+Game : (room:1) sprite_precache_slowest3_view=-1 sprite_precache_slowest3_ms=-1
+Game : (room:1) first_room_load_ms=9226
+Game : (room:1) preloop_game_start_script_ms=479
+Game : (room:1) preloop_restart_point_ms=-1
+Game : (room:1) preloop_placeholder_fade_ms=1
+Game : (room:1) preloop_room_load_ms=1847
+Game : (room:1) preloop_first_room_init_ms=0
+Game : (room:1) preloop_skipmissed_ms=0
+Game : (room:1) preloop_start_game_ms=2329
+Game : (room:1) restart_diskcheck_ms=-1
+Game : (room:1) restart_screenshot_ms=-1
+Game : (room:1) restart_savegame_ms=-1
+Game : (room:1) restart_total_ms=-1
+Game : (room:1) roomload_loadroom_ms=1403
+Game : (room:1) roomload_bgprep_ms=152
+Game : (room:1) roomload_maskprep_ms=206
+Game : (room:1) roomload_objsetup_ms=35
+Game : (room:1) roomload_script_ms=3
+Game : (room:1) roomload_lighttable_ms=0
+Game : (room:1) roomload_drawdata_ms=1
+Game : (room:1) roomload_total_ms=1846
+Game : (room:1) total_to_first_frame_ms=14928
+Game : (room:1) [DOS-PORT-STARTUP-END]
+Script : AUTOPILOT phase=boot status=ok tick=0 room=1
+Game : (room:1) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:1) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=splash status=begin tick=0 room=1
+Game : (room:1) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:1) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=314 prev_us total=0 present=829371 rb=5318 scene=0 script=458677 events=7371440 sprite_px=24000 present_px=2995200 sprites=1 maxspr=240x100
+Game : (room:1) [room1.asc:16] Room change requested to room 2
+Game : (room:1) Room change requested to room 2
+Game : (room:1) DOS-PORT room_transition t_ms=17333 event=start room=2
+Game : (room:1) Transition-out in room 1
+Game : (room:1) DOSAGS_XT t_ms=12117 phase=fadeout_begin room=1
+Game : (room:1) DOSAGS_XT fade_steps=13
+Game : (room:1) Unloading room 1
+Game : (room:-10) Loading room 2
+Game : (room:-10) DOSAGS_XT t_ms=19187 phase=load_begin room=2
+Game : (room:2) Mouse bounds constrained to (0,0)-(639,359)
+Game : (room:2) Now in room 2
+Game : (room:2) DOSAGS_XT t_ms=21125 phase=load_end room=2
+DOS-PORT stallwhat tick=1 self_ms=16906 children_ms=1889 script_us=2368880 events_us=18789858 scene_us=168734 rb_us=366202 present_us=1718900
+Game : (room:2) [room2.asc:5] GUI 0 turned off
+Game : (room:2) [room2.asc:6] GUI 1 turned on
+Game : (room:2) [room2.asc:7] Cursor mode set to 6
+Game : (room:2) Transition-in in room 2
+Game : (room:2) DOSAGS_XT t_ms=21138 phase=fadein_begin room=2
+DOS-PORT biggui idx=1 name=gTitleMenu 640x360 changed=1 ctrls=1 n=1 unchanged=0
+Game : (room:2) DOSAGS_XT t_ms=29259 phase=fadein_end room=2
+Game : (room:2) DOS-PORT room_transition t_ms=34480 event=ready room=2
+Script : AUTOPILOT phase=splash status=ok tick=81 room=2
+Game : (room:2) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:2) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=menu status=begin tick=81 room=2
+Game : (room:2) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:2) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+DOS-PORT stallwhat tick=82 self_ms=8588 children_ms=0 script_us=457419 events_us=8578643 scene_us=0 rb_us=53860 present_us=808028
+Game : (room:2) [GlobalScript.asc:165] GUI 1 turned off
+Game : (room:2) [GlobalScript.asc:166] Room change requested to room 3
+Game : (room:2) Room change requested to room 3
+Game : (room:2) DOS-PORT room_transition t_ms=34949 event=start room=3
+Game : (room:2) Transition-out in room 2
+Game : (room:2) DOSAGS_XT t_ms=29736 phase=fadeout_begin room=2
+Game : (room:2) DOSAGS_XT fade_steps=13
+Game : (room:2) Unloading room 2
+Game : (room:-10) Loading room 3
+Game : (room:-10) DOSAGS_XT t_ms=36806 phase=load_begin room=3
+Game : (room:3) Mouse bounds constrained to (0,0)-(639,359)
+Game : (room:3) Now in room 3
+Game : (room:3) DOSAGS_XT t_ms=38605 phase=load_end room=3
+DOS-PORT stallwhat tick=83 self_ms=8889 children_ms=0 script_us=5826 events_us=8882599 scene_us=0 rb_us=354 present_us=807623
+Game : (room:3) [room3.asc:8] GUI 2 turned on
+Game : (room:3) Transition-in in room 3
+Game : (room:3) DOSAGS_XT t_ms=38634 phase=fadein_begin room=3
+Game : (room:3) DOSAGS_XT t_ms=45956 phase=fadein_end room=3
+Game : (room:3) [room3.asc:19] MoveCharacter: request move cBlueMage: 389,150 to 360,176
+DOS-PORT skipframe owed=4 prev_us total=149077 present=62423 rb=2742 scene=55057 script=0 events=41 sprite_px=8943 present_px=230400 sprites=7 maxspr=170x20
+DOS-PORT skipframe owed=1 prev_us total=30748 present=9638 rb=7349 scene=8343 script=0 events=9 sprite_px=25747 present_px=120228 sprites=8 maxspr=438x38
+DOS-PORT skipframe owed=1 prev_us total=31221 present=9493 rb=7759 scene=8326 script=0 events=7 sprite_px=25747 present_px=120228 sprites=8 maxspr=438x38
+DOS-PORT skipframe owed=1 prev_us total=47953 present=10542 rb=8263 scene=6452 script=0 events=33 sprite_px=29167 present_px=132572 sprites=8 maxspr=418x48
+DOS-PORT skipframe owed=1 prev_us total=32080 present=9275 rb=8256 scene=9384 script=0 events=9 sprite_px=29167 present_px=117898 sprites=8 maxspr=418x48
+DOS-PORT skipframe owed=1 prev_us total=31862 present=9282 rb=8265 scene=9151 script=0 events=8 sprite_px=29167 present_px=117898 sprites=8 maxspr=418x48
+DOS-PORT skipframe owed=1 prev_us total=26306 present=6966 rb=6605 scene=7497 script=0 events=8 sprite_px=21947 present_px=108578 sprites=8 maxspr=338x38
+Game : (room:3) [room3.asc:25] GUI 3 turned on
+Game : (room:3) DOS-PORT room_transition t_ms=60269 event=ready room=3
+Script : AUTOPILOT phase=menu status=ok tick=380 room=3
+Game : (room:3) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:3) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=intro status=begin tick=380 room=3
+Game : (room:3) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:3) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=intro status=ok tick=380 room=3
+Game : (room:3) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:3) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=settle status=begin tick=380 room=3
+Game : (room:3) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:3) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Game : (room:3) [room3.asc:31] Cursor mode set to 0
+DOS-PORT stallwhat tick=84 self_ms=10341 children_ms=7007 script_us=10000975 events_us=17327118 scene_us=1949168 rb_us=1490545 present_us=2497558
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+DOS-PORT rbstruct calls=500 batches=3104 clears=0 clear_px=0 sprites=2859 sprite_px=7612784 clipped=0 flagged=0 noflag=2859 notvs=0 novalid=0 isfull=0 guimiss=0 guihit=0 hitpx=0 fullpx=0 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+DOS-PORT dirtypresent narrow=431 full=69 px_narrow=33109147 px_full=15897600 nocam=0 rej scaled=0 noscene=62 latched=7 norects=0 pal=0 clip=0 multi=431 px_multi=4805790 px_multi_bbox=33109147 boxes=1846 out=0 whole=0 rowfr=431 px_bands=32782720 bands=1751 mg0=1846/4805952 mg2k=1707/5016181 mg5k5=1524/5646853 mg12k=1162/8835667
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+Script : AUTOPILOT phase=settle status=ok tick=501 room=3
+Game : (room:3) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:3) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Game : (room:3) [AutoPilot.asc:356] MoveCharacter: request move cBlueMage: 360,176 to 88,286
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=225 prev_us total=0 present=2685 rb=3288 scene=4685 script=0 events=0 sprite_px=10579 present_px=70599 sprites=8 maxspr=170x20
+DOS-PORT bgstruct calls=500 whole=7 px=6467385 slow_px=0
+Script : AUTOPILOT phase=key status=begin tick=952 room=3
+Game : (room:3) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:3) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Game : (room:3) [room3.asc:46] MoveCharacter: cBlueMage move path is empty, or is already at destination, not moving
+DOS-PORT rbstruct calls=1000 batches=6604 clears=0 clear_px=0 sprites=6863 sprite_px=13113522 clipped=0 flagged=0 noflag=6863 notvs=0 novalid=0 isfull=0 guimiss=0 guihit=0 hitpx=0 fullpx=0 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT dirtypresent narrow=931 full=69 px_narrow=69665437 px_full=15897600 nocam=0 rej scaled=0 noscene=62 latched=7 norects=0 pal=0 clip=0 multi=931 px_multi=8369834 px_multi_bbox=69665437 boxes=4297 out=0 whole=0 rowfr=931 px_bands=77998720 bands=3653 mg0=4297/8369996 mg2k=3965/8812271 mg5k5=3595/10065950 mg12k=2549/19341674
+DOS-PORT skipframe owed=1 prev_us total=26735 present=8779 rb=6033 scene=6720 script=0 events=7 sprite_px=20467 present_px=73861 sprites=9 maxspr=238x38
+DOS-PORT skipframe owed=1 prev_us total=45298 present=15641 rb=8191 scene=7314 script=0 events=21 sprite_px=28067 present_px=115018 sprites=9 maxspr=438x38
+DOS-PORT skipframe owed=1 prev_us total=40898 present=14684 rb=8054 scene=8436 script=0 events=14 sprite_px=28067 present_px=102287 sprites=9 maxspr=438x38
+DOS-PORT skipframe owed=1 prev_us total=40948 present=14685 rb=8056 scene=8437 script=0 events=13 sprite_px=28067 present_px=102287 sprites=9 maxspr=438x38
+DOS-PORT skipframe owed=1 prev_us total=36554 present=14528 rb=8373 scene=8439 script=0 events=8 sprite_px=28067 present_px=102287 sprites=9 maxspr=438x38
+DOS-PORT skipframe owed=1 prev_us total=51257 present=16839 rb=8603 scene=7315 script=0 events=28 sprite_px=29663 present_px=126022 sprites=9 maxspr=480x38
+DOS-PORT skipframe owed=1 prev_us total=38182 present=15719 rb=8458 scene=8814 script=0 events=7 sprite_px=29663 present_px=112073 sprites=9 maxspr=480x38
+DOS-PORT bgstruct calls=1000 whole=7 px=10608187 slow_px=0
+DOS-PORT skipframe owed=1 prev_us total=42746 present=15723 rb=8693 scene=8813 script=0 events=13 sprite_px=29663 present_px=112073 sprites=9 maxspr=480x38
+DOS-PORT skipframe owed=1 prev_us total=42895 present=15940 rb=8468 scene=8969 script=0 events=13 sprite_px=29663 present_px=112073 sprites=9 maxspr=480x38
+Game : (room:3) [room3.asc:59] GUI 4 turned on
+DOS-PORT skipframe owed=1 prev_us total=44419 present=10425 rb=8884 scene=10818 script=0 events=20 sprite_px=27023 present_px=196075 sprites=9 maxspr=52x300
+Game : (room:3) [room3.asc:62] AudioClip.Play: unable to load sound file
+Game : (room:3) [room3.asc:64] GUI 4 turned off
+DOS-PORT skipframe owed=3 prev_us total=24769 present=3063 rb=8882 scene=5222 script=0 events=7 sprite_px=27023 present_px=60114 sprites=9 maxspr=52x300
+DOS-PORT skipframe owed=1 prev_us total=36965 present=14266 rb=8626 scene=8860 script=0 events=9 sprite_px=30047 present_px=90637 sprites=9 maxspr=388x48
+DOS-PORT skipframe owed=1 prev_us total=41268 present=13914 rb=8627 scene=9115 script=0 events=13 sprite_px=30047 present_px=90637 sprites=9 maxspr=388x48
+DOS-PORT skipframe owed=1 prev_us total=36882 present=13914 rb=8618 scene=9105 script=0 events=7 sprite_px=30047 present_px=90637 sprites=9 maxspr=388x48
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+DOS-PORT stallwhat tick=502 self_ms=6388 children_ms=16808 script_us=23178941 events_us=23186389 scene_us=3600099 rb_us=2939351 present_us=2882489
+Script : AUTOPILOT phase=key status=ok tick=1200 room=3
+Game : (room:3) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:3) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=unlock status=begin tick=1200 room=3
+Game : (room:3) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:3) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Game : (room:3) [AutoPilot.asc:379] Cursor mode set to 4
+Game : (room:3) [room3.asc:247] MoveCharacter: request move cBlueMage: 88,286 to 190,254
+Game : (room:3) [room3.asc:266] AudioClip.Play: unable to load sound file
+DOS-PORT skipframe owed=3 prev_us total=24764 present=2363 rb=3368 scene=5087 script=0 events=7 sprite_px=10913 present_px=60114 sprites=8 maxspr=170x20
+DOS-PORT rbstruct calls=1500 batches=10104 clears=0 clear_px=0 sprites=11040 sprite_px=21412249 clipped=0 flagged=0 noflag=11040 notvs=0 novalid=0 isfull=0 guimiss=0 guihit=0 hitpx=0 fullpx=0 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT dirtypresent narrow=1431 full=69 px_narrow=106784288 px_full=15897600 nocam=0 rej scaled=0 noscene=62 latched=7 norects=0 pal=0 clip=0 multi=1431 px_multi=14918321 px_multi_bbox=106784288 boxes=6753 out=0 whole=0 rowfr=1431 px_bands=122693760 bands=5573 mg0=6753/14918483 mg2k=6184/15556098 mg5k5=5664/17367861 mg12k=3764/33855233
+Game : (room:3) [room3.asc:268] AudioClip.Play: unable to load sound file
+Game : (room:3) [room3.asc:269] Object 0 graphic changed to slot 8
+Game : (room:3) [room3.asc:270] Cursor mode set to 0
+Game : (room:3) [GlobalScript.asc:22] Cursor mode set to 0
+DOS-PORT stallwhat tick=1201 self_ms=895 children_ms=8824 script_us=9697008 events_us=9702012 scene_us=1933895 rb_us=1309993 present_us=1178876
+Script : AUTOPILOT phase=unlock status=ok tick=1564 room=3
+Game : (room:3) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:3) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=enter status=begin tick=1564 room=3
+Game : (room:3) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:3) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Game : (room:3) [room3.asc:323] MoveCharacter: request move cBlueMage: 190,254 to 180,254
+Game : (room:3) [room3.asc:324] MoveCharacter: request move cBlueMage: 180,254 to 160,254
+Game : (room:3) [room3.asc:326] Room change requested to room 4
+Game : (room:3) Room change requested to room 4
+Game : (room:3) DOS-PORT room_transition t_ms=97970 event=start room=4
+Game : (room:3) Transition-out in room 3
+Game : (room:3) DOSAGS_XT t_ms=92754 phase=fadeout_begin room=3
+Game : (room:3) DOSAGS_XT fade_steps=13
+Game : (room:3) Unloading room 3
+Game : (room:-10) Loading room 4
+Game : (room:-10) DOSAGS_XT t_ms=99830 phase=load_begin room=4
+Game : (room:4) Mouse bounds constrained to (0,0)-(639,359)
+Game : (room:4) Now in room 4
+Game : (room:4) DOSAGS_XT t_ms=101507 phase=load_end room=4
+DOS-PORT stallwhat tick=1565 self_ms=9264 children_ms=432 script_us=934380 events_us=9692471 scene_us=99452 rb_us=58039 present_us=851173
+Game : (room:4) [room4.asc:7] Obj 1 start anim view 4 loop 0, speed 4, repeat 1, frame 0
+Game : (room:4) Transition-in in room 4
+Game : (room:4) DOSAGS_XT t_ms=101529 phase=fadein_begin room=4
+Game : (room:4) DOSAGS_XT t_ms=108839 phase=fadein_end room=4
+Game : (room:4) DOS-PORT room_transition t_ms=114061 event=ready room=4
+Script : AUTOPILOT phase=enter status=ok tick=1587 room=4
+Game : (room:4) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:4) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=interior status=begin tick=1587 room=4
+Game : (room:4) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:4) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Game : (room:4) [room4.asc:36] MoveCharacter: request move cBlueMage: 438,342 to 321,133
+DOS-PORT skipframe owed=886 prev_us total=9722157 present=1617194 rb=8827 scene=5772 script=6436729 events=17004450 sprite_px=26939 present_px=6050514 sprites=14 maxspr=55x84
+DOS-PORT bgstruct calls=1500 whole=9 px=15463837 slow_px=0
+Game : (room:4) [room4.asc:37] cBlueMage: Face location 321,100
+Game : (room:4) [room4.asc:39] GUI 4 turned on
+DOS-PORT skipframe owed=5 prev_us total=184959 present=62236 rb=10200 scene=85132 script=0 events=39 sprite_px=30603 present_px=230400 sprites=8 maxspr=52x300
+DOS-PORT skipframe owed=1 prev_us total=27161 present=4478 rb=10125 scene=7298 script=0 events=7 sprite_px=30603 present_px=78440 sprites=8 maxspr=52x300
+Game : (room:4) [room4.asc:42] AudioClip.Play: unable to load sound file
+DOS-PORT skipframe owed=1 prev_us total=27401 present=4479 rb=9975 scene=7543 script=0 events=7 sprite_px=30603 present_px=78440 sprites=8 maxspr=52x300
+Game : (room:4) [room4.asc:44] GUI 4 turned off
+DOS-PORT skipframe owed=2 prev_us total=32854 present=4474 rb=9980 scene=8661 script=0 events=14 sprite_px=30603 present_px=78440 sprites=8 maxspr=52x300
+DOS-PORT skipframe owed=1 prev_us total=45455 present=16524 rb=8531 scene=10715 script=0 events=15 sprite_px=29367 present_px=129944 sprites=8 maxspr=378x38
+DOS-PORT skipframe owed=1 prev_us total=46946 present=16672 rb=8534 scene=12081 script=0 events=13 sprite_px=29367 present_px=129944 sprites=8 maxspr=378x38
+DOS-PORT skipframe owed=1 prev_us total=46928 present=16679 rb=8526 scene=12069 script=0 events=13 sprite_px=29367 present_px=129944 sprites=8 maxspr=378x38
+DOS-PORT skipframe owed=1 prev_us total=41187 present=16528 rb=8678 scene=10714 script=0 events=7 sprite_px=29367 present_px=129944 sprites=8 maxspr=378x38
+DOS-PORT stallwhat tick=1588 self_ms=14954 children_ms=6585 script_us=14211576 events_us=21524630 scene_us=2504805 rb_us=1808883 present_us=2659719
+Game : (room:4) [AutoPilot.asc:413] Cursor mode set to 4
+Game : (room:4) [room4.asc:82] MoveCharacter: request move cBlueMage: 321,133 to 370,290
+Game : (room:4) [room4.asc:84] Cursor mode set to 0
+Game : (room:4) [room4.asc:85] Object 2 turned on
+Game : (room:4) [GlobalScript.asc:22] Cursor mode set to 0
+Script : AUTOPILOT phase=interior status=ok tick=2021 room=4
+Game : (room:4) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:4) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=anim status=begin tick=2021 room=4
+Game : (room:4) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:4) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Game : (room:4) [GlobalScript.asc:22] Cursor mode set to 0
+DOS-PORT stallwhat tick=2022 self_ms=505 children_ms=0 script_us=473616 events_us=474541 scene_us=13151 rb_us=5140 present_us=6043
+Game : (room:4) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:4) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:4) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:4) [GlobalScript.asc:22] Cursor mode set to 0
+Script : AUTOPILOT anim_detail frame0=0 frame1=1 animating=1
+Game : (room:4) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:4) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=anim status=ok tick=2026 room=4
+Game : (room:4) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:4) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=dialog status=begin tick=2026 room=4
+Game : (room:4) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:4) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Game : (room:4) [GlobalScript.asc:22] Cursor mode set to 0
+DOS-PORT stallwhat tick=2027 self_ms=731 children_ms=0 script_us=726244 events_us=727158 scene_us=0 rb_us=0 present_us=0
+Game : (room:4) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:4) [GlobalScript.asc:22] Cursor mode set to 0
+Game : (room:4) [AutoPilot.asc:494] DOS-PORT input_latency t_ms=133651 event=inject
+Game : (room:4) [AutoPilot.asc:0] DOS-PORT input_latency t_ms=133879 event=processed
+Script : AUTOPILOT dialog_detail chosen=14
+Game : (room:4) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:4) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=dialog status=ok tick=2030 room=4
+Game : (room:4) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:4) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=save status=begin tick=2030 room=4
+Game : (room:4) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:4) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=save status=ok tick=2030 room=4
+Game : (room:4) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:4) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=restore status=begin tick=2030 room=4
+Game : (room:4) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:4) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Restoring saved game './agssave.001'
+Game : (room:4) Transition-out in room 4
+Game : (room:4) DOSAGS_XT t_ms=130459 phase=fadeout_begin room=4
+Game : (room:4) DOSAGS_XT fade_steps=13
+DOS-PORT rbstruct calls=2000 batches=13380 clears=0 clear_px=0 sprites=14477 sprite_px=30333527 clipped=0 flagged=0 noflag=14477 notvs=0 novalid=0 isfull=0 guimiss=0 guihit=0 hitpx=0 fullpx=0 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+Game : (room:4) Unloading room 4
+Created script module (0) 'AutoPilot.asc'
+Created global script
+Created dialog script
+Game : (room:4) Loading room 4
+Game : (room:4) DOSAGS_XT t_ms=137822 phase=load_begin room=4
+Game : (room:4) Mouse bounds constrained to (0,0)-(639,359)
+Game : (room:4) Now in room 4
+Game : (room:4) DOSAGS_XT t_ms=139340 phase=load_end room=4
+Game : (room:4) Cursor mode set to 0
+Script : AUTOPILOT phase=restore status=ok tick=2030 room=4
+Game : (room:4) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:4) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=exit status=begin tick=2030 room=4
+Game : (room:4) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:4) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Game : (room:4) [room4.asc:21] MoveCharacter: request move cBlueMage: 370,290 to 433,344
+DOS-PORT skipframe owed=2 prev_us total=114442 present=62063 rb=41 scene=22999 script=0 events=42 sprite_px=0 present_px=230400 sprites=0 maxspr=0x0
+DOS-PORT dirtypresent narrow=1888 full=112 px_narrow=145865692 px_full=25804800 nocam=1 rej scaled=0 noscene=100 latched=11 norects=1 pal=0 clip=0 multi=1888 px_multi=21788547 px_multi_bbox=145865692 boxes=8993 out=0 whole=0 rowfr=1888 px_bands=187057280 bands=7340 mg0=8993/21796903 mg2k=8288/22651651 mg5k5=7472/25514592 mg12k=5157/45296679
+DOS-PORT skipframe owed=2 prev_us total=76472 present=62297 rb=36 scene=238 script=0 events=24 sprite_px=0 present_px=230400 sprites=0 maxspr=0x0
+Game : (room:4) [room4.asc:22] Room change requested to room 3
+Game : (room:4) Room change requested to room 3
+Game : (room:4) DOS-PORT room_transition t_ms=145717 event=start room=3
+Game : (room:4) Transition-out in room 4
+Game : (room:4) DOSAGS_XT t_ms=140501 phase=fadeout_begin room=4
+Game : (room:4) DOSAGS_XT fade_steps=13
+Game : (room:4) Unloading room 4
+Game : (room:-10) Loading room 3
+Game : (room:-10) DOSAGS_XT t_ms=140516 phase=load_begin room=3
+Game : (room:3) Mouse bounds constrained to (0,0)-(639,359)
+Game : (room:3) Now in room 3
+Game : (room:3) DOSAGS_XT t_ms=142103 phase=load_end room=3
+DOS-PORT stallwhat tick=2030 self_ms=12973 children_ms=725 script_us=2612516 events_us=13674534 scene_us=44563 rb_us=28565 present_us=1339816
+Game : (room:3) Transition-in in room 3
+Game : (room:3) DOSAGS_XT t_ms=142116 phase=fadein_begin room=3
+Game : (room:3) DOSAGS_XT t_ms=149337 phase=fadein_end room=3
+Game : (room:3) DOS-PORT room_transition t_ms=154558 event=ready room=3
+Script : AUTOPILOT phase=exit status=ok tick=2059 room=3
+Game : (room:3) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:3) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=gem status=begin tick=2059 room=3
+Game : (room:3) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:3) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Game : (room:3) [room3.asc:323] MoveCharacter: cBlueMage move path is empty, or is already at destination, not moving
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=374 prev_us total=0 present=808876 rb=3632 scene=0 script=461525 events=7224702 sprite_px=10848 present_px=2995200 sprites=7 maxspr=170x20
+Game : (room:3) [room3.asc:324] MoveCharacter: request move cBlueMage: 180,254 to 160,254
+Game : (room:3) [room3.asc:326] Room change requested to room 4
+Game : (room:3) Room change requested to room 4
+Game : (room:3) DOS-PORT room_transition t_ms=155504 event=start room=4
+Game : (room:3) Transition-out in room 3
+Game : (room:3) DOSAGS_XT t_ms=150288 phase=fadeout_begin room=3
+Game : (room:3) DOSAGS_XT fade_steps=13
+Game : (room:3) Unloading room 3
+Game : (room:-10) Loading room 4
+Game : (room:-10) DOSAGS_XT t_ms=157275 phase=load_begin room=4
+Game : (room:4) Mouse bounds constrained to (0,0)-(639,359)
+Game : (room:4) Now in room 4
+Game : (room:4) DOSAGS_XT t_ms=158874 phase=load_end room=4
+DOS-PORT stallwhat tick=2060 self_ms=16313 children_ms=455 script_us=945938 events_us=16762905 scene_us=124426 rb_us=52053 present_us=1711334
+Game : (room:4) [room4.asc:7] Obj 1 start anim view 4 loop 0, speed 4, repeat 1, frame 0
+Game : (room:4) Transition-in in room 4
+Game : (room:4) DOSAGS_XT t_ms=158887 phase=fadein_begin room=4
+Game : (room:4) DOSAGS_XT t_ms=166109 phase=fadein_end room=4
+Game : (room:4) DOS-PORT room_transition t_ms=171330 event=ready room=4
+Game : (room:4) [room4.asc:137] MoveCharacter: request move cBlueMage: 438,342 to 200,146
+DOS-PORT skipframe owed=4 prev_us total=156717 present=62082 rb=5036 scene=60228 script=0 events=39 sprite_px=16347 present_px=230400 sprites=8 maxspr=55x84
+DOS-PORT bgstruct calls=2000 whole=14 px=23202384 slow_px=0
+Game : (room:4) [room4.asc:138] MoveCharacter: request move cBlueMage: 200,146 to 155,140
+Game : (room:4) [room4.asc:139] Room change requested to room 3
+Game : (room:4) Room change requested to room 3
+Game : (room:4) DOS-PORT room_transition t_ms=176098 event=start room=3
+Game : (room:4) Transition-out in room 4
+Game : (room:4) DOSAGS_XT t_ms=170882 phase=fadeout_begin room=4
+Game : (room:4) DOSAGS_XT fade_steps=13
+Game : (room:4) Unloading room 4
+Game : (room:-10) Loading room 3
+Game : (room:-10) DOSAGS_XT t_ms=177868 phase=load_begin room=3
+Game : (room:3) Mouse bounds constrained to (0,0)-(639,359)
+Game : (room:3) Now in room 3
+Game : (room:3) DOSAGS_XT t_ms=179459 phase=load_end room=3
+DOS-PORT stallwhat tick=2085 self_ms=16230 children_ms=4353 script_us=4769201 events_us=20576262 scene_us=1489132 rb_us=838165 present_us=2504617
+Game : (room:3) [room3.asc:12] Object 1 graphic changed to slot 10
+Game : (room:3) Transition-in in room 3
+Game : (room:3) DOSAGS_XT t_ms=179478 phase=fadein_begin room=3
+Game : (room:3) DOSAGS_XT t_ms=186699 phase=fadein_end room=3
+Game : (room:3) DOS-PORT room_transition t_ms=191922 event=ready room=3
+DOS-PORT skipframe owed=4 prev_us total=159056 present=62173 rb=7597 scene=59775 script=0 events=41 sprite_px=26177 present_px=230400 sprites=9 maxspr=408x38
+DOS-PORT skipframe owed=1 prev_us total=32496 present=10985 rb=7745 scene=8590 script=0 events=8 sprite_px=26177 present_px=117792 sprites=9 maxspr=408x38
+DOS-PORT skipframe owed=1 prev_us total=32725 present=11138 rb=7593 scene=8593 script=0 events=7 sprite_px=26177 present_px=117792 sprites=9 maxspr=408x38
+Game : (room:3) [room3.asc:304] GUI 4 turned on
+Game : (room:3) [room3.asc:307] AudioClip.Play: unable to load sound file
+DOS-PORT skipframe owed=1 prev_us total=38830 present=10016 rb=8686 scene=10462 script=0 events=13 sprite_px=26273 present_px=198950 sprites=9 maxspr=52x300
+Game : (room:3) [room3.asc:309] GUI 4 turned off
+DOS-PORT skipframe owed=1 prev_us total=43707 present=14013 rb=9778 scene=10297 script=0 events=17 sprite_px=33137 present_px=139762 sprites=9 maxspr=468x48
+DOS-PORT skipframe owed=1 prev_us total=43710 present=14240 rb=9565 scene=10293 script=0 events=16 sprite_px=33137 present_px=139762 sprites=9 maxspr=468x48
+DOS-PORT skipframe owed=1 prev_us total=39438 present=14017 rb=9708 scene=10533 script=0 events=7 sprite_px=33137 present_px=139762 sprites=9 maxspr=468x48
+DOS-PORT skipframe owed=1 prev_us total=43740 present=14018 rb=9940 scene=10294 script=0 events=13 sprite_px=33137 present_px=139762 sprites=9 maxspr=468x48
+DOS-PORT skipframe owed=1 prev_us total=57000 present=13324 rb=9094 scene=7088 script=0 events=41 sprite_px=29777 present_px=119498 sprites=9 maxspr=398x48
+DOS-PORT skipframe owed=1 prev_us total=36004 present=12444 rb=9091 scene=9469 script=0 events=7 sprite_px=29777 present_px=118902 sprites=9 maxspr=398x48
+DOS-PORT skipframe owed=1 prev_us total=36179 present=12218 rb=9089 scene=9473 script=0 events=7 sprite_px=29777 present_px=118902 sprites=9 maxspr=398x48
+DOS-PORT skipframe owed=1 prev_us total=35948 present=12219 rb=9090 scene=9474 script=0 events=8 sprite_px=29777 present_px=118902 sprites=9 maxspr=398x48
+Game : (room:3) [room3.asc:312] Object 3 turned off
+Game : (room:3) [room3.asc:312] Object 3 stop moving
+Game : (room:3) [room3.asc:31] Cursor mode set to 0
+DOS-PORT stallwhat tick=2270 self_ms=17064 children_ms=4684 script_us=14508365 events_us=21736249 scene_us=2122527 rb_us=2133367 present_us=3031531
+Script : AUTOPILOT phase=gem status=ok tick=2471 room=3
+Game : (room:3) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:3) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Game : (room:3) [room3.asc:361] MoveCharacter: request move cBlueMage: 90,130 to 93,128
+Game : (room:3) [room3.asc:364] Room change requested to room 4
+Game : (room:3) Room change requested to room 4
+Game : (room:3) DOS-PORT room_transition t_ms=206884 event=start room=4
+Game : (room:3) Transition-out in room 3
+Game : (room:3) DOSAGS_XT t_ms=201669 phase=fadeout_begin room=3
+Game : (room:3) DOSAGS_XT fade_steps=13
+Game : (room:3) Unloading room 3
+Game : (room:-10) Loading room 4
+Game : (room:-10) DOSAGS_XT t_ms=208660 phase=load_begin room=4
+Game : (room:4) Mouse bounds constrained to (0,0)-(639,359)
+Game : (room:4) Now in room 4
+Game : (room:4) DOSAGS_XT t_ms=210181 phase=load_end room=4
+DOS-PORT stallwhat tick=2472 self_ms=8779 children_ms=189 script_us=446832 events_us=8964101 scene_us=66995 rb_us=6589 present_us=873740
+Game : (room:4) [room4.asc:7] Obj 1 start anim view 4 loop 0, speed 4, repeat 1, frame 0
+Game : (room:4) Transition-in in room 4
+Game : (room:4) DOSAGS_XT t_ms=210195 phase=fadein_begin room=4
+DOS-PORT rbstruct calls=2500 batches=16360 clears=0 clear_px=0 sprites=17899 sprite_px=40026749 clipped=0 flagged=0 noflag=17899 notvs=0 novalid=0 isfull=0 guimiss=0 guihit=0 hitpx=0 fullpx=0 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT dirtypresent narrow=2291 full=209 px_narrow=186131726 px_full=48153600 nocam=1 rej scaled=0 noscene=182 latched=20 norects=7 pal=0 clip=0 multi=2291 px_multi=30022561 px_multi_bbox=186131726 boxes=10948 out=0 whole=0 rowfr=2291 px_bands=233267840 bands=8995 mg0=10948/30040397 mg2k=10235/30906339 mg5k5=8996/35280802 mg12k=6554/56056458
+Game : (room:4) DOSAGS_XT t_ms=217422 phase=fadein_end room=4
+Game : (room:4) DOS-PORT room_transition t_ms=222643 event=ready room=4
+Game : (room:4) [room4.asc:21] MoveCharacter: request move cBlueMage: 200,146 to 433,344
+DOS-PORT skipframe owed=4 prev_us total=155307 present=62079 rb=4743 scene=59331 script=0 events=39 sprite_px=15289 present_px=230400 sprites=8 maxspr=55x84
+Game : (room:4) [room4.asc:22] Room change requested to room 3
+Game : (room:4) Room change requested to room 3
+Game : (room:4) DOS-PORT room_transition t_ms=227088 event=start room=3
+Game : (room:4) Transition-out in room 4
+Game : (room:4) DOSAGS_XT t_ms=221872 phase=fadeout_begin room=4
+Game : (room:4) DOSAGS_XT fade_steps=13
+Game : (room:4) Unloading room 4
+Game : (room:-10) Loading room 3
+Game : (room:-10) DOSAGS_XT t_ms=228859 phase=load_begin room=3
+Game : (room:3) Mouse bounds constrained to (0,0)-(639,359)
+Game : (room:3) Now in room 3
+Game : (room:3) DOSAGS_XT t_ms=230399 phase=load_end room=3
+DOS-PORT stallwhat tick=2484 self_ms=15991 children_ms=4226 script_us=4448716 events_us=20208568 scene_us=1459884 rb_us=821743 present_us=2496376
+Game : (room:3) Transition-in in room 3
+Game : (room:3) DOSAGS_XT t_ms=230411 phase=fadein_begin room=3
+Game : (room:3) DOSAGS_XT t_ms=237630 phase=fadein_end room=3
+Game : (room:3) DOS-PORT room_transition t_ms=242853 event=ready room=3
+Script : AUTOPILOT phase=guimenu status=begin tick=2659 room=3
+Game : (room:3) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:3) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+DOS-PORT skipframe owed=1 prev_us total=53841 present=13859 rb=8002 scene=9621 script=0 events=35 sprite_px=28189 present_px=122553 sprites=8 maxspr=458x38
+DOS-PORT skipframe owed=1 prev_us total=34478 present=12958 rb=7996 scene=8374 script=0 events=8 sprite_px=28189 present_px=122553 sprites=8 maxspr=458x38
+DOS-PORT skipframe owed=1 prev_us total=34646 present=12745 rb=8150 scene=8612 script=0 events=7 sprite_px=28189 present_px=122553 sprites=8 maxspr=458x38
+Game : (room:3) [room3.asc:109] MoveCharacter: request move cBlueMage: 180,254 to 416,144
+DOS-PORT bgstruct calls=2500 whole=22 px=32932141 slow_px=0
+DOS-PORT rbstruct calls=3000 batches=19624 clears=0 clear_px=0 sprites=21310 sprite_px=46049841 clipped=0 flagged=0 noflag=21310 notvs=0 novalid=0 isfull=0 guimiss=0 guihit=0 hitpx=0 fullpx=0 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT dirtypresent narrow=2758 full=242 px_narrow=226938002 px_full=55756800 nocam=1 rej scaled=0 noscene=212 latched=23 norects=7 pal=0 clip=0 multi=2758 px_multi=34498795 px_multi_bbox=226938002 boxes=13366 out=0 whole=0 rowfr=2758 px_bands=282693760 bands=11055 mg0=13366/34516631 mg2k=12626/35418645 mg5k5=10872/41564207 mg12k=8270/63679262
+Game : (room:3) [room3.asc:110] GUI 7 turned on
+Game : (room:3) [room3.asc:111] Mouse bounds constrained to (90,50)-(550,310)
+Game : (room:3) [GlobalScript.asc:174] GUI 4 turned on
+Game : (room:3) [room3.asc:31] Cursor mode set to 0
+DOS-PORT stallwhat tick=2660 self_ms=7733 children_ms=12270 script_us=12755825 events_us=19984744 scene_us=2267206 rb_us=1619431 present_us=2293408
+Script : AUTOPILOT phase=guimenu status=ok tick=3162 room=3
+Game : (room:3) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:3) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=audio status=begin tick=3162 room=3
+Game : (room:3) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:3) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=30 prev_us total=0 present=44719 rb=45135 scene=123432 script=0 events=0 sprite_px=145468 present_px=199296 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=71660 present=2634 rb=44719 scene=4430 script=0 events=19 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=69263 present=2391 rb=44952 scene=4187 script=0 events=21 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=64760 present=2390 rb=44983 scene=4190 script=0 events=14 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=69239 present=2391 rb=44935 scene=4191 script=0 events=20 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=67225 present=2391 rb=44966 scene=4447 script=0 events=21 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=67115 present=2392 rb=44961 scene=4436 script=0 events=22 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=67563 present=2634 rb=44954 scene=4188 script=0 events=21 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=67092 present=2391 rb=44948 scene=4190 script=0 events=21 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=1 prev_us total=67003 present=2393 rb=44958 scene=4185 script=0 events=20 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=1 prev_us total=67151 present=2388 rb=44945 scene=4192 script=0 events=20 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=64745 present=2395 rb=44951 scene=4196 script=0 events=13 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT bgstruct calls=3000 whole=22 px=36026809 slow_px=0
+DOS-PORT skipframe owed=2 prev_us total=64480 present=2396 rb=44950 scene=4182 script=0 events=15 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=69193 present=2391 rb=44958 scene=4185 script=0 events=21 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=69070 present=2389 rb=44956 scene=4179 script=0 events=19 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=1 prev_us total=67271 present=2543 rb=44802 scene=4195 script=0 events=21 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=1 prev_us total=67097 present=2634 rb=44792 scene=4186 script=0 events=21 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=1 prev_us total=67383 present=2392 rb=44795 scene=4189 script=0 events=20 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=62950 present=2393 rb=44969 scene=4187 script=0 events=15 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=63086 present=2392 rb=44967 scene=4188 script=0 events=16 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=78720 present=2395 rb=44824 scene=4348 script=0 events=21 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=1 prev_us total=66868 present=2393 rb=44828 scene=4198 script=0 events=20 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=64892 present=2392 rb=44937 scene=4186 script=0 events=14 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=68636 present=2395 rb=44958 scene=4190 script=0 events=20 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=69261 present=2393 rb=44957 scene=4185 script=0 events=20 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=69253 present=2386 rb=44951 scene=4187 script=0 events=20 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=1 prev_us total=67267 present=2394 rb=44965 scene=4195 script=0 events=19 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DosMidiBackend: OPL3/OPL2 chip detected and initialized (status bits 1-2 say OPL3; driven as OPL3, 18 two-op voices)
+DOS-PORT skipframe owed=5 prev_us total=67178 present=2406 rb=44725 scene=4495 script=0 events=20 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DosMidiBackend: MIDI tick isr (writes planned ahead, replayed by the SB IRQ)
+DOS-PORT skipframe owed=1 prev_us total=66199 present=2393 rb=44979 scene=4182 script=0 events=22 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=61405 present=2390 rb=44983 scene=4191 script=0 events=13 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=1 prev_us total=65833 present=2394 rb=44794 scene=4188 script=0 events=21 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=66062 present=2394 rb=44964 scene=4189 script=0 events=19 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=1 prev_us total=65822 present=2393 rb=44929 scene=4187 script=0 events=21 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=65811 present=2392 rb=44925 scene=4187 script=0 events=23 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=61683 present=2392 rb=44802 scene=4348 script=0 events=14 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=65844 present=2391 rb=44885 scene=4191 script=0 events=19 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=61443 present=2391 rb=44936 scene=4188 script=0 events=16 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=1 prev_us total=66151 present=2395 rb=44941 scene=4187 script=0 events=20 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+DOS-PORT skipframe owed=2 prev_us total=61356 present=2391 rb=44796 scene=4194 script=0 events=14 sprite_px=145032 present_px=83181 sprites=9 maxspr=460x260
+Script : AUTOPILOT phase=audio status=ok tick=3586 room=3
+Game : (room:3) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:3) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=shots status=begin tick=3586 room=3
+Game : (room:3) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:3) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=shots status=ok tick=3586 room=3
+Game : (room:3) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:3) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Script : AUTOPILOT phase=quit status=begin tick=3586 room=3
+Game : (room:3) [AutoPilot.asc:109] FileOpen: request: $SAVEGAMEDIR$/AUTOPLT.LOG, mode: ab
+Game : (room:3) [AutoPilot.asc:109] FileOpen: success, handle 1, path: ././AUTOPLT.LOG
+Quitting the game...
+Set game text language: 
+Set locale: 
+***** ENGINE HAS SHUTDOWN
+DOS-PORT bgstruct_final calls=3108 whole=22 px=36644407 slow_px=0
+DOS-PORT bgspans n=540522 lt16=25455 lt64=376707 ge64=138360 mean_px=67
+DOS-PORT evtype none n=0 us=0
+DOS-PORT evtype script n=135 us=79815113
+DOS-PORT evtype object n=284 us=99356113
+DOS-PORT evtype fadein n=9 us=66255177
+DOS-PORT evtype gui n=0 us=0
+DOS-PORT evtype newroom n=0 us=0
+DOS-PORT evobj room n=153 us=99339262
+DOS-PORT evobj hotspot n=131 us=16851
+DOS-PORT afterfadein gui_n=9 gui_us=142 log_n=9 log_us=45719 line_n=9 line_us=10173
+DOS-PORT afterfadein_script us=53434850
+DOS-PORT afterfadein onevent_n=9 onevent_us=79152050 nested_us=32575927
+DOS-PORT dirtysrc other n=0 px=0
+DOS-PORT dirtysrc roomsprite n=14044 px=23553379
+DOS-PORT dirtysrc uisprite n=606 px=9590000
+DOS-PORT dirtysrc cursor n=3099 px=147136
+DOS-PORT dirtysrc screen n=0 px=0
+DOS-PORT dirtysrc carry n=15063 px=35222037
+DOS-PORT vblank vsync_leg=0 dac_leg=0 called=0 skipped=0
+DOS-PORT vblank2 vsync_leg=0 dac_leg=0 called=0 skipped=0
+DOS-PORT fade8 steps=0 interp_us=0 setpal_us=0
+DOS-PORT flushpath banked=0 lfb=0 vblank_entered=0 fb_created=1
+DOS-PORT objsetup setview_n=3 setview_us=98 animate_n=3 animate_us=7415 visible_n=2 visible_us=3157
+DOS-PORT scfile open_n=39 open_us=8670744 write_n=39 write_us=5002 close_n=39 close_us=521815
+DOS-PORT dirtycarry presents=3107 boxes=15063 full=0
+DOS-PORT guitally idx=1 n=1 unchanged=0 changed=1 skipped=0
+DOS-PORT guitally idx=7 n=154 unchanged=153 changed=1 skipped=153
+DOS-PORT guiskip flushed=51 late=0 hidden=4 props=0 flag=47
+DOS-PORT guiflush idx=0 n=1
+DOS-PORT guiflush idx=2 n=37
+DOS-PORT guiflush idx=3 n=7
+DOS-PORT guiflush idx=4 n=6
+DOS-PORT objflush n=1
+DOS-PORT objflush idx=3 n=1
+DOS-PORT bigguiopaque opaque=0 masked=155
+DOS-PORT biggui_final n=155 unchanged=153 changed=2 pct=98
+DOS-PORT screenshot n=3 us=16645828
+DOS-PORT evinteraction n=281 us=20107795
+DOS-PORT evroom firstenter n=4 us=9092581
+DOS-PORT evroom beforefadein n=9 us=37994
+DOS-PORT evroom repexec n=131 us=81494
+DOS-PORT evroom afterfadein n=9 us=90127193
+DOS-PORT blackfill skipped=3008 done=100 px=548710 rects=100 whole=1
+DOS-PORT pack24 active=1 mode=0x0112 pushed_px=92509388

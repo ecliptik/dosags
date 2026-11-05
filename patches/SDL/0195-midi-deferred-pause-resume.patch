@@ -1,0 +1,198 @@
+From 002de00911634fa0d5303030421e52d96d4bb9c6 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 13:12:56 -0700
+Subject: [PATCH] dos: patch 0195 -- the deferred MIDI replay pauses silently
+ and resumes where it stopped
+
+WHY: with 0193 a port plans its MIDI up to ~2 s ahead into the replay queue. dosags' pause only
+stopped planning, so the queued music kept playing for up to the lookahead and then the notes hung
+(PLAN.md follow-up 4, 2026-09-23). Flushing the queue would lose the planned-ahead song and leave
+the scheduler 2 s ahead of where the music stopped. The pause has to stop the SOUND at once and keep
+the PLAN.
+
+WHAT: SDL_DOSMidiDeferPause(true) holds the replay (the ISR writes nothing; the queue is kept) and
+silences what the replay left sounding: for OPL, every voice whose last 0xB0-group write had the
+key-on bit set is keyed off by rewriting that value with bit 5 cleared (pitch undisturbed); for
+MPU-401, All Notes Off (CC 123) on all 16 channels. SDL_DOSMidiDeferPause(false) moves every queued
+stamp forward by the IRQs the pause lasted, releases the hold, and returns that count so the port
+can shift its own plan. To know what is sounding, the replay now tracks the 18 voices' key-on bits
+and last 0xB0 values on every OPL write it makes (ISR and disable write-out); SDL_DOSMidiDeferKeysOn()
+returns how many are keyed on. Enable(0) (a stop, also during a pause) clears the pause and the hold.
+Notes sounding at the pause are not re-struck on resume, as with a paused MIDI file. Only reachable
+through the opt-in 0193 replay; nothing changes for a port that does not enable it.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ include/SDL3/SDL_dosmidi_tick.h |  6 ++
+ src/audio/dos/SDL_dosaudio_sb.c | 99 +++++++++++++++++++++++++++++++++
+ 2 files changed, 105 insertions(+)
+
+diff --git a/include/SDL3/SDL_dosmidi_tick.h b/include/SDL3/SDL_dosmidi_tick.h
+index fa25a79f7..eefa6647f 100644
+--- a/include/SDL3/SDL_dosmidi_tick.h
++++ b/include/SDL3/SDL_dosmidi_tick.h
+@@ -280,6 +280,12 @@ extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferStats(Uint32 *written, Uint32 *
+ /* Entries discarded unplayed (a disable past its bound, or the device
+    closing with deferral on) and entries a disable wrote from the main thread. */
+ extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferStats2(Uint32 *dropped, Uint32 *sync);
++/* DOS-PORT patch 0195: pause (true) holds the replay, keeps the queue and
++   silences what it left sounding (OPL key-off / MPU All Notes Off); resume
++   (false) shifts the queued stamps by the pause's IRQs, releases the hold and
++   returns that count. KeysOn: OPL voices currently keyed on by the replay. */
++extern SDL_DECLSPEC Uint32 SDLCALL SDL_DOSMidiDeferPause(bool pause);
++extern SDL_DECLSPEC Uint32 SDLCALL SDL_DOSMidiDeferKeysOn(void);
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index 28b163dbe..780b901ee 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -1759,6 +1759,18 @@ static volatile Uint32 g_mdq_full = 0;     /* captures refused because the queue
+ static volatile Uint32 g_mdq_dropped = 0;  /* entries discarded unplayed (bounded disable, device close) */
+ static volatile Uint32 g_mdq_sync = 0;     /* entries written from the main thread by a disable */
+ static bool g_mdq_locked = false;
++/* DOS-PORT patch 0195: OPL key-on state of the 18 voices as last written by
++   the replay (bit v = voice v keyed on), and each voice's last 0xB0-group
++   value (block + F-number high bits), so a pause can key off exactly what is
++   sounding without disturbing pitch. */
++static volatile Uint32 g_mdq_keys = 0;
++static Uint8 g_mdq_b0[18];
++static volatile Uint32 g_mdq_pause_irq = 0;
++static volatile Uint8 g_mdq_paused = 0;
++
++/* The voice a 0xB0-0xB8 register (either bank) addresses, or -1. */
++#define MDQ_B0_VOICE(reg) ((((reg) & 0xFF) >= 0xB0 && ((reg) & 0xFF) <= 0xB8) \
++    ? (int)(((reg) & 0xFF) - 0xB0) + (((reg) >= 0x100) ? 9 : 0) : -1)
+ 
+ static void MidiDeferWriteOne(Uint32 idx)
+ {
+@@ -1780,6 +1792,13 @@ static void MidiDeferWriteOne(Uint32 idx)
+     for (int i = 0; i < 6; i++) {
+         (void)inportb(0x388);
+     }
++    { /* DOS-PORT patch 0195: track key-on */
++        const int v = MDQ_B0_VOICE(reg);
++        if (v >= 0) {
++            g_mdq_b0[v] = val;
++            if (val & 0x20) g_mdq_keys |= (1u << v); else g_mdq_keys &= ~(1u << v);
++        }
++    }
+ }
+ 
+ static void MidiDeferDrain(Uint32 irq_now)
+@@ -1922,6 +1941,11 @@ bool SDL_DOSMidiDeferEnable(int kind)
+                     for (int i = 0; i < 6; i++) (void)inportb(0x388);
+                     outportb((reg < 0x100) ? 0x389 : 0x38B, g_mdq_val[idx]);
+                     for (int i = 0; i < 6; i++) (void)inportb(0x388);
++                    const int v = MDQ_B0_VOICE(reg); /* DOS-PORT patch 0195 */
++                    if (v >= 0) {
++                        g_mdq_b0[v] = g_mdq_val[idx];
++                        if (g_mdq_val[idx] & 0x20) g_mdq_keys |= (1u << v); else g_mdq_keys &= ~(1u << v);
++                    }
+                 }
+                 g_mdq_head = g_mdq_head + 1u;
+                 done++;
+@@ -1931,6 +1955,8 @@ bool SDL_DOSMidiDeferEnable(int kind)
+         g_mdq_sync += done;
+         g_mdq_dropped += g_mdq_tail - g_mdq_head;
+         g_mdq_head = g_mdq_tail;
++        g_mdq_paused = 0; /* DOS-PORT patch 0195: a stop while paused ends the pause */
++        g_mdq_hold = 0;
+         return true;
+     }
+     if (!g_dos_sb_device_open || (kind != 1 && kind != 2)) {
+@@ -1952,16 +1978,89 @@ bool SDL_DOSMidiDeferEnable(int kind)
+         DOS_LockVariable(g_mdq_late);
+         DOS_LockVariable(g_mdq_late_max);
+         DOS_LockVariable(g_mdq_burst_max);
++        DOS_LockVariable(g_mdq_keys); /* DOS-PORT patch 0195 */
++        DOS_LockData(g_mdq_b0, sizeof(g_mdq_b0));
+         g_mdq_locked = true;
+     }
+     DOS_DisableInterrupts();
+     g_mdq_head = g_mdq_tail;
+     g_mdq_stamp_now = dos_port_audio_irq_count;
++    g_mdq_keys = 0; /* DOS-PORT patch 0195: the sink's init keys every voice off */
++    g_mdq_paused = 0;
+     g_mdq_kind = (Uint8)kind;
+     DOS_EnableInterrupts();
+     return true;
+ }
+ 
++/* DOS-PORT patch 0195: pause / resume the replay the way a main-loop poll's
++   pause sounded -- but silent, not holding notes.
++   Pause: hold the replay (the ISR writes nothing; the planned-ahead queue is
++   KEPT), then key off every OPL voice the replay left sounding, writing its
++   last 0xB0 value with the key-on bit cleared (pitch undisturbed), or send
++   All Notes Off (CC 123) on all 16 channels for MPU-401; returns 0.
++   Resume: move every queued stamp forward by the IRQs the pause lasted, so
++   the rest of the plan plays from where it stopped, and release the hold;
++   returns that number of IRQs (the port shifts its own plan by the same).
++   Notes that were sounding at the pause are not re-struck (as a paused MIDI
++   file would). No-op when deferral is off. */
++Uint32 SDL_DOSMidiDeferPause(bool pause)
++{
++    if (g_mdq_kind == 0) {
++        return 0;
++    }
++    if (pause) {
++        if (g_mdq_paused) {
++            return 0;
++        }
++        g_mdq_hold = 1;
++        g_mdq_paused = 1;
++        g_mdq_pause_irq = dos_port_audio_irq_count;
++        DOS_DisableInterrupts();
++        if (g_mdq_kind == 1) {
++            for (int v = 0; v < 18; v++) {
++                if (!(g_mdq_keys & (1u << v))) {
++                    continue;
++                }
++                const Uint16 reg = (Uint16)((v < 9) ? (0xB0 + v) : (0x100 + 0xB0 + (v - 9)));
++                const Uint8 val = (Uint8)(g_mdq_b0[v] & ~0x20);
++                outportb((reg < 0x100) ? 0x388 : 0x38A, (Uint8)(reg & 0xFF));
++                for (int i = 0; i < 6; i++) (void)inportb(0x388);
++                outportb((reg < 0x100) ? 0x389 : 0x38B, val);
++                for (int i = 0; i < 6; i++) (void)inportb(0x388);
++                g_mdq_b0[v] = val;
++            }
++            g_mdq_keys = 0;
++        } else {
++            for (int ch = 0; ch < 16; ch++) {
++                outportb(g_mdq_mpu_base, (Uint8)(0xB0 | ch));
++                outportb(g_mdq_mpu_base, 123);
++                outportb(g_mdq_mpu_base, 0);
++            }
++        }
++        DOS_EnableInterrupts();
++        return 0;
++    }
++    if (!g_mdq_paused) {
++        return 0;
++    }
++    DOS_DisableInterrupts();
++    const Uint32 delta = dos_port_audio_irq_count - g_mdq_pause_irq;
++    for (Uint32 i = g_mdq_head; i != g_mdq_tail; i++) {
++        g_mdq_stamp[i & (MIDI_DEFER_QUEUE - 1u)] += delta;
++    }
++    g_mdq_paused = 0;
++    g_mdq_hold = 0;
++    DOS_EnableInterrupts();
++    return delta;
++}
++
++Uint32 SDL_DOSMidiDeferKeysOn(void)
++{
++    Uint32 k = g_mdq_keys, n = 0;
++    while (k) { n += k & 1u; k >>= 1; }
++    return n;
++}
++
+ // The IRQ handler. Copies one chunk from the ring buffer into the DMA
+ // half-buffer that the hardware isn't currently playing. If the ring is
+ // empty it fills with silence (no stutter, just a brief gap).
+-- 
+2.47.3
+

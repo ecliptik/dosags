@@ -1,0 +1,13 @@
+G2R1 -- VOID (cell ran, wrong rung; see PLAN.md work-order step 1, 2026-09-21)
+
+Staged ACSETUP-OFF.CFG (fullscreen = full_window) instead of
+tests/harness/presentation/bench8/ACSETUP-OFF-NATIVE.CFG (fullscreen = native),
+so the engine ran the 640x480 2x rung, not Mode 13h. Void conditions tripped:
+no "vscreen alias ON" line; blit_path unscaled=0.
+
+G2R1.LOG holds TWO run manifests: the first (binary_sha12=327be2b29809, started
+2026-09-20) is a previous run that used the same tag; the second is this run.
+G2R1SDL.LOG is the previous run's stale trace, not this run's (this binary has
+the trace off). AUTOPLT.LOG, STDOUT.TXT, PH01.BMP are this run's.
+
+Not a Gate 2 figure. Retained as raw data only.

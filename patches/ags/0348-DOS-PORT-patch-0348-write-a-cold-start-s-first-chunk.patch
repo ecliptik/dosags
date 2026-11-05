@@ -1,0 +1,190 @@
+From e22110d8849dfcacd25d3019b4a23e4ef651f930 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 29 Sep 2026 13:39:10 -0700
+Subject: [PATCH] DOS-PORT: patch 0348 -- write a cold start's first chunk on
+ its first PutData, not at the end of the next pump
+
+A sound starting into an idle device (music is OPL/MIDI, so most SFX
+start that way) reached the SB ring only at the end of the next pump,
+after the mixer had topped the SDL stream up to ~186 ms: ~4.6 ms of
+mixing on the 486, ~2.2 ms under DOSBox-X. An SB IRQ in that window
+found the ring empty and played silence, so the sound started one DMA
+half (~46 ms) later than it could have. The lab probe put this at ~10%
+of cold starts on the 486 (round CS, lab-mmd/gate/COLDSTART3.md), and
+since 0347 it is counted as start_latency_irqs. The operator's decision
+is to cut it as well as count it.
+
+One of CS's five cases was a priming pump that wrote nothing at all.
+The likely cause is SDL/0067's runaway cap in SDL_DOSAudioPump: after
+32 calls in a row that left room, it returns without iterating. An idle
+ring always has room, so about one idle call in 33 skips (DOSBox-X S16
+logs show 631-878 cap trips per run). That link is not shown for the
+CS event itself.
+
+Now, on a sound's first PutData, if the device is idle (no other voice
+has unmixed data, the SDL stream is empty, the ring holds less than one
+chunk), the mixer mixes one chunk and writes it to the ring at once. If
+the stream still holds that chunk afterwards (the cap skipped), it calls
+SDL_DOSAudioPump once more. The samples are the same ones the next pump
+would have mixed, just written earlier; the pump's top-up, warm starts
+and other voices are unchanged. The 0347 episode starts after the write.
+The mixer status gains primes= and prime_retries=; g_last_status and the
+status-string buffer grow 1552 -> 1600 for them.
+
+Fix, 2026-09-29 (from review, before landing): the prime also fires when
+a voice that starved mid-sound gets data again, since its ring is empty
+then too. The first cut reset the 0347 snapshots and episode flags there
+without classifying the interval pending since the last pump, which
+erased that starvation's silent IRQs and let the next one pass as start
+latency. Now, if audio was already owed, the pending interval is
+classified first and the episode continues; only a start from nothing
+owed begins a new episode. Scope: that path needs a voice whose ring
+starved (its source fell behind; the mixer zero-fills it meanwhile, so
+the SB ring stays fed) AND a main-loop stall lined up with its late
+data, long enough for the SB ring to run dry while owed; lab test T5
+forces exactly that (lab-mmd/gate/COUNTER.md).
+
+Port-side only. The cap is SDL3-DOS behaviour; a hub refinement (not
+counting no-write calls toward it) would be a separate change.
+---
+ Engine/platform/dos/dos_audio_mixer.cpp | 72 ++++++++++++++++++++++---
+ 1 file changed, 66 insertions(+), 6 deletions(-)
+
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index 9817bdb68..df53f0279 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -157,6 +157,9 @@ uint32_t g_start_latency_irqs = 0;
+ static uint32_t g_silent_end = 0, g_sounded_start = 0, g_sounded_end = 0;
+ static bool g_episode_sounded = false;
+ static bool g_episode_latency_taken = false; // the one start-latency IRQ an episode may have
++// DOS-PORT patch 0348: cold-start primes (a sound's first chunk written to the SB ring on its first PutData into an
++// idle device) and the retries a prime needed because SDL_DOSAudioPump returned without writing.
++uint32_t g_primes = 0, g_prime_retries = 0;
+ uint32_t g_pcm_irq_base = 0;
+ 
+ // DOS-PORT (patch 0201): ring overrun witnesses. overwrites = SDL 0190's
+@@ -182,7 +185,7 @@ uint32_t g_room_since = 0;
+ // shutdown_sound()) still reports the real final state instead of the
+ // "never opened" NA sentinel. Left at "NA" if the device was never
+ // opened at all, so that genuine case is still distinguishable.
+-char g_last_status[1552] = "NA"; // patch 0252: 512 -> 640, room for mixed=,...,inflight= beside 0213's fields; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280; patch 0341: -> 1472 (1443 B with the RTC pump's fields); patch 0346: -> 1520 (preroll=, <= 48 B); patch 0347: -> 1552 (start_latency_irqs=, <= 30 B: 1522 B worst case)
++char g_last_status[1600] = "NA"; // patch 0252: 512 -> 640, room for mixed=,...,inflight= beside 0213's fields; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280; patch 0341: -> 1472 (1443 B with the RTC pump's fields); patch 0346: -> 1520 (preroll=, <= 48 B); patch 0347: -> 1552 (start_latency_irqs=, <= 30 B: 1522 B worst case); patch 0348: -> 1600 (primes=,prime_retries=, <= 43 B: 1565 B worst case)
+ 
+ void format_status_string(char *buf, size_t bufsize)
+ {
+@@ -195,13 +198,16 @@ void format_status_string(char *buf, size_t bufsize)
+     // "midi=<backend>,events=<n>" fragment now -- S1 hardcoded ";midi=none"
+     // here since no MIDI backend existed yet.
+     dos_midi_backend_status_fragment(midi_fragment, sizeof(midi_fragment));
+-    char irq_fragment[96];
++    char irq_fragment[128];
+     if (g_gus_backend)
+-        std::snprintf(irq_fragment, sizeof(irq_fragment), "pcm_irqs=NA,silent_irqs=NA,start_latency_irqs=NA");
++        std::snprintf(irq_fragment, sizeof(irq_fragment),
++            "pcm_irqs=NA,silent_irqs=NA,start_latency_irqs=NA,primes=NA,prime_retries=NA");
+     else
+-        std::snprintf(irq_fragment, sizeof(irq_fragment), "pcm_irqs=%u,silent_irqs=%u,start_latency_irqs=%u",
++        std::snprintf(irq_fragment, sizeof(irq_fragment),
++            "pcm_irqs=%u,silent_irqs=%u,start_latency_irqs=%u,primes=%u,prime_retries=%u",
+             (unsigned)(dos_port_audio_sfx_active_count - g_pcm_irq_base), (unsigned)g_owed_silent_irqs,
+-            (unsigned)g_start_latency_irqs); // DOS-PORT patch 0347
++            (unsigned)g_start_latency_irqs, (unsigned)g_primes,
++            (unsigned)g_prime_retries); // DOS-PORT patches 0347, 0348
+     char ring_fragment[160];
+     if (g_gus_backend)
+         std::snprintf(ring_fragment, sizeof(ring_fragment),
+@@ -257,6 +263,7 @@ bool dos_audio_mixer_init()
+     g_owed_at_snap = false;
+     g_silent_snap = dos_port_audio_silent_irq_count;
+     g_start_latency_irqs = 0; // DOS-PORT patch 0347
++    g_primes = g_prime_retries = 0; // DOS-PORT patch 0348
+     g_silent_end = g_silent_snap;
+     g_sounded_start = g_sounded_end = dos_port_audio_sfx_active_count;
+     g_episode_sounded = false;
+@@ -381,6 +388,8 @@ void dos_audio_mixer_voice_release(int voice)
+     g_voices[voice] = Voice();
+ }
+ 
++static void dos_prime_cold_start(int voice); // DOS-PORT patch 0348, defined after mix_one_chunk
++
+ size_t dos_audio_mixer_voice_write(int voice, const void *data, size_t bytes)
+ {
+     if (voice < 0 || voice >= DOS_AUDIO_MIXER_MAX_VOICES || !g_voices[voice].used)
+@@ -395,6 +404,8 @@ size_t dos_audio_mixer_voice_write(int voice, const void *data, size_t bytes)
+         return 0u; // reject the whole chunk; caller retries next frame
+     const uint8_t *bytes_in = static_cast<const uint8_t *>(data);
+     v.ring.insert(v.ring.end(), bytes_in, bytes_in + bytes);
++    if (buffered == 0 && v.active)
++        dos_prime_cold_start(voice); // DOS-PORT patch 0348: no-op unless the device is idle
+     return bytes;
+ }
+ 
+@@ -566,6 +577,55 @@ static void dos_silent_classify(uint32_t d, uint32_t a)
+         g_episode_sounded = true;
+ }
+ 
++// DOS-PORT patch 0348: a sound starting into an idle device used to reach the SB ring only at the end of the next
++// pump, after the stream was topped up to ~186 ms (~4.6 ms of mixing on a 486), so an IRQ in that window played
++// silence and the sound started one half late. On the sound's first PutData into an idle device -- no other voice
++// has unmixed data, the SDL stream is empty, the ring holds less than one chunk -- mix one chunk and write it now.
++// SDL_DOSAudioPump can return without writing (SDL/0067's runaway cap: after 32 calls in a row that left room it
++// skips one; an idle ring always has room), so one retry follows if the stream still holds the chunk. From nothing
++// owed, the 0347 episode starts here, after the write, not yet sounded; if audio was already owed (a voice that
++// starved mid-sound), the episode continues and the pending interval is classified first.
++static void dos_prime_cold_start(int voice)
++{
++    if (!g_stream || g_gus_backend)
++        return;
++    for (int i = 0; i < DOS_AUDIO_MIXER_MAX_VOICES; i++)
++    {
++        const Voice &o = g_voices[i];
++        if (i != voice && o.used && o.active && o.ring.size() > o.read_pos)
++            return;
++    }
++    if (SDL_GetAudioStreamQueued(g_stream) > 0 || SDL_DOSAudioRingFillFrames() >= MIX_CHUNK_SAMPLES)
++        return;
++    bool any_active = false;
++    mix_one_chunk(any_active);
++    if (!any_active)
++        return;
++    SDL_DOSAudioSetContentActive(true);
++    SDL_DOSAudioPump();
++    g_primes++;
++    if (SDL_GetAudioStreamQueued(g_stream) > 0)
++    {
++        SDL_DOSAudioPump();
++        g_prime_retries++;
++    }
++    // The prime also fires when a voice that starved mid-sound gets data again (its ring was empty). If audio was
++    // already owed, the episode continues: classify the silent IRQs pending since the last pump's end (a real
++    // dropout if the episode had sounded) and keep its flags. Only a start from nothing owed begins a new episode.
++    const uint32_t silent_now = dos_port_audio_silent_irq_count;
++    const uint32_t sounded_now = dos_port_audio_sfx_active_count;
++    if (g_owed_at_snap)
++        dos_silent_classify(silent_now - g_silent_end, sounded_now - g_sounded_end);
++    else
++    {
++        g_episode_sounded = false;
++        g_episode_latency_taken = false;
++    }
++    g_silent_end = silent_now;
++    g_sounded_end = sounded_now;
++    g_owed_at_snap = true;
++}
++
+ void dos_audio_mixer_pump()
+ {
+     dos_midi_stream_sample();   // DOS-PORT patch 0253: once per tick
+@@ -703,7 +763,7 @@ const char *dos_audio_mixer_status_string()
+ {
+     if (!g_stream && !g_gus_open)
+         return g_last_status; // "NA" if never opened, else the shutdown-time snapshot
+-    static char buf[1552];   // patch 0252: 512 -> 640; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280; patch 0341: -> 1472; patch 0346: -> 1520; patch 0347: -> 1552 (see g_last_status)
++    static char buf[1600];   // patch 0252: 512 -> 640; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280; patch 0341: -> 1472; patch 0346: -> 1520; patch 0347: -> 1552; patch 0348: -> 1600 (see g_last_status)
+     format_status_string(buf, sizeof(buf));
+     return buf;
+ }
+-- 
+2.47.3
+

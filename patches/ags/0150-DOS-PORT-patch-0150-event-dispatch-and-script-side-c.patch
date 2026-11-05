@@ -1,0 +1,446 @@
+From 6570d09a6300e7f653f076a2fcd51fbf0596c4c3 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 21 Sep 2026 11:17:30 -0700
+Subject: [PATCH] DOS-PORT: patch 0150 -- event-dispatch and script-side cost
+ attribution
+
+Consolidates 0150, 0151, 0154, 0155, 0156, 0157, 0158, 0159, 0179, 0180 and
+0181, across ac/event.cpp, ac/file.cpp, ac/global_game.cpp and ac/object.cpp.
+
+Why. Blocking ticks of several seconds (AfterFadein at 7.53 s per dispatch on
+hardware, 11-13% script_vm) sat behind one process_events_dispatch bracket
+that was six different things. Each candidate is bracketed instead of argued:
+- 0150/0151: per-event-type and per-room-event cost.
+- 0154: the interaction run alone, by subtraction from the per-event total.
+- 0155/0156/0157: the AfterFadein pre-amble. 0155 opened its scope too early
+  and swallowed run_on_event; 0157 closes it where the logging ends. Only the
+  corrected scope is in the tree, and that mis-scope is why "AfterFadein is
+  our own logging" was retracted.
+- 0158: SaveScreenShot, to separate the fixture's own overhead.
+- 0159: nested-tick time inside the dispatch, to tell a screen that keeps
+  animating from one that freezes.
+- 0179: Object_SetView / Animate / SetVisible, the per-object scene-setup cost.
+- 0180: the script_vm delta inside the dispatch, so it decomposes instead of
+  leaving a residual.
+- 0181: sc_OpenFile / WriteRawLine / Close, the script's own file I/O.
+
+Timing only; no control flow changes. Needs dos_tick_nested_us from 0140.
+
+Provenance of this export (2026-09-21): these edits sat uncommitted in the
+vendor tree from patch 0123 onward, which is why every gate cell since said
+build_dirty=1. They were made under one campaign-wide patch counter shared
+with vendor/SDL, and each hunk carries its number in an in-source comment.
+Intermediate states were never committed, so this patch is a hunk-level
+partition of the final tree by concern, attributed by those comments -- not a
+replay of the order the edits were made in, and its intermediate state was not
+built on its own. The numbers named below are the ones found in its hunks.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/ac/event.cpp       | 171 +++++++++++++++++++++++++++++++++++++-
+ Engine/ac/file.cpp        |  45 ++++++++++
+ Engine/ac/global_game.cpp |  25 ++++++
+ Engine/ac/object.cpp      |  42 ++++++++++
+ 4 files changed, 282 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/ac/event.cpp b/Engine/ac/event.cpp
+index 42d4d4c06..927a10a4d 100644
+--- a/Engine/ac/event.cpp
++++ b/Engine/ac/event.cpp
+@@ -155,9 +155,101 @@ void force_event(const AGSEvent &evt)
+         setevent(evt);
+ }
+ 
++#ifdef __DJGPP__
++// DOS-PORT patch 0150: per-event-type cost inside process_events_dispatch.
++//
++// gem's six-second ticks are 11-13% script_vm and essentially 100%
++// process_events_dispatch, with children_ms only 465 of 6321 -- so the
++// time is NOT a nested game loop, it is a tight path inside event
++// dispatch. "Event dispatch" is six different things behind one bracket,
++// exactly as "scene_construct" turned out to be, and that decomposition
++// found draw_preroom_background at 55% of a term whose name promised
++// something else. Same treatment.
++//
++// Indexed by AGSGameEventType (0..5), with kAGSEvent_Object split by its
++// own sub-type, which is where a hotspot interaction would land.
++long long dos_port_evt_us[6] = {0,0,0,0,0,0};
++long      dos_port_evt_n[6]  = {0,0,0,0,0,0};
++long long dos_port_evt_obj_us[8] = {0,0,0,0,0,0,0,0};
++long      dos_port_evt_obj_n[8]  = {0,0,0,0,0,0,0,0};
++// patch 0151: and WHICH room event. kObjEventType_Room is 153 dispatches
++// at 324 ms each while kObjEventType_Hotspot is 131 at a microsecond
++// apiece, so the cost is one specific room event, not "room events".
++// Indexed by AGSRoomEventType (0..11): Edge* 0-3, FirstEnter 4,
++// BeforeFadein 5, Repexec 6, AfterFadein 7, Before/AfterFadeout 8-9.
++long long dos_port_evt_room_us[12] = {0,0,0,0,0,0,0,0,0,0,0,0};
++long      dos_port_evt_room_n[12]  = {0,0,0,0,0,0,0,0,0,0,0,0};
++
++// patch 0155: two candidates inside the AfterFadein pre-amble.
++long long dos_port_afterfadein_gui_us = 0;  long dos_port_afterfadein_gui_n = 0;
++long long dos_port_afterfadein_log_us = 0;  long dos_port_afterfadein_log_n = 0;
++long long dos_port_afterfadein_line_us = 0; long dos_port_afterfadein_line_n = 0;
++long long dos_port_afterfadein_onevent_us = 0; long dos_port_afterfadein_onevent_n = 0;
++long long dos_port_afterfadein_script_us = 0;   // patch 0180
++long long dos_port_afterfadein_nested_us = 0;   // patch 0159
++
++struct DosPortNamedScope
++{
++    uclock_t t0; long long *us; long *n;
++    DosPortNamedScope(long long &u, long &c) : t0(uclock()), us(&u), n(&c) {}
++    // patch 0157: closable, so a scope can end where the thing it measures
++    // ends rather than where the enclosing block happens to.
++    void close()
++    {
++        if (!us) return;
++        long long d = (long long)(uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC;
++        if (d < 0) d = 0;
++        *us += d; (*n)++;
++        us = nullptr; n = nullptr;
++    }
++    ~DosPortNamedScope() { close(); }
++};
++
++// patch 0154: time spent actually running the interaction, as opposed to
++// everything else process_event does around it.
++long long dos_port_evt_interaction_us = 0;
++long      dos_port_evt_interaction_n  = 0;
++
++struct DosPortEventInteractionScope
++{
++    uclock_t t0;
++    DosPortEventInteractionScope() : t0(uclock()) {}
++    ~DosPortEventInteractionScope()
++    {
++        long long us = (long long)(uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC;
++        if (us < 0) us = 0;
++        dos_port_evt_interaction_us += us;
++        dos_port_evt_interaction_n++;
++    }
++};
++
++struct DosPortEventScope
++{
++    uclock_t t0; int type; int sub; int roomev;
++    DosPortEventScope(int ty, int sb, int rv)
++        : t0(uclock()), type(ty), sub(sb), roomev(rv) {}
++    ~DosPortEventScope()
++    {
++        long long us = (long long)(uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC;
++        if (us < 0) us = 0;
++        if (type >= 0 && type < 6) { dos_port_evt_us[type] += us; dos_port_evt_n[type]++; }
++        if (sub >= 0 && sub < 8)   { dos_port_evt_obj_us[sub] += us; dos_port_evt_obj_n[sub]++; }
++        if (roomev >= 0 && roomev < 12)
++        { dos_port_evt_room_us[roomev] += us; dos_port_evt_room_n[roomev]++; }
++    }
++};
++#endif
++
+ void process_event(const AGSEvent *evp)
+ {
+     const int room_was = play.room_changes;
++#ifdef __DJGPP__
++    DosPortEventScope _dp_evt((int)evp->Type,
++        evp->Type == kAGSEvent_Object ? (int)evp->Data.Object.ObjEvType : -1,
++        (evp->Type == kAGSEvent_Object &&
++         evp->Data.Object.ObjEvType == kObjEventType_Room)
++            ? (int)evp->Data.Object.ObjEvent : -1);
++#endif
+ 
+     RuntimeScriptValue rval_null;
+     if (evp->Type == kAGSEvent_Script)
+@@ -230,7 +322,24 @@ void process_event(const AGSEvent *evp)
+             else if (obj.ObjEvent == kRoomEvent_AfterFadein)
+             {
+                 in_room_transition = false;
++#ifdef __DJGPP__
++                // patch 0155: AfterFadein is 7.53 s per dispatch on hardware
++                // and only 11-13% script_vm, and patch 0154 ruled out the
++                // interaction run (10.7 s across ALL 281 object events, against
++                // 40.9 s for these nine alone). So the cost is in this
++                // pre-amble, and there are exactly two candidates: the GUI
++                // label marking, and the logging block below. Bracket both
++                // rather than guess -- guessing has been wrong at every step
++                // of this particular chase.
++                { DosPortNamedScope _dp(dos_port_afterfadein_gui_us,
++                                        dos_port_afterfadein_gui_n);
++#endif
+                 GUIE::MarkSpecialLabelsForUpdate(kLabelMacro_Overhotspot);
++#ifdef __DJGPP__
++                }
++                DosPortNamedScope _dp_log(dos_port_afterfadein_log_us,
++                                          dos_port_afterfadein_log_n);
++#endif
+ #ifdef __DJGPP__
+                 // DOS-PORT: paired with new_room()'s own "start" timestamp
+                 // (room.cpp) for room-transition-latency instrumentation --
+@@ -242,7 +351,14 @@ void process_event(const AGSEvent *evp)
+                 {
+                     extern uclock_t dos_port_engine_start_uclock;
+                     long t_ms = (long)((uclock() - dos_port_engine_start_uclock) * 1000 / UCLOCKS_PER_SEC);
+-                    debug_script_log("DOS-PORT room_transition t_ms=%ld event=ready room=%d", t_ms, displayed_room);
++                    {   // patch 0156: ONE line, timed on its own. This decides
++                        // how bad the finding is: a one-shot startup report is
++                        // a first-room cost, while 4 seconds on every room
++                        // entry is a per-transition tax on every measurement.
++                        DosPortNamedScope _dp1(dos_port_afterfadein_line_us,
++                                               dos_port_afterfadein_line_n);
++                        debug_script_log("DOS-PORT room_transition t_ms=%ld event=ready room=%d", t_ms, displayed_room);
++                    }
+ 
+                     // DOS-PORT patch 0078: this is also "first interactive
+                     // frame" for the startup-timing report -- emit it here,
+@@ -301,6 +417,44 @@ void process_event(const AGSEvent *evp)
+                         debug_script_log("[DOS-PORT-STARTUP-END]");
+                     }
+                 }
++#endif
++#ifdef __DJGPP__
++                // patch 0157: CLOSE the logging scope here.
++                //
++                // 0155 opened it before the #ifdef block and let it run to
++                // the end of the else-if, so it covered run_on_event() as
++                // well -- and I reported "AfterFadein is our own logging"
++                // on the strength of it. It is not measuring logging; it is
++                // measuring logging plus the RoomAfterFadein script
++                // dispatch. A single log line is 48 us (line_us=432 over
++                // nine), so ~40 of them cannot be 38 seconds, and that
++                // contradiction is what exposed the mis-scope.
++                _dp_log.close();
++                // patch 0159: total AND the nested-tick time inside it. If
++                // run_on_event's seconds are nearly all self with almost no
++                // nested ticks, the loop never ran and the screen was frozen
++                // -- which is a defect, not the game responding to a click.
++                extern long long dos_tick_nested_us;
++                const long long _dp_nest0 = dos_tick_nested_us;
++                struct _DpNest {
++                    const long long &now; long long before;
++                    ~_DpNest() { dos_port_afterfadein_nested_us += (now - before); }
++                } _dp_nest{dos_tick_nested_us, _dp_nest0};
++                // patch 0180: the script_vm delta INSIDE this dispatch, so
++                // the 570 ms decomposes rather than leaving a residual.
++                //   afterfadein total
++                //     - script_vm within it   = engine dispatch overhead
++                //   script_vm within it
++                //     - the three object calls = our script's own bytecode
++                // A residual is the error bar on coverage, not a term, so
++                // each piece gets measured instead of subtracted.
++                const long long _dp_sv0 = dos_port_tick_timing.script_vm.total_us;
++                struct _DpSv {
++                    const long long &now; long long before;
++                    ~_DpSv() { dos_port_afterfadein_script_us += (now - before); }
++                } _dp_sv{dos_port_tick_timing.script_vm.total_us, _dp_sv0};
++                DosPortNamedScope _dp_onevent(dos_port_afterfadein_onevent_us,
++                                              dos_port_afterfadein_onevent_n);
+ #endif
+                 run_on_event(kScriptEvent_RoomAfterFadein, displayed_room);
+             }
+@@ -323,6 +477,18 @@ void process_event(const AGSEvent *evp)
+         }
+ 
+         assert(obj_inter || obj_events);
++#ifdef __DJGPP__
++        // patch 0154: split an AfterFadein dispatch into the two things it
++        // can be. Its 7.53 s on hardware is only 11-13% script_vm, so the
++        // cost is either the pre-amble in the switch above (flag setting
++        // and MarkSpecialLabelsForUpdate) or the interaction run below.
++        // Bracketing the interaction run alone answers it by subtraction
++        // from the per-event total we already have -- and a residual is
++        // not a term, so whichever side it lands on gets its own bracket
++        // next rather than an assumption.
++        {
++        DosPortEventInteractionScope _dp_ix;
++#endif
+         if (obj_events)
+         {
+             run_interaction_script(obj_evt, obj_events, obj.ObjEvent);
+@@ -331,6 +497,9 @@ void process_event(const AGSEvent *evp)
+         {
+             run_interaction_event(obj_evt, obj_inter, obj.ObjEvent);
+         }
++#ifdef __DJGPP__
++        }
++#endif
+ 
+         if ((obj.ObjEvType == kObjEventType_Room) && (obj.ObjEvent == kRoomEvent_BeforeFadein))
+             in_enters_screen = false;
+diff --git a/Engine/ac/file.cpp b/Engine/ac/file.cpp
+index 513061e88..ad68a606a 100644
+--- a/Engine/ac/file.cpp
++++ b/Engine/ac/file.cpp
+@@ -215,7 +215,46 @@ void *File_GetFiles(const char *filemask, int file_sort, int sort_dir)
+     return arr.Obj();
+ }
+ 
++
++#ifdef __DJGPP__
++// DOS-PORT patch 0181: bracket the SCRIPT's file I/O directly.
++//
++// BENCH8's AfterFadein dispatch is 583 ms, of which the three object calls
++// are 6.5% and ~508 ms is our script's other work. The candidate is
++// AutoPilot.asc's WriteLog doing File.Open(eFileAppend) -> WriteRawLine ->
++// Close per line -- on a CF card through DOS FAT that is a directory scan
++// per open and a FAT flush per close.
++//
++// 169 ms per line is currently a RESIDUAL divided by a line count, which is
++// the same move that produced a phantom 4.4 ms term earlier today. This
++// measures the writes instead of subtracting around them.
++//
++// And it has a twin that was already wrong: "AfterFadein is our own
++// logging" reached the operator this morning and was false -- a scope
++// opened before an #ifdef swallowed the call after it. That was the PORT's
++// debug_script_log at 1.9 ms; this is the FIXTURE's script doing real file
++// writes, a different mechanism with an identical-looking sentence. So the
++// count matters as much as the time: 169 ms x N must reconcile against the
++// fixed component, or the candidate is wrong however slow one write is.
++#include <time.h>
++long long dos_port_scfile_open_us = 0;   long dos_port_scfile_open_n = 0;
++long long dos_port_scfile_write_us = 0;  long dos_port_scfile_write_n = 0;
++long long dos_port_scfile_close_us = 0;  long dos_port_scfile_close_n = 0;
++struct DosPortFileScope {
++    uclock_t t0; long long *us; long *n;
++    DosPortFileScope(long long &u, long &c) : t0(uclock()), us(&u), n(&c) {}
++    ~DosPortFileScope() {
++        long long d = (long long)(uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC;
++        if (d < 0) d = 0;
++        *us += d; (*n)++;
++    }
++};
++#endif
++
+ void *sc_OpenFile(const char *fnmm, int mode) {
++#ifdef __DJGPP__
++    DosPortFileScope _dp(dos_port_scfile_open_us, dos_port_scfile_open_n);
++#endif
+   if ((mode < scFileRead) || (mode > scFileAppend))
+     quit("!OpenFile: invalid file mode");
+ 
+@@ -237,6 +276,9 @@ const char *File_ResolvePath(const char *fnmm)
+ }
+ 
+ void File_Close(sc_File *fil) {
++#ifdef __DJGPP__
++    DosPortFileScope _dp(dos_port_scfile_close_us, dos_port_scfile_close_n);
++#endif
+   fil->Close();
+ }
+ 
+@@ -269,6 +311,9 @@ void File_WriteRawInt(sc_File *fil, int towrite) {
+ }
+ 
+ void File_WriteRawLine(sc_File *fil, const char *towrite) {
++#ifdef __DJGPP__
++    DosPortFileScope _dp(dos_port_scfile_write_us, dos_port_scfile_write_n);
++#endif
+   FileWriteRawLine(fil->handle, towrite);
+ }
+ 
+diff --git a/Engine/ac/global_game.cpp b/Engine/ac/global_game.cpp
+index f9a327f1c..e319528ce 100644
+--- a/Engine/ac/global_game.cpp
++++ b/Engine/ac/global_game.cpp
+@@ -894,8 +894,33 @@ void *GetPressedKeys()
+     return arr.Obj();
+ }
+ 
++#ifdef __DJGPP__
++// DOS-PORT patch 0158: how much of AfterFadein is our own screenshot.
++//
++// AfterFadein's 7.53 s/event is run_on_event -> QueueScriptFunction ->
++// the game's on_event, run synchronously because nothing is inside a
++// script at that point. Our AutoPilot overlay hooks that event and does
++// two things there: SaveScreenShot (pure fixture overhead) and RunHotspot
++// (the autopilot driving the game, which a player's click would also
++// cost). Only the first is an artefact. This brackets it so the two can
++// be separated instead of argued about.
++long long dos_port_screenshot_us = 0;
++long dos_port_screenshot_n = 0;
++#endif
++
+ int SaveScreenShot4(const char *namm, int width, int height, int layers)
+ {
++#ifdef __DJGPP__
++    const uclock_t _dp_ss_t0 = uclock();
++    struct _DpSs {
++        uclock_t t0;
++        ~_DpSs() {
++            long long d = (long long)(uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC;
++            if (d < 0) d = 0;
++            dos_port_screenshot_us += d; dos_port_screenshot_n++;
++        }
++    } _dp_ss{_dp_ss_t0};
++#endif
+     String filepath = namm;
+     String ext = Path::GetFileExtension(filepath);
+     if (ext.IsEmpty())
+diff --git a/Engine/ac/object.cpp b/Engine/ac/object.cpp
+index da6f02147..c99d9a366 100644
+--- a/Engine/ac/object.cpp
++++ b/Engine/ac/object.cpp
+@@ -105,7 +105,43 @@ void Object_RemoveTint(ScriptObject *objj) {
+     RemoveObjectTint(objj->id);
+ }
+ 
++
++#ifdef __DJGPP__
++// DOS-PORT patch 0179: split the AfterFadein scene-setup cost.
++//
++// BENCH8's AfterFadein dispatch is 570 ms in ONE call, and the anim4/anim12
++// pair puts it at ~30 ms per object on a ~410 ms zero-object baseline. Two
++// different things: the per-object part is what BeginScene's loop does, the
++// baseline is not and a bracket on the loop would say nothing about it.
++//
++// Within the per-object part, script_vm brackets CallScriptFunction, so our
++// script's own bytecode and the engine work it triggers are currently one
++// number -- which is the fixture-versus-port question, and it has gone the
++// port's way twice and the fixture's way never. These three brackets
++// separate the engine calls from each other and from the script.
++//
++// Generality is why this is worth more than Gate 2: at ~30 ms each, ANY AGS
++// game entering a room with twenty objects freezes for six hundred
++// milliseconds on this port, every room change.
++#include <time.h>
++long long dos_port_objsetview_us = 0;  long dos_port_objsetview_n = 0;
++long long dos_port_objanimate_us = 0;  long dos_port_objanimate_n = 0;
++long long dos_port_objvisible_us = 0;  long dos_port_objvisible_n = 0;
++struct DosPortObjScope {
++    uclock_t t0; long long *us; long *n;
++    DosPortObjScope(long long &u, long &c) : t0(uclock()), us(&u), n(&c) {}
++    ~DosPortObjScope() {
++        long long d = (long long)(uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC;
++        if (d < 0) d = 0;
++        *us += d; (*n)++;
++    }
++};
++#endif
++
+ void Object_SetView(ScriptObject *objj, int view, int loop, int frame) {
++#ifdef __DJGPP__
++    DosPortObjScope _dp(dos_port_objsetview_us, dos_port_objsetview_n);
++#endif
+     SetObjectFrameSimple(objj->id, view, loop, frame);
+ }
+ 
+@@ -162,6 +198,9 @@ int Object_GetBaseline(ScriptObject *objj) {
+ 
+ void Object_Animate(ScriptObject *objj, int loop, int delay, int repeat,
+     int blocking, int direction, int sframe, int volume) {
++#ifdef __DJGPP__
++    DosPortObjScope _dp(dos_port_objanimate_us, dos_port_objanimate_n);
++#endif
+     AnimateObjectImpl(objj->id, loop, delay, repeat, direction, blocking, sframe, volume);
+ }
+ 
+@@ -192,6 +231,9 @@ void Object_StopMoving(ScriptObject *objj) {
+ }
+ 
+ void Object_SetVisible(ScriptObject *objj, int onoroff) {
++#ifdef __DJGPP__
++    DosPortObjScope _dp(dos_port_objvisible_us, dos_port_objvisible_n);
++#endif
+     if (onoroff)
+         ObjectOn(objj->id);
+     else
+-- 
+2.47.3
+

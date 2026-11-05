@@ -1,0 +1,205 @@
+From d1bd07332da639b931c6718c7f845948ff064e5b Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 13:44:12 -0700
+Subject: [PATCH] [AGS] Add DJGPP libstdc++ std:: cmath compat shim,
+ force-included for DOS
+
+DJGPP's libstdc++ does not export the C99 <cmath> additions into
+std:: (no _GLIBCXX_USE_C99_MATH or equivalent) -- the underlying C99
+functions are real and present (confirmed: global ::log2/::exp2/
+::round/::trunc/::asinh/::acosh/::atanh are declared by <math.h> and
+work; ::fma exists only as a GCC builtin, no header declaration, also
+confirmed working via a standalone reproduction against the real
+toolchain).
+
+GLM (libsrc/glm, used throughout Engine/Common, not just the disabled
+hardware renderer) calls std::log2/std::exp2/std::round/std::trunc/
+std::fma/std::asinh/std::acosh/std::atanh directly in several of its
+own headers -- the second real source-compile gap found build-testing
+patches 0001-0011, after the STRICT_ANSI one.
+
+A first attempt at this fix just did `using ::round;` etc. into
+namespace std -- wrong, confirmed by a real build failure (GLM's
+internal glm::detail::functor1<...>::call(round, x) dispatch, which
+takes round's address as a float(*)(float) function pointer, reported
+"cannot convert '<unresolved overloaded function type>'"): DJGPP's
+global round/trunc/log2/exp2/asinh/acosh/atanh are each a SINGLE
+double-only overload, not the three (float/double/long double)
+overloads a real C99 <cmath> provides, and GLM's function-pointer-typed
+dispatch needs exactly one unambiguous float-typed candidate to bind
+to.
+
+New Common/platform/dos_compat.h instead declares the f/l-suffixed C99
+variants (confirmed present under DJGPP as GCC builtins with no header
+declaration -- roundf/roundl, truncf/truncl, log2f/log2l, exp2f/exp2l,
+fmaf/fma/fmal, asinhf/asinhl, acoshf/acoshl, atanhf/atanhl) and defines
+three properly disambiguated std:: overloads per function, exactly
+mirroring what a real C99-complete <cmath> would generate. Force-
+included into every C++ translation unit for DOS via -include, since
+GLM is header-only and used broadly rather than from one identifiable
+translation unit. Deliberately a general "DJGPP runtime compat"
+header, not GLM-specific -- Phase C's mutex/condition_variable shim
+(PATCH-SEQUENCE.md, not yet written) is expected to extend it rather
+than create a second file for the same category of gap.
+---
+ CMakeLists.txt               |  11 +++
+ Common/platform/dos_compat.h | 125 +++++++++++++++++++++++++++++++++++
+ 2 files changed, 136 insertions(+)
+ create mode 100644 Common/platform/dos_compat.h
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 7a7758cb8..6158fe3d3 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -137,6 +137,17 @@ if (DOS)
+     # it first, and add_compile_options() here (before any
+     # add_subdirectory() call below) reaches all of them.
+     add_compile_options(-U__STRICT_ANSI__)
++
++    # DOS-PORT: force-include Common/platform/dos_compat.h into every C++
++    # translation unit -- see that file's own header comment for what it
++    # fixes (currently: std::log2/exp2/round/trunc/fma/asinh/acosh/atanh,
++    # missing from DJGPP's libstdc++ <cmath> but needed by GLM, used
++    # throughout Engine/Common). $<COMPILE_LANGUAGE:CXX> scopes this to
++    # C++ compiles only -- the header is __cplusplus-guarded anyway, but
++    # there is no reason to force-include it into C translation units.
++    add_compile_options(
++        "$<$<COMPILE_LANGUAGE:CXX>:-include${CMAKE_CURRENT_SOURCE_DIR}/Common/platform/dos_compat.h>"
++    )
+ endif ()
+ 
+ message( "CMAKE_SYSTEM_NAME:" ${CMAKE_SYSTEM_NAME} )
+diff --git a/Common/platform/dos_compat.h b/Common/platform/dos_compat.h
+new file mode 100644
+index 000000000..a0b67a62d
+--- /dev/null
++++ b/Common/platform/dos_compat.h
+@@ -0,0 +1,125 @@
++//=============================================================================
++//
++// Adventure Game Studio (AGS)
++//
++// Copyright (C) 1999-2011 Chris Jones and 2011-2026 various contributors
++// The full list of copyright holders can be found in the Copyright.txt
++// file, which is part of this source code distribution.
++//
++// The AGS source code is provided under the Artistic License 2.0.
++// A copy of this license can be found in the file License.txt and at
++// https://opensource.org/license/artistic-2-0/
++//
++//=============================================================================
++//
++// DOS-PORT: DJGPP runtime compatibility shims, force-included into every
++// C++ translation unit built for DOS (see the top-level CMakeLists.txt's
++// -include wiring). Guarded by __cplusplus so it is a harmless no-op if
++// ever pulled into a C translation unit too.
++//
++// This file grows as more DJGPP libstdc++ gaps are found -- see each
++// section's own comment for what it fixes and why. Every gap here was
++// confirmed by a standalone reproduction against the real toolchain
++// before being added, not assumed.
++//
++//=============================================================================
++#ifndef __AGS_DOS_COMPAT_H
++#define __AGS_DOS_COMPAT_H
++
++#ifdef __cplusplus
++
++// --- C99 <cmath> functions DJGPP's libstdc++ does not export into std:: ---
++//
++// DJGPP's <cmath> does not define _GLIBCXX_USE_C99_MATH (or equivalent),
++// so std::log2/exp2/round/trunc/fma/asinh/acosh/atanh do not exist at
++// all. GLM (libsrc/glm, used throughout Engine/Common, not just the
++// disabled hardware renderer) calls these directly in several of its own
++// headers (func_common.inl, func_exponential.inl, func_trigonometric.inl)
++// -- found build-testing patches 0001-0011.
++//
++// A first attempt at this fix just did `using ::round;` etc. into
++// namespace std -- wrong, confirmed by a real build failure, not just
++// theory: DJGPP's global ::round/::trunc/::log2/::exp2/::asinh/::acosh/
++// ::atanh (from <math.h>) are each a SINGLE double-only overload (no
++// float/long-double siblings the way a real C99 <cmath> provides three
++// overloads per function), and GLM's own internal function-pointer-typed
++// dispatch (glm::detail::functor1<...>::call(round, x), T=float,
++// expecting exactly one float(*)(float) candidate) needs a properly
++// disambiguated three-overload set, or the compiler reports "unresolved
++// overloaded function type" trying to bind the bare name to a specific
++// pointer type -- confirmed by reproducing the exact same shape of
++// error standalone before writing the real fix below.
++//
++// The f/l-suffixed C99 variants (roundf/roundl, truncf/truncl, etc.) DO
++// exist under DJGPP -- confirmed by a standalone build (all compile and
++// link, exit 0) -- but as GCC-recognized builtins with no header
++// declaration at all, hence the extern "C" prototypes below. This
++// mirrors exactly what a real C99-complete <cmath> would generate: three
++// non-ambiguous overloads per function, one per real width.
++#include <cmath>
++
++// Only the symbols DJGPP's own headers do not already declare -- the
++// double-width versions of these (round, trunc, log2, exp2, asinh,
++// acosh, atanh) already have real <math.h> declarations (confirmed:
++// tests/probes/djgpp-runtime/ and this file's own probing), so those are
++// not redeclared here to avoid any risk of a conflicting-declaration
++// mismatch against the real header. Only fma's double form is missing a
++// declaration too (present only as a GCC builtin, same as every f/l
++// variant below).
++extern "C" {
++    float       log2f(float);
++    long double log2l(long double);
++    float       exp2f(float);
++    long double exp2l(long double);
++    float       roundf(float);
++    long double roundl(long double);
++    float       truncf(float);
++    long double truncl(long double);
++    float       fmaf(float, float, float);
++    double      fma(double, double, double);
++    long double fmal(long double, long double, long double);
++    float       asinhf(float);
++    long double asinhl(long double);
++    float       acoshf(float);
++    long double acoshl(long double);
++    float       atanhf(float);
++    long double atanhl(long double);
++}
++
++namespace std {
++    inline float       log2(float x)       { return ::log2f(x); }
++    inline double      log2(double x)      { return ::log2(x); }
++    inline long double log2(long double x) { return ::log2l(x); }
++
++    inline float       exp2(float x)       { return ::exp2f(x); }
++    inline double      exp2(double x)      { return ::exp2(x); }
++    inline long double exp2(long double x) { return ::exp2l(x); }
++
++    inline float       round(float x)       { return ::roundf(x); }
++    inline double      round(double x)      { return ::round(x); }
++    inline long double round(long double x) { return ::roundl(x); }
++
++    inline float       trunc(float x)       { return ::truncf(x); }
++    inline double      trunc(double x)      { return ::trunc(x); }
++    inline long double trunc(long double x) { return ::truncl(x); }
++
++    inline float       fma(float a, float b, float c)             { return ::fmaf(a, b, c); }
++    inline double      fma(double a, double b, double c)          { return ::fma(a, b, c); }
++    inline long double fma(long double a, long double b, long double c) { return ::fmal(a, b, c); }
++
++    inline float       asinh(float x)       { return ::asinhf(x); }
++    inline double      asinh(double x)      { return ::asinh(x); }
++    inline long double asinh(long double x) { return ::asinhl(x); }
++
++    inline float       acosh(float x)       { return ::acoshf(x); }
++    inline double      acosh(double x)      { return ::acosh(x); }
++    inline long double acosh(long double x) { return ::acoshl(x); }
++
++    inline float       atanh(float x)       { return ::atanhf(x); }
++    inline double      atanh(double x)      { return ::atanh(x); }
++    inline long double atanh(long double x) { return ::atanhl(x); }
++}
++
++#endif // __cplusplus
++
++#endif // __AGS_DOS_COMPAT_H
+-- 
+2.47.3
+

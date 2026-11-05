@@ -1,0 +1,142 @@
+From 15dd818d9838bc3357139c96617a368bfe64c406 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sat, 19 Sep 2026 07:09:05 -0700
+Subject: [PATCH] DOS-PORT: patch 0123 -- per-channel LUT fade step for RGB565
+
+The stock 16-bit fade step is Fill(460,800) plus an alpha TransBlendBlt of
+the same frame: ~1.4 MB of traffic across three streams, measured at
+387 ms per step against 17.0 MB/s for a plain RAM-to-RAM copy. Thirteen
+steps make a 5.25 s fade, and the present inside each step is only 16.7 ms
+of the 404 -- so 96% of a fade is this blend.
+
+Operator ruling (2026-09-19): fades stay VISIBLE but become fast, roughly
+1 s, shipping fast by default with a tunable to restore full length.
+
+Why a lookup table rather than shift-and-mask. Shifts give only powers of
+two -- 1/2, 1/4, 1/8 -- about five unevenly spaced levels before black.
+The fade is 13 steps and the ruling was "as authored", so a five-step
+power-of-two ramp would be a different animation rather than a faster one.
+Three small tables express any factor exactly: 32 entries for 5-bit red
+and blue, 64 for 6-bit green, 96 bytes total, rebuilt once per step rather
+than per pixel and small enough to stay in cache. A non-black fade colour
+works identically, since the table encodes fadeCol*(1-a) + src*a per
+channel exactly as the blender computes it.
+
+It also removes a whole memory stream. The stock path fills the buffer
+with the fade colour and then reads it back as the blend's destination; a
+per-channel scale needs only the source frame, so traffic falls from
+~1.4 MB to ~0.92 MB per step. On a machine whose binding constraint is
+memory bandwidth that is worth as much as the arithmetic saved.
+
+Expectation set honestly rather than optimistically: this does real
+per-pixel work -- unpack, three table reads, repack -- so it lands between
+a copy and the stock blend, roughly 1.0-1.3 s for the whole fade, not the
+~568 ms a copy-speed assumption would predict. That meets the target and
+is a 4-5x improvement; quoting 568 ms would have made a good result read
+as a shortfall.
+
+Falls back to the stock path for any non-16-bit surface or any geometry
+that does not fit, so this is additive rather than a replacement.
+
+Verified under DOSBox-X: 13 steps preserved, PH01 byte-identical to the
+pre-patch run. The remaining risk is banding rather than coarseness, which
+only a picture on the real monitor can settle -- that capture is required
+before this is called done.
+---
+ Engine/ac/screen.cpp | 73 ++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 73 insertions(+)
+
+diff --git a/Engine/ac/screen.cpp b/Engine/ac/screen.cpp
+index 22beac7bd..88f12b570 100644
+--- a/Engine/ac/screen.cpp
++++ b/Engine/ac/screen.cpp
+@@ -332,6 +332,74 @@ public:
+         }
+     }
+ 
++#ifdef __DJGPP__
++    // DOS-PORT patch 0123: a per-channel LUT fade step for RGB565.
++    //
++    // The stock step is Fill(460,800) + an alpha TransBlendBlt of the same
++    // frame: ~1.4 MB of traffic across THREE streams, measured at 387 ms
++    // per step against 17.0 MB/s for a plain copy. Thirteen steps make a
++    // 5.25 s fade, and the present inside each step is only 16.7 ms of the
++    // 404 -- so 96% of a fade is this blend.
++    //
++    // Why a lookup table and not a shift-and-mask. Shifts give only powers
++    // of two -- 1/2, 1/4, 1/8 -- which is about five unevenly spaced
++    // levels before black. The operator's ruling was "fast but still
++    // visible, as authored", and the fade is 13 steps; a five-step
++    // power-of-two ramp is a different animation, not a faster one. Three
++    // small tables express ANY factor exactly: 32 entries for 5-bit red
++    // and blue, 64 for 6-bit green, 96 bytes total, rebuilt once per step
++    // rather than per pixel, and small enough to stay in cache.
++    //
++    // It also drops a whole memory stream. The stock path fills the buffer
++    // with the fade colour and then reads it back as the blend's
++    // destination; a per-channel scale needs only the source frame, so
++    // traffic falls from ~1.4 MB to ~0.92 MB per step. On a machine whose
++    // binding constraint is memory bandwidth that matters as much as the
++    // arithmetic saved.
++    //
++    // Expectation, set honestly: this does real per-pixel work (unpack,
++    // three table reads, repack), so it lands between a copy and the stock
++    // blend -- roughly 1.0-1.3 s for the whole fade, not the ~568 ms a
++    // copy-speed assumption would predict. That still meets the ~1 s
++    // target and is a 4-5x improvement.
++    bool DosPortFadeStepFast()
++    {
++        if (!_bmpBuff || !_bmpFrame)
++            return false;
++        if (_bmpBuff->GetColorDepth() != 16 || _bmpFrame->GetColorDepth() != 16)
++            return false;
++        const int w = _bmpFrame->GetWidth(), h = _bmpFrame->GetHeight();
++        if (_view.Left < 0 || _view.Top < 0 ||
++            _view.Left + w > _bmpBuff->GetWidth() || _view.Top + h > _bmpBuff->GetHeight())
++            return false;
++        // dst = fadeCol*(1-a) + src*a, per channel, exactly as the blender
++        // computes it -- so a non-black fade colour works identically.
++        const int a = _fadein ? _alpha : 255 - _alpha;
++        const int ia = 255 - a;
++        uint16_t lr[32], lg[64], lb[32];
++        const int cr = _fadeCol.r >> 1, cg = _fadeCol.g, cb = _fadeCol.b >> 1; // 6-bit pal -> 5/6/5
++        for (int i = 0; i < 32; i++)
++        {
++            lr[i] = (uint16_t)(((i * a + cr * ia) / 255) & 0x1F);
++            lb[i] = (uint16_t)(((i * a + cb * ia) / 255) & 0x1F);
++        }
++        for (int i = 0; i < 64; i++)
++            lg[i] = (uint16_t)(((i * a + cg * ia) / 255) & 0x3F);
++        for (int y = 0; y < h; y++)
++        {
++            const uint16_t *src = (const uint16_t *)_bmpFrame->GetScanLine(y);
++            uint16_t *dst = (uint16_t *)_bmpBuff->GetScanLineForWriting(_view.Top + y) + _view.Left;
++            for (int x = 0; x < w; x++)
++            {
++                const uint16_t p = src[x];
++                dst[x] = (uint16_t)((lr[(p >> 11) & 0x1F] << 11) |
++                                    (lg[(p >> 5) & 0x3F] << 5) |
++                                     lb[p & 0x1F]);
++            }
++        }
++        return true;
++    }
++#endif
+     // Draw the state
+     void Draw() override
+     {
+@@ -345,6 +413,11 @@ public:
+             // is fewer steps or a cheaper per-step blend depends entirely
+             // on the step COUNT, which nothing currently reports.
+             dp_fade_steps++;
++            if (DosPortFadeStepFast())
++            {
++                render_to_screen();
++                return;
++            }
+ #endif
+             _bmpBuff->Fill(_clearCol);
+             set_trans_blender(0, 0, 0, _fadein ? _alpha : 255 - _alpha);
+-- 
+2.47.3
+

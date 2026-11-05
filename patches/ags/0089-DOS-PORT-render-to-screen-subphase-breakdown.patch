@@ -1,0 +1,347 @@
+From 00a88a984db9f1568a12d89c48b5b2113c007f83 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 17 Sep 2026 06:34:17 -0700
+Subject: [PATCH] DOS-PORT: patch 0089 -- fine-grained sub-phase breakdown of
+ render_to_screen_pertick
+
+Operator-directed follow-up to patch 0087: the horizontal-replication
+fix cut render_to_screen_pertick from ~121ms to ~74ms/call but did not
+explain where the remaining ~74ms goes. Instrument before guessing
+again, same discipline that found patch 0087 itself.
+
+Adds sub-phase brackets for every real step in render_to_screen()'s
+own call chain: screen_overlay_vsync (the plugin-hook check,
+construct_engine_overlay(), and vsync-set logic, before
+gfxDriver->Render()), and inside Present() itself:
+present_get_win_surface, present_sync_palette, present_flip_handling
+(expected near-zero for this game, verified not assumed),
+present_blit, and present_update_window (the actual push to the
+display). Also breaks present_blit down further via manual microsecond
+accumulation inside TryFastIntegerNearestBlit() itself (one
+dos_port_tick_record() call per Present(), not per source row, to
+avoid per-row RAII overhead across up to 240 rows/call):
+fastblit_lock, fastblit_hreplicate, fastblit_vmemcpy.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hnodGZ6cg8CWuFXEDTsUq
+---
+ Engine/ac/draw.cpp                 |  48 +++++++------
+ Engine/gfx/ali3dsw.cpp             | 106 +++++++++++++++++++++--------
+ Engine/main/dos_port_tick_timing.h |  19 ++++++
+ Engine/main/quit.cpp               |   9 +++
+ 4 files changed, 133 insertions(+), 49 deletions(-)
+
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index 92d5e8f21..7d4cb4d67 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -1347,27 +1347,37 @@ void render_to_screen()
+ #ifdef __DJGPP__
+     DosPortTickScope _dos_port_render_to_screen_scope(dos_port_tick_timing.render_to_screen);
+ #endif
+-    // Stage: final plugin callback (still drawn on game screen)
+-    if (pl_any_want_hook(kPluginEvt_FinalScreenDraw))
++    // DOS-PORT patch 0089: everything before gfxDriver->Render() below --
++    // the plugin-hook check, construct_engine_overlay(), and the
++    // vsync-set logic -- as one phase, so it can be ruled in or out
++    // against render_to_screen_pertick's own remaining ~74ms/call
++    // rather than assumed cheap.
+     {
+-        gfxDriver->BeginSpriteBatch(play.GetMainViewport(),
+-            play.GetGlobalTransform(drawstate.FullFrameRedraw), (GraphicFlip)play.screen_flipped);
+-        gfxDriver->AddRenderEvent(kPluginEvt_FinalScreenDraw, 0);
+-        gfxDriver->EndSpriteBatch();
+-    }
+-    // Stage: engine overlay
+-    construct_engine_overlay();
++#ifdef __DJGPP__
++        DosPortTickScope _dos_port_overlay_vsync_scope(dos_port_tick_timing.screen_overlay_vsync);
++#endif
++        // Stage: final plugin callback (still drawn on game screen)
++        if (pl_any_want_hook(kPluginEvt_FinalScreenDraw))
++        {
++            gfxDriver->BeginSpriteBatch(play.GetMainViewport(),
++                play.GetGlobalTransform(drawstate.FullFrameRedraw), (GraphicFlip)play.screen_flipped);
++            gfxDriver->AddRenderEvent(kPluginEvt_FinalScreenDraw, 0);
++            gfxDriver->EndSpriteBatch();
++        }
++        // Stage: engine overlay
++        construct_engine_overlay();
+ 
+-    // Try set new vsync value, and remember the actual result
+-    if (isTimerFpsMaxed())
+-    {
+-        gfxDriver->SetVsync(false);
+-    }
+-    else
+-    {
+-        bool new_vsync = gfxDriver->SetVsync(scsystem.vsync > 0);
+-        if (new_vsync != (scsystem.vsync != 0))
+-            System_SetVSyncInternal(new_vsync);
++        // Try set new vsync value, and remember the actual result
++        if (isTimerFpsMaxed())
++        {
++            gfxDriver->SetVsync(false);
++        }
++        else
++        {
++            bool new_vsync = gfxDriver->SetVsync(scsystem.vsync > 0);
++            if (new_vsync != (scsystem.vsync != 0))
++                System_SetVSyncInternal(new_vsync);
++        }
+     }
+ 
+     bool succeeded = false;
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index 9b2e36e6f..68983461c 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -764,6 +764,13 @@ static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const
+         return false;
+     const size_t bpp = (size_t)fmt->bytes_per_pixel;
+ 
++    // patch 0089: manual microsecond accumulation (one dos_port_tick_record()
++    // call per Present(), not per source row) breaking this function's own
++    // cost into lock/horizontal-replicate/vertical-memcpy, to see where
++    // the remaining ~74ms/call (after patch 0087's fix) actually
++    // concentrates, per the operator's own instrument-before-guessing
++    // instruction.
++    uclock_t _t0 = uclock();
+     const bool src_lock = SDL_MUSTLOCK(src);
+     const bool dst_lock = SDL_MUSTLOCK(dst);
+     if (src_lock && !SDL_LockSurface(src))
+@@ -773,6 +780,8 @@ static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const
+         if (src_lock) SDL_UnlockSurface(src);
+         return false;
+     }
++    uclock_t _t1 = uclock();
++    dos_port_tick_record(dos_port_tick_timing.fastblit_lock, (_t1 - _t0) * 1000000LL / UCLOCKS_PER_SEC);
+ 
+     const Uint8 *src_pixels = (const Uint8 *)src->pixels;
+     Uint8 *dst_pixels = (Uint8 *)dst->pixels;
+@@ -806,10 +815,12 @@ static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const
+     // performance-blocked for unrelated reasons, per STATUS.md), and a
+     // multi-byte memcpy's per-call overhead is proportionally smaller
+     // relative to its payload than a 1-byte one is.
++    long long hrep_us = 0, vmemcpy_us = 0;
+     if (bpp == 1)
+     {
+         for (int sy = 0; sy < src->h; sy++)
+         {
++            _t0 = uclock();
+             const Uint8 *src_row = src_pixels + (size_t)sy * (size_t)src->pitch;
+             Uint8 *out = row_buf.data();
+             for (int sx = 0; sx < src->w; sx++)
+@@ -818,17 +829,22 @@ static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const
+                 for (int r = 0; r < scale_x; r++)
+                     *out++ = v;
+             }
++            _t1 = uclock();
++            hrep_us += (_t1 - _t0) * 1000000LL / UCLOCKS_PER_SEC;
+             Uint8 *dst_row_base = dst_pixels + (size_t)(sy * scale_y) * (size_t)dst->pitch;
+             for (int r = 0; r < scale_y; r++)
+             {
+                 std::memcpy(dst_row_base + (size_t)r * (size_t)dst->pitch, row_buf.data(), dst_row_bytes);
+             }
++            _t0 = uclock();
++            vmemcpy_us += (_t0 - _t1) * 1000000LL / UCLOCKS_PER_SEC;
+         }
+     }
+     else
+     {
+         for (int sy = 0; sy < src->h; sy++)
+         {
++            _t0 = uclock();
+             const Uint8 *src_row = src_pixels + (size_t)sy * (size_t)src->pitch;
+             Uint8 *out = row_buf.data();
+             for (int sx = 0; sx < src->w; sx++)
+@@ -840,13 +856,19 @@ static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const
+                     out += bpp;
+                 }
+             }
++            _t1 = uclock();
++            hrep_us += (_t1 - _t0) * 1000000LL / UCLOCKS_PER_SEC;
+             Uint8 *dst_row_base = dst_pixels + (size_t)(sy * scale_y) * (size_t)dst->pitch;
+             for (int r = 0; r < scale_y; r++)
+             {
+                 std::memcpy(dst_row_base + (size_t)r * (size_t)dst->pitch, row_buf.data(), dst_row_bytes);
+             }
++            _t0 = uclock();
++            vmemcpy_us += (_t0 - _t1) * 1000000LL / UCLOCKS_PER_SEC;
+         }
+     }
++    dos_port_tick_record(dos_port_tick_timing.fastblit_hreplicate, hrep_us);
++    dos_port_tick_record(dos_port_tick_timing.fastblit_vmemcpy, vmemcpy_us);
+ 
+     if (dst_lock) SDL_UnlockSurface(dst);
+     if (src_lock) SDL_UnlockSurface(src);
+@@ -859,14 +881,25 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+     SDL_Window *window = sys_get_window();
+     if (!window || !_vscreenSurface) { return; }
+ 
+-    SDL_Surface *win_surface = SDL_GetWindowSurface(window);
++    SDL_Surface *win_surface;
++    {
++#ifdef __DJGPP__
++        DosPortTickScope _dos_port_getwin_scope(dos_port_tick_timing.present_get_win_surface);
++#endif
++        win_surface = SDL_GetWindowSurface(window);
++    }
+     if (!win_surface)
+     {
+         Debug::Printf(kDbgMsg_Error, "SDLRenderer: SDL_GetWindowSurface failed: %s", SDL_GetError());
+         return;
+     }
+ 
+-    SyncPaletteIfNeeded(win_surface);
++    {
++#ifdef __DJGPP__
++        DosPortTickScope _dos_port_syncpal_scope(dos_port_tick_timing.present_sync_palette);
++#endif
++        SyncPaletteIfNeeded(win_surface);
++    }
+ 
+     // DOS-PORT: AGS's own screen-shake / mirror-display script features
+     // (play.shake_screen_yoff / play.screen_flipped -- see Engine/ac/draw.cpp's
+@@ -878,32 +911,37 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+     // in-place flip would permanently scramble it. Flip a scratch copy
+     // instead, only when actually requested.
+     SDL_Surface *blit_src = _vscreenSurface;
+-    if (flip != kFlip_None)
+     {
+-        SDL_FlipMode sdl_flip = SDL_FLIP_NONE;
+-        switch (flip)
++#ifdef __DJGPP__
++        DosPortTickScope _dos_port_flip_scope(dos_port_tick_timing.present_flip_handling);
++#endif
++        if (flip != kFlip_None)
+         {
+-        case kFlip_Horizontal: sdl_flip = SDL_FLIP_HORIZONTAL; break;
+-        case kFlip_Vertical:   sdl_flip = SDL_FLIP_VERTICAL; break;
+-        case kFlip_Both:       sdl_flip = SDL_FLIP_HORIZONTAL_AND_VERTICAL; break;
+-        default: break;
+-        }
++            SDL_FlipMode sdl_flip = SDL_FLIP_NONE;
++            switch (flip)
++            {
++            case kFlip_Horizontal: sdl_flip = SDL_FLIP_HORIZONTAL; break;
++            case kFlip_Vertical:   sdl_flip = SDL_FLIP_VERTICAL; break;
++            case kFlip_Both:       sdl_flip = SDL_FLIP_HORIZONTAL_AND_VERTICAL; break;
++            default: break;
++            }
+ 
+-        if (!_flipScratch)
+-        {
+-            _flipScratch = SDL_CreateSurface(_vscreenSurface->w, _vscreenSurface->h, _vscreenSurface->format);
+-            if (_flipScratch && SDL_ISPIXELFORMAT_INDEXED(_vscreenSurface->format))
+-                SDL_SetSurfacePalette(_flipScratch, SDL_GetSurfacePalette(_vscreenSurface));
+-        }
+-        if (_flipScratch &&
+-            SDL_BlitSurface(_vscreenSurface, nullptr, _flipScratch, nullptr) &&
+-            SDL_FlipSurface(_flipScratch, sdl_flip))
+-        {
+-            blit_src = _flipScratch;
+-        }
+-        else
+-        {
+-            Debug::Printf(kDbgMsg_Error, "SDLRenderer: failed to flip presented frame: %s", SDL_GetError());
++            if (!_flipScratch)
++            {
++                _flipScratch = SDL_CreateSurface(_vscreenSurface->w, _vscreenSurface->h, _vscreenSurface->format);
++                if (_flipScratch && SDL_ISPIXELFORMAT_INDEXED(_vscreenSurface->format))
++                    SDL_SetSurfacePalette(_flipScratch, SDL_GetSurfacePalette(_vscreenSurface));
++            }
++            if (_flipScratch &&
++                SDL_BlitSurface(_vscreenSurface, nullptr, _flipScratch, nullptr) &&
++                SDL_FlipSurface(_flipScratch, sdl_flip))
++            {
++                blit_src = _flipScratch;
++            }
++            else
++            {
++                Debug::Printf(kDbgMsg_Error, "SDLRenderer: failed to flip presented frame: %s", SDL_GetError());
++            }
+         }
+     }
+ 
+@@ -928,14 +966,22 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+     // to the generic, always-correct SDL_BlitSurfaceScaled() for any
+     // case it does not specifically handle.
+     bool blitted = false;
++    {
+ #ifdef __DJGPP__
+-    blitted = TryFastIntegerNearestBlit(blit_src, win_surface, dst);
++        DosPortTickScope _dos_port_blit_scope(dos_port_tick_timing.present_blit);
++        blitted = TryFastIntegerNearestBlit(blit_src, win_surface, dst);
+ #endif
+-    if (!blitted && !SDL_BlitSurfaceScaled(blit_src, nullptr, win_surface, &dst, SDL_SCALEMODE_NEAREST))
+-        Debug::Printf(kDbgMsg_Error, "SDLRenderer: blit to window surface failed: %s", SDL_GetError());
++        if (!blitted && !SDL_BlitSurfaceScaled(blit_src, nullptr, win_surface, &dst, SDL_SCALEMODE_NEAREST))
++            Debug::Printf(kDbgMsg_Error, "SDLRenderer: blit to window surface failed: %s", SDL_GetError());
++    }
+ 
+-    if (!SDL_UpdateWindowSurface(window))
+-        Debug::Printf(kDbgMsg_Warn, "SDLRenderer: SDL_UpdateWindowSurface failed: %s", SDL_GetError());
++    {
++#ifdef __DJGPP__
++        DosPortTickScope _dos_port_updatewin_scope(dos_port_tick_timing.present_update_window);
++#endif
++        if (!SDL_UpdateWindowSurface(window))
++            Debug::Printf(kDbgMsg_Warn, "SDLRenderer: SDL_UpdateWindowSurface failed: %s", SDL_GetError());
++    }
+ }
+ 
+ void SDLRendererGraphicsDriver::Render(int xoff, int yoff, GraphicFlip flip)
+diff --git a/Engine/main/dos_port_tick_timing.h b/Engine/main/dos_port_tick_timing.h
+index d8c192ab6..a65954b20 100644
+--- a/Engine/main/dos_port_tick_timing.h
++++ b/Engine/main/dos_port_tick_timing.h
+@@ -324,6 +324,25 @@ struct DosPortTickTiming
+     // per-tick path (ac/draw.cpp:~3179), which IS a clean subset,
+     // comparable directly against update_game_once_total.
+     DosPortTickPhaseStats render_to_screen_pertick; // ac/draw.cpp: render_graphics()'s own render_to_screen() call site only
++
++    // patch 0089 (operator-directed follow-up: patch 0087 cut
++    // render_to_screen_pertick from ~121ms to ~74ms/call, but did not
++    // explain where the remaining ~74ms goes -- instrument before
++    // guessing again, same discipline that found patch 0087 itself).
++    // Sub-phases of render_to_screen()/Present(), in call order:
++    DosPortTickPhaseStats screen_overlay_vsync;    // ac/draw.cpp: render_to_screen()'s own plugin-hook+construct_engine_overlay()+vsync-set logic, BEFORE gfxDriver->Render()
++    DosPortTickPhaseStats present_get_win_surface; // gfx/ali3dsw.cpp: Present()'s SDL_GetWindowSurface() call
++    DosPortTickPhaseStats present_sync_palette;    // gfx/ali3dsw.cpp: Present()'s SyncPaletteIfNeeded() call
++    DosPortTickPhaseStats present_flip_handling;   // gfx/ali3dsw.cpp: Present()'s `if (flip != kFlip_None)` block -- expected near-zero for this game (screen_flipped is normally off), verified not assumed
++    DosPortTickPhaseStats present_blit;            // gfx/ali3dsw.cpp: Present()'s TryFastIntegerNearestBlit()/SDL_BlitSurfaceScaled() call
++    DosPortTickPhaseStats present_update_window;   // gfx/ali3dsw.cpp: Present()'s SDL_UpdateWindowSurface() call -- the actual push to the display
++    // Internal breakdown of present_blit itself, when the fast path is
++    // taken (TryFastIntegerNearestBlit) -- accumulated manually (one
++    // dos_port_tick_record() call per Present(), not per source row)
++    // to avoid per-row RAII overhead across up to 240 rows/call.
++    DosPortTickPhaseStats fastblit_lock;       // SDL_LockSurface() calls (src+dst)
++    DosPortTickPhaseStats fastblit_hreplicate; // the horizontal pixel-replication loop, summed across all source rows
++    DosPortTickPhaseStats fastblit_vmemcpy;    // the vertical memcpy() replication, summed across all source rows
+ };
+ 
+ // Defined in main.cpp, alongside dos_port_startup_timing.
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 0b0632b1b..85025ff0c 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -507,6 +507,15 @@ void quit(const char *quitmsg)
+                 dos_port_tick_emit(run_manifest_log, "catchup_audio_poll", t.catchup_audio_poll);
+                 dos_port_tick_emit(run_manifest_log, "render_to_screen", t.render_to_screen);
+                 dos_port_tick_emit(run_manifest_log, "render_to_screen_pertick", t.render_to_screen_pertick);
++                dos_port_tick_emit(run_manifest_log, "screen_overlay_vsync", t.screen_overlay_vsync);
++                dos_port_tick_emit(run_manifest_log, "present_get_win_surface", t.present_get_win_surface);
++                dos_port_tick_emit(run_manifest_log, "present_sync_palette", t.present_sync_palette);
++                dos_port_tick_emit(run_manifest_log, "present_flip_handling", t.present_flip_handling);
++                dos_port_tick_emit(run_manifest_log, "present_blit", t.present_blit);
++                dos_port_tick_emit(run_manifest_log, "present_update_window", t.present_update_window);
++                dos_port_tick_emit(run_manifest_log, "fastblit_lock", t.fastblit_lock);
++                dos_port_tick_emit(run_manifest_log, "fastblit_hreplicate", t.fastblit_hreplicate);
++                dos_port_tick_emit(run_manifest_log, "fastblit_vmemcpy", t.fastblit_vmemcpy);
+             }
+ 
+             // DOS-PORT patch 0085 (operator-directed DPMI/interrupt audit):
+-- 
+2.47.3
+

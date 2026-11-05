@@ -1,0 +1,280 @@
+From 694a1ae3cabb75190319a7caff4485df8393c616 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 21 Sep 2026 14:13:12 -0700
+Subject: [PATCH] DOS-PORT: patch 0193 -- the pushed set covers every pixel
+ that changed in RAM this present
+
+Fixes the present-narrowing under-push found by the ags 0192 verifier: on the AGS Quest demo 3,100 of 3,565
+presents left the screen different from the engine's frame, and the operator saw the result on the physical
+screen as chains of whole copies of the walking character, leftover speech-text fragments and garbled boxes.
+The engine's RAM frame was right (a screen-level series with the narrowing off is clean); only the pushed
+rects were wrong. One mechanism: the pushed set must contain every region the engine repaints.
+
+Why it was wrong. The narrowed present (ags 0124/0129) pushes the marks made since the last present. But a
+frame's marks are made AFTER that frame's background restore (put_sprite_list_on_screen(), the cursor, overlays
+and GUIs all come after it), so they are repainted by the NEXT frame's restore. The region a sprite stood in
+last frame is therefore restored in RAM this frame and lies in no pushed rect unless the sprite has not moved.
+That is every trail. Evidence: the pushed rect [389,195 9x17] moved 4 px per frame with the stale strip
+immediately behind it; at frame 1200 the stale area was 407x183 px along the whole walking path against a pushed
+rect of 29x57.
+
+What this does.
+- Marks made after the interval's room restore are also kept in a second box set (same merge policy, same
+  cap). At the next present they are added to that present's set, tagged as source "carry" in the dirtysrc
+  counters, and are not re-recorded as post-restore marks (that would carry them forever).
+- A whole-surface invalidation after the restore latches the NEXT present full. invalidate_all_rects() and
+  invalidate_all_camera_rects() also latch THIS present full: they mark WHOLESCREENDIRTY inside the engine's own
+  dirty structure and never told the accumulator, and their callers include Display() boxes (display.cpp),
+  room changes, fades, palette changes and the drawing-surface API. The experiment of latching only these two
+  moved the first stale frame from 14 to 149 and cut stale pixels from 31.8M to 10.1M, which is why the two
+  parts are one mechanism and not two.
+- "After the restore" is tracked (the room restore is the boundary), not assumed, so a pre-restore mark is not
+  carried twice and a full latch before the restore does not cost a second full push.
+Counters: a dirtycarry line (presents that carried boxes, boxes carried, full latches carried).
+
+The verifier (ags 0192) is the oracle, not this account. Cost is expected and pre-registered in PLAN.md: about
+1.6x the union area for moving content, unchanged for in-place animation; a cost above it is reported and not
+optimised here.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_017rABavUPepUfapaKZYKPvD
+---
+ Engine/ac/draw_software.cpp | 104 ++++++++++++++++++++++++++++++++++++
+ Engine/ac/draw_software.h   |  16 +++++-
+ Engine/gfx/ali3dsw.cpp      |   1 +
+ Engine/main/quit.cpp        |   4 +-
+ 4 files changed, 123 insertions(+), 2 deletions(-)
+
+diff --git a/Engine/ac/draw_software.cpp b/Engine/ac/draw_software.cpp
+index bca86cbff..fdeb4886d 100644
+--- a/Engine/ac/draw_software.cpp
++++ b/Engine/ac/draw_software.cpp
+@@ -246,6 +246,9 @@ void set_invalidrects_cameraoffs(int view_index, int x, int y)
+ 
+ void invalidate_all_rects()
+ {
++#ifdef __DJGPP__
++    dos_port_dirty_set_full("invalidate_all_rects");   // patch 0193: the accumulator never heard of this
++#endif
+     for (auto &rects : RoomCamRects)
+     {
+         if (!IsRectInsideRect(rects.Viewport, BlackRects.Viewport))
+@@ -256,6 +259,9 @@ void invalidate_all_rects()
+ 
+ void invalidate_all_camera_rects(int view_index)
+ {
++#ifdef __DJGPP__
++    dos_port_dirty_set_full("invalidate_all_camera_rects");   // patch 0193
++#endif
+     if (view_index < 0)
+         return;
+     RoomCamRects[view_index].NumDirtyRegions = WHOLESCREENDIRTY;
+@@ -413,9 +419,63 @@ int dos_port_dirty_max_boxes = []() {
+     return n;
+ }();
+ 
++// patch 0193: the same merge policy as the main accumulator below (touching or overlapping boxes
++// coalesce, else a free slot, else the pair whose union wastes the fewest pixels), on a bare set.
++static void dos_port_boxset_add(DosPortDirtyBox *box, int &n, int cap, int x1, int y1, int x2, int y2)
++{
++    for (int i = 0; i < n; ++i)
++    {
++        DosPortDirtyBox &b = box[i];
++        if (x1 <= b.x2 + 1 && x2 >= b.x1 - 1 && y1 <= b.y2 + 1 && y2 >= b.y1 - 1)
++        {
++            if (x1 < b.x1) b.x1 = x1;
++            if (y1 < b.y1) b.y1 = y1;
++            if (x2 > b.x2) b.x2 = x2;
++            if (y2 > b.y2) b.y2 = y2;
++            return;
++        }
++    }
++    if (n < cap)
++    {
++        box[n].x1 = x1; box[n].y1 = y1; box[n].x2 = x2; box[n].y2 = y2;
++        ++n;
++        return;
++    }
++    int best_i = 0, best_j = 1;
++    long long best_waste = -1;
++    DosPortDirtyBox cand; cand.x1 = x1; cand.y1 = y1; cand.x2 = x2; cand.y2 = y2;
++    for (int i = 0; i < n; ++i)
++    {
++        for (int j = i + 1; j <= n; ++j)
++        {
++            const DosPortDirtyBox &a = box[i];
++            const DosPortDirtyBox &b = (j == n) ? cand : box[j];
++            const int ux1 = a.x1 < b.x1 ? a.x1 : b.x1, uy1 = a.y1 < b.y1 ? a.y1 : b.y1;
++            const int ux2 = a.x2 > b.x2 ? a.x2 : b.x2, uy2 = a.y2 > b.y2 ? a.y2 : b.y2;
++            const long long waste = (long long)(ux2 - ux1 + 1) * (uy2 - uy1 + 1)
++                - (long long)(a.x2 - a.x1 + 1) * (a.y2 - a.y1 + 1)
++                - (long long)(b.x2 - b.x1 + 1) * (b.y2 - b.y1 + 1);
++            if (best_waste < 0 || waste < best_waste) { best_waste = waste; best_i = i; best_j = j; }
++        }
++    }
++    DosPortDirtyBox &a = box[best_i];
++    const DosPortDirtyBox &b = (best_j == n) ? cand : box[best_j];
++    if (b.x1 < a.x1) a.x1 = b.x1;
++    if (b.y1 < a.y1) a.y1 = b.y1;
++    if (b.x2 > a.x2) a.x2 = b.x2;
++    if (b.y2 > a.y2) a.y2 = b.y2;
++    if (best_j < n) { box[best_j].x1 = x1; box[best_j].y1 = y1; box[best_j].x2 = x2; box[best_j].y2 = y2; }
++}
++
+ void dos_port_dirty_add_screen(int x1, int y1, int x2, int y2)
+ {
+     dos_port_dirty.adds++;
++    // patch 0193: after this interval's background restore, a mark is repainted by the NEXT
++    // frame's restore, so it is kept for the next present too. Before the full-latch return
++    // below, because a full push now says nothing about what the next restore repaints.
++    if (dos_port_dirty.restore_seen)
++        dos_port_boxset_add(dos_port_dirty.post_box, dos_port_dirty.post_nbox, dos_port_dirty_max_boxes,
++                            x1, y1, x2, y2);
+     {   // patch 0175: attribute this rect's area to whoever asked for it
+         const int _s = (dos_port_dirty_source >= 0 && dos_port_dirty_source < kDirtySrc_Count)
+                        ? dos_port_dirty_source : kDirtySrc_Other;
+@@ -530,6 +590,8 @@ void dos_port_dirty_add_screen(int x1, int y1, int x2, int y2)
+ 
+ void dos_port_dirty_set_full(const char *why)
+ {
++    if (dos_port_dirty.restore_seen)
++        dos_port_dirty.post_full = true;   // patch 0193: the next restore repaints all of it
+     if (!dos_port_dirty.is_full)
+     {
+         dos_port_dirty.is_full = true;
+@@ -538,8 +600,49 @@ void dos_port_dirty_set_full(const char *why)
+     }
+ }
+ 
++void dos_port_dirty_note_restore()
++{
++    dos_port_dirty.restore_seen = true;   // patch 0193
++}
++
++// patch 0193: called at the top of the present's narrowing decision. Adds the previous interval's
++// post-restore marks (what THIS frame's restore repainted) to this interval's set, without letting
++// them be re-recorded as post-restore marks (that would carry them forever).
++void dos_port_dirty_merge_carry()
++{
++    DosPortDirtyState &d = dos_port_dirty;
++    const bool rs = d.restore_seen;
++    d.restore_seen = false;
++    if (d.carry_full)
++    {
++        dos_port_dirty_set_full("previous interval invalidated the whole surface after its restore");
++        d.carried_full++;
++    }
++    if (d.carry_nbox > 0)
++    {
++        const int saved_src = dos_port_dirty_source;
++        dos_port_dirty_source = kDirtySrc_Carry;
++        for (int i = 0; i < d.carry_nbox; ++i)
++            dos_port_dirty_add_screen(d.carry_box[i].x1, d.carry_box[i].y1, d.carry_box[i].x2, d.carry_box[i].y2);
++        dos_port_dirty_source = saved_src;
++        d.carried_presents++;
++        d.carried_boxes += d.carry_nbox;
++    }
++    d.carry_nbox = 0;
++    d.carry_full = false;
++    d.restore_seen = rs;
++}
++
+ void dos_port_dirty_frame_reset()
+ {
++    // patch 0193: what was marked after this interval's restore is what the next restore repaints.
++    dos_port_dirty.carry_nbox = dos_port_dirty.post_nbox;
++    for (int i = 0; i < dos_port_dirty.post_nbox; ++i)
++        dos_port_dirty.carry_box[i] = dos_port_dirty.post_box[i];
++    dos_port_dirty.carry_full = dos_port_dirty.post_full;
++    dos_port_dirty.post_nbox = 0;
++    dos_port_dirty.post_full = false;
++    dos_port_dirty.restore_seen = false;
+     dos_port_dirty.valid = false;
+     dos_port_dirty.is_full = false;
+     dos_port_dirty.full_reason = nullptr;
+@@ -825,6 +928,7 @@ void update_room_invreg_and_reset(int view_index, Bitmap *ds, Bitmap *src, bool
+     update_invalid_region(ds, src, RoomCamRects[view_index], no_transform);
+ #ifdef __DJGPP__
+     }
++    dos_port_dirty_note_restore();   // patch 0193: marks made from here on are repainted next frame
+     if ((dos_port_tick_timing.bg_calls % 500) == 0)
+         AGS::Common::Debug::Printf("DOS-PORT bgstruct calls=%ld whole=%ld px=%ld slow_px=%ld",
+             dos_port_tick_timing.bg_calls, dos_port_tick_timing.bg_whole,
+diff --git a/Engine/ac/draw_software.h b/Engine/ac/draw_software.h
+index 1afb3f271..73a7061a6 100644
+--- a/Engine/ac/draw_software.h
++++ b/Engine/ac/draw_software.h
+@@ -103,6 +103,17 @@ struct DosPortDirtyState
+     long adds = 0, adds_no_camera = 0, full_latches = 0;
+     long frames_narrow = 0, frames_full = 0;
+     long long px_narrow = 0, px_full = 0;
++    // patch 0193: a frame's marks are made AFTER that frame's background restore, so they are
++    // repainted by the NEXT frame's restore. The present must push them then, or the region a
++    // sprite stood in last frame is restored in RAM and never reaches the screen.
++    bool restore_seen = false;                        // this interval's room restore has run
++    DosPortDirtyBox post_box[DOS_PORT_DIRTY_MAX_BOXES] = {};   // marks made after it
++    int  post_nbox = 0;
++    bool post_full = false;                           // a whole-surface invalidation after it
++    DosPortDirtyBox carry_box[DOS_PORT_DIRTY_MAX_BOXES] = {};  // the previous interval's post-restore marks
++    int  carry_nbox = 0;
++    bool carry_full = false;
++    long carried_presents = 0, carried_boxes = 0, carried_full = 0;
+ };
+ extern DosPortDirtyState dos_port_dirty;
+ // DOS-PORT patch 0175: which call site dirtied how many pixels.
+@@ -119,7 +130,7 @@ extern DosPortDirtyState dos_port_dirty;
+ // Same technique that found gCredits: one field, no cell, one question.
+ enum DosPortDirtySource {
+     kDirtySrc_Other = 0, kDirtySrc_RoomSprite, kDirtySrc_UiSprite,
+-    kDirtySrc_Cursor, kDirtySrc_Screen, kDirtySrc_Count
++    kDirtySrc_Cursor, kDirtySrc_Screen, kDirtySrc_Carry, kDirtySrc_Count
+ };
+ extern int dos_port_dirty_source;
+ extern long long dos_port_dirty_src_px[kDirtySrc_Count];
+@@ -127,6 +138,9 @@ extern long dos_port_dirty_src_n[kDirtySrc_Count];
+ void dos_port_dirty_add_screen(int x1, int y1, int x2, int y2);
+ void dos_port_dirty_set_full(const char *why);
+ void dos_port_dirty_frame_reset();
++// patch 0193: push last interval's post-restore marks with this one's; note the restore happened
++void dos_port_dirty_merge_carry();
++void dos_port_dirty_note_restore();
+ #endif
+ 
+ void invalidate_rect_ds(int x1, int y1, int x2, int y2, bool in_room);
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index 5fca92bbe..ee9e2a2d5 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -1678,6 +1678,7 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+     // DOSAGS_DIRTY_PRESENT=0 disables -- fastest by default, tunable off.
+     SDL_Rect _dp_push = dst;
+     bool _dp_narrowed = false;
++    dos_port_dirty_merge_carry();   // patch 0193: last interval's marks are repainted by THIS frame's restore
+     SDL_Rect _dp_rects[DOS_PORT_DIRTY_MAX_BOXES];   // patch 0129
+     int _dp_nrects = 0;
+     {
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 535376e09..46e400cae 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -633,7 +633,7 @@ void quit(const char *quitmsg)
+                         dos_port_afterfadein_onevent_n, (long)dos_port_afterfadein_onevent_us,
+                         (long)dos_port_afterfadein_nested_us);
+                     {   // patch 0175: dirty pixels by source
+-                        static const char *DSN[] = {"other","roomsprite","uisprite","cursor","screen"};
++                        static const char *DSN[] = {"other","roomsprite","uisprite","cursor","screen","carry"};
+                         for (int _d = 0; _d < kDirtySrc_Count; ++_d)
+                             Debug::Printf("DOS-PORT dirtysrc %s n=%ld px=%ld",
+                                 DSN[_d], dos_port_dirty_src_n[_d], (long)dos_port_dirty_src_px[_d]);
+@@ -675,6 +675,8 @@ void quit(const char *quitmsg)
+                     extern long dos_port_gui_unchanged_tally[64];
+                     extern long dos_port_gui_skip_tally[64];    // patch 0191
+                     extern long dos_port_gui_flush_n, dos_port_gui_flush_late_n;
++                    Debug::Printf("DOS-PORT dirtycarry presents=%ld boxes=%ld full=%ld",   // patch 0193
++                        dos_port_dirty.carried_presents, dos_port_dirty.carried_boxes, dos_port_dirty.carried_full);
+                     if (dos_port_pv_frames)
+                         Debug::Printf("DOS-PORT presentverify frames=%ld stale_frames=%ld stale_px=%lld stale_px_max=%ld first_stale_frame=%ld bbox=%d,%d..%d,%d",
+                             dos_port_pv_frames, dos_port_pv_stale_frames, dos_port_pv_stale_px, dos_port_pv_stale_max,
+-- 
+2.47.3
+

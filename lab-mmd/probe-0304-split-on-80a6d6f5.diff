@@ -1,0 +1,125 @@
+diff --git a/Engine/ac/event.cpp b/Engine/ac/event.cpp
+index 927a10a4d..8bf4b7ec8 100644
+--- a/Engine/ac/event.cpp
++++ b/Engine/ac/event.cpp
+@@ -223,13 +223,15 @@ struct DosPortEventInteractionScope
+     }
+ };
+ 
++int dp_split_in_evt = 0; // DOS-PORT probe 0304 (LAB ONLY): inside a kAGSEvent_Script dispatch
+ struct DosPortEventScope
+ {
+     uclock_t t0; int type; int sub; int roomev;
+     DosPortEventScope(int ty, int sb, int rv)
+-        : t0(uclock()), type(ty), sub(sb), roomev(rv) {}
++        : t0(uclock()), type(ty), sub(sb), roomev(rv) { if (ty == 1) dp_split_in_evt++; } // probe 0304
+     ~DosPortEventScope()
+     {
++        if (type == 1) dp_split_in_evt--; // probe 0304
+         long long us = (long long)(uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC;
+         if (us < 0) us = 0;
+         if (type >= 0 && type < 6) { dos_port_evt_us[type] += us; dos_port_evt_n[type]++; }
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index b309b043c..576c601da 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -595,6 +595,7 @@ void quit(const char *quitmsg)
+                     t.bg_spans, t.bg_span_lt16, t.bg_span_lt64, t.bg_span_ge64,
+                     t.bg_spans ? (long)(t.bg_px / t.bg_spans) : 0L);
+ #ifdef __DJGPP__
++                { extern void dp_split_dump(); dp_split_dump(); } // probe 0304 (LAB ONLY)
+                 {   // patch 0150: what event dispatch actually spends its time on
+                     extern long long dos_port_evt_us[6];
+                     extern long dos_port_evt_n[6];
+diff --git a/Engine/script/cc_instance.cpp b/Engine/script/cc_instance.cpp
+index c2cb3d44d..9e85a98e0 100644
+--- a/Engine/script/cc_instance.cpp
++++ b/Engine/script/cc_instance.cpp
+@@ -584,9 +584,54 @@ inline bool FixupArgument(RuntimeScriptValue &arg, const int fixup, const uintpt
+ }
+ 
+ 
++#ifdef __DJGPP__
++// DOS-PORT probe 0304 (LAB ONLY, never in patches/): split the script event into the outermost VM
++// run, SCMD_CALLEXT marshalling and the API bodies (LAB-MMD.md 16.2). Raw uclock_t sums, converted
++// at dump; every read counted so its cost can be corrected. Nested runs started from inside an API
++// body count as API. DOSAGS_SPLIT=0 keeps the counts but takes no clock reads (check (a)).
++#include <time.h>
++extern int dp_split_in_evt;
++static int dp_split_on = -1, dp_split_depth = 0, dp_split_in_api = 0;
++static long long dp_split_run_t = 0, dp_split_marsh_t = 0, dp_split_api_t = 0, dp_split_reads = 0;
++static long dp_split_runs = 0, dp_split_ext = 0;
++static long long dp_split_pair_t = -1;
++static inline bool dp_split_active() { return dp_split_in_evt > 0 && dp_split_in_api == 0; }
++static inline void dp_split_init()
++{
++    if (dp_split_on >= 0) return;
++    const char *e = getenv("DOSAGS_SPLIT"); dp_split_on = (e && atoi(e) == 0) ? 0 : 1;
++    long long pair = 0;
++    for (int i = 0; i < 1000; ++i) { const uclock_t a = uclock(); const uclock_t b = uclock(); pair += (long long)(b - a); }
++    dp_split_pair_t = pair; // raw uclock ticks for 1000 back-to-back pairs
++}
++static inline uclock_t dp_split_now() { if (!dp_split_on) return 0; dp_split_reads++; return uclock(); }
++struct DpSplitRunScope
++{
++    bool timed; uclock_t t0;
++    DpSplitRunScope() : timed(false), t0(0)
++    {
++        dp_split_init();
++        if (dp_split_active() && dp_split_depth++ == 0) { timed = true; dp_split_runs++; t0 = dp_split_now(); }
++    }
++    ~DpSplitRunScope()
++    {
++        if (timed) { dp_split_run_t += (long long)(dp_split_now() - t0); dp_split_depth = 0; }
++        else if (dp_split_active() && dp_split_depth > 0) dp_split_depth--;
++    }
++};
++void dp_split_dump()
++{
++    Debug::Printf("DOS-PORT split on=%d runs=%ld callext=%ld reads=%ld run_t=%ld marsh_t=%ld api_t=%ld pair1000_t=%ld ucps=%ld",
++        dp_split_on, dp_split_runs, dp_split_ext, (long)dp_split_reads, (long)dp_split_run_t,
++        (long)dp_split_marsh_t, (long)dp_split_api_t, (long)dp_split_pair_t, (long)UCLOCKS_PER_SEC);
++}
++#endif
+ #define MAXNEST 50  // number of recursive function calls allowed
+ ccInstError ccInstance::Run(int32_t curpc)
+ {
++#ifdef __DJGPP__
++    DpSplitRunScope _dp_split_run; // probe 0304
++#endif
+     _pc = curpc;
+     _returnValue = -1;
+ 
+@@ -1358,6 +1403,11 @@ ccInstError ccInstance::Run(int32_t curpc)
+         {
+             // Call to a real 'C' code function
+             const auto &reg1 = _registers[op_arg1];
++#ifdef __DJGPP__
++            const bool dp_sx = dp_split_active() && dp_split_depth > 0; // probe 0304
++            const uclock_t dp_sx0 = dp_sx ? dp_split_now() : 0;
++            if (dp_sx) dp_split_ext++;
++#endif
+ 
+             was_just_callas = -1;
+             if (num_args_to_func < 0)
+@@ -1384,6 +1434,10 @@ ccInstError ccInstance::Run(int32_t curpc)
+ #endif
+ 
+             RuntimeScriptValue return_value;
++#ifdef __DJGPP__
++            const uclock_t dp_sx1 = dp_sx ? dp_split_now() : 0; // probe 0304
++            if (dp_sx) { dp_split_marsh_t += (long long)(dp_sx1 - dp_sx0); dp_split_in_api++; }
++#endif
+ 
+             if (reg1.Type == kScValPluginFunction)
+             {
+@@ -1424,6 +1478,9 @@ ccInstError ccInstance::Run(int32_t curpc)
+             {
+                 cc_error("invalid pointer type for function call: %d", reg1.Type);
+             }
++#ifdef __DJGPP__
++            if (dp_sx) { dp_split_in_api--; dp_split_api_t += (long long)(dp_split_now() - dp_sx1); } // probe 0304
++#endif
+ 
+             if (cc_has_error())
+             {

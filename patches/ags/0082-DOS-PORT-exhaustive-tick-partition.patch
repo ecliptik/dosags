@@ -1,0 +1,690 @@
+From a71817459fa446b84bc782ca232ecadc32df399d Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 16 Sep 2026 20:05:53 -0700
+Subject: [PATCH] DOS-PORT: patch 0082 -- exhaustive closes-by-construction
+ tick partition
+
+Three full instrumentation rounds (0079/0080/0081) left ~62% of the
+reconciled steady-state budget unaccounted for, despite naming and
+measuring 7 candidate phases. Per operator instruction, stopped
+guessing individual functions and checked whether real profiling is
+viable on this toolchain first.
+
+gprof confirmed non-viable, empirically, not assumed: DJGPP's libc.a
+genuinely has the full profiling runtime (_mcount, __monstartup,
+gcrt0.o all present and correctly linked -- confirmed by inspecting
+the toolchain directly), but a minimal, isolated DJGPP test program
+built with -pg and run under DOSBox-X for a real 23-second workload
+produced a GMON.OUT that gprof could parse as a valid file yet recorded
+ZERO time samples and ZERO call-graph arcs for the test's own hot
+functions (only a single incidental libc sample). Not "sparse
+sampling" -- a structurally broken histogram/arc mechanism for this
+target. Not chased further (the goal was a working profiler, not a
+profiler bug hunt); cleaned up and moved to the fallback.
+
+Falls back to an EXHAUSTIVE, closes-BY-CONSTRUCTION manual partition
+instead of more named guesses:
+
+- game_tick_outer: GameTick() bracketed as a whole -- confirmed to be
+  the true single top-level per-outer-iteration entry point (calls
+  dos_run_tick_fixed() when fixed-timestep is active, else
+  UpdateGameOnce() directly, nothing else). If this phase's own sum
+  does not reach ~100% of the steady-state budget, that is direct
+  proof something OUTSIDE the named call graph entirely is
+  responsible, not another function to name.
+- update_game_once_total: UpdateGameOnce() bracketed as a whole, a
+  strict superset of every other per-tick phase -- the accounting
+  check for what's still unnamed inside one logic tick.
+- Three real content-scaling candidates found by reading
+  main/update.cpp in full for the first time (a whole file dedicated
+  to per-tick object/character updates, reached via
+  GameUpdateGameState() -> update_game_objects(), never previously
+  read): game_objects_update (loops over croom->numobj and
+  game.numcharacters via update_cycling_views/
+  update_character_move_and_anim), objects_scale (a SEPARATE pass
+  looping over both again, via UpdateDrawableObjectStates()), and
+  gui_poll (loops over every GUI panel via update_cursor_over_gui()).
+  All three confirmed non-recursive (no RunScriptFunction/
+  processallevents call in ac/characterinfo_engine.cpp,
+  ac/roomobject.cpp, or Common/gui/guimain.cpp).
+- Every remaining call site directly inside UpdateGameOnce(), grouped
+  where adjacent: ground_interactions, input_handling, room_check,
+  gui_context_cursor, persistent_anims, end_of_tick. Deliberately NOT
+  bracketed: GameUpdateProcessEvents() (a thin wrapper around
+  processallevents(), whose own script-callback execution script_vm
+  already counts -- bracketing it separately would double-count).
+
+17 total tracked phases now (up from 6). quit.cpp's own emission
+refactored to a small helper (dos_port_tick_emit()) instead of a
+repeated fprintf per phase.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hnodGZ6cg8CWuFXEDTsUq
+---
+ Engine/ac/event.cpp                |  10 ++
+ Engine/main/dos_port_tick_timing.h | 161 +++++++++++++++++++++++++++++
+ Engine/main/game_run.cpp           | 155 +++++++++++++++++++++++----
+ Engine/main/quit.cpp               |  92 +++++++++--------
+ Engine/script/script.cpp           |  15 +++
+ 5 files changed, 372 insertions(+), 61 deletions(-)
+
+diff --git a/Engine/ac/event.cpp b/Engine/ac/event.cpp
+index f1d2145ef..a60dd2958 100644
+--- a/Engine/ac/event.cpp
++++ b/Engine/ac/event.cpp
+@@ -16,6 +16,7 @@
+ #ifdef __DJGPP__
+ #include <time.h> // uclock(), UCLOCKS_PER_SEC -- DOS-PORT room-transition timestamps
+ #include "main/dos_port_startup_timing.h" // DosPortStartupTiming, patch 0078
++#include "main/dos_port_tick_timing.h" // DOS-PORT patch 0082
+ #endif
+ #include "ac/common.h"
+ #include "ac/draw.h"
+@@ -325,6 +326,15 @@ void process_event(const AGSEvent *evp)
+ }
+ 
+ void processallevents() {
++    // DOS-PORT patch 0082: process_events_dispatch -- whole-function
++    // bracket, first line so it covers the early "already inside" exit
++    // too. Inclusive of script_vm's own nested cost (every hotspot/
++    // region/room/on_event script this dispatches ultimately reaches
++    // RunScriptFunction() via RunScriptFunctionAuto(), already counted
++    // there) -- reported alongside, not summed with, script_vm.
++#ifdef __DJGPP__
++    DosPortTickScope _dos_port_process_events_scope(dos_port_tick_timing.process_events_dispatch);
++#endif
+     if (inside_processevent)
+     {
+         events.clear(); // flush queued events
+diff --git a/Engine/main/dos_port_tick_timing.h b/Engine/main/dos_port_tick_timing.h
+index 1f3264e52..a9df61a73 100644
+--- a/Engine/main/dos_port_tick_timing.h
++++ b/Engine/main/dos_port_tick_timing.h
+@@ -52,6 +52,73 @@
+ //    collapsed) is exactly the failure mode a bare wall-clock number
+ //    alone cannot distinguish from correct behavior.
+ //
++// DOS-PORT patch 0082: after three full instrumentation rounds
++// (0079/0080/0081) still left ~62% of the reconciled steady-state
++// budget unaccounted for, this patch abandons "guess a candidate
++// function, spend a rig cycle" entirely. gprof-style profiling was
++// tried first and confirmed non-viable on this toolchain (a minimal,
++// isolated DJGPP test program built with -pg, run under DOSBox-X,
++// produced a GMON.OUT that gprof could parse as a file but that
++// recorded ZERO samples and ZERO call-graph arcs for the test's own
++// hot functions even over a real 23-second run -- not "sparse
++// sampling", a structurally broken histogram/arc mechanism for this
++// target; not chased further since the goal was a working profiler,
++// not a profiler bug hunt). Falls back to an EXHAUSTIVE, closes-by-
++// construction manual partition instead of more named guesses:
++//  - game_tick_outer: main/game_run.cpp's GameTick() -- confirmed to
++//    be the true single top-level per-outer-iteration entry point
++//    (calls dos_run_tick_fixed() when DOSAGS_FIXED_TIMESTEP is active,
++//    else UpdateGameOnce() directly -- nothing else). Brackets
++//    EVERYTHING that happens per outer iteration, including
++//    dos_run_tick_fixed()'s own epoch/owed bookkeeping. If this
++//    phase's own sum does not equal ~100% of the steady-state budget,
++//    that is direct proof something outside the named call graph
++//    entirely (interrupt-driven cost, DOS/DPMI transition overhead,
++//    etc.) is responsible -- not another function to name.
++//  - update_game_once_total: UpdateGameOnce() bracketed AS A WHOLE,
++//    in addition to its existing internal sub-brackets -- a strict
++//    superset of every other per-tick phase. Comparing this against
++//    the SUM of all named sub-phases below reveals exactly how much,
++//    if anything, is still unnamed inside one logic tick.
++//  - Content-scaling candidates found by reading main/update.cpp (a
++//    whole file dedicated to per-tick object/character updates,
++//    reached via GameUpdateGameState() -> update_game_objects(), never
++//    previously read) and confirmed non-recursive (no
++//    RunScriptFunction/processallevents call in
++//    ac/characterinfo_engine.cpp, ac/roomobject.cpp, or
++//    Common/gui/guimain.cpp):
++//      - game_objects_update: update_game_objects() -- loops over
++//        croom->numobj (update_cycling_views) and game.numcharacters
++//        (update_character_move_and_anim/update_following_exactly_characters),
++//        every tick, skipped or rendered.
++//      - objects_scale: update_objects_scale() (via
++//        UpdateDrawableObjectStates()) -- a SEPARATE pass looping over
++//        BOTH croom->numobj and game.numcharacters again.
++//      - gui_poll: update_cursor_over_gui() -- loops over every GUI
++//        panel (gui.Poll()).
++//  - Every other remaining call site directly inside UpdateGameOnce(),
++//    grouped where adjacent and clearly non-recursive, so the
++//    accounting has no silent gaps: ground_interactions
++//    (GameUpdateCheckGroundInteractions), input_handling
++//    (ags_domouse()+GameUpdateCheckControlsAndEdges()), room_check
++//    (check_new_room()'s own top-level call), gui_context_cursor
++//    (update_gui_context()+UpdateSavedCursorOverLocation()),
++//    persistent_anims (GameUpdatePersistentAnimations()),
++//    end_of_tick (update_polled_stuff()+
++//    game_loop_update_background_animation()+
++//    game_loop_update_loop_counter()+game_loop_update_fps()).
++//    Deliberately NOT bracketed as its own phase:
++//    GameUpdateProcessEvents() -- it is a thin wrapper around
++//    processallevents(), whose own script-callback execution is
++//    already counted by script_vm; bracketing it separately would
++//    double-count that time. Its own small non-script overhead (room-
++//    transition event scheduling) falls into whatever small remainder
++//    update_game_once_total minus every named phase reveals, along
++//    with GameUpdateCheckProblems()/check_debug_keys()/
++//    ccNotifyScriptStillAlive()/update_gui_disabled_status() -- single
++//    condition checks, read and judged genuinely negligible, not
++//    silently ignored.
++//
+ // Bracket points, found by reading source (not assumed):
+ //  - script_vm: script/script.cpp's RunScriptFunction() -- the single
+ //    funnel every per-tick script callback actually runs through
+@@ -103,6 +170,14 @@ struct DosPortTickPhaseStats
+     long total_ms = 0;
+     long min_ms = -1; // -1 == no sample yet
+     long max_ms = -1;
++    // patch 0082: found live (a DOSBox-X validation run of this very
++    // patch produced a genuinely negative gui_poll total_ms) -- uclock()
++    // is not perfectly monotonic across every call pair on this
++    // platform/environment (a real, if rare, clock-reading artifact,
++    // not a true negative duration). Counted rather than silently
++    // absorbed, so a phase with many clamped samples is visible instead
++    // of just quietly under-reporting.
++    long clamped_negative_count = 0;
+ };
+ 
+ struct DosPortTickTiming
+@@ -119,6 +194,83 @@ struct DosPortTickTiming
+     // against wait_next_frame's own MEASURED cost above.
+     long wait_next_frame_sleep_calls = 0;
+     long wait_next_frame_requested_ms = 0;
++
++    // patch 0082: the two whole-function "closes by construction"
++    // brackets, plus every remaining named per-tick candidate.
++    DosPortTickPhaseStats game_tick_outer;       // main/game_run.cpp: GameTick()
++    DosPortTickPhaseStats update_game_once_total; // main/game_run.cpp: UpdateGameOnce(), whole function
++    DosPortTickPhaseStats game_objects_update;   // main/update.cpp: update_game_objects()
++    DosPortTickPhaseStats objects_scale;         // main/game_run.cpp: update_objects_scale()
++    DosPortTickPhaseStats gui_poll;              // main/game_run.cpp: update_cursor_over_gui()
++    DosPortTickPhaseStats ground_interactions;   // main/game_run.cpp: GameUpdateCheckGroundInteractions()
++    DosPortTickPhaseStats input_handling;        // ags_domouse()+GameUpdateCheckControlsAndEdges()
++    DosPortTickPhaseStats room_check;            // main/game_run.cpp: check_new_room(), top-level call
++    DosPortTickPhaseStats gui_context_cursor;    // update_gui_context()+UpdateSavedCursorOverLocation()
++    DosPortTickPhaseStats persistent_anims;      // main/game_run.cpp: GameUpdatePersistentAnimations()
++    DosPortTickPhaseStats end_of_tick;           // update_polled_stuff+background_animation+loop_counter+fps
++
++    // patch 0082 (found only after the real-hardware TNP82A cell showed
++    // update_game_once_total leaving a huge, unexplained remainder even
++    // after every phase above): script_vm's own bracket lives inside
++    // RunScriptFunction() -- but GameUpdateEarlyRepExec()/
++    // GameUpdateLateRepExec() (the routine, EVERY-tick
++    // repeatedly_execute[_always] callbacks) do NOT call
++    // RunScriptFunction() at all. They call
++    // run_function_on_non_blocking_thread(), which calls
++    // DoRunScriptFuncCantBlock() for every module + the room + the
++    // global script, and THAT calls sci->CallScriptFunction() directly
++    // -- a completely separate call path patch 0079 never bracketed.
++    // Tracked as its own phase, not folded into script_vm, since it is
++    // a genuinely distinct call site reached a different way.
++    DosPortTickPhaseStats rep_exec_vm;           // script/script.cpp: DoRunScriptFuncCantBlock()
++
++    // patch 0082: rep_exec_vm only wraps the innermost VM call inside
++    // DoRunScriptFuncCantBlock() -- GameUpdateEarlyRepExec()/
++    // GameUpdateLateRepExec() THEMSELVES (the actual call sites in
++    // UpdateGameOnce()) were never bracketed as wholes, leaving
++    // run_function_on_non_blocking_thread()'s own wrapper overhead
++    // (update_script_mouse_coords(), the numScriptModules loop,
++    // setevent() calls, SyncDrawablesState()) outside every phase above.
++    // Inclusive of rep_exec_vm and (for the Late variant) objects_scale's
++    // own nested cost -- a whole-function check, not meant to be summed
++    // alongside those two without subtracting their own contribution.
++    DosPortTickPhaseStats rep_exec_wrapper;       // main/game_run.cpp: GameUpdateEarlyRepExec()+GameUpdateLateRepExec()
++
++    // patch 0082: objects_scale only wraps update_objects_scale() --
++    // UpdateDrawableObjectStates() (its caller) ALSO calls
++    // play.UpdateRoomCameras(), update_cursor_over_location(), and
++    // update_cursor_view() directly, none of which were ever bracketed.
++    // Whole-function check, inclusive of objects_scale's own nested cost.
++    DosPortTickPhaseStats drawable_object_states; // main/game_run.cpp: UpdateDrawableObjectStates()
++
++    // patch 0082 (final lead, after four consecutive null results):
++    // script_vm's own ~3669ms single-tick outlier does NOT appear in
++    // rep_exec_vm/rep_exec_wrapper's own max_ms (both capped at 3ms) --
++    // meaning it is NOT reached via the routine repeatedly_execute
++    // path. Traced the real path by reading the actual call chain
++    // (not assumed): ac/event.cpp's process_event() (called from
++    // processallevents()'s dispatch loop) routes hotspot/region/room
++    // interactions through run_interaction_script() (script/script.cpp),
++    // which calls QueueScriptFunction() -- NOT RunScriptFunction()
++    // directly. QueueScriptFunction() itself either defers to
++    // curscript->RunAnother() (if already inside a script) or calls
++    // RunScriptFunctionAuto() immediately, and RunScriptFunctionAuto()'s
++    // own helpers (RunEventInModule/RunClaimableEvent/RunUnclaimableEvent)
++    // all funnel into RunScriptFunction() -- confirmed by reading each
++    // of those four functions directly, not assumed from the name.
++    // So the ACTUAL VM EXECUTION time for event-driven interactions
++    // (hotspot/region/room scripts, on_event handlers) IS already
++    // counted by script_vm -- what is NOT counted is
++    // processallevents()'s own wrapper overhead around that dispatch:
++    // the `std::vector<AGSEvent> evtcopy = events` copy, the dispatch
++    // loop itself, and process_event()'s own routing logic (building
++    // ObjectEvent, resolving EventHandlers vs legacy Interaction
++    // pointers) that runs BEFORE any script gets invoked. Whole-
++    // function bracket on processallevents(), inclusive of script_vm's
++    // own nested cost -- avoiding double-counting the SAME way
++    // rep_exec_wrapper/drawable_object_states do (report this phase's
++    // own total alongside, not summed with, script_vm).
++    DosPortTickPhaseStats process_events_dispatch; // ac/event.cpp: processallevents()
+ };
+ 
+ // Defined in main.cpp, alongside dos_port_startup_timing.
+@@ -127,6 +279,15 @@ extern DosPortTickTiming dos_port_tick_timing;
+ static inline void dos_port_tick_record(DosPortTickPhaseStats &stats, long sample_ms)
+ {
+     stats.calls++;
++    if (sample_ms < 0)
++    {
++        // A negative sample is a clock-reading artifact (uclock() is
++        // not perfectly monotonic across every call pair here), never
++        // a real negative duration -- clamp to 0 rather than let it
++        // corrupt the running total, but count it so it stays visible.
++        stats.clamped_negative_count++;
++        sample_ms = 0;
++    }
+     stats.total_ms += sample_ms;
+     if (stats.min_ms < 0 || sample_ms < stats.min_ms)
+         stats.min_ms = sample_ms;
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 77ddb7c8c..e1ccc7e0d 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -271,6 +271,14 @@ static void GameUpdateCheckProblems()
+ // schedules global and room's rep-exec events to be run during script event processing.
+ static void GameUpdateEarlyRepExec()
+ {
++    // DOS-PORT patch 0082: rep_exec_wrapper -- whole-function bracket,
++    // since rep_exec_vm only wraps the innermost VM call reached inside
++    // run_function_on_non_blocking_thread(); this instead captures that
++    // function's own wrapper overhead (update_script_mouse_coords(),
++    // the numScriptModules loop, setevent() calls) too.
++#ifdef __DJGPP__
++    DosPortTickScope _dos_port_rep_exec_wrapper_scope1(dos_port_tick_timing.rep_exec_wrapper);
++#endif
+     if (in_new_room == kEnterRoom_None)
+     {
+         // Run the room and game script repeatedly_execute
+@@ -283,6 +291,13 @@ static void GameUpdateEarlyRepExec()
+ // Runs late-rep-exec-always
+ static void GameUpdateLateRepExec()
+ {
++    // DOS-PORT patch 0082: rep_exec_wrapper -- same phase as
++    // GameUpdateEarlyRepExec() above (both are the same conceptual
++    // "run the rep-exec callbacks" step, just early/late halves);
++    // inclusive of SyncDrawablesState()'s own nested objects_scale cost.
++#ifdef __DJGPP__
++    DosPortTickScope _dos_port_rep_exec_wrapper_scope2(dos_port_tick_timing.rep_exec_wrapper);
++#endif
+     if (in_new_room == kEnterRoom_None)
+     {
+         // sync drawable object states before running event
+@@ -895,6 +910,17 @@ static void GameUpdateGameState()
+     {
+         if (game_paused == 0)
+         {
++            // DOS-PORT patch 0082: game_objects_update -- main/update.cpp's
++            // update_game_objects(), a whole file dedicated to per-tick
++            // object/character updates never previously read. Loops over
++            // croom->numobj (update_cycling_views) and game.numcharacters
++            // (update_character_move_and_anim/
++            // update_following_exactly_characters) -- confirmed non-
++            // recursive (no RunScriptFunction/processallevents call
++            // anywhere in ac/characterinfo_engine.cpp or ac/roomobject.cpp).
++#ifdef __DJGPP__
++            DosPortTickScope _dos_port_game_objects_scope(dos_port_tick_timing.game_objects_update);
++#endif
+             update_game_objects();
+         }
+     }
+@@ -903,6 +929,12 @@ static void GameUpdateGameState()
+ // Updated objects that do not auto-pause when the game is paused
+ static void GameUpdatePersistentAnimations()
+ {
++    // DOS-PORT patch 0082: persistent_anims -- confirmed non-recursive
++    // (no RunScriptFunction/processallevents call reachable from
++    // UpdateAnimatingButton()).
++#ifdef __DJGPP__
++    DosPortTickScope _dos_port_persistent_anims_scope(dos_port_tick_timing.persistent_anims);
++#endif
+     // update animating GUI buttons
+     // this bit isn't in update_stuff because it always needs to
+     // happen, even when the game is paused
+@@ -920,6 +952,12 @@ extern std::vector<ViewStruct> views;
+ 
+ static void update_objects_scale()
+ {
++    // DOS-PORT patch 0082: objects_scale -- a SEPARATE pass (from
++    // game_objects_update) looping over both croom->numobj and
++    // game.numcharacters again, confirmed non-recursive.
++#ifdef __DJGPP__
++    DosPortTickScope _dos_port_objects_scale_scope(dos_port_tick_timing.objects_scale);
++#endif
+     if (displayed_room < 0)
+         return;
+ 
+@@ -1090,6 +1128,13 @@ static void update_cursor_over_location(int mwasatx, int mwasaty)
+ 
+ static void UpdateDrawableObjectStates(bool do_cursor, int mwasatx, int mwasaty)
+ {
++    // DOS-PORT patch 0082: drawable_object_states -- whole-function
++    // bracket, inclusive of objects_scale's own nested cost, since
++    // UpdateRoomCameras()/update_cursor_over_location()/
++    // update_cursor_view() were never individually bracketed.
++#ifdef __DJGPP__
++    DosPortTickScope _dos_port_drawable_scope(dos_port_tick_timing.drawable_object_states);
++#endif
+     if (displayed_room < 0)
+         return;
+ 
+@@ -1412,6 +1457,14 @@ uint32_t get_runtime_ms()
+ //
+ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int extra_x, int extra_y, bool skip_render_and_wait)
+ {
++    // DOS-PORT patch 0082: whole-function bracket, first line so it
++    // covers every return path (there is an early return below, at
++    // the ground-interactions check) -- a strict superset of every
++    // other per-tick phase, used to check whether the sum of all
++    // named sub-phases actually accounts for the whole tick.
++#ifdef __DJGPP__
++    DosPortTickScope _dos_port_update_once_scope(dos_port_tick_timing.update_game_once_total);
++#endif
+     set_our_eip(1000);
+ 
+     // DOS-PORT patch 0080: input polling, one candidate from the "what
+@@ -1444,7 +1497,16 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+     // Tell scripts that the game is alive
+     ccNotifyScriptStillAlive();
+     // Check if we just entered a new room, and run "before fade-in" script event
+-    check_new_room();
++    // DOS-PORT patch 0082: room_check -- NOTE this can call RunScriptFunction
++    // internally on an actual room-transition tick (rare -- most ticks have
++    // in_new_room==kEnterRoom_None and this is a cheap no-op check), so
++    // room_check and script_vm can overlap on those specific ticks.
++    {
++#ifdef __DJGPP__
++        DosPortTickScope _dos_port_room_check_scope(dos_port_tick_timing.room_check);
++#endif
++        check_new_room();
++    }
+ 
+     set_our_eip(1003);
+ 
+@@ -1453,7 +1515,19 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+ 
+     set_our_eip(1004);
+ 
+-    if (!GameUpdateCheckGroundInteractions())
++    // DOS-PORT patch 0082: ground_interactions -- GetHotspotIDAtRoom()/
++    // GetRegionIDAtRoom() (room-mask lookups) plus setevent() scheduling;
++    // confirmed non-recursive for modern (3.6.3+) games (region/hotspot
++    // events are scheduled via setevent(), not run inline) -- only pre-
++    // 3.6.3 games take the direct RunRegionInteraction() path here.
++    bool _dos_port_ground_ok;
++    {
++#ifdef __DJGPP__
++        DosPortTickScope _dos_port_ground_scope(dos_port_tick_timing.ground_interactions);
++#endif
++        _dos_port_ground_ok = GameUpdateCheckGroundInteractions();
++    }
++    if (!_dos_port_ground_ok)
+         return; // update interrupted
+ 
+     set_our_eip(1005);
+@@ -1463,14 +1537,32 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+     const int mwasatx = mousex, mwasaty = mousey;
+     mouse_on_iface = -1; // FIXME: why is this here? move to a related update function!
+     // update mouse position (mousex, mousey)
+-    ags_domouse();
+-    // update gui under mouse; this also updates gui control focus;
+-    // atm we must call this before "check_controls", because GUI interaction
+-    // relies on remembering which control was focused by the cursor prior
+-    update_gui_disabled_status();
+-    update_cursor_over_gui();
+-    // handle actual input (keys, mouse, and so forth)
+-    GameUpdateCheckControlsAndEdges(do_controls);
++    // DOS-PORT patch 0082: input_handling -- ags_domouse() (position
++    // tracking) + GameUpdateCheckControlsAndEdges() (keyboard/mouse
++    // click dispatch, room-edge checks). May overlap with script_vm on
++    // a tick where a click triggers an interaction event, same class of
++    // rare overlap as room_check above.
++    {
++#ifdef __DJGPP__
++        DosPortTickScope _dos_port_input_handling_scope(dos_port_tick_timing.input_handling);
++#endif
++        ags_domouse();
++        // update gui under mouse; this also updates gui control focus;
++        // atm we must call this before "check_controls", because GUI interaction
++        // relies on remembering which control was focused by the cursor prior
++        update_gui_disabled_status();
++        // DOS-PORT patch 0082: gui_poll -- loops over every GUI panel
++        // (gui.Poll()), confirmed non-recursive (Common/gui/guimain.cpp
++        // has no RunScriptFunction/processallevents call).
++        {
++#ifdef __DJGPP__
++            DosPortTickScope _dos_port_gui_poll_scope(dos_port_tick_timing.gui_poll);
++#endif
++            update_cursor_over_gui();
++        }
++        // handle actual input (keys, mouse, and so forth)
++        GameUpdateCheckControlsAndEdges(do_controls);
++    }
+ 
+     set_our_eip(1006);
+ 
+@@ -1503,12 +1595,19 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+     // Update drawable object states, which depend on their positions,
+     // room region properties, or other object positions
+     UpdateDrawableObjectStates(true /* cursor-related update */, mwasatx, mwasaty);
+-    UpdateSavedCursorOverLocation();
++    // DOS-PORT patch 0082: gui_context_cursor -- both call GetLocationName()
++    // (room-mask lookup), confirmed non-recursive.
++    {
++#ifdef __DJGPP__
++        DosPortTickScope _dos_port_gui_context_scope(dos_port_tick_timing.gui_context_cursor);
++#endif
++        UpdateSavedCursorOverLocation();
+ 
+-    set_our_eip(1010);
++        set_our_eip(1010);
+ 
+-    // Record necessary values for the GUI rendering
+-    update_gui_context(mwasatx, mwasaty);
++        // Record necessary values for the GUI rendering
++        update_gui_context(mwasatx, mwasaty);
++    }
+     // Only render if we are not skipping a cutscene, or serving a
+     // fixed-timestep catch-up tick (DOS-PORT patch 0047: skip_render_and_wait
+     // -- every logic step above this line still runs, only the render and
+@@ -1527,10 +1626,19 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+ 
+     set_our_eip(1012);
+ 
+-    update_polled_stuff();
+-    game_loop_update_background_animation();
+-    game_loop_update_loop_counter();
+-    game_loop_update_fps();
++    // DOS-PORT patch 0082: end_of_tick -- small, adjacent bookkeeping
++    // calls, confirmed non-recursive (update_polled_stuff() only calls
++    // quit()/check_for_messages_from_debugger(), neither reachable here
++    // in a non-editor real run).
++    {
++#ifdef __DJGPP__
++        DosPortTickScope _dos_port_end_of_tick_scope(dos_port_tick_timing.end_of_tick);
++#endif
++        update_polled_stuff();
++        game_loop_update_background_animation();
++        game_loop_update_loop_counter();
++        game_loop_update_fps();
++    }
+ 
+     // Immediately start the next frame if we are skipping a cutscene, or a
+     // fixed-timestep catch-up tick (DOS-PORT patch 0047) -- either way the
+@@ -1789,6 +1897,17 @@ static void dos_run_tick_fixed()
+ // Run single game iteration; calls UpdateGameOnce() internally
+ static void GameTick()
+ {
++    // DOS-PORT patch 0082: the true single top-level per-outer-
++    // iteration entry point (calls dos_run_tick_fixed() when fixed-
++    // timestep is active, else UpdateGameOnce() directly -- nothing
++    // else). Brackets EVERYTHING that happens per outer iteration,
++    // including dos_run_tick_fixed()'s own epoch/owed bookkeeping --
++    // a "closes by construction" check: if this doesn't sum to ~100%
++    // of the steady-state budget, something outside the named call
++    // graph entirely is responsible.
++#ifdef __DJGPP__
++    DosPortTickScope _dos_port_tick_outer_scope(dos_port_tick_timing.game_tick_outer);
++#endif
+ #ifdef __DJGPP__
+     if (dos_fixed_timestep_active())
+     {
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index e818887f7..c5d7a4942 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -193,6 +193,21 @@ QuitReason quit_check_for_error_state(const char *qmsg, String &errmsg, String &
+     }
+ }
+ 
++#ifdef __DJGPP__
++// DOS-PORT patch 0082: one helper instead of a repeated fprintf per
++// phase, now that the exhaustive partition brings the phase count to
++// 17. Same "DOS-PORT tickstats_<name> calls=... total_ms=... min_ms=...
++// max_ms=... mean_ms=..." line shape patches 0079-0081 already
++// established (tools/port-game/port_game.py's own parser expects it).
++static void dos_port_tick_emit(FILE *log, const char *name, const DosPortTickPhaseStats &s)
++{
++    fprintf(log, "DOS-PORT tickstats_%s calls=%ld total_ms=%ld min_ms=%ld max_ms=%ld mean_ms=%.2f clamped_neg=%ld\n",
++        name, s.calls, s.total_ms, s.min_ms, s.max_ms,
++        s.calls > 0 ? (double)s.total_ms / (double)s.calls : 0.0,
++        s.clamped_negative_count);
++}
++#endif
++
+ // quit - exits the engine, shutting down everything gracefully
+ // The parameter is the message to print. If this message begins with
+ // an '!' character, then it is printed as a "contact game author" error.
+@@ -437,56 +452,47 @@ void quit(const char *quitmsg)
+                     tick_rate_hz, dos_get_frames_skipped());
+             }
+ 
+-            // DOS-PORT patch 0079: full-run script-VM/render-compositing
++            // DOS-PORT patches 0079-0082: full-run per-tick phase
+             // aggregates (dos_port_tick_timing.h) -- same "own line after
+             // the RUNMANIFEST block" placement as tick_rate/frames_skipped
+             // and memory_min_free_kb just above, not a RUNMANIFEST schema
+             // field. calls=0 means that phase's bracket was never reached
+-            // this run (e.g. a game that quit before its first tick) --
+-            // min_ms/max_ms stay at -1 and mean_ms is printed as 0.00
+-            // rather than dividing by zero.
++            // this run -- min_ms/max_ms stay at -1 and mean_ms is printed
++            // as 0.00 rather than dividing by zero. One helper call per
++            // phase instead of a repeated fprintf now that patch 0082's
++            // exhaustive partition brings the phase count to 17 -- see
++            // dos_port_tick_emit()'s own definition above quit().
+             {
+-                const DosPortTickPhaseStats &sv = dos_port_tick_timing.script_vm;
+-                const DosPortTickPhaseStats &rb = dos_port_tick_timing.render_backbuffer;
+-                fprintf(run_manifest_log,
+-                    "DOS-PORT tickstats_script_vm calls=%ld total_ms=%ld min_ms=%ld max_ms=%ld mean_ms=%.2f\n",
+-                    sv.calls, sv.total_ms, sv.min_ms, sv.max_ms,
+-                    sv.calls > 0 ? (double)sv.total_ms / (double)sv.calls : 0.0);
+-                fprintf(run_manifest_log,
+-                    "DOS-PORT tickstats_render_backbuffer calls=%ld total_ms=%ld min_ms=%ld max_ms=%ld mean_ms=%.2f\n",
+-                    rb.calls, rb.total_ms, rb.min_ms, rb.max_ms,
+-                    rb.calls > 0 ? (double)rb.total_ms / (double)rb.calls : 0.0);
+-                // DOS-PORT patch 0080: same shape, two more candidates
+-                // (input polling, audio sync) from the round-2 "what else
+-                // is in UpdateGameOnce()" investigation.
+-                const DosPortTickPhaseStats &ip = dos_port_tick_timing.input_poll;
+-                const DosPortTickPhaseStats &au = dos_port_tick_timing.audio_sync;
+-                fprintf(run_manifest_log,
+-                    "DOS-PORT tickstats_input_poll calls=%ld total_ms=%ld min_ms=%ld max_ms=%ld mean_ms=%.2f\n",
+-                    ip.calls, ip.total_ms, ip.min_ms, ip.max_ms,
+-                    ip.calls > 0 ? (double)ip.total_ms / (double)ip.calls : 0.0);
+-                fprintf(run_manifest_log,
+-                    "DOS-PORT tickstats_audio_sync calls=%ld total_ms=%ld min_ms=%ld max_ms=%ld mean_ms=%.2f\n",
+-                    au.calls, au.total_ms, au.min_ms, au.max_ms,
+-                    au.calls > 0 ? (double)au.total_ms / (double)au.calls : 0.0);
+-                // DOS-PORT patch 0081: three more candidates from the
+-                // 8-bit optimization pass (draw-list construction, and
+-                // the frame-pacing wait -- both measured cost AND, for
+-                // the wait, what it itself requested to sleep for).
+-                const DosPortTickPhaseStats &sc = dos_port_tick_timing.scene_construct;
+-                const DosPortTickPhaseStats &wf = dos_port_tick_timing.wait_next_frame;
+-                fprintf(run_manifest_log,
+-                    "DOS-PORT tickstats_scene_construct calls=%ld total_ms=%ld min_ms=%ld max_ms=%ld mean_ms=%.2f\n",
+-                    sc.calls, sc.total_ms, sc.min_ms, sc.max_ms,
+-                    sc.calls > 0 ? (double)sc.total_ms / (double)sc.calls : 0.0);
+-                fprintf(run_manifest_log,
+-                    "DOS-PORT tickstats_wait_next_frame calls=%ld total_ms=%ld min_ms=%ld max_ms=%ld mean_ms=%.2f\n",
+-                    wf.calls, wf.total_ms, wf.min_ms, wf.max_ms,
+-                    wf.calls > 0 ? (double)wf.total_ms / (double)wf.calls : 0.0);
++                const DosPortTickTiming &t = dos_port_tick_timing;
++                dos_port_tick_emit(run_manifest_log, "script_vm", t.script_vm);
++                dos_port_tick_emit(run_manifest_log, "render_backbuffer", t.render_backbuffer);
++                dos_port_tick_emit(run_manifest_log, "input_poll", t.input_poll);
++                dos_port_tick_emit(run_manifest_log, "audio_sync", t.audio_sync);
++                dos_port_tick_emit(run_manifest_log, "scene_construct", t.scene_construct);
++                dos_port_tick_emit(run_manifest_log, "wait_next_frame", t.wait_next_frame);
+                 fprintf(run_manifest_log,
+                     "DOS-PORT tickstats_wait_next_frame_requested sleep_calls=%ld requested_ms=%ld\n",
+-                    dos_port_tick_timing.wait_next_frame_sleep_calls,
+-                    dos_port_tick_timing.wait_next_frame_requested_ms);
++                    t.wait_next_frame_sleep_calls, t.wait_next_frame_requested_ms);
++                // DOS-PORT patch 0082: the exhaustive, closes-by-
++                // construction partition -- game_tick_outer and
++                // update_game_once_total are strict supersets of every
++                // other phase (including each other's own gap, if any);
++                // the rest are the remaining named per-tick candidates.
++                dos_port_tick_emit(run_manifest_log, "game_tick_outer", t.game_tick_outer);
++                dos_port_tick_emit(run_manifest_log, "update_game_once_total", t.update_game_once_total);
++                dos_port_tick_emit(run_manifest_log, "game_objects_update", t.game_objects_update);
++                dos_port_tick_emit(run_manifest_log, "objects_scale", t.objects_scale);
++                dos_port_tick_emit(run_manifest_log, "gui_poll", t.gui_poll);
++                dos_port_tick_emit(run_manifest_log, "ground_interactions", t.ground_interactions);
++                dos_port_tick_emit(run_manifest_log, "input_handling", t.input_handling);
++                dos_port_tick_emit(run_manifest_log, "room_check", t.room_check);
++                dos_port_tick_emit(run_manifest_log, "gui_context_cursor", t.gui_context_cursor);
++                dos_port_tick_emit(run_manifest_log, "persistent_anims", t.persistent_anims);
++                dos_port_tick_emit(run_manifest_log, "end_of_tick", t.end_of_tick);
++                dos_port_tick_emit(run_manifest_log, "rep_exec_vm", t.rep_exec_vm);
++                dos_port_tick_emit(run_manifest_log, "rep_exec_wrapper", t.rep_exec_wrapper);
++                dos_port_tick_emit(run_manifest_log, "drawable_object_states", t.drawable_object_states);
++                dos_port_tick_emit(run_manifest_log, "process_events_dispatch", t.process_events_dispatch);
+             }
+ 
+             // TEMPORARY DIAGNOSTIC (S7): dump the AUDIOPRB window data
+diff --git a/Engine/script/script.cpp b/Engine/script/script.cpp
+index cdf13f5c6..75f34d8fe 100644
+--- a/Engine/script/script.cpp
++++ b/Engine/script/script.cpp
+@@ -385,7 +385,22 @@ static bool DoRunScriptFuncCantBlock(ccInstance *sci, NonBlockingScriptFunction*
+         return(false);
+ 
+     no_blocking_functions++;
++    // DOS-PORT patch 0082: rep_exec_vm -- the actual VM call for
++    // GameUpdateEarlyRepExec()/GameUpdateLateRepExec()'s routine, every-
++    // tick repeatedly_execute[_always] callbacks, a call path patch 0079
++    // never bracketed (it only wrapped RunScriptFunction(), which this
++    // does NOT go through). Found only after a real-hardware run showed
++    // update_game_once_total leaving a huge unexplained remainder even
++    // with every other named phase measured -- see this patch's own
++    // commit message.
++#ifdef __DJGPP__
++    const uclock_t _dos_port_rep_exec_t0 = uclock();
++#endif
+     ccInstError result = sci->CallScriptFunction(funcToRun->FunctionName, funcToRun->ParamCount, funcToRun->Params);
++#ifdef __DJGPP__
++    dos_port_tick_record(dos_port_tick_timing.rep_exec_vm,
++        (long)((uclock() - _dos_port_rep_exec_t0) * 1000 / UCLOCKS_PER_SEC));
++#endif
+ 
+     if (result == kInstErr_FuncNotFound)
+     {
+-- 
+2.47.3
+

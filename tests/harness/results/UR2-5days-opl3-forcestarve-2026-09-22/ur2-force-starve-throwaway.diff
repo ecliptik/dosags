@@ -1,0 +1,17 @@
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index 3736ec1c0..0cc467e3a 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -453,9 +453,11 @@ void dos_audio_mixer_pump()
+         g_irq_snap = irq_now;
+         g_silent_snap = silent_now;
+ 
++        static int ur2_force = -1; // THROWAWAY (UR2 field check): never lands
++        if (ur2_force < 0) { const char *e = SDL_getenv("DOSAGS_UR2_FORCE_STARVE"); ur2_force = (e && e[0] == '1') ? 1 : 0; }
+         for (int iter = 0; iter < MAX_PUMP_ITERS; iter++)
+         {
+-            if (SDL_GetAudioStreamQueued(g_stream) >= TARGET_QUEUED_BYTES)
++            if (!ur2_force && SDL_GetAudioStreamQueued(g_stream) >= TARGET_QUEUED_BYTES)
+                 break;
+             bool any_active = false;
+             mix_one_chunk(any_active);

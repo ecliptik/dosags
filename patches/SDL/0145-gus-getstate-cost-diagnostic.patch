@@ -1,0 +1,122 @@
+From 6607c49ae537f778139432f74e2fcf4f035d0ab9 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 15 Sep 2026 01:07:49 -0700
+Subject: [PATCH] dos: patch 0145 -- temporary SDL_DOSGusGetState per-call cost
+ diagnostic (S7-GUS)
+
+WHY: dosags real hardware (tag GUST1, tests/games/trilbysnotes/results/
+S7-gus-midi-realhw-2026-09-14.md) found the MIDI slot Poll() loop under
+GUS (via gus_sink.c's reap_finished_voices(), called on every note-on)
+costs a mean of 102,962us with a max of 6,890,560us (6.9 seconds) --
+source reading shows SDL_DOSGusGetState()'s own register-read loop is
+bounded (O(busy voices), a handful of inportb() calls per voice,
+cli/sti-wrapped) and should cost microseconds, not hundreds of
+milliseconds. Per this hub's own "instrument the thing that produces
+the unexplained quantity, not its neighbors" rule, this measures this
+function's own cost directly rather than guessing at a fix (e.g.
+assuming the already-proven SDL_DOSGusVoiceActive per-voice pattern
+directly applies here -- it may not, since reap_finished_voices()
+genuinely needs the full voice mask, unlike the PCM path's own
+single-voice query).
+
+WHAT: brackets SDL_DOSGusGetState()'s real (non-early-return) path with
+uclock()-based microsecond timestamps, accumulates in-memory (no I/O),
+and exposes a snapshot-and-reset accessor, SDL_DOSGusGetStateDiagSnapshot(),
+for a caller to poll and fold into its own already-open log handle --
+same idiom as the OPL3 regwrite diagnostic (SDL_dos_audio_synth.c,
+patch SDL/0141) this mirrors. The accessor's own `calls` count
+distinguishes call VOLUME (many cheap calls during a catch-up burst)
+from a genuine single-call stall. dosags's own audio_core.cpp is the
+consumer.
+
+Temporary -- to be reverted once this sub-investigation concludes.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ src/audio/dos/SDL_dosaudio_gus.c | 52 ++++++++++++++++++++++++++++++++
+ 1 file changed, 52 insertions(+)
+
+diff --git a/src/audio/dos/SDL_dosaudio_gus.c b/src/audio/dos/SDL_dosaudio_gus.c
+index 00f6e9b82..4d6691f08 100644
+--- a/src/audio/dos/SDL_dosaudio_gus.c
++++ b/src/audio/dos/SDL_dosaudio_gus.c
+@@ -54,6 +54,7 @@
+ #include "../../core/dos/SDL_dos.h"
+ #include "../../video/dos/SDL_dosdbg.h" /* dos_port_dbg_log routing (patch 0041) */
+ #include <SDL3/SDL_dosgus.h>            /* the engine-facing export prototypes */
++#include <time.h> /* TEMPORARY DIAGNOSTIC (S7-GUS): uclock() -- see SDL_DOSGusGetState below */
+ 
+ /* ------------------------------------------------------------------------- */
+ /* GF1 I/O port map (relative to the ULTRASND base port, e.g. 0x240).        */
+@@ -1124,10 +1125,49 @@ static bool gus_voice_check_running(int v)
+     return hw_running != 0;
+ }
+ 
++/* TEMPORARY DIAGNOSTIC (S7-GUS): this function's own per-call cost.
++   Real hardware (HW-486-66, tag GUST1, tests/games/trilbysnotes/results/
++   S7-gus-midi-realhw-2026-09-14.md) measured the MIDI slot Poll() loop
++   this function sits inside (via gus_sink.c's reap_finished_voices(),
++   called on every note-on) at a mean of 102,962us and a max of
++   6,890,560us (6.9 SECONDS) -- source reading shows the register-read
++   loop itself is bounded (O(busy voices), a handful of inportb() calls
++   per voice, cli/sti-wrapped) and should cost microseconds, not
++   hundreds of milliseconds, so either (a) call VOLUME is high during a
++   backlog-catch-up burst (many cheap calls summing up, the same
++   "register-write volume is a downstream symptom of tick-starvation"
++   pattern already found for OPL3, S7-regwrite-diag-realhw-2026-09-14.md),
++   or (b) some individual call is a genuine hardware stall. Bracketing
++   the whole function (not just the register-read section) so the
++   accessor's own `calls` count can distinguish the two: high calls +
++   small mean == volume; low calls + huge max == a real stall. In-memory
++   accumulate only (no I/O here), same idiom as the OPL3 regwrite
++   diagnostic (SDL_dos_audio_synth.c, patch SDL/0141) this mirrors.
++   Temporary -- revert once this sub-investigation concludes. */
++static Uint32 s_gus_getstate_calls = 0;
++static Uint64 s_gus_getstate_sum_us = 0;
++static Uint64 s_gus_getstate_min_us = ~(Uint64)0;
++static Uint64 s_gus_getstate_max_us = 0;
++
++void SDL_DOSGusGetStateDiagSnapshot(
++    Uint32 *out_calls, Uint32 *out_min_us, Uint32 *out_mean_us, Uint32 *out_max_us)
++{
++    if (out_calls)  *out_calls  = s_gus_getstate_calls;
++    if (out_min_us) *out_min_us = (Uint32)((s_gus_getstate_calls > 0) ? s_gus_getstate_min_us : 0);
++    if (out_mean_us) *out_mean_us = (Uint32)((s_gus_getstate_calls > 0) ? (s_gus_getstate_sum_us / s_gus_getstate_calls) : 0);
++    if (out_max_us) *out_max_us = (Uint32)s_gus_getstate_max_us;
++
++    s_gus_getstate_calls = 0;
++    s_gus_getstate_sum_us = 0;
++    s_gus_getstate_min_us = ~(Uint64)0;
++    s_gus_getstate_max_us = 0;
++}
++
+ bool SDL_DOSGusGetState(SDL_DOSGusState *out)
+ {
+     int v;
+     Uint32 mask = 0;
++    const uclock_t t0 = uclock(); /* TEMPORARY DIAGNOSTIC, see above */
+     /* gus-7: capture interrupt-enabled state at ENTRY (before any cli) -- tells
+        us this call is in MAIN-LOOP context (IF set), the only place the diag
+        ring may be flushed to the log safely. Captured here because the cli/sti
+@@ -1189,6 +1229,18 @@ bool SDL_DOSGusGetState(SDL_DOSGusState *out)
+     if (g_gus_diag && was_main) {
+         gus_diag_flush();
+     }
++
++    /* TEMPORARY DIAGNOSTIC (S7-GUS), see the accessor's own comment above.
++       Only the real (non-early-return) path is measured -- the !out/
++       !g_gus_active guards above never do real work and would only dilute
++       the mean with near-zero calls that cannot be where the cost is. */
++    {
++        const Uint64 call_us = (Uint64)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
++        s_gus_getstate_calls++;
++        s_gus_getstate_sum_us += call_us;
++        if (call_us < s_gus_getstate_min_us) s_gus_getstate_min_us = call_us;
++        if (call_us > s_gus_getstate_max_us) s_gus_getstate_max_us = call_us;
++    }
+     return true;
+ }
+ 
+-- 
+2.47.3
+

@@ -1,0 +1,94 @@
+From 9e20dcf0603382a791072fe4b92f4a01a1c5e40b Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 15:05:06 -0700
+Subject: [PATCH] [AGS] Rename-only SDL3 sites in system.cpp/mousew32.cpp
+
+- SDL.h -> SDL3/SDL.h in both files (bare SDL.h no longer resolves
+  against this port's SDL3-only sysroot).
+- KMOD_NUM/KMOD_CAPS -> SDL_KMOD_NUM/SDL_KMOD_CAPS (system.cpp).
+- SDL_GetKeyboardState() now returns const bool*, not const Uint8*.
+- SDL_SetRelativeMouseMode(SDL_bool) and the SDL_bool type itself are
+  both gone in SDL3. Replaced with SDL_SetWindowRelativeMouseMode(
+  window, bool), which needs an explicit SDL_Window*; sys_get_window()
+  (added by patch 0015) supplies it.
+
+Verified in isolation, not just by full-build reasoning: with
+sdldecoder.h/openalsource.h (both unrelated, not-yet-written patch
+0022/0024 territory) temporarily swapped for scratch stubs exposing
+only the members audioplayer.h actually needs, system.cpp.obj and
+mousew32.cpp.obj both compile clean -- zero errors. Real headers
+restored before this commit; scratch stubs never landed.
+
+Breadth-checked beyond just these two files: a tree-wide grep for
+every remaining bare '#include <SDL' site in Engine/+Common/ turns up
+17 more, but every one of them is either non-DOS platform code that
+never compiles here (macOS/Android/iOS/Windows, OpenGL renderer) or
+already scoped to a later Phase D patch (sdldecoder.h/0022,
+gfxfilter_*/ali3dsw.h/0023, sdl2_util.h/0021, main_sdl2.cpp/
+graphics_mode.cpp/debug.cpp/agsplatformdriver.cpp/0025) -- confirms
+the existing phase split, not a new gap.
+---
+ Engine/ac/system.cpp       | 8 ++++----
+ Engine/device/mousew32.cpp | 4 ++--
+ 2 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/Engine/ac/system.cpp b/Engine/ac/system.cpp
+index 476fe7376..dba1c8fb9 100644
+--- a/Engine/ac/system.cpp
++++ b/Engine/ac/system.cpp
+@@ -11,7 +11,7 @@
+ // https://opensource.org/license/artistic-2-0/
+ //
+ //=============================================================================
+-#include <SDL.h>
++#include <SDL3/SDL.h>
+ #include "ac/common.h"
+ #include "ac/draw.h"
+ #include "ac/dynobj/cc_audiochannel.h"
+@@ -125,18 +125,18 @@ const char *System_GetLocaleName()
+ int System_GetNumLock()
+ {
+     SDL_Keymod mod_state = SDL_GetModState();
+-    return (mod_state & KMOD_NUM) ? 1 : 0;
++    return (mod_state & SDL_KMOD_NUM) ? 1 : 0;
+ }
+ 
+ int System_GetCapsLock()
+ {
+     SDL_Keymod mod_state = SDL_GetModState();
+-    return (mod_state & KMOD_CAPS) ? 1 : 0;
++    return (mod_state & SDL_KMOD_CAPS) ? 1 : 0;
+ }
+ 
+ int System_GetScrollLock()
+ {
+-    const Uint8 *state = SDL_GetKeyboardState(NULL);
++    const bool *state = SDL_GetKeyboardState(NULL);
+     return (state[SDL_SCANCODE_SCROLLLOCK]) ? 1 : 0;
+ }
+ 
+diff --git a/Engine/device/mousew32.cpp b/Engine/device/mousew32.cpp
+index a31bad684..6110505f3 100644
+--- a/Engine/device/mousew32.cpp
++++ b/Engine/device/mousew32.cpp
+@@ -21,7 +21,7 @@
+ //
+ //=============================================================================
+ #include "device/mousew32.h"
+-#include <SDL.h>
++#include <SDL3/SDL.h>
+ #include "ac/gamestate.h"
+ #include "ac/sys_events.h"
+ #include "debug/out.h"
+@@ -176,7 +176,7 @@ void Mouse::SetMovementControl(bool on)
+ {
+ #if defined (SDL_HINT_MOUSE_RELATIVE_SPEED_SCALE)
+     ControlEnabled = on;
+-    SDL_SetRelativeMouseMode(static_cast<SDL_bool>(on));
++    SDL_SetWindowRelativeMouseMode(sys_get_window(), on);
+     if (on)
+         SDL_SetHint(SDL_HINT_MOUSE_RELATIVE_SPEED_SCALE, String::FromFormat("%.2f", Mouse::Speed).GetCStr());
+     else
+-- 
+2.47.3
+

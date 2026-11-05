@@ -1,0 +1,41 @@
+From 40be6dbf9dc5ba424a435ba5f46214d3f0a94f8c Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 13:35:57 -0700
+Subject: [PATCH 2/2] [AGS] Gate Glad::Glad (OpenGL loader) out for DOS
+
+The AGS_OPENGLES2 else() branch linked Glad::Glad unconditionally for
+every non-GLES2 platform, including DOS. DOS has no hardware-renderer
+path at all -- window-surface presentation only (patches/ags/0017) --
+so it is excluded directly. No CMake-level AGS_HAS_OPENGL variable
+exists to gate on generically (confirmed: platform.h's AGS_HAS_OPENGL
+is a C-preprocessor-only macro, not visible to CMake); every other
+platform this file supports wants OpenGL today, so a targeted `NOT DOS`
+exclusion is the minimal, honest fix rather than introducing a new
+CMake-level mirror of that macro for one platform.
+---
+ Engine/CMakeLists.txt | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/CMakeLists.txt b/Engine/CMakeLists.txt
+index 468f2c9cf..b6a3f897c 100644
+--- a/Engine/CMakeLists.txt
++++ b/Engine/CMakeLists.txt
+@@ -565,7 +565,14 @@ endif()
+ 
+ if (AGS_OPENGLES2)
+     target_link_libraries(engine PUBLIC EGL GLESv2 Glad::GladGLES2)
+-else()
++elseif (NOT DOS)
++    # DOS-PORT: every other platform this file supports wants desktop
++    # OpenGL (there is no separate AGS_HAS_OPENGL CMake variable to gate
++    # on -- platform.h's own AGS_HAS_OPENGL macro is a C-preprocessor-only
++    # concept, not visible here). DOS has no hardware-renderer path at
++    # all (window-surface presentation only, patches/ags/0017), so it is
++    # excluded directly rather than introducing a CMake-level mirror of
++    # platform.h's macro for a single platform.
+     target_link_libraries(engine PUBLIC Glad::Glad)
+ endif (AGS_OPENGLES2)
+ 
+-- 
+2.47.3
+

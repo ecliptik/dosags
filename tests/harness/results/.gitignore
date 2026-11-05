@@ -1,0 +1,17 @@
+# Operator decision 2026-09-25 (licensing): audio captures of the games' music are never committed.
+# Keep them local; record each capture's sha256 and the numbers derived from it in the result files.
+*.ogg
+*.OGG
+*.wav
+*.WAV
+*.opus
+*.OPUS
+*.flac
+*.FLAC
+*.mp3
+*.MP3
+# Coordinator decision 2026-09-26: run-created AGS saves stay local too -- they embed game state and a
+# screenshot thumbnail of game art, so they are closer to game data than to our results. Record each
+# save's sha256 in SAVE-SHA256.txt per result dir. (Saves tracked before this line are left as they are.)
+AGSSAVE.*
+agssave.*

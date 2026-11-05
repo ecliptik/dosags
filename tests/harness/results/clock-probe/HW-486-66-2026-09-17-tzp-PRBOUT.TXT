@@ -1,0 +1,10 @@
+TZ=(unset) TZDIR=(unset) DJDIR=(unset) DJGPP=(unset)
+1_default              time()=1789652836 gmtime=2026-09-17T13:47:16Z local=13:30:12 gmtoff=-1024 zone=GMT gettimeofday_us=1299.6
+open(/dev/env/DJDIR/etc/localtime) -> FAILED errno=22 fixpath=c:/etc/localtime
+open(/etc/localtime) -> FAILED errno=22 fixpath=c:/etc/localtime
+open(/dev/env/DJDIR/zoneinfo/localtime) -> FAILED errno=22 fixpath=c:/zoneinfo/localtime
+open(/dev/env/DJDIR/zoneinfo/posixrules) -> FAILED errno=22 fixpath=c:/zoneinfo/posixrules
+open(/dev/env/DJDIR/zoneinfo/GMT) -> FAILED errno=22 fixpath=c:/zoneinfo/gmt
+2_TZ=UTC0              time()=1789651812 gmtime=2026-09-17T13:30:12Z local=13:30:12 gmtoff=0 zone=UTC gettimeofday_us=1304.1
+3_TZ=empty             time()=1789651812 gmtime=2026-09-17T13:30:12Z local=13:30:12 gmtoff=0 zone=GMT gettimeofday_us=1304.7
+4_TZ_unset_again       time()=1789651812 gmtime=2026-09-17T13:30:12Z local=13:30:12 gmtoff=0 zone=GMT gettimeofday_us=1304.7

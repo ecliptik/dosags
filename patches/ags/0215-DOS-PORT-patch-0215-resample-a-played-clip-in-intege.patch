@@ -1,0 +1,126 @@
+From aee56858c132b176a46c81c7af76807b43151c27 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 17:59:12 -0700
+Subject: [PATCH] DOS-PORT: patch 0215 -- resample a played clip in integers,
+ not doubles
+
+A clip whose rate is not the mixer's (11025 Hz) is resampled whole on the
+main thread when it starts, and nearly every clip in the S8 fixture is
+24000, 22050 or 44100 Hz. The loop computed each output sample with a
+double divide, a double multiply and two float-to-integer conversions (on
+DJGPP's x87 each conversion also switches the FPU control word): ~55
+instructions a sample. That is most of room 35's ambient-18 start
+(decode_pcm 248 ms of PlayAmbientSound's 299 ms, LAB-JOURNEYS 9b.2) and
+every re-decode of a repeating clip.
+
+The source position now steps exactly in integers (i * src_rate ==
+i0 * RATE + rem), and the sample is trunc((s0 * RATE + (s1 - s0) * rem) /
+RATE) -- the value the double formula truncates to whenever that quotient
+is not whole, since the double's error is far below 1/RATE. When it is
+whole, the double can land on either side and truncate differently, so
+those samples keep the old formula. Every output sample is the old one:
+old vs new fuzz over WAV 1-3 ch, 8/16 bit, 13 rates, odd tails and VOC
+multi-block, 0 mismatches in 22.4M samples (host SSE and -m32 x87) and in
+7.4M samples as a DJGPP -O3 build under DOSBox-X; with the fallback
+removed the same fuzz finds 321,639 mismatches (1.4%), so it has the power
+to see what the fallback prevents.
+---
+ Engine/platform/dos/dos_audio_decode.cpp | 66 ++++++++++++++++++++----
+ 1 file changed, 57 insertions(+), 9 deletions(-)
+
+diff --git a/Engine/platform/dos/dos_audio_decode.cpp b/Engine/platform/dos/dos_audio_decode.cpp
+index 371713414..147558274 100644
+--- a/Engine/platform/dos/dos_audio_decode.cpp
++++ b/Engine/platform/dos/dos_audio_decode.cpp
+@@ -29,10 +29,36 @@ uint32_t rd_u32le(const uint8_t *p)
+         (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
+ }
+ 
++// DOS-PORT patch 0215: the original per-sample formula, now used only where the integer path
++// below cannot decide the result on its own.
++int16_t interp_double(const int16_t *src, size_t i, int src_rate)
++{
++    const double src_pos = (static_cast<double>(i) * src_rate) / DOS_AUDIO_MIXER_RATE;
++    const size_t i0 = static_cast<size_t>(src_pos);
++    const double frac = src_pos - static_cast<double>(i0);
++    const int32_t s0 = src[i0];
++    const int32_t s1 = src[i0 + 1];
++    return static_cast<int16_t>(s0 + static_cast<double>(s1 - s0) * frac);
++}
++
++// s0 * RATE + (s1 - s0) * rem must fit an int32 for every 16-bit s0, s1 and rem < RATE.
++static_assert(DOS_AUDIO_MIXER_RATE <= 21845, "patch 0215's int32 interpolation would overflow");
++
+ // Appends mono, already-signed-16-bit PCM at src_rate into out_pcm,
+ // resampling to DOS_AUDIO_MIXER_RATE via linear interpolation -- adequate
+ // for the short SFX/chime-class content this decoder handles in S1 (real
+ // music is MIDI/tracker, later Sound-milestone slices).
++//
++// DOS-PORT patch 0215: in integers. Output sample i sits at source position i * src_rate / RATE;
++// i0 and rem (i * src_rate == i0 * RATE + rem) step exactly, and the sample is
++// trunc((s0 * RATE + (s1 - s0) * rem) / RATE), which is what the double formula computes whenever
++// that quotient is not a whole number: the double's error is far below 1/RATE, the smallest
++// distance a non-whole quotient can have from a whole one. When it IS whole, the double can land
++// either side of it and truncate differently, so those samples (s0 != s1 and (s1 - s0) * rem a
++// multiple of RATE: 1.4% of the patch's fuzz samples, all of which the integer quotient alone got
++// wrong) still take the double formula. Every sample is therefore the one the old loop produced,
++// and the rest skip a double divide and two float-to-integer conversions each (~55 instructions a
++// sample before, most of ambient 18's 248 ms decode in LAB-JOURNEYS 9b.2).
+ void append_resampled_mono(const std::vector<int16_t> &src_mono, int src_rate,
+     std::vector<int16_t> &out_pcm)
+ {
+@@ -46,20 +72,42 @@ void append_resampled_mono(const std::vector<int16_t> &src_mono, int src_rate,
+     const size_t src_n = src_mono.size();
+     const size_t dst_n = static_cast<size_t>(
+         (static_cast<uint64_t>(src_n) * DOS_AUDIO_MIXER_RATE) / static_cast<uint32_t>(src_rate));
+-    out_pcm.reserve(out_pcm.size() + dst_n);
++    const size_t base = out_pcm.size();
++    out_pcm.resize(base + dst_n);
++    int16_t *const out = out_pcm.data() + base;
++    const int16_t *const src = src_mono.data();
++    const size_t step_i = static_cast<uint32_t>(src_rate) / DOS_AUDIO_MIXER_RATE;
++    const int32_t step_r = static_cast<int32_t>(static_cast<uint32_t>(src_rate) % DOS_AUDIO_MIXER_RATE);
++    size_t i0 = 0;
++    int32_t rem = 0;
+     for (size_t i = 0; i < dst_n; i++)
+     {
+-        const double src_pos = (static_cast<double>(i) * src_rate) / DOS_AUDIO_MIXER_RATE;
+-        const size_t i0 = static_cast<size_t>(src_pos);
+         if (i0 + 1 >= src_n)
+         {
+-            out_pcm.push_back(src_mono[src_n - 1]);
+-            continue;
++            out[i] = src[src_n - 1];
++        }
++        else
++        {
++            const int32_t s0 = src[i0];
++            const int32_t d = static_cast<int32_t>(src[i0 + 1]) - s0;
++            if (rem == 0 || d == 0)
++            {
++                out[i] = static_cast<int16_t>(s0); // frac or the difference is exactly 0 in the double too
++            }
++            else
++            {
++                const int32_t t = s0 * DOS_AUDIO_MIXER_RATE + d * rem;
++                const int32_t q = t / DOS_AUDIO_MIXER_RATE; // truncates toward zero, as the cast did
++                out[i] = (q * DOS_AUDIO_MIXER_RATE != t) ? static_cast<int16_t>(q) : interp_double(src, i, src_rate);
++            }
++        }
++        i0 += step_i;
++        rem += step_r;
++        if (rem >= DOS_AUDIO_MIXER_RATE)
++        {
++            rem -= DOS_AUDIO_MIXER_RATE;
++            i0++;
+         }
+-        const double frac = src_pos - static_cast<double>(i0);
+-        const int32_t s0 = src_mono[i0];
+-        const int32_t s1 = src_mono[i0 + 1];
+-        out_pcm.push_back(static_cast<int16_t>(s0 + static_cast<double>(s1 - s0) * frac));
+     }
+ }
+ 
+-- 
+2.47.3
+

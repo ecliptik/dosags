@@ -1,0 +1,106 @@
+--- a/AGSQuest/Game.agf
++++ b/AGSQuest/Game.agf
+@@ -18,7 +18,7 @@
+       <BinaryFilesInSourceControl>False</BinaryFilesInSourceControl>
+       <BuildTargets>Windows</BuildTargets>
+       <ClipGUIControls>True</ClipGUIControls>
+-      <ColorDepth>TrueColor</ColorDepth>
++      <ColorDepth>HighColor</ColorDepth>
+       <CompressSpritesType>None</CompressSpritesType>
+       <CrossfadeMusic>No</CrossfadeMusic>
+       <CustomDataDir IsNull="True" />
+@@ -2180,6 +2180,20 @@
+         <TTFMetricsFixup>None</TTFMetricsFixup>
+         <VerticalOffset>0</VerticalOffset>
+       </Font>
++      <Font>
++        <AutoOutlineStyle>Squared</AutoOutlineStyle>
++        <AutoOutlineThickness>1</AutoOutlineThickness>
++        <ID>3</ID>
++        <LineSpacing>0</LineSpacing>
++        <Name xml:space="preserve">Press Start 2P (overlay)</Name>
++        <OutlineFont>0</OutlineFont>
++        <OutlineStyle>None</OutlineStyle>
++        <PointSize>10</PointSize>
++        <SizeMultiplier>1</SizeMultiplier>
++        <SourceFilename xml:space="preserve">Assets/Fonts/PressStart2P-Regular.ttf</SourceFilename>
++        <TTFMetricsFixup>None</TTFMetricsFixup>
++        <VerticalOffset>0</VerticalOffset>
++      </Font>
+     </Fonts>
+     <Palette>
+       <PaletteEntry Index="0" Type="Gamewide" Red="0" Green="0" Blue="0" />
+@@ -3846,6 +3860,30 @@
+           <ScriptAndHeader>
+             <ScriptAndHeader_Header>
+               <Script>
++                <FileName>AutoPilot.ash</FileName>
++                <Name />
++                <Description />
++                <Author />
++                <Version />
++                <Key>990000001</Key>
++                <IsHeader>True</IsHeader>
++              </Script>
++            </ScriptAndHeader_Header>
++            <ScriptAndHeader_Script>
++              <Script>
++                <FileName>AutoPilot.asc</FileName>
++                <Name />
++                <Description />
++                <Author />
++                <Version />
++                <Key>990000001</Key>
++                <IsHeader>False</IsHeader>
++              </Script>
++            </ScriptAndHeader_Script>
++          </ScriptAndHeader>
++          <ScriptAndHeader>
++            <ScriptAndHeader_Header>
++              <Script>
+                 <FileName>GlobalScript.ash</FileName>
+                 <Name />
+                 <Description />
+@@ -3875,7 +3913,21 @@
+         <SubFolders>
+           <AudioClipFolder Name="Music">
+             <SubFolders />
+-            <AudioClips />
++            <AudioClips>
++              <AudioClip>
++                <BundlingType>InGameEXE</BundlingType>
++                <DefaultPriority>Inherit</DefaultPriority>
++                <DefaultRepeat>Inherit</DefaultRepeat>
++                <DefaultVolume>-1</DefaultVolume>
++                <FileType>MIDI</FileType>
++                <ID>0</ID>
++                <Index>18</Index>
++                <ScriptName>mAutopilotTune</ScriptName>
++                <SourceFileName xml:space="preserve">Assets/Music/autopilot_tune.mid</SourceFileName>
++                <Type>2</Type>
++                <FileLastModifiedDate>2026-09-11 00:00:00Z</FileLastModifiedDate>
++              </AudioClip>
++            </AudioClips>
+             <AudioClipFolder>
+               <DefaultBundlingType>InSeparateVOX</DefaultBundlingType>
+               <DefaultPriority>Inherit</DefaultPriority>
+@@ -3952,6 +4004,19 @@
+                 <Type>3</Type>
+                 <FileLastModifiedDate>2024-04-13 11:46:37Z</FileLastModifiedDate>
+               </AudioClip>
++              <AudioClip>
++                <BundlingType>InGameEXE</BundlingType>
++                <DefaultPriority>Inherit</DefaultPriority>
++                <DefaultRepeat>Inherit</DefaultRepeat>
++                <DefaultVolume>-1</DefaultVolume>
++                <FileType>WAV</FileType>
++                <ID>5</ID>
++                <Index>17</Index>
++                <ScriptName>aAutopilotChime</ScriptName>
++                <SourceFileName xml:space="preserve">Assets/Sound/autopilot_chime.wav</SourceFileName>
++                <Type>3</Type>
++                <FileLastModifiedDate>2026-09-11 00:00:00Z</FileLastModifiedDate>
++              </AudioClip>
+             </AudioClips>
+             <AudioClipFolder>
+               <DefaultBundlingType>InGameEXE</DefaultBundlingType>

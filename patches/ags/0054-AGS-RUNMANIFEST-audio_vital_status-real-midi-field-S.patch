@@ -1,0 +1,71 @@
+From bcb5d14cbcda5013e53f93aadfd82a87ea90b10b Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sat, 12 Sep 2026 18:53:42 -0700
+Subject: [PATCH 54/54] [AGS] RUNMANIFEST audio_vital_status: real midi= field
+ (Sound milestone S4)
+
+dos_audio_mixer.cpp's format_status_string() spliced ";midi=none" as a
+hardcoded literal (S1 had no MIDI backend to report). Now splices in
+dos_midi_backend_status_fragment()'s real "midi=<backend>,events=<n>"
+fragment instead. Verified end to end this session: DOSBox-X with an OPL3
+chip present reads "...;midi=opl3,events=29"; with none present, cleanly
+"...;midi=none,events=0" -- both via a real harness run, not just unit
+logic.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/platform/dos/dos_audio_mixer.cpp | 11 +++++++++--
+ Engine/platform/dos/dos_audio_mixer.h   |  8 ++++----
+ 2 files changed, 13 insertions(+), 6 deletions(-)
+
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index 9faa6c977..01d8c0fd7 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -20,6 +20,7 @@
+ #include <SDL3/SDL_dosaudio_devicerate.h>
+ #include <SDL3/SDL_dosaudio_pump.h>
+ #include "debug/out.h"
++#include "platform/dos/dos_midi_backend.h"
+ 
+ using namespace AGS::Common;
+ 
+@@ -71,8 +72,14 @@ void format_status_string(char *buf, size_t bufsize)
+ {
+     const int bits = static_cast<int>(SDL_AUDIO_BITSIZE(DOS_AUDIO_MIXER_FORMAT));
+     const char chan_letter = (DOS_AUDIO_MIXER_CHANNELS == 1) ? 'm' : 's';
+-    std::snprintf(buf, bufsize, "pcm=sb@%d%c%d,voices=%d,underruns=%d;midi=none",
+-        DOS_AUDIO_MIXER_RATE, chan_letter, bits, DOS_AUDIO_MIXER_MAX_VOICES, g_underruns);
++    char midi_fragment[96];
++    // DOS-PORT (Sound milestone, S4): dos_midi_backend owns the real
++    // "midi=<backend>,events=<n>" fragment now -- S1 hardcoded ";midi=none"
++    // here since no MIDI backend existed yet.
++    dos_midi_backend_status_fragment(midi_fragment, sizeof(midi_fragment));
++    std::snprintf(buf, bufsize, "pcm=sb@%d%c%d,voices=%d,underruns=%d;%s",
++        DOS_AUDIO_MIXER_RATE, chan_letter, bits, DOS_AUDIO_MIXER_MAX_VOICES, g_underruns,
++        midi_fragment);
+ }
+ 
+ } // namespace
+diff --git a/Engine/platform/dos/dos_audio_mixer.h b/Engine/platform/dos/dos_audio_mixer.h
+index fb4432339..8eb16b388 100644
+--- a/Engine/platform/dos/dos_audio_mixer.h
++++ b/Engine/platform/dos/dos_audio_mixer.h
+@@ -96,10 +96,10 @@ void dos_audio_mixer_pump();
+ // active voices) -- the audio_vital_status "underruns=" field.
+ int dos_audio_mixer_underrun_count();
+ 
+-// Builds "pcm=<device>@<rate><ch><bits>,voices=<n>,underruns=<n>;midi=none"
+-// into a static buffer (S1 has no MIDI backend yet -- "midi=none" is the
+-// deliberate, honest placeholder PLAN.md's S1 line calls for; S4 replaces
+-// it once a real backend exists). Returns "NA" if the device never opened.
++// Builds "pcm=<device>@<rate><ch><bits>,voices=<n>,underruns=<n>;midi=<backend>,
++// events=<n>" into a static buffer -- the "midi=" fragment comes from
++// platform/dos/dos_midi_backend.h (S4; S1 hardcoded "midi=none" here since
++// no MIDI backend existed yet). Returns "NA" if the PCM device never opened.
+ const char *dos_audio_mixer_status_string();
+ 
+ #endif // __AGS_EE_PLATFORM_DOS__DOS_AUDIO_MIXER_H
+-- 
+2.47.3
+

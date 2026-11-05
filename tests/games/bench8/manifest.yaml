@@ -1,0 +1,206 @@
+# BENCH8 -- manifest for the self-authored, TAS-driven benchmark fixture
+# (PLAN.md, "First test game -- authoring plan"; as-built record in
+# tests/fixtures/bench/README.md). Unlike every other manifest here this
+# is NOT a sourced third-party game: source, assets and build live in this
+# repo (tests/fixtures/bench/), CC0 assets + MIT scripts + the OFL font.
+#
+# Arms are SCENES, not sound on/off: one scripted scene per run, chosen by
+# the BENCH.CFG each arm stages (extra_files). Build the package first:
+#   tests/fixtures/bench/build-host-tools.sh <pristine AGS src at the pin>
+#   tests/fixtures/bench/build.sh
+# then, DOSBox-X:
+#   tools/port-game/port_game.py validate --manifest tests/games/bench8/manifest.yaml \
+#       --layout-dir tests/harness/games/bench8 --arm all
+# and on real hardware, per arm <A> (cfg file tests/fixtures/bench/cfg/<A>.cfg):
+#   tests/harness/run-hw.sh bench8 --tag <TAG> \
+#       --extra-file tests/harness/games/bench8/ACSETUP-OFF.CFG:ACSETUP.CFG \
+#       --extra-file tests/fixtures/bench/cfg/<A>.cfg:BENCH.CFG \
+#       --env DOSAGS_TAS_AUTO_EXIT_TICK=1500 --env DOSAGS_SCENE=<A>
+#   tools/port-game/port_game.py check --manifest ... --arm <A> --run-dir <collected>
+# Every scene's capture is PH01.BMP, a name run-hw.sh already collects.
+# CLEAR PH*.BMP AND AUTOPLT.LOG ON THE TARGET BEFORE EACH CELL (AUTOPLT.LOG
+# is opened in append mode); the scene-specific pose makes a stale capture
+# from a different scene fail its hash, but not one from the same scene.
+
+id: bench8
+title: "Bench 8-bit"
+source: in-repo -- tests/fixtures/bench/ (see tests/harness/packages/bench/PIN)
+license: "assets CC0 1.0; scripts/tooling MIT; font Press Start 2P, SIL OFL 1.1"
+
+data_version: 3060310        # as logged: "Game data version: 3060310"
+compiled_with_editor: "3.6.3.13 headless tools (agf2dta/agscc/spritepak/crmpak/agspak), no Editor"
+loadable: true
+legacy_audio_system: false
+
+resolution: "320x200"        # TRUE 320x200 to the engine: LetterboxMode is
+color_depth: 8               # False, log reads "Game native resolution:
+                             # 320 x 200 (8 bit)" with no letterbox suffix --
+                             # the one fixture that fits Mode 13h exactly
+audio:
+  clip_count: 2
+  formats: [midi, wav]       # au000000.mid, au000001.wav (11025 Hz mono 16-bit)
+  needs_host_transcode: false
+  has_audio_vox: false
+  has_speech_vox: false
+fonts:
+  - {file: agsfnt0.ttf, kind: "TTF (Press Start 2P, OFL) -- exercises alfont/FreeType"}
+
+driving_recipe: "AutoPilot.asc runs the scene named in BENCH.CFG for
+  hold_ticks logic ticks, forces a scene-specific fixed pose, waits 40
+  still ticks, SaveScreenShot(PH01.BMP), QuitGame -- so the run ends
+  itself with a RUNMANIFEST. auto_exit_tick below is only a safety net
+  (hold 1000 + settle 40 = ~1045 ticks); a run that needed it fails the
+  stdout witnesses. Fixed timestep ON, as for every benchmark cell."
+
+validate:
+  pkg: bench8
+  auto_exit_tick: 1500
+  timeout_s: 240
+  arms:
+    idle:
+      cfg: ACSETUP-OFF.CFG
+      extra_files:
+        BENCH.CFG: tests/fixtures/bench/cfg/idle.cfg
+      env:
+        DOSAGS_SCENE: idle
+    walk:
+      cfg: ACSETUP-OFF.CFG
+      extra_files:
+        BENCH.CFG: tests/fixtures/bench/cfg/walk.cfg
+      env:
+        DOSAGS_SCENE: walk
+    anim4:
+      cfg: ACSETUP-OFF.CFG
+      extra_files:
+        BENCH.CFG: tests/fixtures/bench/cfg/anim4.cfg
+      env:
+        DOSAGS_SCENE: anim4
+    anim12:
+      cfg: ACSETUP-OFF.CFG
+      extra_files:
+        BENCH.CFG: tests/fixtures/bench/cfg/anim12.cfg
+      env:
+        DOSAGS_SCENE: anim12
+    text:
+      cfg: ACSETUP-OFF.CFG
+      extra_files:
+        BENCH.CFG: tests/fixtures/bench/cfg/text.cfg
+      env:
+        DOSAGS_SCENE: text
+    gui:
+      cfg: ACSETUP-OFF.CFG
+      extra_files:
+        BENCH.CFG: tests/fixtures/bench/cfg/gui.cfg
+      env:
+        DOSAGS_SCENE: gui
+    full:
+      cfg: ACSETUP-OFF.CFG
+      extra_files:
+        BENCH.CFG: tests/fixtures/bench/cfg/full.cfg
+      env:
+        DOSAGS_SCENE: full
+
+# The block name is historical; `check` applies the same expectations to
+# a real-hardware run directory. SaveScreenShot writes the engine's own
+# 8-bit virtual screen, so the capture hash is expected to be identical on
+# real hardware (AGS Quest's captures were, DOSBox-X vs the Mach64) -- if
+# it is not, that is a finding, not a baseline to update.
+expected_runmanifest_dosbox_x:
+  idle:
+    exit_code: 0
+    audio_vital_status: "NA"
+    stdout_contains:
+      - "Game native resolution: 320 x 200 (8 bit)"
+      - "AUTOPILOT config scene=idle hold_ticks=1000 objects=4 midshot=0"
+      - "AUTOPILOT phase=idle status=ok"
+      - "AUTOPILOT phase=shot status=ok"
+    capture_sha256:
+      PH01.BMP: "e0352be7e4c89136a753f9110e30917b8f802061acdc7855e8bfdc65f38ba567"
+  walk:
+    exit_code: 0
+    audio_vital_status: "NA"
+    stdout_contains:
+      - "Game native resolution: 320 x 200 (8 bit)"
+      - "AUTOPILOT config scene=walk hold_ticks=1000 objects=4 midshot=0"
+      - "AUTOPILOT phase=walk status=ok"
+      - "AUTOPILOT phase=shot status=ok"
+    capture_sha256:
+      PH01.BMP: "b1283ceb48764831bd4fb450c7a377ba16b4a747bda3f02bb43ff8d49c17db12"
+  anim4:
+    exit_code: 0
+    audio_vital_status: "NA"
+    stdout_contains:
+      - "Game native resolution: 320 x 200 (8 bit)"
+      - "AUTOPILOT config scene=anim hold_ticks=1000 objects=4 midshot=0"
+      - "AUTOPILOT phase=anim status=ok"
+      - "AUTOPILOT phase=shot status=ok"
+    capture_sha256:
+      PH01.BMP: "02fa4b2f5045909c4a1d85af15fa7ccdbc6cc3b4ced75c44cbcbccdbefdcaec8"
+  anim12:
+    exit_code: 0
+    audio_vital_status: "NA"
+    stdout_contains:
+      - "Game native resolution: 320 x 200 (8 bit)"
+      - "AUTOPILOT config scene=anim hold_ticks=1000 objects=12 midshot=0"
+      - "AUTOPILOT phase=anim status=ok"
+      - "AUTOPILOT phase=shot status=ok"
+    capture_sha256:
+      PH01.BMP: "9f0650485d4efe6042c3cf6812243c3836b03b7647eaffb15c98429954bfbe78"
+  text:
+    exit_code: 0
+    audio_vital_status: "NA"
+    stdout_contains:
+      - "Game native resolution: 320 x 200 (8 bit)"
+      - "AUTOPILOT config scene=text hold_ticks=1000 objects=4 midshot=0"
+      - "AUTOPILOT phase=text status=ok"
+      - "AUTOPILOT phase=shot status=ok"
+    capture_sha256:
+      PH01.BMP: "e69a82cbac8d09eb5febcf01852f68a8f684f1c43cf9427f8b27907028fcb073"
+  gui:
+    exit_code: 0
+    audio_vital_status: "NA"
+    stdout_contains:
+      - "Game native resolution: 320 x 200 (8 bit)"
+      - "AUTOPILOT config scene=gui hold_ticks=1000 objects=4 midshot=0"
+      - "AUTOPILOT phase=gui status=ok"
+      - "AUTOPILOT phase=shot status=ok"
+    capture_sha256:
+      PH01.BMP: "3cbb692a908b58e3fd29f6bd228f60ead45b5f1dd4e34c4ac3c1c886a43cfcb5"
+  full:
+    exit_code: 0
+    audio_vital_status: "NA"
+    stdout_contains:
+      - "Game native resolution: 320 x 200 (8 bit)"
+      - "AUTOPILOT config scene=full hold_ticks=1000 objects=4 midshot=0"
+      - "AUTOPILOT phase=look status=ok"
+      - "AUTOPILOT phase=pickup status=ok"
+      - "AUTOPILOT phase=useinv status=ok"
+      - "AUTOPILOT phase=gui status=ok"
+      - "AUTOPILOT phase=save status=ok"
+      - "AUTOPILOT phase=restore status=ok"
+      - "AUTOPILOT phase=full status=ok"
+      - "AUTOPILOT phase=shot status=ok"
+    capture_sha256:
+      PH01.BMP: "33d19e90cb9af4069cc5f3b14c8c569a16715540d2ae98f7f1a18e75c4a7b056"
+
+validated:
+  - environment: dosbox-x
+    date: 2026-09-17
+    idle: {tag: B8VDLE, exit_code: 0, audio_vital_status: "NA", fps_p50: 39.88, fps_p95: 41.34, tick_rate: 39.14, frames_skipped: 25, presents_real: 1015, presents_skipped: 0, tick_rate_steady: 40.08, tick_rate_window: 40.06, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 1015 of 1015 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 7e00e95d8c41}
+    walk: {tag: B8VALK, exit_code: 0, audio_vital_status: "NA", fps_p50: 39.88, fps_p95: 40.43, tick_rate: 38.81, frames_skipped: 9, presents_real: 1031, presents_skipped: 0, tick_rate_steady: 40.07, tick_rate_window: 40.07, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 1031 of 1031 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 7e00e95d8c41}
+    anim4: {tag: B8VIM4, exit_code: 0, audio_vital_status: "NA", fps_p50: 39.88, fps_p95: 41.14, tick_rate: 39.15, frames_skipped: 19, presents_real: 1021, presents_skipped: 0, tick_rate_steady: 40.06, tick_rate_window: 40.10, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 1021 of 1021 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 7e00e95d8c41}
+    anim12: {tag: B8VM12, exit_code: 0, audio_vital_status: "NA", fps_p50: 39.88, fps_p95: 41.10, tick_rate: 38.72, frames_skipped: 6, presents_real: 1034, presents_skipped: 0, tick_rate_steady: 40.01, tick_rate_window: 39.93, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 1034 of 1034 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 7e00e95d8c41}
+    text: {tag: B8VEXT, exit_code: 0, audio_vital_status: "NA", fps_p50: 39.88, fps_p95: 41.18, tick_rate: 39.07, frames_skipped: 10, presents_real: 1030, presents_skipped: 0, tick_rate_steady: 40.09, tick_rate_window: 40.14, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 1030 of 1030 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 7e00e95d8c41}
+    gui: {tag: B8VGUI, exit_code: 0, audio_vital_status: "NA", fps_p50: 39.88, fps_p95: 40.43, tick_rate: 38.80, frames_skipped: 8, presents_real: 1032, presents_skipped: 0, tick_rate_steady: 40.03, tick_rate_window: 39.98, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 1032 of 1032 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 7e00e95d8c41}
+    full: {tag: B8VULL, exit_code: 0, audio_vital_status: "NA", fps_p50: 0.95, fps_p95: 0.95, tick_rate: 10.18, frames_skipped: 2, presents_real: 119, presents_skipped: 0, tick_rate_steady: 43.41, tick_rate_window: NA, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [{"index": 1, "ms": 1075}, {"index": 3, "ms": 997}, {"index": 4, "ms": 452}], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 119 of 119 presents real (100.0%), 0 skipped as unchanged -- most render passes reached the display", critical_count: 0, warn_count: 0, binary_sha12: 7e00e95d8c41}
+    note: "First manifest-only validate of the BENCH8 fixture (T5): all seven scene arms PASS -- each scene's own AUTOPILOT ok + shot ok witnesses, the 320x200 native-resolution line, fixed-timestep ENABLED, exit 0 / critical 0 / warn 0, and the scene-specific PH01.BMP hash. Engine snapshot = main d3c7a4a build (patches through 0098). DOSBox-X: correctness only, no performance claim. presents_skipped=0 in every arm: patches 0087-0092 do not engage on a letterboxed 640x400 destination."
+  - environment: dosbox-x
+    date: 2026-09-21
+    idle: {tag: F2D8DLE, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.04, fps_p95: 40.04, tick_rate: 39.85, frames_skipped: -1, presents_real: 2, presents_skipped: 1039, tick_rate_steady: 40.04, tick_rate_window: 40.00, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 2 of 1041 presents real (0.2%), 1039 skipped as unchanged -- STATIC-SCREEN figure, not a gameplay fps", critical_count: 0, warn_count: 0, binary_sha12: 53df45d9ac94}
+    walk: {tag: F2D8ALK, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.00, fps_p95: 40.47, tick_rate: 39.74, frames_skipped: -1, presents_real: 199, presents_skipped: 842, tick_rate_steady: 40.04, tick_rate_window: 40.00, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 199 of 1041 presents real (19.1%), 842 skipped as unchanged -- STATIC-SCREEN figure, not a gameplay fps", critical_count: 0, warn_count: 0, binary_sha12: 53df45d9ac94}
+    anim4: {tag: F2D8IM4, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.00, fps_p95: 40.43, tick_rate: 39.69, frames_skipped: -1, presents_real: 503, presents_skipped: 538, tick_rate_steady: 40.04, tick_rate_window: 40.00, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 503 of 1041 presents real (48.3%), 538 skipped as unchanged -- STATIC-SCREEN figure, not a gameplay fps", critical_count: 0, warn_count: 0, binary_sha12: 53df45d9ac94}
+    anim12: {tag: F2D8M12, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.00, fps_p95: 40.43, tick_rate: 39.75, frames_skipped: -1, presents_real: 503, presents_skipped: 538, tick_rate_steady: 40.04, tick_rate_window: 40.00, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 503 of 1041 presents real (48.3%), 538 skipped as unchanged -- STATIC-SCREEN figure, not a gameplay fps", critical_count: 0, warn_count: 0, binary_sha12: 53df45d9ac94}
+    text: {tag: F2D8EXT, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.00, fps_p95: 40.43, tick_rate: 39.71, frames_skipped: -1, presents_real: 65, presents_skipped: 976, tick_rate_steady: 40.04, tick_rate_window: 40.00, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 65 of 1041 presents real (6.2%), 976 skipped as unchanged -- STATIC-SCREEN figure, not a gameplay fps", critical_count: 0, warn_count: 0, binary_sha12: 53df45d9ac94}
+    gui: {tag: F2D8GUI, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.00, fps_p95: 40.51, tick_rate: 39.69, frames_skipped: -1, presents_real: 52, presents_skipped: 989, tick_rate_steady: 40.04, tick_rate_window: 40.00, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 52 of 1041 presents real (5.0%), 989 skipped as unchanged -- STATIC-SCREEN figure, not a gameplay fps", critical_count: 0, warn_count: 0, binary_sha12: 53df45d9ac94}
+    full: {tag: F2D8ULL, exit_code: 0, audio_vital_status: "NA", fps_p50: 1.00, fps_p95: 1.00, tick_rate: 12.65, frames_skipped: 2, presents_real: 4, presents_skipped: 115, tick_rate_steady: 43.59, tick_rate_window: NA, clock_crosscheck_ratio: NA, hw_recovered: false, tick_stalls: [{"index": 1, "ms": 999}, {"index": 3, "ms": 996}, {"index": 4, "ms": 286}], fps_measures: "render passes/s (RenderCounter), NOT displayed frames/s; 4 of 119 presents real (3.4%), 115 skipped as unchanged -- STATIC-SCREEN figure, not a gameplay fps", critical_count: 0, warn_count: 0, binary_sha12: 53df45d9ac94}
+    note: "All seven arms PASS with capture hashes equal to the baselines, on binary_sha12 53df45d9ac94 (ags 0191) with the fixture fix that drops the stale WriteLog handle after a restore. The gui and full arms had failed on the export binary (ags 0169 stage 1; fixture log handle), see tests/harness/results/EXPORT1-2026-09-21. DOSBox-X: correctness only, no performance claim."

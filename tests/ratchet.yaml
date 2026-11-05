@@ -1,0 +1,607 @@
+# tests/ratchet.yaml -- dosags's deterministic DOSBox-X checks for the hub's ratchet.sh
+# (.sdl-dos-ports/shared/tools/ratchet.sh; its header is the format spec, version 1).
+#
+#   .sdl-dos-ports/shared/tools/ratchet.sh --capture-display N              # every check, no controls
+#   .sdl-dos-ports/shared/tools/ratchet.sh --capture-display N --controls   # prove each check can fail
+#   tests/harness/nightly-ratchet.sh [--controls]   # unattended: own worktree, clean build, display 271
+# The capture runs (gate, clicks) take their Xvfb display from --capture-display (no display: key
+# here): a worker running it by hand passes its own (lab-journeys 231); the nightly uses 271.
+#
+# Every figure here is a COUNT or an exact equality on DOSBox-X -- never a rate, a millisecond or
+# a percentile (DOSBox-X predicts rates not at all). Journey timings and stall share are printed
+# in each run's facts.txt for reading, and are deliberately not checked here.
+#
+# Every gating check has a control: a command that breaks what the check guards and must make the
+# check FAIL. A check whose control passes has no power (NOPOWER) and fails the run.
+#
+# QUARANTINED (reported, never gating): agsquest-alias-y60 and shards-alias-512x384, intermittent
+# one-tick divergences between the A and B runs (AQ: splash onset 81 vs 82 with sound off;
+# Shards: tick 100). Not present-path defects as far as known; see PLAN.md step 8 / gate-0209.
+# Also QUARANTINED, information only: shards-alias-512x384 in FIXED mode (gate-shards-fixed). It is
+# deterministic and clean on both flavours, but it has no control by construction (static title, see
+# its note), and a check without a control cannot gate.
+#
+# Figures come from tests/harness/ratchet-cell.sh, which writes facts.txt: "RATCHET k=v" lines
+# from ratchet-facts.py (audio, verifier, code lock) and journeys.py (ags 0250 journeys, lost
+# inputs). A figure the cell cannot give is printed NA, so its check ERRORs rather than passing.
+# LAB-JOURNEYS.md section 2 explains each check, its limit and its control.
+version: 1
+
+build: make all
+build_timeout: 2400
+
+# CYCLES. Each run is labelled FIXED (cycles=fixed 40000, tests/harness/confs/dosbox-x-fixed40k-opl3.conf:
+# deterministic whatever else the host runs, hub rule bb5482c) or FULL SPEED (cycles=max: the check
+# is about behaviour when the emulated CPU is as fast as the host allows). Only sb-5days and the
+# gate stay at full speed; the gate's rows move once the main worker's fixed-cycles test of the AQ
+# row is in. (ratchet.sh itself still holds the lock EXCLUSIVE per unit; see LAB-JOURNEYS.md.)
+# LOCK (2026-09-24, coordinator's rule). `lock: shared` is only for FIXED runs whose input comes from
+# inside the game (AutoPilot, TAS keyed to ticks, or no input). A run driven by xdotool (the click runs
+# and their controls) takes the lock EXCLUSIVE even at fixed cycles: fixed cycles fix EMULATED time, but
+# a click lands at a WALL-clock time, so beside other runs it falls on a different emulated tick and the
+# game can take a different path (lab/journeys CAP2 G35-on: +439 MIDI events). click-cell.sh enforces
+# it by itself (lab-lock.sh --exclusive).
+runs:
+  - name: gate-alias           # FULL SPEED (cycles=max; the existing gate, unchanged)
+    kind: capture
+    command: tests/harness/gate-alias.sh --out "$RATCHET_OUT" --no-control --no-aq
+    timeout: 10800
+  - name: gate-aq-fixed   # FIXED, no fixed timestep (the AQ row; main's AQFIX, 52cf7cad)
+    kind: capture
+    lock: shared
+    command: env GATE_CONF="$RATCHET_ROOT/tests/harness/confs/dosbox-x-fixed40k-opl3.conf" GATE_FIXED_TIMESTEP=0 GATE_ASSERT_NO_SKIP=1 tests/harness/gate-alias.sh --out "$RATCHET_OUT" --no-control --rows agsquest-alias-y60
+    timeout: 3600
+  - name: gate-shards-fixed   # FIXED, no fixed timestep, no-skip assert (the AQ row's mode; 2026-11-04)
+    kind: capture
+    lock: shared
+    command: env GATE_CONF="$RATCHET_ROOT/tests/harness/confs/dosbox-x-fixed40k-opl3.conf" GATE_FIXED_TIMESTEP=0 GATE_ASSERT_NO_SKIP=1 tests/harness/gate-alias.sh --out "$RATCHET_OUT" --no-control --rows shards-alias-512x384
+    timeout: 3600
+  - name: aq-journeys   # FIXED
+    kind: plain
+    lock: shared
+    command: tests/harness/ratchet-cell.sh "$RATCHET_OUT" lab agsquest --fixed-timestep --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf --timeout 1800
+    timeout: 2400
+  - name: sb-5days   # FULL SPEED: PCM accounting, overwrites and MIDI lateness at max speed
+    kind: sb-live
+    command: tests/harness/ratchet-cell.sh "$RATCHET_OUT" lab 5days --fixed-timestep --sb-live --conf tests/harness/confs/dosbox-x-fast-opl3.conf --ags-arg --startr --ags-arg 3 --env DOSAGS_TAS_AUTO_EXIT_TICK=3000 --env DOS_PORT_LOG=1 --timeout 800
+    timeout: 1200
+  - name: mi-stall-isr   # FIXED
+    kind: sb-live
+    lock: shared
+    command: tests/harness/ratchet-cell.sh "$RATCHET_OUT" lab 5days --fixed-timestep --sb-live --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf --ags-arg --startr --ags-arg 3 --env DOSAGS_TAS_AUTO_EXIT_TICK=3000 --env DOSAGS_UR3_STALL_EVERY=150 --timeout 900
+    timeout: 1300
+  - name: mi-throttle-isr   # FIXED
+    kind: sb-live
+    lock: shared
+    command: tests/harness/ratchet-cell.sh "$RATCHET_OUT" lab 5days --fixed-timestep --sb-live --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf --ags-arg --startr --ags-arg 3 --env DOSAGS_TAS_AUTO_EXIT_TICK=3000 --env DOSAGS_MI_RENDER_DELAY_MS=150 --timeout 900
+    timeout: 1300
+  - name: clicks   # FIXED, EXCLUSIVE (xdotool input at wall-clock times; see LOCK below)
+    kind: capture
+    command: tests/harness/ratchet-cell.sh "$RATCHET_OUT" click --startr 3 --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf -- --wait-room 3 --clicks 20 --hold-ms 80 --keys 5
+    timeout: 1200
+  - name: clicks-throttled-quick   # FIXED, EXCLUSIVE (xdotool input at wall-clock times; see LOCK below)
+    kind: capture
+    command: tests/harness/ratchet-cell.sh "$RATCHET_OUT" click --startr 3 --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf --env DOSAGS_MI_RENDER_DELAY_MS=150 -- --wait-room 3 --clicks 20 --hold-ms 20
+    timeout: 1500
+
+checks:
+  # ---- Screen equality: every alias-ON row, A (default present) == B (full push), pixel for pixel,
+  # at every freeze (gate-alias.sh). Control: the same row with DOSAGS_BREAK_0193=1 on A.
+  - name: screen-bench8-alias-idle
+    run: gate-alias
+    result: $RATCHET_OUT/summary.txt
+    match: '^bench8-alias-idle '
+    regex: 'compared, ([0-9]+) problem'
+    compare: eq
+    limit: 0
+    control: tests/harness/gate-alias.sh --out "$RATCHET_OUT" --no-control --break-a --rows bench8-alias-idle
+  - name: screen-bench8-alias-walk
+    run: gate-alias
+    result: $RATCHET_OUT/summary.txt
+    match: '^bench8-alias-walk '
+    regex: 'compared, ([0-9]+) problem'
+    compare: eq
+    limit: 0
+    control: tests/harness/gate-alias.sh --out "$RATCHET_OUT" --no-control --break-a --rows bench8-alias-walk
+  - name: screen-bench8-alias-anim4
+    run: gate-alias
+    result: $RATCHET_OUT/summary.txt
+    match: '^bench8-alias-anim4 '
+    regex: 'compared, ([0-9]+) problem'
+    compare: eq
+    limit: 0
+    control: tests/harness/gate-alias.sh --out "$RATCHET_OUT" --no-control --break-a --rows bench8-alias-anim4
+  - name: screen-bench8-alias-anim12
+    run: gate-alias
+    result: $RATCHET_OUT/summary.txt
+    match: '^bench8-alias-anim12 '
+    regex: 'compared, ([0-9]+) problem'
+    compare: eq
+    limit: 0
+    control: tests/harness/gate-alias.sh --out "$RATCHET_OUT" --no-control --break-a --rows bench8-alias-anim12
+  - name: screen-bench8-alias-text
+    run: gate-alias
+    result: $RATCHET_OUT/summary.txt
+    match: '^bench8-alias-text '
+    regex: 'compared, ([0-9]+) problem'
+    compare: eq
+    limit: 0
+    control: tests/harness/gate-alias.sh --out "$RATCHET_OUT" --no-control --break-a --rows bench8-alias-text
+  - name: screen-bench8-alias-gui
+    run: gate-alias
+    result: $RATCHET_OUT/summary.txt
+    match: '^bench8-alias-gui '
+    regex: 'compared, ([0-9]+) problem'
+    compare: eq
+    limit: 0
+    control: tests/harness/gate-alias.sh --out "$RATCHET_OUT" --no-control --break-a --rows bench8-alias-gui
+  - name: screen-bench8-alias-full
+    run: gate-alias
+    result: $RATCHET_OUT/summary.txt
+    match: '^bench8-alias-full '
+    regex: 'compared, ([0-9]+) problem'
+    compare: eq
+    limit: 0
+    control: tests/harness/gate-alias.sh --out "$RATCHET_OUT" --no-control --break-a --rows bench8-alias-full
+  - name: screen-agsquest-alias-y60-fixed40k
+    run: gate-aq-fixed
+    result: $RATCHET_OUT/summary.txt
+    match: '^agsquest-alias-y60 .*A==B: ok '
+    regex: 'compared, ([0-9]+) problem'
+    compare: eq
+    limit: 0
+    quarantine: true
+    note: QUARANTINED until 10 consecutive clean nightly runs in this mode (fixed 40000, no fixed timestep, no skipped frame -- a VOID or FAIL line yields no number, so it counts as not clean); nightly-ratchet.sh appends the running count to the report. At cycles=max the row diverged by one tick (host-timing noise, main 52cf7cad).
+  - name: screen-bench8-alias-512x384-idle
+    run: gate-alias
+    result: $RATCHET_OUT/summary.txt
+    match: '^bench8-alias-512x384-idle '
+    regex: 'compared, ([0-9]+) problem'
+    compare: eq
+    limit: 0
+    control: tests/harness/gate-alias.sh --out "$RATCHET_OUT" --no-control --break-a --rows bench8-alias-512x384-idle
+  - name: screen-bench8-alias-512x384-anim12
+    run: gate-alias
+    result: $RATCHET_OUT/summary.txt
+    match: '^bench8-alias-512x384-anim12 '
+    regex: 'compared, ([0-9]+) problem'
+    compare: eq
+    limit: 0
+    control: tests/harness/gate-alias.sh --out "$RATCHET_OUT" --no-control --break-a --rows bench8-alias-512x384-anim12
+  - name: screen-bench16-alias-512x384-idle
+    run: gate-alias
+    result: $RATCHET_OUT/summary.txt
+    match: '^bench16-alias-512x384-idle '
+    regex: 'compared, ([0-9]+) problem'
+    compare: eq
+    limit: 0
+    control: tests/harness/gate-alias.sh --out "$RATCHET_OUT" --no-control --break-a --rows bench16-alias-512x384-idle
+  - name: screen-bench16-alias-512x384-anim12
+    run: gate-alias
+    result: $RATCHET_OUT/summary.txt
+    match: '^bench16-alias-512x384-anim12 '
+    regex: 'compared, ([0-9]+) problem'
+    compare: eq
+    limit: 0
+    control: tests/harness/gate-alias.sh --out "$RATCHET_OUT" --no-control --break-a --rows bench16-alias-512x384-anim12
+  - name: screen-5days-alias-512x384
+    run: gate-alias
+    result: $RATCHET_OUT/summary.txt
+    match: '^5days-alias-512x384 '
+    regex: 'compared, ([0-9]+) problem'
+    compare: eq
+    limit: 0
+    control: tests/harness/gate-alias.sh --out "$RATCHET_OUT" --no-control --break-a --rows 5days-alias-512x384
+  - name: screen-shards-alias-512x384
+    run: gate-alias
+    result: $RATCHET_OUT/summary.txt
+    match: '^shards-alias-512x384 '
+    regex: 'compared, ([0-9]+) problem'
+    compare: eq
+    limit: 0
+    quarantine: true
+    note: QUARANTINED, information only -- FULL SPEED freeze-landing drift; and its control has no power (the title is static after tick 100, dosags 5345e699). Freeze problems per run, 2026-11-04, three runs each in one session -- release 6/4/6, instrumented 4/3/3; every release problem was a VOID 'froze at different ticks', every compared pair was equal (tests/harness/results/REL1-2026-11-04/alias). The FIXED-mode row below is the same scene without the drift.
+  - name: screen-shards-alias-512x384-fixed40k
+    run: gate-shards-fixed
+    result: $RATCHET_OUT/summary.txt
+    match: '^shards-alias-512x384 .*A==B: ok '
+    regex: 'compared, ([0-9]+) problem'
+    compare: eq
+    limit: 0
+    quarantine: true
+    note: QUARANTINED, information only -- no control by construction. The row has no AutoPilot, so it freezes on the Shards title (room 0), which does not move; DOSAGS_BREAK_0193=1 on A leaves A == B at ticks 100-900 and at 10-90 on both flavours, so no break-style control can fail. The --startr probe (operator option (a), 4 rooms, 2026-11-04, tests/harness/results/SHARDSA-2026-11-04) found no room with motion the break can expose -- room 6 equal under --break-a; 1 equal under --break-a and VOID (frames_skipped=-1); 9 VOID (froze at ticks 100 and 300 only); 5 script error on the debug jump. A --startr jump leaves the player at the room's default position. A VOID or FAIL line yields no number.
+
+  # ---- Present verifier (ags 0192) on the cells that already run: no pixel the engine drew was
+  # left unpushed. Control: DOSAGS_BREAK_0193=1. Only the AQ cell: 5 Days runs at its default 2x
+  # rung, where the narrowed present is always rejected and the verifier cannot fail (its control
+  # read NOPOWER in run 20260924T100738Z), so a stale-frames check there would be vacuous.
+  - name: stale-frames-aq-journeys
+    run: aq-journeys
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: stale_frames
+    compare: eq
+    limit: 0
+    control: tests/harness/ratchet-cell.sh "$RATCHET_OUT" lab agsquest --fixed-timestep --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf --timeout 1800 --env DOSAGS_BREAK_0193=1
+
+  - name: journeys-room-n
+    run: aq-journeys
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: room_n
+    compare: eq
+    limit: 8
+    control: tests/harness/ratchet-cell.sh "$RATCHET_OUT" lab agsquest --fixed-timestep --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf --timeout 1800 --env DOSAGS_TAS_AUTO_EXIT_TICK=1000
+  - name: journeys-save-n
+    run: aq-journeys
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: save_n
+    compare: eq
+    limit: 1
+    control: tests/harness/ratchet-cell.sh "$RATCHET_OUT" lab agsquest --fixed-timestep --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf --timeout 1800 --env DOSAGS_TAS_AUTO_EXIT_TICK=1000
+  - name: journeys-load-n
+    run: aq-journeys
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: load_n
+    compare: eq
+    limit: 1
+    control: tests/harness/ratchet-cell.sh "$RATCHET_OUT" lab agsquest --fixed-timestep --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf --timeout 1800 --env DOSAGS_TAS_AUTO_EXIT_TICK=1000
+  - name: journeys-boot-n
+    run: aq-journeys
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: boot_n
+    compare: eq
+    limit: 1
+    control: tests/harness/ratchet-cell.sh "$RATCHET_OUT" lab agsquest --fixed-timestep --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf --timeout 1800 --env DOSAGS_JOURNEY_TITLE_ROOM=99
+  - name: journeys-unfinished
+    run: aq-journeys
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: journeys_unfinished
+    compare: eq
+    limit: 0
+    control: tests/harness/ratchet-cell.sh "$RATCHET_OUT" lab agsquest --fixed-timestep --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf --timeout 1800 --env DOSAGS_JOURNEY_TITLE_ROOM=99
+
+  # ---- Journey TIMES at FIXED cycles (aq-journeys runs at cycles=fixed 40000): two runs agreed
+  # within 0-5 ms (JAQF1/JAQF2-2026-09-23: room p95 12053/12050, load 10714/10709, save 895/895,
+  # boot 7746/7742), so each p95 is gated at its measured value + 2%. Fixed 40k ranks by instruction
+  # count, not 486 time: these are regression limits, not predictions of the target. Stall share is
+  # NOT gated: AGS Quest presents ~4.5/s at fixed 40k, so every window is below 39 (share 1.0).
+  # Control: DOSAGS_MI_RENDER_DELAY_MS=150 (ags 0251) slows every present, so every journey.
+  - name: journey-boot-p95-ms-fixed
+    run: aq-journeys
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: boot_p95_ms
+    compare: le
+    limit: 7901
+    control: tests/harness/ratchet-cell.sh "$RATCHET_OUT" lab agsquest --fixed-timestep --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf --timeout 1800 --env DOSAGS_MI_RENDER_DELAY_MS=150
+  - name: journey-room-p95-ms-fixed
+    run: aq-journeys
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: room_p95_ms
+    compare: le
+    limit: 12295
+    control: tests/harness/ratchet-cell.sh "$RATCHET_OUT" lab agsquest --fixed-timestep --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf --timeout 1800 --env DOSAGS_MI_RENDER_DELAY_MS=150
+  - name: journey-save-p95-ms-fixed
+    run: aq-journeys
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: save_p95_ms
+    compare: le
+    limit: 913
+    control: tests/harness/ratchet-cell.sh "$RATCHET_OUT" lab agsquest --fixed-timestep --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf --timeout 1800 --env DOSAGS_MI_RENDER_DELAY_MS=150
+  - name: journey-load-p95-ms-fixed
+    run: aq-journeys
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: load_p95_ms
+    compare: le
+    limit: 10929
+    control: tests/harness/ratchet-cell.sh "$RATCHET_OUT" lab agsquest --fixed-timestep --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf --timeout 1800 --env DOSAGS_MI_RENDER_DELAY_MS=150
+
+  # ---- PCM accounting (ags 0252), --sb-live 5 Days with OPL3 music and SB PCM effects:
+  # pcm_unaccounted = mixed - pcm_irqs - inflight. Since SDL 0192 every chunk mixed while a sound
+  # plays (its own silence included) must reach the device, and nothing else may: 0 is exact
+  # (DOSBox-X 2026-09-23: 232 = 232, 108 of them all-zero); +-1 is allowed for a partial chunk
+  # or one played between the reads (inflight= needs the 0252 of 2026-09-23 late). Control: SDL_HINT_DOS_SILENCE_DETECT=0 (the gate
+  # off entirely, so idle silence is played too and the IRQ count no longer matches the mix).
+  - name: pcm-accounting-sb-5days
+    run: sb-5days
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: pcm_unaccounted_abs
+    compare: le
+    limit: 1
+    control: tests/harness/ratchet-cell.sh "$RATCHET_OUT" lab 5days --fixed-timestep --sb-live --conf tests/harness/confs/dosbox-x-fast-opl3.conf --ags-arg --startr --ags-arg 3 --env DOSAGS_TAS_AUTO_EXIT_TICK=3000 --env DOS_PORT_LOG=1 --timeout 800 --env SDL_HINT_DOS_SILENCE_DETECT=0
+
+  # sound was really mixed (else pcm-accounting reads 0 vacuously). Control: [sound] enabled=0.
+  - name: pcm-mixed-sb-5days
+    run: sb-5days
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: pcm_mixed
+    compare: ge
+    limit: 50
+    control: bash -c 'mkdir -p "$RATCHET_OUT/cfg" && printf "[sound]\r\nenabled=0\r\n" > "$RATCHET_OUT/cfg/ACSETUP.CFG" && exec tests/harness/ratchet-cell.sh "$RATCHET_OUT" lab 5days --fixed-timestep --sb-live --conf tests/harness/confs/dosbox-x-fast-opl3.conf --ags-arg --startr --ags-arg 3 --env DOSAGS_TAS_AUTO_EXIT_TICK=3000 --timeout 800 --include-extra "$RATCHET_OUT/cfg/ACSETUP.CFG"'
+
+  # The SB ring was never written over unplayed audio (SDL 0190's counter). REPORTED, NOT GATING:
+  # no switch makes a correct build overwrite (a 2-chunk ring, and one with no background audio
+  # thread, both read 0: run 20260924T100738Z, results/OVWC-2026-09-24), so the check has no
+  # control. An overwrite loses audio, so pcm-accounting (which has one) fails on it anyway.
+  - name: overwrites-sb-5days
+    run: sb-5days
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: overwrites
+    compare: eq
+    limit: 0
+    quarantine: true
+    note: reported only -- no control can make a correct build overwrite; pcm-accounting catches the loss
+
+  # ---- No voice runs dry mid-clip (2026-09-30, after the ags 0348 revert): underruns counts mixed chunks in which an active
+  # voice whose clip had not ended had no data (the mixer still emits the chunk, that voice contributing zero -- a hole the SB
+  # plays as ring data, so silent_irqs cannot see it). 0 in every run on 0347-era builds (ratchets 20260929T204426Z and
+  # 20260929T220535Z, all three runs, stalled and throttled included); ags 0348 read underruns == primes (sb-5days 6, stall 4,
+  # throttle 5; lab/mmd 569df3b1) and was reverted. Control: that 0348 sb-5days run's counters (underrun-control.sh).
+  - name: underruns-sb-5days
+    run: sb-5days
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: underruns
+    compare: eq
+    limit: 0
+    control: tests/harness/underrun-control.sh "$RATCHET_OUT"
+  - name: underruns-stall
+    run: mi-stall-isr
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: underruns
+    compare: eq
+    limit: 0
+    control: tests/harness/underrun-control.sh "$RATCHET_OUT"
+  - name: underruns-throttle
+    run: mi-throttle-isr
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: underruns
+    compare: eq
+    limit: 0
+    control: tests/harness/underrun-control.sh "$RATCHET_OUT"
+
+  # ---- MIDI on time (SDL 0193-0196, ags 0207-0209): the ISR replay writes no OPL3 register late,
+  # at full speed, through forced 1.5 s main-loop stalls (ags 0251 DOSAGS_UR3_STALL_EVERY) and at
+  # ~6 renders/s (DOSAGS_MI_RENDER_DELAY_MS=150). midi_late_writes = late_writes (isr) or late50
+  # (poll, events > 50 ms late). Control: the same cell on the poll tick (DOSAGS_MIDI_TICK=poll).
+  - name: midi-late-sb-5days
+    run: sb-5days
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: midi_late_writes
+    compare: eq
+    limit: 0
+    control: tests/harness/ratchet-cell.sh "$RATCHET_OUT" lab 5days --fixed-timestep --sb-live --conf tests/harness/confs/dosbox-x-fast-opl3.conf --ags-arg --startr --ags-arg 3 --env DOSAGS_TAS_AUTO_EXIT_TICK=3000 --env DOS_PORT_LOG=1 --timeout 800 --env DOSAGS_MIDI_TICK=poll --env DOSAGS_UR3_STALL_EVERY=150
+  - name: midi-late-stall
+    run: mi-stall-isr
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: midi_late_writes
+    compare: eq
+    limit: 0
+    control: tests/harness/ratchet-cell.sh "$RATCHET_OUT" lab 5days --fixed-timestep --sb-live --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf --ags-arg --startr --ags-arg 3 --env DOSAGS_TAS_AUTO_EXIT_TICK=3000 --env DOSAGS_UR3_STALL_EVERY=150 --timeout 900 --env DOSAGS_MIDI_TICK=poll
+  # the stall cell's stalls really fired (else midi-late-stall is vacuous). Control: no stalls.
+  - name: midi-stall-fired
+    run: mi-stall-isr
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: mistall_n
+    compare: ge
+    limit: 10
+    control: tests/harness/ratchet-cell.sh "$RATCHET_OUT" lab 5days --fixed-timestep --sb-live --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf --ags-arg --startr --ags-arg 3 --env DOSAGS_TAS_AUTO_EXIT_TICK=3000 --timeout 900
+  - name: midi-late-throttle
+    run: mi-throttle-isr
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: midi_late_writes
+    compare: eq
+    limit: 0
+    control: tests/harness/ratchet-cell.sh "$RATCHET_OUT" lab 5days --fixed-timestep --sb-live --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf --ags-arg --startr --ags-arg 3 --env DOSAGS_TAS_AUTO_EXIT_TICK=3000 --env DOSAGS_MI_RENDER_DELAY_MS=150 --timeout 900 --env DOSAGS_MIDI_TICK=poll
+
+  # ---- Input: every click and key the host injected reached the engine (journeys.py
+  # lost_inputs, end to end), and the host really injected them (else lost_inputs=0 is vacuous).
+  # SDL 0221 delivers the presses the level poll misses, so quick clicks survive the ~3 fps of
+  # 5 Days room 3 at FIXED 40k (80 ms clicks) and the ~4 fps of the 150 ms render delay (20 ms
+  # clicks). Control: the same cell with SDL_HINT_DOS_MOUSE_LEVEL_ONLY=1 (SDL 0222: 0221 off), which
+  # loses 12-13 of 21 (F0222 G0, F0221 F3c). Before 0221 these runs held each click 400 ms.
+  - name: lost-inputs
+    run: clicks
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: lost_inputs
+    compare: eq
+    limit: 0
+    control: tests/harness/ratchet-cell.sh "$RATCHET_OUT" click --startr 3 --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf --env SDL_HINT_DOS_MOUSE_LEVEL_ONLY=1 -- --wait-room 3 --clicks 20 --hold-ms 80 --keys 5
+  - name: lost-clicks-driver-vs-poll
+    run: clicks
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: lost_clicks
+    compare: eq
+    limit: 0
+    control: tests/harness/ratchet-cell.sh "$RATCHET_OUT" click --startr 3 --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf --env SDL_HINT_DOS_MOUSE_LEVEL_ONLY=1 -- --wait-room 3 --clicks 20 --hold-ms 80
+  - name: clicks-injected
+    run: clicks
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: host_clicks
+    compare: eq
+    limit: 21
+    control: tests/harness/ratchet-cell.sh "$RATCHET_OUT" click --startr 3 --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf -- --wait-room 3 --clicks 10 --hold-ms 80 --keys 5
+  - name: keys-injected
+    run: clicks
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: host_keys
+    compare: eq
+    limit: 5
+    control: tests/harness/ratchet-cell.sh "$RATCHET_OUT" click --startr 3 --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf -- --wait-room 3 --clicks 20 --hold-ms 80 --keys 2
+  # quick 20 ms clicks survive a 150 ms render delay (the JC6Q case; SDL 0221)
+  - name: lost-inputs-throttled-quick
+    run: clicks-throttled-quick
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: lost_inputs
+    compare: eq
+    limit: 0
+    control: tests/harness/ratchet-cell.sh "$RATCHET_OUT" click --startr 3 --conf tests/harness/confs/dosbox-x-fixed40k-opl3.conf --env DOSAGS_MI_RENDER_DELAY_MS=150 --env SDL_HINT_DOS_MOUSE_LEVEL_ONLY=1 -- --wait-room 3 --clicks 20 --hold-ms 20
+
+  # ---- SB alive (2026-09-24; LAB-JOURNEYS 8.15 and CAP3b). A dead SB reports underruns=0 and
+  # silent_irqs=0 (those count IRQs that happen), so no other check here sees it. The ISR replay's
+  # MIDI song clock advances only on SB IRQs: sb_clk_permille = song_ms / rtc_s (ratchet-facts.py).
+  # Healthy: 956-1000 (lab and 486); the dead SB of DLY-v1b: 213. Limit 900.
+  # Control: the counters-only manifest of that dead-SB run (tests/harness/fixtures/sb-dead-dlyv1b),
+  # read by the same parser -- it proves the parser and the limit only, like exe-bytes' control; the
+  # live proof (a real SB death seen by this metric) is DLY-v1b in LAB-JOURNEYS.
+  - name: sb-alive-clk-sb-5days
+    run: sb-5days
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: sb_clk_permille
+    compare: ge
+    limit: 900
+    control: tests/harness/sb-alive-control.sh "$RATCHET_OUT"
+  - name: sb-alive-clk-stall
+    run: mi-stall-isr
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: sb_clk_permille
+    compare: ge
+    limit: 900
+    control: tests/harness/sb-alive-control.sh "$RATCHET_OUT"
+  - name: sb-alive-clk-throttle
+    run: mi-throttle-isr
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: sb_clk_permille
+    compare: ge
+    limit: 900
+    control: tests/harness/sb-alive-control.sh "$RATCHET_OUT"
+
+  # ---- Build size (DJGPP keeps .bss in the image, so this also catches a static array).
+  # Control: the same measurement on a copy grown by 4 KB (proves the check reads the size and
+  # fails on growth; a real code-growth control would need a second build).
+  # LIMITS 2026-09-24 (coordinator-approved, exact, no headroom): taken from the nightly run
+  # 20260924T200002Z (tree 7d59d8fa, build ea5586a42d75) -- landed series growth since the first limits
+  # were set on 348920d7fe7b (8490979 / 5107296). The next growth trips the check again, on purpose.
+  # LIMITS 2026-09-25 (coordinator-approved, exact, no headroom): 8578675 -> 8586040 / 5118864 -> 5121728,
+  # from ratchet report 20260925T053038Z (main + ags 0215 + 0216, build 5f052e7319af). Exe: +589 from SDL 0227
+  # (its landing ran only the click units; main-with-0227 = 8579264 bytes) and +6776 from 0215 + 0216. Lock:
+  # +2864, attributed to 0215 + 0216.
+  # LIMITS 2026-09-25 (coordinator-approved in advance for size-only fails from 0240's own code, exact, no
+  # headroom): 8586040 -> 8588220 / 5121728 -> 5122800, from ratchet report 20260925T063901Z (main + SDL 0240,
+  # build 8d5df1ebe705): +2180 exe and +1072 locked, the mouse IRQ doorbell's code.
+  # LIMITS 2026-09-25 (coordinator-approved, exact, no headroom): 8588220 -> 8589515 / 5122800 -> 5123136, from
+  # ratchet report 20260925T080643Z (main + ags 0275, build 1ee973f4a069): +1295 exe and +336 locked, 0275's code.
+  # LIMITS 2026-09-25 (coordinator-approved, exact, no headroom): 8589515 -> 8595179 / 5123136 -> 5128080, from
+  # ratchet report 20260925T094320Z (main + 0275 + ags 0233, build f07490dcc2f8): +5664 exe and +4944 locked, 0233's code.
+  # LIMITS 2026-09-25 (coordinator-approved in advance, exact, no headroom): 8595179 -> 8595958 / 5128080 -> 5128624,
+  # from ratchet report 20260925T140917Z (main + ags 0234, build 55cca7e85a28): +779 exe and +544 locked, 0234's code.
+  # LIMITS 2026-09-25 (coordinator-approved in advance, exact, no headroom): 8595958 -> 8596893 / 5128624 -> 5128864,
+  # from ratchet report 20260925T155900Z (main + SDL 0198 + ags 0217 + --wrap=uclock, build b56839568382) and the
+  # re-run of its blocked unit (report 20260925T181620Z, lost-inputs-throttled-quick PASS 0): +935 exe and +240 locked, TPIT's uclock wrapper and report line.
+  # LIMITS 2026-09-25 (coordinator-approved, exact, no headroom): 8596893 -> 8598510 / 5128864 -> 5130208, from
+  # ratchet report 20260925T204348Z (main + SDL 0199 + ags 0218, build c7a073cdd72e): +1617 exe and +1344 locked,
+  # the AUDIOPRB switch and its end-of-run pump histogram.
+  # LIMITS 2026-09-25 (coordinator-approved, exact, no headroom): 8598510 -> 8604357 / 5130208 -> 5136384, from
+  # ratchet report 20260925T222201Z (main + ags 0315, build 3cf8c4a48fe6, harness default fine timing ON): +5847 exe
+  # and +6176 locked, 0315's switch at ~80 gated timing sites (LAB-MMD 46/46.6).
+  # LIMITS 2026-09-26 (coordinator-approved, exact, no headroom): 8604357 -> 8615079 / 5136384 -> 5142960, from
+  # ratchet report 20260926T000433Z (main + SDL 0250-0255 + ags 0330-0333, build a30ee9702c2a): +10722 exe and
+  # +6576 locked, the pump-free CAP3/PACE set (LAB-JOURNEYS 8.42).
+  # LIMIT 2026-09-26 (coordinator-approved, exact, no headroom): exe-bytes 8615079 -> 8615872, from ratchet report
+  # 20260926T051232Z (main + SDL 0256 + ags 0316, build b1cd5ccee175): +793 exe, 0316's opt-in per-tick log.
+  # code-lock-bytes read 5142240 there (IMPROVED); its limit stays 5142960 until the coordinator decides after 0236/0238.
+  # LIMIT 2026-09-26 0238 wordscan: +547 exe, +32 over limit code-lock (coordinator-approved from ratchet
+  # 20260926T155950Z): exe-bytes 8615872 -> 8616419, code-lock-bytes 5142960 -> 5142992 (build fd81c895a2ae).
+  # LIMIT 2026-09-26 0239 fade resync (default off): +679 exe, +432 code-lock (coordinator-approved from ratchet
+  # 20260926T172243Z): exe-bytes 8616419 -> 8617098, code-lock-bytes 5142992 -> 5143424 (build 6cac4cb84990).
+  # LIMIT 2026-09-26 0317 legacy pathfinder: +561 exe, +656 code-lock (coordinator-approved from ratchet
+  # 20260926T182208Z): exe-bytes 8617098 -> 8617659, code-lock-bytes 5143424 -> 5144080 (build bcf49030a498).
+  # LIMIT 2026-09-26 0240 32-bpp fade fast step: +2579 exe, +1872 code-lock (coordinator-approved from ratchet
+  # 20260926T192630Z): exe-bytes 8617659 -> 8620238, code-lock-bytes 5144080 -> 5145952 (build 794a45491c4b).
+  # LIMIT 2026-09-26 WB RTC-pump series (SDL 0260-0267 + ags 0340-0345, opt-in): +14227 exe, +10352 code-lock
+  # (coordinator-approved from ratchet 20260926T203040Z): exe-bytes 8620238 -> 8634465, code-lock-bytes
+  # 5145952 -> 5156304 (build 3d0bfbad9318 = lab-wb's land5).
+  # LIMIT 2026-09-27 SDL 0257 PicoGUS pacing default restored (PACEI CLEARED): +512 exe, +208 code-lock
+  # (coordinator-approved from ratchet 20260926T235049Z): exe-bytes 8634465 -> 8634977, code-lock-bytes
+  # 5156304 -> 5156512 (build 883a862a2d79).
+  # LIMIT 2026-09-27 ags 0320 incremental PCM decode (default off): +4990 exe, +4208 code-lock (coordinator-approved
+  # from ratchet 20260927T030640Z): exe-bytes 8634977 -> 8639967, code-lock-bytes 5156512 -> 5160720 (build ed5a46b2a03a).
+  # LIMIT 2026-09-27 hub 9593c9d midi_sched merge-ordered SMF events + open_mem: +1616 exe, +1536 code-lock
+  # (coordinator-approved from ratchet 20260927T054057Z): exe-bytes 8639967 -> 8641583, code-lock-bytes
+  # 5160720 -> 5162256 (build d13264c9b2a5).
+  # LIMIT 2026-09-27 ags 0241 one-call DOS existence check for misses (default off): +1326 exe, +880 code-lock
+  # (coordinator-approved from ratchet 20260927T072802Z): exe-bytes 8641583 -> 8642909, code-lock-bytes
+  # 5162256 -> 5163136 (build 3206a5d0fe6a).
+  # LIMIT 2026-09-27 SDL 0268 + ags 0346 WB pump pre-roll (opt-in): +4111 exe (+3072 text, +512 data alignment of
+  # 0346 status buffers), +3184 code-lock (coordinator-approved from ratchet 20260927T084354Z): exe-bytes 8642909 ->
+  # 8647020, code-lock-bytes 5163136 -> 5166320 (build 87f617794648).
+  # LIMIT 2026-09-27 ags 0321 MIDI clip parsed from memory, no DOSMIDI.TMP (default on, DOSAGS_MIDI_MEM=0 kills): +108
+  # exe, +112 code-lock (coordinator-approved from ratchet 20260927T100144Z): exe-bytes 8647020 -> 8647128,
+  # code-lock-bytes 5166320 -> 5166432 (build 94f6de7fb0c6).
+  # LIMIT 2026-09-27 ags 0242 one read-only handle per package (default off): +2891 exe, +1936 code-lock
+  # (coordinator-approved from ratchet 20260927T111615Z): exe-bytes 8647128 -> 8650019, code-lock-bytes
+  # 5166432 -> 5168368 (build 40e982437560).
+  # LIMIT 2026-09-27 ags 0322 SB device buffer adopts the decoder's int16 output (default off): +2013 exe (+1024 text,
+  # +512 data alignment), +1216 code-lock (coordinator-approved from ratchet 20260927T121450Z): exe-bytes 8650019 ->
+  # 8652032, code-lock-bytes 5168368 -> 5169584 (build 0ae21c7a984e).
+  # LIMIT 2026-09-28 ags 0243/0244 (0241/0242 default ON): exe-bytes unchanged 8652032; code-lock-bytes LOWERED
+  # 5169584 -> 5169552 (-32, IMPROVED; coordinator-approved from ratchet 20260928T185524Z; build d18d63368af6).
+  # LIMIT 2026-09-28 ags 0245 + 0246 dircache / readdirect (default off): +5757 exe, +4144 code-lock (coordinator-approved
+  # from ratchet 20260928T215324Z): exe-bytes 8652032 -> 8657789, code-lock-bytes 5169552 -> 5173696 (build ef123dba0adf).
+  # LIMIT 2026-09-29 ags 0247 + 0248 (tick clicks, fixed seed; default off) + 0249 (0246 readdirect default ON): -282 exe,
+  # -560 code-lock (coordinator-approved from ratchet 20260929T051134Z): exe-bytes 8657789 -> 8657507, code-lock-bytes
+  # 5173696 -> 5173136 (build 7d5053dcb8bb).
+  # LIMIT 2026-09-29 ags 0319 re-cut 2 legacy pathfinder serial-keyed mask cache + per-row run-table labels (default ON,
+  # DOSAGS_RP_FAST=0 kills): +9874 exe, +6608 code-lock (coordinator-approved from ratchet 20260929T064635Z): exe-bytes
+  # 8657507 -> 8667381, code-lock-bytes 5173136 -> 5179744 (build 3074cd9ce099).
+  # LIMIT 2026-09-29 ags 0324 DOSAGS_MSGSKIP fixture prompt dismissal of blocking message boxes (default off): +655 exe,
+  # +32 code-lock (coordinator-approved from ratchet 20260929T155057Z): exe-bytes 8667381 -> 8668036, code-lock-bytes
+  # 5179744 -> 5179776 (build d8c3aa2eafdf).
+  # LIMIT 2026-09-29 ags 0347 silent_irqs counts dropouts only, start_latency_irqs= added (one per owed episode): +903
+  # exe, +528 code-lock (coordinator-approved from ratchet 20260929T220535Z): exe-bytes 8668036 -> 8668939,
+  # code-lock-bytes 5179776 -> 5180304 (build 8249193ed041).
+  # LIMIT 2026-09-30 ags 0348 cold-start prime re-landed with 0349 (hold the top-up after a prime) and 0350 (irq_fragment
+  # 160): +1691 exe, +1472 code-lock (coordinator-approved from ratchet 20260930T084452Z): exe-bytes 8668939 -> 8670630,
+  # code-lock-bytes 5180304 -> 5181776 (build af3f0824499e).
+  # LIMIT 2026-11-04 step 1b (ags 0352/0353, SDL 0269: AUDIOPRB retired) + ags 0354 (stdout commit at room entry):
+  # -34575 exe, -6768 code-lock, lowered exact (no headroom) to the INSTRUMENTED flavour, which the nightly builds
+  # (sdlports-approved; ratchets 20261105T000223Z instrumented 7e5dfe26f272, 20261105T005648Z release a1dba5d61624):
+  # exe-bytes 8670630 -> 8636055, code-lock-bytes 5181776 -> 5175008. The release flavour reads lower on both
+  # (8598425 / 5144064) and passes these limits.
+  # 2026-11-04: reads $AGS_EXE when it is set (as run-dosbox.sh does), so a ratchet run on another binary (the
+  # DOSAGS_RELEASE flavour, build/ags-release/ags.exe) measures that binary, not build/ags/ags.exe.
+  - name: exe-bytes
+    command: bash -c 'stat -c "exe_bytes=%s" "${AGS_EXE:-build/ags/ags.exe}"'
+    key: exe_bytes
+    compare: le
+    limit: 8636055
+    control: bash -c 'cp "${AGS_EXE:-build/ags/ags.exe}" "$RATCHET_OUT/big.exe" && head -c 4096 /dev/zero >> "$RATCHET_OUT/big.exe" && stat -c "exe_bytes=%s" "$RATCHET_OUT/big.exe"'
+    timeout: 60
+
+  # ---- The ISR code lock (SDL 0194 / hub 0145) engaged and covers no more than it did: bytes
+  # locked, from SDLDBG.LOG (DOS_PORT_LOG=1). NA (ERROR) if the line is missing or not "locked".
+  # Control: the same parser on a recorded cell (results/MCLK-2026-09-23, same lock line format)
+  # with the figure raised by 1 MB -- proves the parser and the limit only; see exe-bytes.
+  - name: code-lock-bytes
+    run: sb-5days
+    result: $RATCHET_OUT/facts.txt
+    match: '^RATCHET '
+    key: code_lock_bytes
+    compare: le
+    limit: 5175008
+    control: tests/harness/ratchet-lock-control.sh "$RATCHET_OUT"

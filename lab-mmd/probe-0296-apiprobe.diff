@@ -1,0 +1,114 @@
+diff --git a/Engine/ac/global_button.cpp b/Engine/ac/global_button.cpp
+index e2714fced..8005d00cf 100644
+--- a/Engine/ac/global_button.cpp
++++ b/Engine/ac/global_button.cpp
+@@ -13,6 +13,11 @@
+ //=============================================================================
+ 
+ #include "ac/global_button.h"
++#ifdef __DJGPP__
++#include <stdlib.h> // probe 0296
++#include <stdint.h>
++#include <algorithm>
++#endif
+ #include "ac/common.h"
+ #include "ac/button.h"
+ #include "ac/gamesetupstruct.h"
+@@ -75,7 +80,19 @@ int GetButtonPic(int guin, int objn, int ptype) {
+     }
+ }
+ 
++#ifdef __DJGPP__
++// DOS-PORT probe 0296 (LAB ONLY): SetButtonPic calls by type, how many leave the slot unchanged, and
++// ABLATION switches measuring cost only (not semantics-preserving): DOSAGS_ABL_SBP=1 returns after the
++// argument checks when a normal-graphic slot is unchanged; =2 returns at entry for every call.
++long dp_sbp_calls = 0, dp_sbp_type[4] = {0,0,0,0}, dp_sbp_same = 0;
++static int dp_sbp_abl = -1;
++#endif
+ void SetButtonPic(int guin,int objn,int ptype,int slotn) {
++#ifdef __DJGPP__
++    if (dp_sbp_abl < 0) { const char *e = getenv("DOSAGS_ABL_SBP"); dp_sbp_abl = e ? atoi(e) : 0; }
++    dp_sbp_calls++;
++    if (dp_sbp_abl == 2) return;
++#endif
+     if ((guin<0) | (guin>=game.numgui)) quit("!SetButtonPic: invalid GUI number");
+     if ((objn<0) | (objn>=guis[guin].GetControlCount())) quit("!SetButtonPic: invalid object number");
+     if (guis[guin].GetControlType(objn)!=kGUIButton)
+@@ -83,6 +100,13 @@ void SetButtonPic(int guin,int objn,int ptype,int slotn) {
+     if ((ptype<1) | (ptype>3)) quit("!SetButtonPic: invalid pic type");
+ 
+     GUIButton*guil=(GUIButton*)guis[guin].GetControl(objn);
++#ifdef __DJGPP__
++    dp_sbp_type[ptype & 3]++;
++    {
++        const int cur = (ptype == 1) ? guil->GetNormalImage() : (ptype == 2) ? guil->GetMouseOverImage() : guil->GetPushedImage();
++        if (cur == std::max(0, slotn)) { dp_sbp_same++; if (dp_sbp_abl == 1 && ptype == 1) return; }
++    }
++#endif
+     if (ptype==1) {
+         Button_SetNormalGraphic(guil, slotn);
+     }
+diff --git a/Engine/ac/global_gui.cpp b/Engine/ac/global_gui.cpp
+index 2b4a404f4..60582719e 100644
+--- a/Engine/ac/global_gui.cpp
++++ b/Engine/ac/global_gui.cpp
+@@ -12,6 +12,11 @@
+ //
+ //=============================================================================
+ #include <vector>
++#ifdef __DJGPP__
++#include <stdlib.h> // probe 0296
++#include <stdint.h>
++#include <algorithm>
++#endif
+ #include "ac/common.h"
+ #include "ac/display.h"
+ #include "ac/draw.h"
+@@ -42,8 +47,29 @@ int IsGUIOn (int guinum) {
+ 
+ // This is an internal script function, and is undocumented.
+ // It is used by the editor's automatic macro generation.
++#ifdef __DJGPP__
++// DOS-PORT probe 0296 (LAB ONLY, never a gate binary): FindGUIID calls, GUIs scanned, and an ABLATION
++// switch (DOSAGS_ABL_FGI=1: answer from a pointer-keyed cache WITHOUT validation) that measures the
++// scan's cost only. Not a fix: the ablation is not semantics-preserving by design.
++long dp_fgi_calls = 0, dp_fgi_scanned = 0, dp_fgi_hits = 0;
++static int dp_fgi_abl = -1;
++static const char *dp_fgi_key[16]; static int dp_fgi_val[16];
++#endif
++int dp_numgui_for_probe() { return game.numgui; }
+ int FindGUIID (const char* GUIName) {
++#ifdef __DJGPP__
++    if (dp_fgi_abl < 0) { const char *e = getenv("DOSAGS_ABL_FGI"); dp_fgi_abl = (e && e[0] == '1') ? 1 : 0; }
++    dp_fgi_calls++;
++    const unsigned dp_slot = ((unsigned)(uintptr_t)GUIName >> 2) & 15;
++    if (dp_fgi_abl && dp_fgi_key[dp_slot] == GUIName) { dp_fgi_hits++; return dp_fgi_val[dp_slot]; }
++#endif
+     for (int ii = 0; ii < game.numgui; ii++) {
++#ifdef __DJGPP__
++        dp_fgi_scanned++;
++        if (dp_fgi_abl && ((guis[ii].GetName() == GUIName) ||
++            ((!guis[ii].GetName().IsEmpty()) && (guis[ii].GetName()[0u] == 'g') && (ags_stricmp(guis[ii].GetName().GetCStr() + 1, GUIName) == 0))))
++        { dp_fgi_key[dp_slot] = GUIName; dp_fgi_val[dp_slot] = ii; }
++#endif
+         if (guis[ii].GetName().IsEmpty())
+             continue;
+         if (guis[ii].GetName() == GUIName)
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index f0024c6b9..c1e1aa16f 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -593,6 +593,13 @@ void quit(const char *quitmsg)
+                     t.bg_spans, t.bg_span_lt16, t.bg_span_lt64, t.bg_span_ge64,
+                     t.bg_spans ? (long)(t.bg_px / t.bg_spans) : 0L);
+ #ifdef __DJGPP__
++                {   // probe 0296 (LAB ONLY)
++                    extern long dp_fgi_calls, dp_fgi_scanned, dp_fgi_hits, dp_sbp_calls, dp_sbp_type[4], dp_sbp_same;
++                    extern int dp_numgui_for_probe();
++                    Debug::Printf("DOS-PORT apiprobe findguiid calls=%ld scanned=%ld hits=%ld numgui=%d setbuttonpic calls=%ld normal=%ld over=%ld pushed=%ld same=%ld",
++                        dp_fgi_calls, dp_fgi_scanned, dp_fgi_hits, dp_numgui_for_probe(), dp_sbp_calls,
++                        dp_sbp_type[1], dp_sbp_type[2], dp_sbp_type[3], dp_sbp_same);
++                }
+                 {   // patch 0150: what event dispatch actually spends its time on
+                     extern long long dos_port_evt_us[6];
+                     extern long dos_port_evt_n[6];

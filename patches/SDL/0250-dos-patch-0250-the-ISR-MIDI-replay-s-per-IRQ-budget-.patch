@@ -1,0 +1,152 @@
+From 016bad18ec71a0564e713414dcfaa3cba4c64546 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 07:06:05 -0700
+Subject: [PATCH 250/255] dos: patch 0250 -- the ISR MIDI replay's per-IRQ
+ budget as a hint, and the drain's own time
+
+WHY: patch 0193's replay writes at most MIDI_DEFER_MAX_PER_IRQ (256) queued
+OPL writes per SB IRQ, a bound on ISR time. Dense music overruns it: on
+DOSBox-X, Trilby's Notes room 35 (Gate S8's fixture) peaks at the cap in
+many IRQs and 510 writes go out one or two IRQs late (up to 92 ms in room
+1), while every 5 Days cell peaks near 80 and reads late_writes=0. Whether
+a larger budget is safe depends on what a write costs inside the ISR on the
+486 -- 1 out, 6 status reads, 1 out, 6 reads, ISA timing -- which nobody
+has measured. The budget has to be settable without a rebuild, and the
+drain has to time itself, before any budget can be chosen.
+
+WHAT: SDL_HINT_DOS_MIDI_DEFER_MAX_PER_IRQ (environment, read when the
+replay is enabled; default 256 = unchanged; clamped 16..8192) sets the
+budget. Each drain that writes anything is timed with the SB ISR's own
+IRQ-safe timer (SDL_DOSAudioReadTimer / SDL_DOSAudioTimerDeltaUs: RDTSC
+where the CPU has it, else PIT channel 0 -- the clock the ISR's
+audio_irq_wall_us already uses), and the longest drain, the sum and the
+count are kept in us; an IRQ that stops at the budget with a due entry
+still queued is counted as a cap hit. SDL_DOSMidiDeferStats3() returns
+budget, cap hits, longest drain, sum and count. The new variables are
+locked with the replay's others. (A first version read PIT channel 0
+directly and assumed one count per clock; on DOSBox-X it reported a 54 ms
+drain inside a 46 ms IRQ period -- the shared timer replaces it.)
+
+RENUMBERED 2026-09-25 from 0223 to 0250 (the coordinator's SDL block 0250-0259),
+so the series sorts after main's SDL 0240. It lands on main ahead of the RTC
+pump series (SDL 0230-0237), which re-applies on top. 0223 never landed on
+main; its slot is retired on lab/journeys.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ include/SDL3/SDL_dosmidi_tick.h |  7 +++++
+ src/audio/dos/SDL_dosaudio_sb.c | 50 ++++++++++++++++++++++++++++++++-
+ 2 files changed, 56 insertions(+), 1 deletion(-)
+
+diff --git a/include/SDL3/SDL_dosmidi_tick.h b/include/SDL3/SDL_dosmidi_tick.h
+index eefa6647f..cf4c1564d 100644
+--- a/include/SDL3/SDL_dosmidi_tick.h
++++ b/include/SDL3/SDL_dosmidi_tick.h
+@@ -280,6 +280,13 @@ extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferStats(Uint32 *written, Uint32 *
+ /* Entries discarded unplayed (a disable past its bound, or the device
+    closing with deferral on) and entries a disable wrote from the main thread. */
+ extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferStats2(Uint32 *dropped, Uint32 *sync);
++/* DOS-PORT patch 0250: the per-IRQ write budget in force
++   (SDL_HINT_DOS_MIDI_DEFER_MAX_PER_IRQ, read at enable; default 256, clamped
++   16..8192), the IRQs that stopped at it with a due entry left, and the
++   drain's own time in us (the SB ISR's timer: RDTSC, else PIT): the longest
++   drain, and the sum and count of drains that wrote anything. */
++extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferStats3(Uint32 *budget, Uint32 *cap_hits, Uint32 *isr_max_us,
++                                                        Uint32 *isr_sum_us, Uint32 *isr_drains);
+ /* DOS-PORT patch 0195: pause (true) holds the replay, keeps the queue and
+    silences what it left sounding (OPL key-off / MPU All Notes Off); resume
+    (false) shifts the queued stamps by the pause's IRQs, releases the hold and
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index 272b6098a..64d873010 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -1765,6 +1765,16 @@ static volatile Uint32 g_mdq_full = 0;     /* captures refused because the queue
+ static volatile Uint32 g_mdq_dropped = 0;  /* entries discarded unplayed (bounded disable, device close) */
+ static volatile Uint32 g_mdq_sync = 0;     /* entries written from the main thread by a disable */
+ static bool g_mdq_locked = false;
++/* DOS-PORT patch 0250: the per-IRQ write budget (was the constant
++   MIDI_DEFER_MAX_PER_IRQ; that is still the default), how often it bound,
++   and the drain's own time in us, from the SB ISR's own IRQ-safe timer
++   (SDL_DOSAudioReadTimer: RDTSC where the CPU has it, else PIT channel 0 --
++   the same clock as dos_port_audio_irq_wall_us). */
++static volatile Uint32 g_mdq_budget = MIDI_DEFER_MAX_PER_IRQ;
++static volatile Uint32 g_mdq_cap_hits = 0;   /* IRQs that stopped at the budget with a due entry left */
++static volatile Uint32 g_mdq_isr_max = 0;    /* the longest drain, us */
++static volatile Uint32 g_mdq_isr_sum = 0;    /* all drains that wrote anything, us */
++static volatile Uint32 g_mdq_isr_n = 0;      /* ... how many */
+ /* DOS-PORT patch 0195: OPL key-on state of the 18 voices as last written by
+    the replay (bit v = voice v keyed on), and each voice's last 0xB0-group
+    value (block + F-number high bits), so a pause can key off exactly what is
+@@ -1813,7 +1823,9 @@ static void MidiDeferDrain(Uint32 irq_now)
+     if (g_mdq_hold) {
+         return; /* chip detect/init/shutdown in progress on the main thread */
+     }
+-    while (g_mdq_head != g_mdq_tail && n < MIDI_DEFER_MAX_PER_IRQ) {
++    const Uint64 t0 = SDL_DOSAudioReadTimer(); /* patch 0250 */
++    const Uint32 budget = g_mdq_budget;
++    while (g_mdq_head != g_mdq_tail && n < budget) {
+         __asm__ __volatile__("" ::: "memory"); /* read the entry after seeing the tail */
+         const Uint32 idx = g_mdq_head & (MIDI_DEFER_QUEUE - 1u);
+         const Sint32 late = (Sint32)(irq_now - g_mdq_stamp[idx]);
+@@ -1834,6 +1846,18 @@ static void MidiDeferDrain(Uint32 irq_now)
+     if (n > g_mdq_burst_max) {
+         g_mdq_burst_max = n;
+     }
++    if (n > 0) { /* patch 0250 */
++        const Uint32 us = SDL_DOSAudioTimerDeltaUs(t0, SDL_DOSAudioReadTimer());
++        g_mdq_isr_sum += us;
++        g_mdq_isr_n++;
++        if (us > g_mdq_isr_max) {
++            g_mdq_isr_max = us;
++        }
++        if (n >= budget && g_mdq_head != g_mdq_tail &&
++            (Sint32)(irq_now - g_mdq_stamp[g_mdq_head & (MIDI_DEFER_QUEUE - 1u)]) >= 0) {
++            g_mdq_cap_hits++;
++        }
++    }
+ }
+ static void MidiDeferDrain_End(void) {}
+ 
+@@ -1906,6 +1930,16 @@ void SDL_DOSMidiDeferFlush(void)
+     DOS_EnableInterrupts();
+ }
+ 
++void SDL_DOSMidiDeferStats3(Uint32 *budget, Uint32 *cap_hits, Uint32 *isr_max_us, Uint32 *isr_sum_us,
++                            Uint32 *isr_drains) /* DOS-PORT patch 0250 */
++{
++    if (budget) *budget = g_mdq_budget;
++    if (cap_hits) *cap_hits = g_mdq_cap_hits;
++    if (isr_max_us) *isr_max_us = g_mdq_isr_max;
++    if (isr_sum_us) *isr_sum_us = g_mdq_isr_sum;
++    if (isr_drains) *isr_drains = g_mdq_isr_n;
++}
++
+ void SDL_DOSMidiDeferStats2(Uint32 *dropped, Uint32 *sync)
+ {
+     if (dropped) *dropped = g_mdq_dropped;
+@@ -1975,7 +2009,21 @@ bool SDL_DOSMidiDeferEnable(int kind)
+     if (kind == 2 && !SDL_DOSMpu401BlindDirectBase(&g_mdq_mpu_base)) {
+         return false; /* DSP-mediated, DRR-poll or TX-delay transport: not ISR-safe here */
+     }
++    { /* DOS-PORT patch 0250: the per-IRQ budget, SDL_HINT_DOS_MIDI_DEFER_MAX_PER_IRQ */
++        const char *e = SDL_getenv("SDL_HINT_DOS_MIDI_DEFER_MAX_PER_IRQ");
++        Uint32 b = MIDI_DEFER_MAX_PER_IRQ;
++        if (e && *e) {
++            const long v = SDL_strtol(e, NULL, 10);
++            b = (v < 16) ? 16u : (v > (long)MIDI_DEFER_QUEUE) ? MIDI_DEFER_QUEUE : (Uint32)v;
++        }
++        g_mdq_budget = b;
++    }
+     if (!g_mdq_locked) {
++        DOS_LockVariable(g_mdq_budget);   /* DOS-PORT patch 0250 */
++        DOS_LockVariable(g_mdq_cap_hits);
++        DOS_LockVariable(g_mdq_isr_max);
++        DOS_LockVariable(g_mdq_isr_sum);
++        DOS_LockVariable(g_mdq_isr_n);
+         DOS_LockCode(MidiDeferWriteOne, MidiDeferDrain_End);
+         DOS_LockData(g_mdq_stamp, sizeof(g_mdq_stamp));
+         DOS_LockData(g_mdq_reg, sizeof(g_mdq_reg));
+-- 
+2.47.3
+

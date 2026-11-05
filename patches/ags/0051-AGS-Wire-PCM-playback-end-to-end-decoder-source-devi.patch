@@ -1,0 +1,793 @@
+From 6d731bc23bb439b5c1232b28c60285213da7f9b4 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sat, 12 Sep 2026 09:24:08 -0700
+Subject: [PATCH] [AGS] Wire PCM playback end to end: decoder, source, device,
+ RUNMANIFEST
+
+Sound milestone S1 ("PCM on DOSBox-X"), the actual mechanism patch: uses
+the mixer (dos_audio_mixer.h) and loader (dos_audio_decode.h) from the
+previous two patches to replace the stubs patches 0016/0022/0023 left in
+place for the COMPILES milestone. mojoAL/SDL2_sound stay gated out
+(0005/0006) -- this never tries to make either work on DJGPP.
+
+sdldecoder.cpp (DOS impl of SDLDecoder, kept SDLDecoder's real public
+interface per 0022's own contract): Open() reads the whole clip into
+memory (SDL_LoadFile_IO for a stream source; the existing in-memory
+shared_ptr path for the other), calls dos_audio_decode_pcm(), and stores
+the result as this decoder's own persistent buffer -- GetData() just
+hands out non-owning slices of it (2048-sample/~186ms chunks) to the
+existing, unchanged AudioPlayer::Poll()/OpenAlSource::PutData() chunked
+pump. IsValid()/GetFormat()/GetChannels()/GetFreq()/GetPositionMs()/
+GetDurationMs()/Seek()/EOS() all now reflect real state instead of the
+"nothing decoded" stub answers; repeat wraps instead of ending at EOS,
+matching the original SDL2_sound-backed behavior.
+
+openalsource.cpp (DOS impl of OpenAlSource, same kept-interface
+contract): acquires one dos_audio_mixer voice per instance (released in
+a new, no-longer-defaulted destructor), forwards PutData/volume/Play/
+Pause/Stop to it. SetPanning stays a no-op (the mixer bus is mono) and
+SetSpeed stays tracked-but-unapplied (no real-time resampling in S1) --
+both pre-existing stub behaviors, not regressions. GetPositionMs() keeps
+the existing _predictTs running-estimate approach.
+
+sys_main.cpp: sys_audio_init() now actually calls
+SDL_InitSubSystem(SDL_INIT_AUDIO) + dos_audio_mixer_init() instead of
+unconditionally returning false; sys_audio_shutdown() closes the mixer's
+stream before quitting the subsystem underneath it. Caught and fixed a
+real SDL3 API-migration bug while wiring this up: SDL_InitSubSystem()
+returns bool in SDL3 (true = success), not SDL2's "0 = success" int --
+the first version of this check inverted the result and silently treated
+a successful init as a failure (confirmed by a DOSBox-X run: "Failed to
+init SDL audio subsystem: " with an empty SDL_GetError(), i.e. no actual
+error had occurred).
+
+audio_core.cpp: audio_core_entry_poll()'s existing per-slot AudioPlayer
+poll loop (already reached by WaitForNextFrame() on every normal frame)
+gains one dos_audio_mixer_pump() call after that loop -- the single
+choke point that mixes active voices into the shared stream and services
+the SB ring.
+
+game_run.cpp: UpdateGameOnce's play.fast_forward/skip_render_and_wait
+early return (added by patch 0047, S0) skips WaitForNextFrame() and
+therefore its own audio_core_entry_poll() call -- added a second,
+narrowly-scoped pump call in that branch so a fast-forwarded cutscene or
+a fixed-timestep catch-up run still gets audio serviced. Deliberately
+NOT added to the shared update_polled_stuff() a few lines above instead
+(the plan's own wording, "the fast-forward path needs the pump too",
+reads as if that were the natural hook): update_polled_stuff() has 17
+OTHER call sites across screen fades, dialog options, GUI buttons, and
+room loading -- tight per-step polling loops, not per-tick ones -- and
+routing a full mixdown through all of them measured as a real ~35%
+duration regression on this same harness (RUNMANIFEST duration_s 110 ->
+160, fps_p50 34.6 -> 23.8) before being caught and reverted in favor of
+this narrower placement, which reproduces the original baseline exactly.
+
+quit.cpp: manifest.audio_vital_status is now set from
+dos_audio_mixer_status_string() before runmanifest_emit(). That function
+reads live state, but shutdown_sound() (called earlier in quit(), see
+audio.cpp) has ALREADY torn the device down via sys_audio_shutdown() by
+the time this runs -- so dos_audio_mixer_shutdown() (previous patch's
+own file) snapshots the status string into a static buffer right before
+tearing the stream down, and the getter falls back to that snapshot once
+the live stream is gone. Without this, RUNMANIFEST would report NA even
+after every clip loaded and played correctly, since the manifest is only
+built once, at final clean shutdown, well after the device closes.
+
+Verified on DOSBox-X, tests/harness (agsquest): all 18 phases + optional
+dialog ok, all 3 screenshots byte-identical to the existing baseline,
+RUNMANIFEST audio_vital_status=pcm=sb@11025m16,voices=8,underruns=0;
+midi=none (the "no MIDI backend yet" placeholder S4 replaces once a real
+one exists) -- this port's own overlay WAV chime (autopilot_chime.wav)
+now actually loads and plays (no more "unable to load sound file" for
+that clip); the MIDI tune and the game's own pre-existing OGG clips
+still fail the same way they always have, expected since neither has a
+decoder in S1's scope. Confirmed both with SDL_HINT_DOS_SILENCE_DETECT
+at its default and forced to 0 (already-vendored SDL patches 0056/0057,
+no engine-side wiring needed) -- identical results either way. Confirmed
+together with DOSAGS_FIXED_TIMESTEP=1 (S0): frames_skipped=193 (catch-up
+ticks fired), audio_vital_status still clean, all phases still ok.
+---
+ Engine/main/game_run.cpp            |  20 ++++
+ Engine/main/quit.cpp                |  14 ++-
+ Engine/media/audio/audio_core.cpp   |  30 ++++--
+ Engine/media/audio/openalsource.cpp |  38 +++++++-
+ Engine/media/audio/openalsource.h   |  58 +++++++-----
+ Engine/media/audio/sdldecoder.cpp   | 136 +++++++++++++++++++++++++---
+ Engine/media/audio/sdldecoder.h     |  74 +++++++++------
+ Engine/platform/base/sys_main.cpp   |  45 ++++++---
+ 8 files changed, 319 insertions(+), 96 deletions(-)
+
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 5f27ee0c1..222174948 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -66,6 +66,9 @@
+ #include "main/game_run.h"
+ #include "main/update.h"
+ #include "media/audio/audio_system.h"
++#if defined(AGS_DISABLE_THREADS)
++#include "media/audio/audio_core.h"
++#endif
+ #include "platform/base/agsplatformdriver.h"
+ #include "plugin/plugin_engine.h"
+ #include "script/script.h"
+@@ -1509,7 +1512,24 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+     // fixed-timestep catch-up tick (DOS-PORT patch 0047) -- either way the
+     // pacing wait below belongs only to the tick that actually rendered.
+     if (play.fast_forward || skip_render_and_wait)
++    {
++        // DOS-PORT (Sound milestone, S1): this return skips
++        // WaitForNextFrame() below, the only other audio_core_entry_poll()
++        // call site on the normal per-tick path (Engine/ac/timer.cpp) --
++        // without this, a fast-forwarded cutscene's own sound/music, or a
++        // fixed-timestep catch-up run (S0), would never get pumped for as
++        // long as this path keeps being taken. Deliberately NOT hooked
++        // into the shared update_polled_stuff() a few lines above: that
++        // function is also called from many tight per-step polling loops
++        // elsewhere (screen fades, dialog options, GUI buttons, room
++        // loading -- see its own callers) that are NOT this fast-forward
++        // path, and a full mixdown on every one of those calls measured
++        // as a real fps regression (~35%) on this same harness.
++#if defined(AGS_DISABLE_THREADS)
++        audio_core_entry_poll();
++#endif
+         return;
++    }
+ 
+     set_our_eip(1013);
+ 
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 69a4efa15..5c60d76d8 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -30,6 +30,7 @@
+ // lets the real declarations parse before alconfig.h's macros exist.
+ #ifdef __DJGPP__
+ #include "runmanifest.h"
++#include "platform/dos/dos_audio_mixer.h"
+ #endif
+ 
+ #include "platform/platform.h"
+@@ -321,9 +322,16 @@ void quit(const char *quitmsg)
+         // that case, so no separate guard is needed here.
+         dos_fps_percentiles(&manifest.fps_p50, &manifest.fps_p95);
+ 
+-        // audio/banner data has no source yet (pre-Sound-milestone, no
+-        // banner-witness mechanism exists) -- left at
+-        // runmanifest_init()'s own NA/zero defaults.
++        // DOS-PORT (Sound milestone, S1): audio_vital_status --
++        // dos_audio_mixer_status_string() (platform/dos/dos_audio_mixer.h)
++        // returns a static buffer, valid for the process lifetime, so a
++        // direct assignment here is safe. Reads "NA" itself if the device
++        // never opened (see runmanifest_emit_kv_str_or_na's own NA
++        // convention), so no separate guard is needed.
++        manifest.audio_vital_status = dos_audio_mixer_status_string();
++
++        // banner data has no source yet (no banner-witness mechanism
++        // exists) -- left at runmanifest_init()'s own zero defaults.
+         //
+         // DOS-PORT: wave_tag/scene honor DOSAGS_LOG_TAG/DOSAGS_SCENE
+         // (profiles/dosags.yaml's own reserved names, "not yet
+diff --git a/Engine/media/audio/audio_core.cpp b/Engine/media/audio/audio_core.cpp
+index 737c09450..7140a6b92 100644
+--- a/Engine/media/audio/audio_core.cpp
++++ b/Engine/media/audio/audio_core.cpp
+@@ -22,6 +22,7 @@
+ #include "media/audio/audioplayer.h"
+ #include "media/audio/sdldecoder.h"
+ #include "media/audio/openalsource.h"
++#include "platform/dos/dos_audio_mixer.h"
+ #include "util/memory_compat.h"
+ 
+ using namespace AGS::Common;
+@@ -51,16 +52,16 @@ static struct
+ 
+ static void audio_core_entry();
+ 
+-// DOS STUB (patch 0023): no real audio device to open. OpenAL/mojoAL is
+-// gated out of the link entirely (patch 0005) and SDL2_sound is gone
+-// (patches 0006/0022) -- both the mojoAL-vs-custom-mixer decision and
+-// SDL2_sound's own SDL3 port are deferred to the Sound milestone. The
+-// slot-polling thread still starts, so AudioPlayer/SDLDecoder/OpenAlSource
+-// all keep working exactly as their own stubs define ("silent failure",
+-// not a crash or missing symbol).
++// DOS-PORT (Sound milestone, S1): the real audio device is opened by
++// sys_audio_init() (dos_audio_mixer_init(), platform/dos/dos_audio_mixer.h)
++// BEFORE this function runs -- engine_init_audio() only calls
++// audio_core_init() once sys_audio_init() already succeeded (see
++// Engine/main/engine.cpp). This function only ever owned the slot-polling
++// thread/mutex machinery, which is unrelated to OpenAL/SDL2_sound and was
++// never touched by patches 0005/0006/0022/0023's stubs either.
+ void audio_core_init()
+ {
+-    Debug::Printf(kDbgMsg_Info, "AudioCore: no audio device on DOS yet (Sound milestone)");
++    Debug::Printf(kDbgMsg_Info, "AudioCore: DOS mixer status: %s", dos_audio_mixer_status_string());
+ 
+     g_acore.audio_core_thread_running = true;
+ #if !defined(AGS_DISABLE_THREADS)
+@@ -162,6 +163,19 @@ void audio_core_entry_poll()
+             Debug::Printf(kDbgMsg_Error, "AudioCore poll exception: %s", e.what());
+         }
+     }
++
++    // DOS-PORT (Sound milestone, S1): mix every active voice into the
++    // shared SDL3 stream and service the SB ring. This is the single
++    // choke point both of this function's own callers reach --
++    // WaitForNextFrame() (Engine/ac/timer.cpp) already called
++    // audio_core_entry_poll() before this milestone; update_polled_stuff()
++    // (Engine/main/game_run.cpp) gained a matching call in this same
++    // milestone specifically so the fast-forward path (play.fast_forward,
++    // which returns before WaitForNextFrame()'s own wait -- see
++    // game_run.cpp:1442-1446) still gets the pump. Putting the mixdown
++    // here, rather than duplicating a dos_audio_mixer_pump() call at each
++    // caller, keeps there being exactly one place that drives the device.
++    dos_audio_mixer_pump();
+ }
+ 
+ #if !defined(AGS_DISABLE_THREADS)
+diff --git a/Engine/media/audio/openalsource.cpp b/Engine/media/audio/openalsource.cpp
+index 374aed3f7..ed34e6965 100644
+--- a/Engine/media/audio/openalsource.cpp
++++ b/Engine/media/audio/openalsource.cpp
+@@ -12,6 +12,7 @@
+ //
+ //=============================================================================
+ #include "media/audio/openalsource.h"
++#include "platform/dos/dos_audio_mixer.h"
+ 
+ namespace AGS
+ {
+@@ -23,24 +24,48 @@ namespace Engine
+ //-----------------------------------------------------------------------------
+ 
+ OpenAlSource::OpenAlSource(SDL_AudioFormat /*format*/, int /*channels*/, int /*freq*/)
++    : _voice(dos_audio_mixer_voice_acquire())
+ {
+ }
+ 
+ OpenAlSource::OpenAlSource(OpenAlSource &&src)
+ {
++    _voice = src._voice;
++    src._voice = -1;
+     _playState = src._playState;
+     _speed = src._speed;
+     _predictTs = src._predictTs;
+ }
+ 
+-size_t OpenAlSource::PutData(const SoundBufferPtr & /*data*/)
++OpenAlSource::~OpenAlSource()
+ {
+-    return 0u;
++    if (_voice >= 0)
++        dos_audio_mixer_voice_release(_voice);
++}
++
++bool OpenAlSource::IsEmpty() const
++{
++    return _voice < 0 || dos_audio_mixer_voice_queued(_voice) == 0u;
++}
++
++size_t OpenAlSource::PutData(const SoundBufferPtr &data)
++{
++    if (_voice < 0 || !data.Data() || data.Size() == 0)
++        return 0u;
++    const size_t accepted = dos_audio_mixer_voice_write(_voice, data.Data(), data.Size());
++    if (accepted > 0)
++    {
++        const float dur_ms = data.DurationMs();
++        _predictTs = data.Timestamp() >= 0.f ? (data.Timestamp() + dur_ms) : (_predictTs + dur_ms);
++    }
++    return accepted;
+ }
+ 
+ unsigned OpenAlSource::Poll()
+ {
+-    return 0u;
++    if (_voice < 0)
++        return 0u;
++    return static_cast<unsigned>(dos_audio_mixer_voice_queued(_voice));
+ }
+ 
+ void OpenAlSource::Play()
+@@ -51,6 +76,7 @@ void OpenAlSource::Play()
+     case PlayStateStopped:
+     case PlayStatePaused:
+         _playState = PlayStatePlaying;
++        dos_audio_mixer_voice_set_active(_voice, true);
+         break;
+     default:
+         break;
+@@ -68,6 +94,7 @@ void OpenAlSource::Stop()
+     case PlayStatePaused:
+         _playState = PlayStateStopped;
+         _predictTs = 0.f;
++        dos_audio_mixer_voice_stop(_voice); // clears the ring + marks inactive
+         break;
+     default:
+         break;
+@@ -83,6 +110,7 @@ void OpenAlSource::Pause()
+         break;
+     case PlayStatePlaying:
+         _playState = PlayStatePaused;
++        dos_audio_mixer_voice_set_active(_voice, false); // keeps queued data
+         break;
+     default:
+         break;
+@@ -101,6 +129,7 @@ void OpenAlSource::SetPlaybackPosMs(float pos_ms)
+ 
+ void OpenAlSource::SetPanning(float /*panning*/)
+ {
++    // No-op: the mixer bus is mono (Tier-2), there is no stereo image to pan.
+ }
+ 
+ void OpenAlSource::SetSpeed(float speed)
+@@ -108,8 +137,9 @@ void OpenAlSource::SetSpeed(float speed)
+     _speed = speed;
+ }
+ 
+-void OpenAlSource::SetVolume(float /*volume*/)
++void OpenAlSource::SetVolume(float volume)
+ {
++    dos_audio_mixer_voice_set_volume(_voice, volume);
+ }
+ 
+ } // namespace Engine
+diff --git a/Engine/media/audio/openalsource.h b/Engine/media/audio/openalsource.h
+index a6792dbf1..7040489e1 100644
+--- a/Engine/media/audio/openalsource.h
++++ b/Engine/media/audio/openalsource.h
+@@ -17,15 +17,18 @@
+ // current state.
+ // Supports on the go audio resampling, which is activated when necessary.
+ //
+-// DOS STUB (patch 0023): OpenAL/mojoAL is gated out of this port's link
+-// entirely (patch 0005); the mojoAL-vs-custom-mixer decision for real
+-// audio is deferred to the Sound milestone. This keeps the class's real
+-// public interface (audio_core.cpp/audioplayer.cpp/.h, none touched by
+-// this patch, call against it unchanged) but never touches a real audio
+-// device: PutData() never accepts data, Poll() always reports an empty
+-// queue, the PlaybackState machine still transitions the same way so
+-// GetPlayState() stays meaningful to callers, but nothing ever actually
+-// plays.
++// DOS-PORT (Sound milestone, S1): OpenAL/mojoAL is gated out of this
++// port's link entirely (patch 0005); rather than port mojoAL for DJGPP,
++// this DOS implementation acquires one voice from the small fixed-voice
++// mixer in platform/dos/dos_audio_mixer.h and forwards data/state to it.
++// Keeps the class's real public interface (audio_core.cpp/audioplayer.
++// cpp/.h, none touched by this patch, call against it unchanged). The
++// format/channels/freq constructor params are unused, same as the stub
++// this replaces: they can't be trusted anyway (AudioPlayer constructs
++// this from the decoder's own GetFormat()/GetChannels()/GetFreq() before
++// the decoder has opened anything, see audioplayer.cpp), and the mixer's
++// bus format is fixed (Tier-2) regardless -- sdldecoder.cpp's DOS
++// implementation converts every clip to that exact format once at load.
+ //
+ //=============================================================================
+ #ifndef __AGS_EE_MEDIA__OPENALSOURCE_H
+@@ -41,25 +44,31 @@ namespace Engine
+ class OpenAlSource
+ {
+ public:
+-    // Initializes the (stub) source for the given format; the format is
+-    // not used for anything since there is no real device to configure
++    // Acquires one mixer voice (platform/dos/dos_audio_mixer.h); format/
++    // channels/freq are unused, see the file-head comment above
+     OpenAlSource(SDL_AudioFormat format, int channels, int freq);
+     OpenAlSource(OpenAlSource&& src);
+-    ~OpenAlSource() = default;
++    ~OpenAlSource();
+ 
+-    // Tells if the al source is valid and usable -- always false, there
+-    // is no real audio device backing this stub
+-    bool IsValid() const { return false; }
++    // Tells if a mixer voice was actually acquired (false if every voice
++    // was already in use -- the same "gracefully do nothing" contract a
++    // missing device already had)
++    bool IsValid() const { return _voice >= 0; }
+     // Gets current playback state
+     PlaybackState GetPlayState() const { return _playState; }
+-    // Tells if the data queue is empty -- always true, nothing is ever queued
+-    bool IsEmpty() const { return true; }
+-    // Gets current playback position, in ms
++    // Tells if the voice's mixer-side ring has no data queued
++    bool IsEmpty() const;
++    // Gets current playback position, in ms (a running prediction from
++    // accepted chunk durations, same approach the stub this replaces
++    // already used -- exact position telling is a pre-existing upstream
++    // TODO, not a regression introduced here)
+     float GetPositionMs() const { return _predictTs; }
+ 
+-    // Try putting data into the queue; always returns 0, data is never accepted
++    // Copies data into the voice's mixer-side ring; returns bytes
++    // accepted (0 if invalid, empty, or the ring has no room -- caller
++    // retries next frame with the same still-pending buffer)
+     size_t PutData(const SoundBufferPtr &data);
+-    // Updates the state, processes the sound queue; always reports an empty queue
++    // Updates the state; returns the voice's current queued byte count
+     unsigned Poll();
+ 
+     // Starts the playback, the sound will be played as soon as there's any data is in queue
+@@ -74,15 +83,18 @@ public:
+     // Sets the reference position in ms; this may be necessary because player
+     // receives position hint only with the data timestamps
+     void SetPlaybackPosMs(float pos_ms);
+-    // Sets the sound panning (-1.0f to 1.0) -- no-op, no real device to pan
++    // Sets the sound panning (-1.0f to 1.0) -- no-op: the mixer bus is
++    // mono (Tier-2), there is no stereo image to pan
+     void SetPanning(float panning);
+     // Sets the playback speed (fraction of normal) -- tracked but never
+-    // applied, there is no real playback to resample
++    // applied: real-time resampling isn't implemented in S1, same
++    // no-op-but-tracked behavior the stub this replaces already had
+     void SetSpeed(float speed);
+-    // Sets the playback volume (gain) -- no-op, no real device to set it on
++    // Sets the playback volume (gain), applied at mixdown
+     void SetVolume(float volume);
+ 
+ private:
++    int _voice = -1; // dos_audio_mixer.h voice id, or -1 if none acquired
+     PlaybackState _playState = PlayStateInitial;
+     float _speed = 1.f; // change in playback rate
+     float _predictTs = 0.f; // next timestamp prediction
+diff --git a/Engine/media/audio/sdldecoder.cpp b/Engine/media/audio/sdldecoder.cpp
+index 6f4bea55a..fdbcf3846 100644
+--- a/Engine/media/audio/sdldecoder.cpp
++++ b/Engine/media/audio/sdldecoder.cpp
+@@ -12,13 +12,27 @@
+ //
+ //=============================================================================
+ #include "media/audio/sdldecoder.h"
++#include "platform/dos/dos_audio_decode.h"
++#include "platform/dos/dos_audio_mixer.h"
+ #include "util/sdl2_util.h"
++#include <algorithm>
+ 
+ namespace AGS
+ {
+ namespace Engine
+ {
+ 
++namespace
++{
++// Chunk granularity GetData() hands out -- the decode itself already
++// happened whole, at Open(); this is just a hand-off size to the
++// existing AudioPlayer::Poll()/OpenAlSource::PutData() chunked pump,
++// unchanged by this file, small enough to keep a voice's mixer-side ring
++// (dos_audio_mixer.h, capped at 32 KB) comfortably topped up without
++// ever holding more than a fraction of a second buffered ahead.
++const size_t DECODED_CHUNK_SAMPLES = 2048u; // ~186 ms at 11025 Hz mono
++} // namespace
++
+ //-----------------------------------------------------------------------------
+ // SDLDecoder
+ //-----------------------------------------------------------------------------
+@@ -45,6 +59,13 @@ SDLDecoder::SDLDecoder(SDLDecoder &&dec)
+     dec._rwops = nullptr;
+     _sampleExt = std::move(dec._sampleExt);
+     _repeat = dec._repeat;
++    _pcm = std::move(dec._pcm);
++    _readSamples = dec._readSamples;
++    _opened = dec._opened;
++    _eos = dec._eos;
++    dec._opened = false;
++    dec._eos = true;
++    dec._readSamples = 0u;
+ }
+ 
+ SDLDecoder::~SDLDecoder()
+@@ -52,17 +73,74 @@ SDLDecoder::~SDLDecoder()
+     Close();
+ }
+ 
+-bool SDLDecoder::Open(float /*pos_ms*/)
++SDL_AudioFormat SDLDecoder::GetFormat() const
+ {
+-    // STUB: no decoder backend is available on DOS (SDL2_sound is gated
+-    // out of the link entirely, patch 0006). Always fail -- every real
+-    // call site already handles a failed-to-open decoder (see
+-    // audio_core.cpp's audio_core_slot_init). Still close/release
+-    // whatever was handed to us, matching the original code's own
+-    // "rwops closed regardless of Open()'s outcome" contract, so a
+-    // caller that never calls Close() explicitly can't leak the stream.
+-    Close();
+-    return false;
++    return _opened ? DOS_AUDIO_MIXER_FORMAT : SDL_AUDIO_UNKNOWN;
++}
++
++int SDLDecoder::GetChannels() const
++{
++    return _opened ? DOS_AUDIO_MIXER_CHANNELS : 0;
++}
++
++int SDLDecoder::GetFreq() const
++{
++    return _opened ? DOS_AUDIO_MIXER_RATE : 0;
++}
++
++float SDLDecoder::GetPositionMs() const
++{
++    if (!_opened)
++        return 0.f;
++    return 1000.f * static_cast<float>(_readSamples) / static_cast<float>(DOS_AUDIO_MIXER_RATE);
++}
++
++float SDLDecoder::GetDurationMs() const
++{
++    if (!_opened)
++        return 0.f;
++    return 1000.f * static_cast<float>(_pcm.size()) / static_cast<float>(DOS_AUDIO_MIXER_RATE);
++}
++
++bool SDLDecoder::Open(float pos_ms)
++{
++    // Prevent from "reopening" twice, matching the original real
++    // decoder's own assert/early-seek shape.
++    if (_opened)
++    {
++        if (pos_ms > 0.f)
++            Seek(pos_ms);
++        return true;
++    }
++
++    std::vector<uint8_t> raw;
++    if (_sampleData && !_sampleData->empty())
++    {
++        raw = *_sampleData; // already fully in memory
++    }
++    else if (_rwops)
++    {
++        size_t sz = 0;
++        void *buf = SDL_LoadFile_IO(_rwops, &sz, true /* close it for us */);
++        _rwops = nullptr; // SDL_LoadFile_IO closed it regardless of outcome
++        if (buf)
++        {
++            raw.assign(static_cast<uint8_t *>(buf), static_cast<uint8_t *>(buf) + sz);
++            SDL_free(buf);
++        }
++    }
++
++    const bool decoded = dos_audio_decode_pcm(raw.data(), raw.size(), _pcm);
++    Close(); // release whatever we were handed, decoded or not
++    if (!decoded)
++        return false;
++
++    _opened = true;
++    _readSamples = 0u;
++    _eos = false;
++    if (pos_ms > 0.f)
++        Seek(pos_ms);
++    return true;
+ }
+ 
+ void SDLDecoder::Close()
+@@ -75,14 +153,46 @@ void SDLDecoder::Close()
+     _sampleData = nullptr;
+ }
+ 
+-float SDLDecoder::Seek(float /*pos_ms*/)
++float SDLDecoder::Seek(float pos_ms)
+ {
+-    return 0.f;
++    if (!_opened || pos_ms < 0.f)
++        return GetPositionMs();
++    const size_t total = _pcm.size();
++    size_t target = static_cast<size_t>(
++        (static_cast<double>(pos_ms) / 1000.0) * DOS_AUDIO_MIXER_RATE);
++    target = std::min(target, total);
++    _readSamples = target;
++    _eos = (_readSamples >= total) && !_repeat;
++    return GetPositionMs();
+ }
+ 
+ SoundBufferPtr SDLDecoder::GetData()
+ {
+-    return SoundBufferPtr();
++    if (!_opened || _eos)
++        return SoundBufferPtr();
++
++    const size_t total = _pcm.size();
++    if (_readSamples >= total)
++    {
++        if (!_repeat)
++        {
++            _eos = true;
++            return SoundBufferPtr();
++        }
++        _readSamples = 0u; // repeat: wrap back to start
++    }
++
++    const size_t take = std::min(DECODED_CHUNK_SAMPLES, total - _readSamples);
++    const float ts = 1000.f * static_cast<float>(_readSamples) / static_cast<float>(DOS_AUDIO_MIXER_RATE);
++    const float dur = 1000.f * static_cast<float>(take) / static_cast<float>(DOS_AUDIO_MIXER_RATE);
++    const void *ptr = _pcm.data() + _readSamples;
++    const size_t bytes = take * sizeof(int16_t);
++
++    _readSamples += take;
++    if (_readSamples >= total && !_repeat)
++        _eos = true;
++
++    return SoundBufferPtr(ptr, bytes, ts, dur);
+ }
+ 
+ } // namespace Engine
+diff --git a/Engine/media/audio/sdldecoder.h b/Engine/media/audio/sdldecoder.h
+index 6ad9061be..bdcd416cb 100644
+--- a/Engine/media/audio/sdldecoder.h
++++ b/Engine/media/audio/sdldecoder.h
+@@ -14,15 +14,20 @@
+ //
+ // Sound decoder accompanied by various SDL-based sound utilities.
+ //
+-// DOS STUB (patch 0022): SDL2_sound is gated out of this port's link
+-// entirely (patch 0006) -- it is a real, separate upstream dependency
+-// AGS pulls via CMake FetchContent, not vendored/pinned like everything
+-// else in this tree, and porting its own SDL2 surface to SDL3 is
+-// deferred to the Sound milestone, not required for COMPILES. SDLDecoder
+-// keeps its real public interface (audio_core.cpp/audioplayer.h call
+-// against it unchanged) but never actually decodes anything: Open()
+-// always fails, matching how a real, working decoder would report an
+-// unsupported/corrupt sound file, and every caller already handles that
++// DOS-PORT (Sound milestone, S1): SDL2_sound is gated out of this port's
++// link entirely (patch 0006) -- it is a real, separate upstream
++// dependency AGS pulls via CMake FetchContent, not vendored/pinned like
++// everything else in this tree. Rather than port/vendor it for DJGPP,
++// this DOS implementation reads the whole clip into memory and decodes
++// it itself via platform/dos/dos_audio_decode.h (RIFF WAV + Creative VOC
++// only -- OGG/MP3/tracker formats are host-pre-converted per PLAN.md's
++// Sound milestone decision 2, never decoded on DOS), converting ONCE at
++// Open() to the mixer's fixed Tier-2 device format (dos_audio_mixer.h) so
++// GetData() is just handing out slices of an already-converted buffer,
++// no per-chunk resampling (dossage's own 0039 lesson). SDLDecoder keeps
++// its real public interface (audio_core.cpp/audioplayer.h call against
++// it unchanged); Open() fails cleanly, same as before, for anything that
++// isn't a supported PCM sub-format -- every caller already handles that
+ // path (see audio_core.cpp's audio_core_slot_init).
+ //
+ //=============================================================================
+@@ -171,35 +176,39 @@ public:
+     SDLDecoder(SDLDecoder&& dec);
+     ~SDLDecoder();
+ 
+-    // Tells if the decoder is in a valid state, ready to work -- always
+-    // false, there is no working decoder backing this stub
+-    bool IsValid() const { return false; }
+-    // Gets the audio format -- meaningless, decode never happens
+-    SDL_AudioFormat GetFormat() const { return SDL_AUDIO_UNKNOWN; }
++    // Tells if the decoder successfully opened and decoded its clip
++    bool IsValid() const { return _opened; }
++    // Gets the audio format -- always the mixer's fixed device format
++    // once opened (every clip is converted to it once, at Open())
++    SDL_AudioFormat GetFormat() const;
+     // Gets the number of channels
+-    int GetChannels() const { return 0; }
++    int GetChannels() const;
+     // Gets the audio rate (frequency)
+-    int GetFreq() const { return 0; }
+-    // Tells if the data reading has reached EOS -- always true, nothing
+-    // to read
+-    bool EOS() const { return true; }
++    int GetFreq() const;
++    // Tells if the data reading has reached EOS (never true while
++    // repeat is set -- GetData() wraps instead)
++    bool EOS() const { return _eos; }
+     // Gets current reading position, in ms
+-    float GetPositionMs() const { return 0.f; }
++    float GetPositionMs() const;
+     // Gets total duration, in ms
+-    float GetDurationMs() const { return 0.f; }
+-
+-    // Always fails: SDL2_sound is not part of this build (patch 0006).
+-    // Closes and releases the input stream/data before returning, the
+-    // same contract the real decoder had ("rwops closed regardless of
+-    // Open()'s outcome") so a caller that never calls Close() explicitly
+-    // still can't leak the stream via a failed Open().
++    float GetDurationMs() const;
++
++    // Sniffs and decodes the clip (RIFF WAV or Creative VOC, regardless
++    // of the ext_hint) via dos_audio_decode_pcm(), converting once to
++    // the mixer's device format. Fails cleanly -- same contract as
++    // before -- for any unrecognized header or unsupported sub-format
++    // (OGG/MP3/ADPCM/etc: never decoded on DOS). Closes and releases
++    // whatever input was handed to us before returning either way, so a
++    // caller that never calls Close() explicitly can't leak the stream.
+     bool Open(float pos_ms = 0.f);
+     // Closes decoder, releases any owned resources
+     void Close();
+-    // Seeks to the given read position; returns the new position -- a
+-    // no-op stub always reports position 0
++    // Seeks to the given read position; returns the position actually
++    // landed at (clamped to the decoded clip's own length)
+     float Seek(float pos_ms);
+-    // Returns the next chunk of data; always empty, nothing is ever decoded
++    // Returns the next chunk of already-decoded, already-device-format
++    // data (a non-owning pointer into this decoder's own buffer, valid
++    // for its lifetime); empty once EOS() (unless repeat, which wraps)
+     SoundBufferPtr GetData();
+ 
+ private:
+@@ -207,6 +216,11 @@ private:
+     std::shared_ptr<std::vector<uint8_t>> _sampleData{};
+     String _sampleExt = "";
+     bool _repeat = false;
++
++    std::vector<int16_t> _pcm; // decoded, device-format (mono S16 @ mixer rate)
++    size_t _readSamples = 0u;
++    bool _opened = false;
++    bool _eos = false;
+ };
+ 
+ 
+diff --git a/Engine/platform/base/sys_main.cpp b/Engine/platform/base/sys_main.cpp
+index cbde986fc..e5fefc132 100644
+--- a/Engine/platform/base/sys_main.cpp
++++ b/Engine/platform/base/sys_main.cpp
+@@ -25,6 +25,7 @@
+ #include "ac/sys_events.h"
+ #include "debug/out.h"
+ #include "platform/base/agsplatformdriver.h"
++#include "platform/dos/dos_audio_mixer.h"
+ #include "util/geometry.h"
+ #include "util/string.h"
+ 
+@@ -226,29 +227,43 @@ void sys_renderer_set_output(const String &name)
+ // AUDIO UTILS
+ // ----------------------------------------------------------------------------
+ 
+-// DOS-PORT: audio is stubbed for the COMPILES milestone (explicitly allowed
+-// by that milestone's own definition -- see PATCH-SEQUENCE.md's tl;dr).
+-// The real SDL2->SDL3 audio device rewrite is a Sound-milestone task, not a
+-// COMPILES one: SDL3 collapses SDL2's 5-param negotiated-format
+-// SDL_OpenAudioDevice() into a 2-param call returning an SDL_AudioStream,
+-// a real API redesign, not a rename -- and this DOS port's own audio
+-// architecture (hardware MIDI/OPL3/MPU-401 passthrough vs. mojoAL, see
+-// PLAN.md's open questions) isn't decided yet either. try_init_audio_driver()
+-// (SDL2-shaped: SDL_setenv, 5-param SDL_OpenAudioDevice, SDL_AUDIO_ALLOW_ANY_CHANGE)
+-// is deleted rather than ported now -- there is nothing for a real audio
+-// rewrite to reuse from it once that milestone's own API shape is chosen.
+-// sys_audio_init() returning false is an already-handled path, not a new
+-// failure mode: engine_init_audio() (Engine/main/engine.cpp) sets
++// DOS-PORT (Sound milestone, S1): opens the real DOS audio device via
++// dos_audio_mixer_init() (platform/dos/dos_audio_mixer.h) -- a fixed-voice
++// PCM mixer on one SDL3 audio stream at Tier-2, replacing mojoAL rather
++// than porting it (PLAN.md's "Sound milestone plan" Architecture section).
++// driver_name is ignored: this port has exactly one DOS audio backend
++// (the SB PCM device the vendored SDL3-DOS sysroot provides), so there is
++// no driver list to select from the way SDL2's try_init_audio_driver()
++// (removed by patch 0016, COMPILES milestone) walked one. Returning false
++// on failure is the same already-handled path that stub established:
++// engine_init_audio() (Engine/main/engine.cpp) sets
+ // usetup.AudioEnabled = res and continues normally either way.
+ bool sys_audio_init(const String &driver_name)
+ {
+     (void)driver_name;
+-    Debug::Printf(kDbgMsg_Info, "Audio is stubbed for this DOS build (COMPILES milestone) -- no audio device");
+-    return false;
++    if ((gl_SysMainInfo.SDLSubsystems & SDL_INIT_AUDIO) != 0)
++        return true;
++    if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
++    {
++        Debug::Printf(kDbgMsg_Error, "Failed to init SDL audio subsystem: %s", SDL_GetError());
++        return false;
++    }
++    if (!dos_audio_mixer_init())
++    {
++        Debug::Printf(kDbgMsg_Error, "Failed to open DOS audio device");
++        SDL_QuitSubSystem(SDL_INIT_AUDIO);
++        return false;
++    }
++    gl_SysMainInfo.SDLSubsystems |= SDL_INIT_AUDIO;
++    Debug::Printf(kDbgMsg_Info, "DOS audio device opened: %s", dos_audio_mixer_status_string());
++    return true;
+ }
+ 
+ void sys_audio_shutdown()
+ {
++    // Close the mixer's stream/device BEFORE quitting the SDL audio
++    // subsystem underneath it.
++    dos_audio_mixer_shutdown();
+     // Note: a subsystem that failed to initialize, doesn't increment ref-count
+     // Additionally, we may not have init it at all, see engine_init_audio
+     if ((gl_SysMainInfo.SDLSubsystems & SDL_INIT_AUDIO) != 0)
+-- 
+2.47.3
+

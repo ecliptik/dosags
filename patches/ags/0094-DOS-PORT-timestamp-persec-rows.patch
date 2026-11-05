@@ -1,0 +1,66 @@
+From 86a81b810190225ffc7118ae39d2e70b99c194ab Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 17 Sep 2026 11:17:34 -0700
+Subject: [PATCH] DOS-PORT: patch 0094 -- timestamp the per-second yardstick
+ rows
+
+Patch 0093's first real cell (AGS Quest AutoPilot, AQ93N1) showed its
+own per-second series is not a time base on its own: a row is only
+taken at the end of a tick, so no row is sampled during a multi-second
+blocking stall (a room transition, a Display(), a save), and adjacent
+rows can be 20 s apart. Per-phase tick and present rates computed from
+the row count alone are wrong for any phase containing a stall. Adds
+an engine-start-relative uclock millisecond stamp to each row (same
+anchor as the startup report's t_ms). Instrumentation only.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hnodGZ6cg8CWuFXEDTsUq
+---
+ Engine/main/game_run.cpp | 16 +++++++++++++---
+ 1 file changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 7bf844cf3..396d14546 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1536,7 +1536,13 @@ private:
+ // phases against the same tick counter) rather than only to the run as a
+ // whole. Cumulative, not per-interval: a consumer diffs adjacent rows.
+ #define DOS_PERSEC_CAP 1024
+-struct DosPerSec { uint32_t tick; uint32_t renders; long real; long skipped; };
++// patch 0094: ms (engine-start-relative, uclock-based -- same anchor as the
++// startup report's t_ms) added after patch 0093's first real cell (AGS
++// Quest, AQ93N1) showed rows alone are not a time base: a row is only
++// taken at the end of a tick, so NO row is sampled during a multi-second
++// blocking stall (a room transition, a Display(), a save) and adjacent
++// rows can be 20 s apart. Per-phase rates need the real elapsed time.
++struct DosPerSec { uint32_t tick; uint32_t renders; long real; long skipped; long ms; };
+ static DosPerSec dos_persec[DOS_PERSEC_CAP];
+ static int dos_persec_count = 0;
+ 
+@@ -1549,6 +1555,10 @@ static void dos_persec_sample()
+     r.renders = GameTimer.RenderCounter;
+     r.real = dos_port_tick_timing.presents_real;
+     r.skipped = dos_port_tick_timing.presents_skipped;
++    {
++        extern uclock_t dos_port_engine_start_uclock;
++        r.ms = (long)((uclock() - dos_port_engine_start_uclock) * 1000 / UCLOCKS_PER_SEC);
++    }
+ }
+ 
+ void dos_port_yardstick_emit(FILE *log)
+@@ -1578,9 +1588,9 @@ void dos_port_yardstick_emit(FILE *log)
+         fprintf(log, "DOS-PORT tick_stall_overflow unlisted=%ld\n", dos_tick_stall_total - DOS_TICK_STALL_CAP);
+ 
+     for (int i = 0; i < dos_persec_count; i++)
+-        fprintf(log, "DOS-PORT persec t=%d tick=%lu renders=%lu real=%ld skipped=%ld\n",
++        fprintf(log, "DOS-PORT persec t=%d tick=%lu renders=%lu real=%ld skipped=%ld ms=%ld\n",
+             i + 1, (unsigned long)dos_persec[i].tick, (unsigned long)dos_persec[i].renders,
+-            dos_persec[i].real, dos_persec[i].skipped);
++            dos_persec[i].real, dos_persec[i].skipped, dos_persec[i].ms);
+ }
+ #endif // __DJGPP__
+ 
+-- 
+2.47.3
+

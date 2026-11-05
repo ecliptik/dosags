@@ -1,0 +1,83 @@
+From 2f7725cac31e891e20da9ac59380b0e22ed46784 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 21 Sep 2026 14:39:33 -0700
+Subject: [PATCH] DOS-PORT: patch 0194 -- a GUI that was not composited this
+ frame loses its skip record
+
+Fixes a stale-pixel defect in ags 0191, found by the standing present gate (ags 0193's DOSBox-X matrix): bench16 gui at
+640x480x16 centred 1x read 480 of 1038 presents stale, 7,559 px each, the menu's rect.
+
+The defect. ags 0191 skips a GUI's invalidation when its picture is provably the one already on screen: the real
+pre-clear changed flags are clear AND its X/Y/W/H/transparency/z-order equal what its last composite was drawn from.
+That record stayed valid while the GUI was HIDDEN. GUIMain::SetVisible marks nothing and a hidden GUI's texture stays
+clean, so a re-shown GUI had no changed flag and identical properties: it passed SameAs(), its invalidation was skipped,
+and the menu was composited into RAM but never pushed. 0191's hide side was right (guiskip hidden=25 for 25 hides); the
+show was the miss.
+
+The fix, one mechanism. draw_gui_and_overlays() notes which GUIs it composited this frame; any GUI it did not -- hidden,
+fully transparent, or the UI layer not drawn at all -- has its record invalidated, so a re-show is treated as new and
+marked normally. An unchanged, still-visible GUI is composited every frame, keeps its record, and still skips: stage 1's
+win is intact by construction.
+
+Why 0191's gate missed it, from counters (PLAN.md): at 2x the narrowing rejects every present (narrow=0 full=1500), so
+a full push masks any narrowing bug; at the 8-bit alias rung the unchanged-frame path decided which ticks present (52 of
+1041) and those were clean, while DOSAGS_PRESENT_NO_SKIP=1 on the same rung reads 480 of 1041 stale; only the 16-bit
+centred-1x rung presents every tick with narrowing on the path.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_017rABavUPepUfapaKZYKPvD
+---
+ Engine/ac/draw.cpp | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index 0875b9763..99fd271a2 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -437,6 +437,7 @@ struct DosPortGuiPrev
+     }
+ };
+ static DosPortGuiPrev dos_port_gui_prev[64];
++static bool dos_port_gui_drawn[64];   // patch 0194: composited this frame
+ long dos_port_gui_skip_tally[64] = {0};   // invalidations actually suppressed, per GUI
+ long dos_port_gui_flush_n = 0;            // old rects invalidated ahead of the restore
+ long dos_port_gui_flush_late_n = 0;       // ... found only when the GUI was drawn, a frame late
+@@ -2753,6 +2754,9 @@ void draw_gui_and_overlays()
+         gfxDriver->AddRenderEvent(kPluginEvt_PreGUIDraw, 0); // render stage
+ 
+     clear_sprite_list();
++#ifdef __DJGPP__
++    for (int _i = 0; _i < 64; ++_i) dos_port_gui_drawn[_i] = false;   // patch 0194
++#endif
+ 
+     // Add active overlays to the sprite list
+     const auto &overs = get_overlays();
+@@ -2966,6 +2970,7 @@ void draw_gui_and_overlays()
+                         dos_port_gui_flush_late_n++;
+                     }
+                     _p.Record(gui, gui.GetX(), gui.GetY(), gui_ddb->GetWidth(), gui_ddb->GetHeight());
++                    dos_port_gui_drawn[index] = true;   // patch 0194
+                     _p.unmarked = _skip;
+                     if (_skip) dos_port_gui_skip_tally[index]++;
+                 }
+@@ -2978,6 +2983,17 @@ void draw_gui_and_overlays()
+         }
+     }
+ 
++#ifdef __DJGPP__
++    // DOS-PORT patch 0194: a GUI that was NOT composited this frame -- hidden, fully transparent, or
++    // the UI layer not drawn at all -- no longer has a composite that is "already on screen", so its
++    // skip record must not survive to qualify a later re-show as "the same picture as last frame".
++    // ags 0191 kept the record valid while the GUI was hidden: SetVisible marks nothing and the texture
++    // stays clean, so the re-shown GUI passed SameAs() and its mark was skipped -- composited into RAM,
++    // never pushed (bench16 gui at centred 1x: 480 of 1038 presents stale).
++    for (int _i = 0; _i < 64; ++_i)
++        if (!dos_port_gui_drawn[_i]) dos_port_gui_prev[_i].valid = false;
++#endif
++
+     // Move the resulting sprlist with guis and overlays to render
+     draw_sprite_list();
+     put_sprite_list_on_screen(false);
+-- 
+2.47.3
+

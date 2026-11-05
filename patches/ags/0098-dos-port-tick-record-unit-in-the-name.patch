@@ -1,0 +1,132 @@
+From 3d6ae9b500201e014145f5952656a87525e510ea Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 17 Sep 2026 14:25:00 -0700
+Subject: [PATCH] DOS-PORT: patch 0098 -- script_vm/rep_exec_vm were logged
+ 1000x too small
+
+Patch 0083 changed dos_port_tick_record()'s argument from milliseconds
+to microseconds and converted every call site but two: script.cpp's
+script_vm and rep_exec_vm brackets kept passing
+(uclock() - t0) * 1000 / UCLOCKS_PER_SEC. For every build from 0083
+through 0097 those two phases were therefore recorded 1000x too small.
+The tell was in every log -- script_vm max_ms=2 beside a
+process_events_dispatch max_ms of 2605 for the same blocking call --
+and it was read the wrong way round, as "the wrappers cost
+milliseconds while the VM does ~0 work", which is the premise a whole
+work item (the 40/40 plan's P1 item 3, "zero-work overhead") was
+written on. Most of that "overhead" is real script time.
+
+Only those two rows are affected; fps, tick rates and every other
+phase in those records stand.
+
+So it cannot recur: the function is now dos_port_tick_record_us() --
+the unit is in the name at every call site, and a stale caller no
+longer compiles -- and manual brackets take their elapsed time from
+one helper, dos_port_tick_elapsed_us(t0), instead of doing their own
+arithmetic. Every call site audited: the RAII scope, ali3dsw.cpp's
+three fast-blit accumulators and the skip marker were already in
+microseconds.
+---
+ Engine/gfx/ali3dsw.cpp             |  8 ++++----
+ Engine/main/dos_port_tick_timing.h | 20 +++++++++++++++++---
+ Engine/script/script.cpp           |  6 ++----
+ 3 files changed, 23 insertions(+), 11 deletions(-)
+
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index a002230d4..dfd4333d3 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -782,7 +782,7 @@ static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const
+         return false;
+     }
+     uclock_t _t1 = uclock();
+-    dos_port_tick_record(dos_port_tick_timing.fastblit_lock, (_t1 - _t0) * 1000000LL / UCLOCKS_PER_SEC);
++    dos_port_tick_record_us(dos_port_tick_timing.fastblit_lock, (_t1 - _t0) * 1000000LL / UCLOCKS_PER_SEC);
+ 
+     const Uint8 *src_pixels = (const Uint8 *)src->pixels;
+     Uint8 *dst_pixels = (Uint8 *)dst->pixels;
+@@ -909,8 +909,8 @@ static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const
+             vmemcpy_us += (_t0 - _t1) * 1000000LL / UCLOCKS_PER_SEC;
+         }
+     }
+-    dos_port_tick_record(dos_port_tick_timing.fastblit_hreplicate, hrep_us);
+-    dos_port_tick_record(dos_port_tick_timing.fastblit_vmemcpy, vmemcpy_us);
++    dos_port_tick_record_us(dos_port_tick_timing.fastblit_hreplicate, hrep_us);
++    dos_port_tick_record_us(dos_port_tick_timing.fastblit_vmemcpy, vmemcpy_us);
+ 
+     if (dst_lock) SDL_UnlockSurface(dst);
+     if (src_lock) SDL_UnlockSurface(src);
+@@ -1066,7 +1066,7 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+         if (unchanged)
+         {
+ #ifdef __DJGPP__
+-            dos_port_tick_record(dos_port_tick_timing.present_skip_unchanged, 0);
++            dos_port_tick_record_us(dos_port_tick_timing.present_skip_unchanged, 0);
+             dos_port_tick_timing.presents_skipped++; // patch 0093
+ #endif
+             return;
+diff --git a/Engine/main/dos_port_tick_timing.h b/Engine/main/dos_port_tick_timing.h
+index 7a0577c9a..c15f3e097 100644
+--- a/Engine/main/dos_port_tick_timing.h
++++ b/Engine/main/dos_port_tick_timing.h
+@@ -402,7 +402,22 @@ extern uclock_t dos_port_crosscheck_start_uclock;
+ extern long dos_port_crosscheck_start_rtc_s;
+ long dos_port_rtc_wait_edge(uclock_t *edge_uclock);
+ 
+-static inline void dos_port_tick_record(DosPortTickPhaseStats &stats, long long sample_us)
++// DOS-PORT patch 0098: the unit is in the NAME now. Patch 0083 changed this
++// function's argument from milliseconds to microseconds and updated every
++// call site but two (script.cpp's script_vm and rep_exec_vm brackets), which
++// went on passing milliseconds under a name that did not say what it wanted.
++// For every build from 0083 to 0097 those two phases were logged 1000x too
++// small -- "script_vm max_ms=2" beside a process_events_dispatch max of
++// 2605 ms for the same call -- and a whole line of investigation ("zero-work
++// wrapper overhead") was read off the difference. A stale caller can no
++// longer compile, and manual brackets get their elapsed time from the one
++// helper below rather than from their own arithmetic.
++static inline long long dos_port_tick_elapsed_us(uclock_t t0)
++{
++    return (long long)(uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC;
++}
++
++static inline void dos_port_tick_record_us(DosPortTickPhaseStats &stats, long long sample_us)
+ {
+     stats.calls++;
+     if (sample_us < 0)
+@@ -440,8 +455,7 @@ public:
+         // was silently discarding real aggregate time. uclock_t is
+         // already `long long` (time.h), so this multiply cannot
+         // overflow within any real per-call duration this engine sees.
+-        dos_port_tick_record(_stats,
+-            (uclock() - _t0) * 1000000LL / UCLOCKS_PER_SEC);
++        dos_port_tick_record_us(_stats, dos_port_tick_elapsed_us(_t0));
+     }
+ private:
+     DosPortTickPhaseStats &_stats;
+diff --git a/Engine/script/script.cpp b/Engine/script/script.cpp
+index 75f34d8fe..834361644 100644
+--- a/Engine/script/script.cpp
++++ b/Engine/script/script.cpp
+@@ -398,8 +398,7 @@ static bool DoRunScriptFuncCantBlock(ccInstance *sci, NonBlockingScriptFunction*
+ #endif
+     ccInstError result = sci->CallScriptFunction(funcToRun->FunctionName, funcToRun->ParamCount, funcToRun->Params);
+ #ifdef __DJGPP__
+-    dos_port_tick_record(dos_port_tick_timing.rep_exec_vm,
+-        (long)((uclock() - _dos_port_rep_exec_t0) * 1000 / UCLOCKS_PER_SEC));
++    dos_port_tick_record_us(dos_port_tick_timing.rep_exec_vm, dos_port_tick_elapsed_us(_dos_port_rep_exec_t0));
+ #endif
+ 
+     if (result == kInstErr_FuncNotFound)
+@@ -481,8 +480,7 @@ RunScFuncResult RunScriptFunction(ccInstance *sci, const String &tsname, size_t
+ #endif
+     const ccInstError inst_ret = curscript->Inst->CallScriptFunction(tsname, numParam, params);
+ #ifdef __DJGPP__
+-    dos_port_tick_record(dos_port_tick_timing.script_vm,
+-        (long)((uclock() - _dos_port_script_vm_t0) * 1000 / UCLOCKS_PER_SEC));
++    dos_port_tick_record_us(dos_port_tick_timing.script_vm, dos_port_tick_elapsed_us(_dos_port_script_vm_t0));
+ #endif
+     if ((inst_ret != kInstErr_None) && (inst_ret != kInstErr_FuncNotFound) && (inst_ret != kInstErr_Aborted))
+     {
+-- 
+2.47.3
+

@@ -1,0 +1,327 @@
+From 3bbd05ba8a6f772adda1b048845386f8da5800ef Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 17 Sep 2026 12:10:15 -0700
+Subject: [PATCH] DOS-PORT: patch 0096 -- uclock-backed engine Clock and a
+ deadline frame pacer
+
+Two halves of one fix; either alone makes things worse.
+
+THE CLOCK. On DJGPP every std::chrono clock is gettimeofday() (libstdc++
+here has _GLIBCXX_USE_GETTIMEOFDAY and no _GLIBCXX_USE_CLOCK_MONOTONIC),
+and gettimeofday() is two real-mode INT 21h round trips plus mktime():
+1324.6 us per read, 55 ms resolution, measured on a 486DX-66. The engine
+read it ~4.7 times per game tick -- 6.3 ms of a 25 ms tick spent asking
+the time, for an answer good to two frames. util/time_util.h now aliases
+Clock to DosUclockClock under __DJGPP__ (every other platform keeps
+upstream's alias untouched): uclock()-backed, 4.9 us per read, ~1 us
+resolution.
+
+uclock()'s limits were read from libc's own uclock.o, not assumed:
+ - it can step BACKWARDS by one BIOS tick (~55 ms) when the PIT counter
+   has reloaded but IRQ0 is not yet serviced -- already seen here as
+   tickstats clamped_neg. now() therefore never returns less than it
+   last returned; is_steady = true is honest only because of that guard.
+ - midnight is handled inside uclock() (one rollover per call pair).
+ - its first call reprograms PIT channel 0 to mode 2 and blocks <= 55 ms
+   for a tick edge; this port's instrumentation has done that since 0079.
+duration stays std::chrono::nanoseconds, the type steady_clock had, so
+no other line of the engine changes type; the conversion is split into
+seconds + remainder because t * 1e9 overflows int64 after ~2 hours.
+Nothing converts a Clock::time_point to calendar time (that is all on
+ScriptDateTime::SystemClock = system_clock), and the one
+time_point kept in game state is not serialized.
+
+FastClock too. It is aliased to system_clock upstream, which here is
+the same gettimeofday(); ccInstance::Run() reads it on every script
+function run (the script-timeout watchdog), so every rep_exec call of
+every tick paid 1.3 ms for it. Its users only ever subtract two
+readings (that watchdog, and game.cpp's load stopwatches), so under
+__DJGPP__ FastClock is now Clock. (Added after the first cells of the
+ABBA: the zone-bug cells had shown rep_exec_wrapper and
+process_events_dispatch scaling with clock cost, which is what gave
+this away. Those cells are void for the B arm and were re-run.)
+
+THE PACER. WaitForNextFrame() ended in std::this_thread::sleep_for(),
+which on DJGPP is usleep() spinning on the 55 ms clock(): 54.8 ms for a
+1, 10 or 25 ms request alike. With the old coarse clock that rarely
+fired; with an accurate clock it would fire every frame and cap the
+game at ~18 fps -- hence one patch. It is now a deadline wait on the new
+Clock. WaitForNextFrame() is the only pacer in the engine (fades,
+ShakeScreen, dialog options, inventory, Display, csci dialogs all call
+it), so this fixes every per-frame wait at once. Left alone, on
+purpose: platform->Delay() (one 500 ms splash hold; the rest
+unreachable on DOS), YieldCPU() (suspend loops that never run on DOS),
+and video.cpp's sleep_for(8 ms) -- per-frame, but only during video
+playback, which no fixture exercises, so a change could not be tested.
+
+It is a busy-wait, and this hub has shipped a bad one (it starved the
+BIOS timer, the clock ran slow, self-reported fps went UP while real
+speed collapsed). This one keeps interrupts ENABLED throughout -- no
+cli, no PIC mask, only PIT channel 0 reads and the audio poll -- so IRQ0
+is serviced as everywhere else, and patch 0095 checks uclock() against
+the CMOS RTC over the whole run rather than trusting that. It does NOT
+use __dpmi_yield(): 123 us on the 486, but 54.6 ms under DOSBox-X,
+which would rebuild the cap on the emulator the correctness gates use.
+
+audio_core_entry_poll() keeps running inside the wait, about once a
+millisecond, so a sound-on run is pumped more often than before. A poll
+only starts if the wait has room for it, judged by what recent polls
+cost: the first DOSBox-X run used a fixed 2 ms margin, and an 11 ms
+poll (DOSBox-X; ~1 ms on the 486) ran through the deadline -- max wait
+32 ms. With the adaptive margin the max wait is 25 ms.
+
+THE SAMPLERS. end_of_tick's two once-a-second samplers each read the
+clock every tick on top of game_loop_update_fps()'s own read; all three
+now share one. They stay time-gated rather than tick-counted: fps_p50
+is a percentile over once-per-real-second samples, and gating on ticks
+would make it tick-weighted and incomparable with every recorded
+figure.
+
+DOSBox-X: Trilby's Notes screenshot byte-identical (sha256
+03de57f79303d68c...), fps_p50 40.04, stall-free window 811 ticks in
+20.275 s = 40.00 ticks/s, tick_rate_steady 40.43 (the 0.4 over is the
+fixed-timestep loop repaying 5 ticks after each of two startup stalls,
+as before this patch: 40.47); AGS Quest AutoPilot all phases ok.
+---
+ Engine/ac/timer.cpp      | 53 +++++++++++++++++++++++++++
+ Engine/main/game_run.cpp | 27 +++++++++++---
+ Engine/util/time_util.h  | 77 ++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 153 insertions(+), 4 deletions(-)
+
+diff --git a/Engine/ac/timer.cpp b/Engine/ac/timer.cpp
+index 6a6ea79fc..feaaa4f3a 100644
+--- a/Engine/ac/timer.cpp
++++ b/Engine/ac/timer.cpp
+@@ -23,6 +23,7 @@
+ #include "SDL.h"
+ #endif
+ #ifdef __DJGPP__
++#include <algorithm> // std::max -- DOS-PORT patch 0096
+ #include <time.h> // uclock_t/uclock()/UCLOCKS_PER_SEC -- DOS-PORT patch 0081
+ #include "main/dos_port_tick_timing.h" // DOS-PORT patch 0081
+ #endif
+@@ -121,6 +122,58 @@ void WaitForNextFrame()
+ #if AGS_PLATFORM_OS_EMSCRIPTEN
+         // pass the time as negative in Emscripten Platform Driver
+         platform->Delay(-ToMilliseconds(frame_time_remaining));
++#elif defined(__DJGPP__)
++        // DOS-PORT patch 0096: a deadline wait on the uclock-backed Clock
++        // instead of sleep_for(). On DJGPP sleep_for() is usleep(), which
++        // spins on clock() -- 55 ms BIOS-tick resolution -- so ANY positive
++        // request costs a whole tick: 54.8 ms measured for 1, 10 and 25 ms
++        // alike on a 486DX-66. A frame that finished with 5 ms to spare
++        // paid 55 for it, which caps a paced loop at ~18 fps no matter how
++        // cheap the frame is.
++        //
++        // This is a busy-wait, and this hub has shipped a bad one before
++        // (it starved the BIOS timer, the clock ran slow, and the
++        // self-reported fps went UP while real speed collapsed). What is
++        // different here: interrupts stay ENABLED throughout -- no cli, no
++        // PIC mask write, nothing but reads of PIT channel 0 (inside
++        // uclock()) and the audio poll -- so IRQ0 is serviced exactly as it
++        // is anywhere else in the engine, and the clock this loop watches
++        // keeps advancing. And it is checked rather than trusted: patch
++        // 0095 measures uclock() against the CMOS RTC over the whole run.
++        //
++        // Deliberately NOT __dpmi_yield(): 123 us per call on the 486 under
++        // CWSDPMI, but 54.6 ms per call under DOSBox-X (it halts until the
++        // next timer interrupt there) -- it would rebuild the 18 fps cap
++        // on the emulator every correctness gate runs on.
++        //
++        // Audio keeps being pumped DURING the wait, about once a
++        // millisecond -- more often than the single poll per frame it got
++        // before, so a sound-on run is fed better, not starved. A poll is
++        // only started when the wait has room for it: what the last polls
++        // cost (slowly decaying maximum) plus 1 ms. That cost is not a
++        // constant -- ~1 ms on the 486 with Sound Blaster PCM, but 11 ms
++        // per call under DOSBox-X -- and a fixed margin let a poll run
++        // straight through the deadline there.
++        {
++            static Clock::duration poll_cost = std::chrono::milliseconds(2);
++            const auto deadline = next_frame_timestamp;
++            auto next_poll = now + std::chrono::milliseconds(1); // the entry poll above already ran
++            for (;;)
++            {
++                const auto t = Clock::now();
++                if (t >= deadline)
++                    break;
++#if defined(AGS_DISABLE_THREADS)
++                if (t >= next_poll && (deadline - t) > poll_cost + std::chrono::milliseconds(1))
++                {
++                    audio_core_entry_poll();
++                    const auto t_after = Clock::now();
++                    poll_cost = std::max<Clock::duration>(t_after - t, poll_cost - poll_cost / 8);
++                    next_poll = t_after + std::chrono::milliseconds(1);
++                }
++#endif
++            }
++        }
+ #else
+         std::this_thread::sleep_for(frame_time_remaining);
+ #endif
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 396d14546..940d024c4 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1220,6 +1220,11 @@ static void game_loop_update_loop_counter()
+     if (play.shakesc_length > 0) play.shakesc_length--;
+ }
+ 
++#ifdef __DJGPP__
++static void dos_fps_sample_at(const Clock::time_point &now);    // patch 0096
++static void dos_memory_sample_at(const Clock::time_point &now); // patch 0096
++#endif
++
+ static void game_loop_update_fps()
+ {
+     const auto now = Clock::now();
+@@ -1239,8 +1244,14 @@ static void game_loop_update_fps()
+     }
+ 
+ #ifdef __DJGPP__
+-    dos_fps_sample_tick();
+-    dos_memory_sample_tick();
++    // DOS-PORT patch 0096: both once-a-second samplers gate on the time
++    // this function already read, instead of each reading the clock again
++    // -- three reads per tick became one. (They stay TIME-gated rather
++    // than counting ticks: fps_p50 is a percentile over once-per-real-
++    // second samples, and sampling every N ticks would make it
++    // tick-weighted and incomparable with every figure recorded so far.)
++    dos_fps_sample_at(now);
++    dos_memory_sample_at(now);
+     dos_auto_exit_check();
+ #endif
+ }
+@@ -1259,7 +1270,11 @@ static void dos_persec_sample(); // patch 0093, defined with the rest of the yar
+ 
+ void dos_fps_sample_tick()
+ {
+-    const auto now = Clock::now();
++    dos_fps_sample_at(Clock::now());
++}
++
++static void dos_fps_sample_at(const Clock::time_point &now)
++{
+     if (!dos_fps_have_last_sample_time)
+     {
+         dos_fps_last_sample_time = now;
+@@ -1311,7 +1326,11 @@ static long dos_mem_min_free_kb = -1;
+ 
+ void dos_memory_sample_tick()
+ {
+-    const auto now = Clock::now();
++    dos_memory_sample_at(Clock::now());
++}
++
++static void dos_memory_sample_at(const Clock::time_point &now)
++{
+     if (!dos_mem_have_last_sample_time)
+     {
+         dos_mem_last_sample_time = now;
+diff --git a/Engine/util/time_util.h b/Engine/util/time_util.h
+index cab21ddc2..b4ca3bc25 100644
+--- a/Engine/util/time_util.h
++++ b/Engine/util/time_util.h
+@@ -20,12 +20,76 @@
+ 
+ #include <type_traits>
+ #include <chrono>
++#ifdef __DJGPP__
++#include <time.h> // uclock(), uclock_t, UCLOCKS_PER_SEC -- DOS-PORT patch 0096
++#endif
+ 
+ namespace AGS
+ {
+ namespace Engine
+ {
+ 
++#ifdef __DJGPP__
++// DOS-PORT patch 0096: on DJGPP every std::chrono clock is gettimeofday()
++// underneath (libstdc++ here is built with _GLIBCXX_USE_GETTIMEOFDAY and
++// WITHOUT _GLIBCXX_USE_CLOCK_MONOTONIC, so steady_clock is not even
++// steady), and gettimeofday() is two real-mode INT 21h round trips plus
++// mktime(): 1324.6 us per read and 55 ms resolution, measured on a
++// 486DX-66 (tests/harness/results/clock-probe/). The engine reads Clock
++// ~4.7 times per game tick, i.e. ~6.3 ms of every 25 ms tick went to
++// asking what time it is, and got an answer good to two frames.
++//
++// uclock() is DJGPP's PIT-backed clock: the BIOS tick count at 0040:006C
++// in the high bits, the live 8254 channel 0 counter in the low 16;
++// 1,193,180 units/s, 4.9 us per read on the same machine. Its real limits,
++// read from libc's own uclock.o, and what each costs us here:
++//  - It CAN step backwards by one BIOS tick (~55 ms): when the counter
++//    has reloaded but IRQ0 has not been serviced yet, the tick count it
++//    pairs the fresh counter value with is stale. This port has already
++//    logged it happening (tickstats clamped_neg). Hence the guard below:
++//    a read below the last returned value returns the last value, so
++//    time stalls for the interrupt-latency window instead of jumping
++//    back. Without the guard is_steady = true would be a lie; with it,
++//    it is not.
++//  - Midnight is handled inside uclock() (one rollover per call pair;
++//    the engine calls it many times a second).
++//  - The first call reprograms PIT channel 0 to mode 2 and blocks until
++//    the next BIOS tick (<= 55 ms). Not new: this port's own
++//    instrumentation has called uclock() since patch 0079.
++//  - It only keeps time while IRQ0 is serviced. Nothing here masks
++//    interrupts; patch 0095's RTC cross-check exists to catch it if
++//    anything ever does.
++//
++// duration is nanoseconds on purpose -- the same type libstdc++'s
++// steady_clock has, so every Clock::duration / duration_cast in the
++// engine compiles to exactly what it did before. The conversion is split
++// into whole seconds and remainder because t * 1e9 overflows int64 after
++// about two hours. The epoch is the first uclock() call; nothing in the
++// engine converts a Clock::time_point to calendar time (that is all on
++// ScriptDateTime::SystemClock, i.e. std::chrono::system_clock).
++struct DosUclockClock
++{
++    typedef std::chrono::nanoseconds duration;
++    typedef duration::rep rep;
++    typedef duration::period period;
++    typedef std::chrono::time_point<DosUclockClock> time_point;
++    static constexpr bool is_steady = true;
++
++    static time_point now() noexcept
++    {
++        static uclock_t last = 0;
++        uclock_t t = uclock();
++        if (t < last)
++            t = last;
++        else
++            last = t;
++        const long long secs = t / UCLOCKS_PER_SEC;
++        const long long rem = t - secs * UCLOCKS_PER_SEC;
++        return time_point(duration(secs * 1000000000LL + rem * 1000000000LL / UCLOCKS_PER_SEC));
++    }
++};
++using Clock = DosUclockClock;
++#else
+ // Clock is a high-resolution clock, used when we need max precision.
+ // Use high resolution clock only if we know it is monotonic/steady.
+ // refer to https://stackoverflow.com/a/38253266/84262
+@@ -33,9 +97,22 @@ using Clock = std::conditional<
+     std::chrono::high_resolution_clock::is_steady,
+     std::chrono::high_resolution_clock, std::chrono::steady_clock
+ >::type;
++#endif
+ // FastClock is a higher performance clock, used when the speed is a priority,
+ // but precision may be sacrificed.
++#ifdef __DJGPP__
++// DOS-PORT patch 0096: on DJGPP system_clock is the SAME 1.3 ms
++// gettimeofday() as every other std::chrono clock, so "fast" it is not --
++// and ccInstance::Run() reads it on every script function run (the
++// script-timeout watchdog, cc_instance.cpp), which put a clock read inside
++// every rep_exec call of every tick. All of FastClock's users take
++// differences of two readings (that watchdog; game.cpp's load-time
++// stopwatches); none converts one to calendar time. So it can be the
++// uclock-backed Clock above.
++using FastClock = Clock;
++#else
+ using FastClock = std::chrono::system_clock;
++#endif
+ 
+ template <typename TDur>
+ inline int64_t ToMilliseconds(TDur dur)
+-- 
+2.47.3
+

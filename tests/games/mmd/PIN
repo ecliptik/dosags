@@ -1,0 +1,102 @@
+# Maniac Mansion Deluxe -- source pin, confirmed 2026-09-15 via direct
+# download + hash, not re-cited from memory. Re-verify independently
+# before bumping.
+#
+# Game porting framework F2 (PLAN.md "Game porting framework -- completion
+# plan"), one of the milestone's five golden references (16-bit,
+# in-profile). Freeware, local-testing-only, never committed -- same rule
+# as Trilby's Notes/5 Days a Stranger/AGS Quest. Only this PIN, hashes,
+# logs, and manifest.yaml enter git; the game archive/binary itself never
+# does.
+#
+# DEVELOPER'S OWN SITE IS DEAD -- OPERATOR-APPROVED THIRD-PARTY MIRROR
+# EXCEPTION (2026-09-15). Unlike every other golden reference here, the
+# AGS games database listing (play/game/401) carries NO developer "Game
+# Website" link at all -- only the AGS site's own JS-gated download
+# button (data-download-id click handler, no real href; same
+# anti-automation shape Trilby's Notes' PIN already declined to script
+# around). The credited developer (LucasFan Games)'s own site,
+# http://lucasfangames.de , is also dead: it now issues an HTTP 303 that
+# resolves through Cloudflare to an unrelated ad-landing domain
+# (p2-1.afp24.net), not a revived or successor site -- confirmed live,
+# 2026-09-15. With no developer-published link of any kind to follow, the
+# operator explicitly approved accepting ONE named, well-established
+# third-party mirror as a documented exception, rather than leaving this
+# golden reference blocked or swapping it out of the gate set.
+#
+# MIRROR CHOSEN: the Internet Archive, identifier "Maniac_Mansion_Deluxe"
+# (https://archive.org/details/Maniac_Mansion_Deluxe) -- not
+# "Maniac_Mansion_Deluxe_14" (a separate, later-uploaded v1.4 item by a
+# different, personal-account uploader with less careful metadata).
+# Reasons this specific item was preferred: (1) collection field is
+# "classicpcgames", a curated preservation collection, not just the
+# generic "community" catch-all; (2) identifier/title match the game's
+# canonical name exactly, uploaded 2015-01-24 by swizzle@demu.org;
+# (3) creator field correctly attributes "LucasFan Games"; (4) the
+# downloaded zip's OWN internal uncompressed size (5,826,271 bytes, read
+# from the zip's own central directory via `file`) matches the AGS
+# database's own listed installer filesize ("Filesize: 5,826 kB",
+# data-download-id 8405 on play/game/401) almost exactly -- strong
+# independent evidence this is the same file AGS itself distributes, not
+# an unrelated repack. This is still a third-party mirror, not a
+# developer-published link -- recorded here plainly, not glossed over.
+
+GAME_TITLE="Maniac Mansion Deluxe"
+GAME_YEAR=2004
+GAME_DEVELOPER="LucasFan Games (developer site lucasfangames.de is DEAD --
+  redirects to an unrelated ad-landing domain, confirmed 2026-09-15)"
+
+# Official listing (freeware classification, filesize cross-check):
+# https://www.adventuregamestudio.co.uk/play/game/401/
+# Release Type field: "Freeware". No "Game Website" link present on this
+# listing (unlike every other golden reference's PIN) -- the gap that
+# made a mirror exception necessary.
+SOURCE_URL="https://archive.org/download/Maniac_Mansion_Deluxe/maniacmdsetup.zip"
+SOURCE_URL_ALTERNATE_MIRRORS="https://archive.org/details/Maniac_Mansion_Deluxe_14 (a separate, later v1.4 upload by a different, personal-account uploader -- not used, see rationale above); Abandonia, BestOldGames.net, MobyGames also list this game (not fetched -- one named mirror is the operator's own decision, not a shopping list)."
+DOWNLOADED_UTC="2026-09-15"
+
+# maniacmdsetup.zip itself (an Internet Archive item, collection
+# classicpcgames, uploaded 2015-01-24 by swizzle@demu.org)
+ZIP_SIZE_BYTES=5740929
+ZIP_SHA256=c173b3385f781f6ddc702577cce6b3478d6ad962f265beb48087ed5fd93d5da8
+ZIP_LAST_MODIFIED="2015-01-24T23:26:07Z"  # archive.org item addeddate (its own
+                                          # upload date, not the game's release
+                                          # date -- the game was released
+                                          # 2004-05-21 per the AGS database)
+
+# manicmdsetup.exe (a Ghost-Installer-style self-installing wizard, NOT a
+# single EXE+CLIB like Trilby's Notes/5 Days a Stranger), extracted from
+# maniacmdsetup.zip. Genuinely LucasFan Games' own installer -- confirmed
+# by running it (Wine + Xvfb, non-interactive click-through) and visually
+# matching its "LUCASFAN GAMES" splash branding and default install path
+# (C:\Program Files (x86)\LucasFan Games\MMD) before trusting any
+# extracted content, not assumed from the zip's filename alone.
+INSTALLER_EXE_SIZE_BYTES=5826271
+INSTALLER_EXE_SHA256=5d2a37eee8c6b0a749f875ceef4e90d07ec248efb03425a82a38c57f59be3416
+
+# Installed game files (produced by running manicmdsetup.exe -- this
+# game's CLIB is split across SIX physical files, an old floppy-disk-era
+# AGS packaging shape none of this framework's other golden references
+# use; see manifest.yaml's clib: section and tools/port-game's own
+# find_lib_volumes()):
+MANIAC_EXE_SIZE_BYTES=9395050
+MANIAC_EXE_SHA256=8bcd4be32514a8a6d7628dc48fdc4c3624eca9202049a24c2f085fadbf8292b3
+MANIAC_001_SHA256=37695ffb502854094911d7021b2c3074dc6ff3ba9688c4d33ff850faf1aa9eb4
+MANIAC_002_SHA256=429d3ee5f3b20715c85e2d16c72da3cd65b36bfc517a72d18a09b11577d0dbf0
+MANIAC_003_SHA256=c558e47ec3c382fe23f49941b0823ead86422cbf9e92be5b42bec4d816dd0a9b
+MANIAC_004_SHA256=8906ab5d24495260b22d9e8763f6fe6e22cd724f042d9eb1ee14ed35c3ccea6e
+MANIAC_005_SHA256=19e8d08ebb1efcc69539f889cbb6600d43f2668d4ee6edbadc643008e8146697
+SPEECH_VOX_SHA256=5ebbd056e95036e21d2214abf56476ef85a70a3f0f346b58139f87104c4b7d94
+
+# Licensing: "Freeware" per the AGS database's own release-type field
+# (confirmed above). manual.htm (inside the installer, not committed)
+# carries no separate redistribution/license text at all -- checked in
+# full, no "freeware"/"copyright"/"license"/"distribute" language of any
+# kind (unlike even Trilby's Notes/5 Days a Stranger's brief author-credit
+# lines). No LICENSE/COPYING file ships with the game either. Freeware
+# classification here rests solely on the AGS database's own field, which
+# is the same authoritative source every other golden reference's PIN
+# already leans on -- not a new or weaker standard, just this game's own
+# readme happening to say nothing at all. Consistent with PLAN.md's
+# "Golden-reference games" decision (freeware, local-testing-only, never
+# committed, never redistributed).

@@ -1,0 +1,309 @@
+From e200502abe478d2cd2d604e75f9c2b0173d6fd44 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 15 Sep 2026 06:56:36 -0700
+Subject: [PATCH] dos: patch 0146 -- GUS voice-setup call cost diagnostic
+ (S7-GUS)
+
+WHY: dosags real hardware (tags GUST1/GUSD1, tests/games/trilbysnotes/
+results/S7-gus-getstate-cost-realhw-2026-09-15.md) exonerated
+SDL_DOSGusGetState() (patch SDL/0145) -- 28 calls, 27-170us each, ~3ms
+total -- and instead found the MIDI slot Poll() loop's own 6.9s max is
+ONE single call, nearly identical across two independent runs (175us
+apart out of 6.89 SECONDS), pointing at a deterministic mechanism tied
+to the song/scene content rather than I/O jitter or call-volume
+aggregation. gus_sink.c's sink_note_on() calls SDL_DOSGusSetVoiceFreq,
+SetVoiceVol, SetVoicePan, and SDL_DOSGusStartVoice once each per real
+note-on; SDL_DOSGusStopVoice is called from reap_finished_voices(),
+sink_note_off(), and allocate_voice()'s LRU-steal path. All five were
+read this session -- every one is a bounded handful of outportb()/
+inportb() calls, cli/sti-wrapped, with no retry/poll loop anywhere in
+their own call graph (gus_select_voice, gus_w8, gus_w16, gus_hz_to_fc,
+gus_linear_to_logvol, gus_encode_addr all checked) -- but that was also
+true of SDL_DOSGusGetState() before it was measured, and this file's
+own SDL_DOSMpu401WaitDRR/SDL/0093 precedent shows a single outportb/
+inportb CAN cost far more than source reading predicts on a real ISA
+bus, regardless of loop structure. Per this hub's "instrument the thing
+that produces the unexplained quantity, not its neighbors" rule,
+applied for the third time in this sub-investigation.
+
+WHAT: brackets all five functions with uclock()-based microsecond
+timestamps, one accumulate-and-snapshot pair per function, same idiom
+as SDL_DOSGusGetState() (patch SDL/0145) this mirrors -- five
+independent Diag Snapshot accessors so a caller can tell exactly which
+one (if any) is responsible, not just their combined total.
+SDL_DOSGusStopVoice is a real addition beyond the four functions
+originally flagged for this pass (SetVoiceFreq/Vol/Pan/StartVoice): it
+sits in the same reap/note-off call graph, is equally unmeasured, and
+costs nothing extra to add to the same real-hardware run. dosags
+patches/ags/0070 is the consumer.
+
+Temporary -- to be reverted once this sub-investigation concludes.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01VVzc2V3qXnVbYZC693CTWt
+---
+ src/audio/dos/SDL_dosaudio_gus.c | 184 +++++++++++++++++++++++++++++++
+ 1 file changed, 184 insertions(+)
+
+diff --git a/src/audio/dos/SDL_dosaudio_gus.c b/src/audio/dos/SDL_dosaudio_gus.c
+index 4d6691f08..baddd43bc 100644
+--- a/src/audio/dos/SDL_dosaudio_gus.c
++++ b/src/audio/dos/SDL_dosaudio_gus.c
+@@ -1456,12 +1456,56 @@ int SDL_DOSGusAllocVoiceSfx(void)
+     return found; /* -1 if SFX partition exhausted -- caller does its own steal/drop policy */
+ }
+ 
++/* TEMPORARY DIAGNOSTIC (S7-GUS, continuation): SDL_DOSGusGetState() (patch
++   SDL/0145) came back exonerated on real hardware -- 28 calls, 27-170us
++   each, ~3ms total, nowhere near slots_us's own 101ms mean / 6.9s max
++   (tests/games/trilbysnotes/results/S7-gus-getstate-cost-realhw-
++   2026-09-15.md). That result also found the ~6.89s outlier is ONE single
++   call inside the MIDI slot Poll() loop, nearly identical across two
++   independent runs (175us apart out of 6.89s) -- a deterministic
++   mechanism, not I/O jitter. gus_sink.c's sink_note_on() calls exactly
++   these five SDL_DOSGus* functions once each per real note-on, in this
++   order: SetVoiceFreq, SetVoiceVol, SetVoicePan, StartVoice (StopVoice
++   separately, from reap_finished_voices()/sink_note_off()/the LRU-steal
++   path). Source reading (this entry) shows every one of them is a bounded
++   handful of outportb()/inportb() calls, cli/sti-wrapped, no retry/poll
++   loop anywhere in the call graph (gus_select_voice, gus_w8, gus_w16,
++   gus_hz_to_fc, gus_linear_to_logvol, gus_encode_addr all checked) -- but
++   that was true of SDL_DOSGusGetState() too before it was measured, and a
++   real ISA bus wait-state on a single outportb/inportb CAN cost far more
++   than source reading predicts regardless of loop structure (this exact
++   file's own SDL_DOSMpu401WaitDRR/SDL/0093 precedent). Bracketing all
++   five with the same per-function accumulate-and-snapshot idiom as
++   SDL_DOSGusGetState() (patch SDL/0145) rather than guessing which one to
++   trust. dosags patches/ags/0070 is the consumer. In-memory accumulate
++   only (no I/O here). Temporary -- revert once this sub-investigation
++   concludes. */
++static Uint32 s_gus_startvoice_calls = 0;
++static Uint64 s_gus_startvoice_sum_us = 0;
++static Uint64 s_gus_startvoice_min_us = ~(Uint64)0;
++static Uint64 s_gus_startvoice_max_us = 0;
++
++void SDL_DOSGusStartVoiceDiagSnapshot(
++    Uint32 *out_calls, Uint32 *out_min_us, Uint32 *out_mean_us, Uint32 *out_max_us)
++{
++    if (out_calls)  *out_calls  = s_gus_startvoice_calls;
++    if (out_min_us) *out_min_us = (Uint32)((s_gus_startvoice_calls > 0) ? s_gus_startvoice_min_us : 0);
++    if (out_mean_us) *out_mean_us = (Uint32)((s_gus_startvoice_calls > 0) ? (s_gus_startvoice_sum_us / s_gus_startvoice_calls) : 0);
++    if (out_max_us) *out_max_us = (Uint32)s_gus_startvoice_max_us;
++
++    s_gus_startvoice_calls = 0;
++    s_gus_startvoice_sum_us = 0;
++    s_gus_startvoice_min_us = ~(Uint64)0;
++    s_gus_startvoice_max_us = 0;
++}
++
+ void SDL_DOSGusStartVoice(int voice, Uint32 start, Uint32 end, Uint32 loopstart, Uint32 flags)
+ {
+     Uint16 smsw, slsw, emsw, elsw, cmsw, clsw;
+     int is16 = (flags & SDL_DOSGUS_16BIT) ? 1 : 0;
+     Uint8 ctrl = 0x00;
+     Uint32 curaddr = (flags & SDL_DOSGUS_LOOP) ? loopstart : start;
++    const uclock_t t0 = uclock(); /* TEMPORARY DIAGNOSTIC, see above */
+ 
+     if (!g_gus_active || voice < 0 || voice >= g_gus_voices) {
+         return;
+@@ -1552,10 +1596,47 @@ void SDL_DOSGusStartVoice(int voice, Uint32 start, Uint32 end, Uint32 loopstart,
+     DOS_EnableInterrupts();
+ 
+     g_gus_n_start++;
++
++    /* TEMPORARY DIAGNOSTIC (S7-GUS), see the accessor's own comment above.
++       Only the real (non-early-return) path is measured -- the g_gus_active/
++       voice-range guard above never does real work. */
++    {
++        const Uint64 call_us = (Uint64)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
++        s_gus_startvoice_calls++;
++        s_gus_startvoice_sum_us += call_us;
++        if (call_us < s_gus_startvoice_min_us) s_gus_startvoice_min_us = call_us;
++        if (call_us > s_gus_startvoice_max_us) s_gus_startvoice_max_us = call_us;
++    }
++}
++
++/* TEMPORARY DIAGNOSTIC (S7-GUS): same idiom as SDL_DOSGusStartVoice above --
++   StopVoice is called from gus_sink.c's reap_finished_voices() (once per
++   voice actually reaped, not once per note-on like the others), sink_note_
++   off(), and allocate_voice()'s LRU-steal path -- a real, unmeasured part
++   of the same note-on/note-off call graph, not one of the handoff's
++   original four candidates but in scope for the same reason. */
++static Uint32 s_gus_stopvoice_calls = 0;
++static Uint64 s_gus_stopvoice_sum_us = 0;
++static Uint64 s_gus_stopvoice_min_us = ~(Uint64)0;
++static Uint64 s_gus_stopvoice_max_us = 0;
++
++void SDL_DOSGusStopVoiceDiagSnapshot(
++    Uint32 *out_calls, Uint32 *out_min_us, Uint32 *out_mean_us, Uint32 *out_max_us)
++{
++    if (out_calls)  *out_calls  = s_gus_stopvoice_calls;
++    if (out_min_us) *out_min_us = (Uint32)((s_gus_stopvoice_calls > 0) ? s_gus_stopvoice_min_us : 0);
++    if (out_mean_us) *out_mean_us = (Uint32)((s_gus_stopvoice_calls > 0) ? (s_gus_stopvoice_sum_us / s_gus_stopvoice_calls) : 0);
++    if (out_max_us) *out_max_us = (Uint32)s_gus_stopvoice_max_us;
++
++    s_gus_stopvoice_calls = 0;
++    s_gus_stopvoice_sum_us = 0;
++    s_gus_stopvoice_min_us = ~(Uint64)0;
++    s_gus_stopvoice_max_us = 0;
+ }
+ 
+ void SDL_DOSGusStopVoice(int voice)
+ {
++    const uclock_t t0 = uclock(); /* TEMPORARY DIAGNOSTIC, see above */
+     if (!g_gus_active || voice < 0 || voice >= g_gus_voices) {
+         return;
+     }
+@@ -1571,6 +1652,15 @@ void SDL_DOSGusStopVoice(int voice)
+         gus_diag_put(GUS_DR_STOP, (Uint8)voice, 0, 0);
+     }
+     DOS_EnableInterrupts();
++
++    /* TEMPORARY DIAGNOSTIC (S7-GUS), see above. */
++    {
++        const Uint64 call_us = (Uint64)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
++        s_gus_stopvoice_calls++;
++        s_gus_stopvoice_sum_us += call_us;
++        if (call_us < s_gus_stopvoice_min_us) s_gus_stopvoice_min_us = call_us;
++        if (call_us > s_gus_stopvoice_max_us) s_gus_stopvoice_max_us = call_us;
++    }
+ }
+ 
+ void SDL_DOSGusStopAllVoices(void)
+@@ -1597,9 +1687,30 @@ void SDL_DOSGusStopAllVoices(void)
+     }
+ }
+ 
++/* TEMPORARY DIAGNOSTIC (S7-GUS): same idiom as SDL_DOSGusStartVoice above. */
++static Uint32 s_gus_setfreq_calls = 0;
++static Uint64 s_gus_setfreq_sum_us = 0;
++static Uint64 s_gus_setfreq_min_us = ~(Uint64)0;
++static Uint64 s_gus_setfreq_max_us = 0;
++
++void SDL_DOSGusSetVoiceFreqDiagSnapshot(
++    Uint32 *out_calls, Uint32 *out_min_us, Uint32 *out_mean_us, Uint32 *out_max_us)
++{
++    if (out_calls)  *out_calls  = s_gus_setfreq_calls;
++    if (out_min_us) *out_min_us = (Uint32)((s_gus_setfreq_calls > 0) ? s_gus_setfreq_min_us : 0);
++    if (out_mean_us) *out_mean_us = (Uint32)((s_gus_setfreq_calls > 0) ? (s_gus_setfreq_sum_us / s_gus_setfreq_calls) : 0);
++    if (out_max_us) *out_max_us = (Uint32)s_gus_setfreq_max_us;
++
++    s_gus_setfreq_calls = 0;
++    s_gus_setfreq_sum_us = 0;
++    s_gus_setfreq_min_us = ~(Uint64)0;
++    s_gus_setfreq_max_us = 0;
++}
++
+ void SDL_DOSGusSetVoiceFreq(int voice, Uint32 playback_hz)
+ {
+     Uint16 fc;
++    const uclock_t t0 = uclock(); /* TEMPORARY DIAGNOSTIC, see above */
+     if (!g_gus_active || voice < 0 || voice >= g_gus_voices) {
+         return;
+     }
+@@ -1614,11 +1725,41 @@ void SDL_DOSGusSetVoiceFreq(int voice, Uint32 playback_hz)
+         gus_diag_put(GUS_DR_FREQ, (Uint8)voice, playback_hz, fc);
+     }
+     DOS_EnableInterrupts();
++
++    /* TEMPORARY DIAGNOSTIC (S7-GUS), see above. */
++    {
++        const Uint64 call_us = (Uint64)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
++        s_gus_setfreq_calls++;
++        s_gus_setfreq_sum_us += call_us;
++        if (call_us < s_gus_setfreq_min_us) s_gus_setfreq_min_us = call_us;
++        if (call_us > s_gus_setfreq_max_us) s_gus_setfreq_max_us = call_us;
++    }
++}
++
++/* TEMPORARY DIAGNOSTIC (S7-GUS): same idiom as SDL_DOSGusStartVoice above. */
++static Uint32 s_gus_setvol_calls = 0;
++static Uint64 s_gus_setvol_sum_us = 0;
++static Uint64 s_gus_setvol_min_us = ~(Uint64)0;
++static Uint64 s_gus_setvol_max_us = 0;
++
++void SDL_DOSGusSetVoiceVolDiagSnapshot(
++    Uint32 *out_calls, Uint32 *out_min_us, Uint32 *out_mean_us, Uint32 *out_max_us)
++{
++    if (out_calls)  *out_calls  = s_gus_setvol_calls;
++    if (out_min_us) *out_min_us = (Uint32)((s_gus_setvol_calls > 0) ? s_gus_setvol_min_us : 0);
++    if (out_mean_us) *out_mean_us = (Uint32)((s_gus_setvol_calls > 0) ? (s_gus_setvol_sum_us / s_gus_setvol_calls) : 0);
++    if (out_max_us) *out_max_us = (Uint32)s_gus_setvol_max_us;
++
++    s_gus_setvol_calls = 0;
++    s_gus_setvol_sum_us = 0;
++    s_gus_setvol_min_us = ~(Uint64)0;
++    s_gus_setvol_max_us = 0;
+ }
+ 
+ void SDL_DOSGusSetVoiceVol(int voice, int linear_vol)
+ {
+     Uint16 reg;
++    const uclock_t t0 = uclock(); /* TEMPORARY DIAGNOSTIC, see above */
+     if (!g_gus_active || voice < 0 || voice >= g_gus_voices) {
+         return;
+     }
+@@ -1657,10 +1798,44 @@ void SDL_DOSGusSetVoiceVol(int voice, int linear_vol)
+         gus_diag_put(GUS_DR_VOL, (Uint8)voice, (Uint32)linear_vol, reg); /* IRQ-safe */
+     }
+     DOS_EnableInterrupts();
++
++    /* TEMPORARY DIAGNOSTIC (S7-GUS), see above. Note this function is also
++       called from gus_sink.c's sink_on_tick() (patch 0254 release ramp,
++       once per releasing voice per scheduler tick) -- not just note-on --
++       so its own call count will run higher than SetVoiceFreq/Pan/
++       StartVoice's own ~28. */
++    {
++        const Uint64 call_us = (Uint64)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
++        s_gus_setvol_calls++;
++        s_gus_setvol_sum_us += call_us;
++        if (call_us < s_gus_setvol_min_us) s_gus_setvol_min_us = call_us;
++        if (call_us > s_gus_setvol_max_us) s_gus_setvol_max_us = call_us;
++    }
++}
++
++/* TEMPORARY DIAGNOSTIC (S7-GUS): same idiom as SDL_DOSGusStartVoice above. */
++static Uint32 s_gus_setpan_calls = 0;
++static Uint64 s_gus_setpan_sum_us = 0;
++static Uint64 s_gus_setpan_min_us = ~(Uint64)0;
++static Uint64 s_gus_setpan_max_us = 0;
++
++void SDL_DOSGusSetVoicePanDiagSnapshot(
++    Uint32 *out_calls, Uint32 *out_min_us, Uint32 *out_mean_us, Uint32 *out_max_us)
++{
++    if (out_calls)  *out_calls  = s_gus_setpan_calls;
++    if (out_min_us) *out_min_us = (Uint32)((s_gus_setpan_calls > 0) ? s_gus_setpan_min_us : 0);
++    if (out_mean_us) *out_mean_us = (Uint32)((s_gus_setpan_calls > 0) ? (s_gus_setpan_sum_us / s_gus_setpan_calls) : 0);
++    if (out_max_us) *out_max_us = (Uint32)s_gus_setpan_max_us;
++
++    s_gus_setpan_calls = 0;
++    s_gus_setpan_sum_us = 0;
++    s_gus_setpan_min_us = ~(Uint64)0;
++    s_gus_setpan_max_us = 0;
+ }
+ 
+ void SDL_DOSGusSetVoicePan(int voice, int pan)
+ {
++    const uclock_t t0 = uclock(); /* TEMPORARY DIAGNOSTIC, see above */
+     if (!g_gus_active || voice < 0 || voice >= g_gus_voices) {
+         return;
+     }
+@@ -1674,6 +1849,15 @@ void SDL_DOSGusSetVoicePan(int voice, int pan)
+     gus_select_voice(voice);
+     gus_w8(GUS_VREG_PAN, (Uint8)(pan >> 4)); /* 0..255 -> 4-bit 0..15 */
+     DOS_EnableInterrupts();
++
++    /* TEMPORARY DIAGNOSTIC (S7-GUS), see above. */
++    {
++        const Uint64 call_us = (Uint64)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
++        s_gus_setpan_calls++;
++        s_gus_setpan_sum_us += call_us;
++        if (call_us < s_gus_setpan_min_us) s_gus_setpan_min_us = call_us;
++        if (call_us > s_gus_setpan_max_us) s_gus_setpan_max_us = call_us;
++    }
+ }
+ 
+ #endif /* defined(SDL_PLATFORM_DOS) */
+-- 
+2.47.3
+

@@ -1,0 +1,83 @@
+From 57240d7c105ed310e9e1ef14ad3cc0ef7cee5d5e Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 28 Sep 2026 16:06:36 -0700
+Subject: [PATCH] DOS-PORT: patch 0247 -- tick-keyed clicks for a test fixture
+ (DOSAGS_TICKCLICKS=first,period,count, default off)
+
+S32P's clicks come from the host on wall-clock time (xdotool under
+DOSBox-X, drive-walk on the 486), so an arm that moves game time meets
+different game states at each click: round V's 0240 pair played sound
+10 in one cell and never in the other, and its whole-run compared two
+different games. The fade itself compared cleanly; nothing after it did.
+
+With DOSAGS_TICKCLICKS=first,period,count the engine clicks by itself at
+tick first + k * period, at point k of a fixed 12-point sweep over a
+320x200 room, through the calls script uses (SetMousePosition then
+SimulateMouseClick, i.e. the SDL_TOUCH_MOUSEID pseudo-device). It runs
+just before the tick drains its events, so each click is acted on in
+its own tick, including inside a catch-up burst. With the variable unset
+it reads the environment once and does nothing else; it never reads or
+changes the real mouse device's events, so host clicks behave as before.
+Each click is logged: "DOS-PORT tickclick lc= n= x= y=".
+---
+ Engine/main/game_run.cpp | 37 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 37 insertions(+)
+
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index f308e6c8a..789cd93a0 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1923,6 +1923,42 @@ void dos_port_yardstick_emit(FILE *log)
+ //
+ // UpdateGameOnce is a primary game update routine.
+ //
++#ifdef __DJGPP__
++// DOS-PORT patch 0247: tick-keyed clicks for a test fixture (DOSAGS_TICKCLICKS=first,period,count).
++// A fixture that clicks on wall-clock time (xdotool, or the 486's drive-walk) makes any arm that moves
++// game time -- a faster fade, a faster read -- meet different game states, so its whole-run compares
++// different games (round V's 0240 pair). Here the engine itself clicks at tick first + k * period, at
++// point k of a fixed sweep over a 320x200 room, through the same calls script uses (SetMousePosition,
++// SimulateMouseClick: the SDL_TOUCH_MOUSEID pseudo-device), just before this tick drains its events, so
++// the click is acted on in its own tick even inside a catch-up burst. It never reads or changes the
++// real mouse device's input, and does nothing at all unless the variable is set.
++static int dos_tc_mode = -1;   // -1 unread, 0 off, 1 on
++static long dos_tc_first = 0, dos_tc_period = 0, dos_tc_count = 0, dos_tc_next = 0;
++static void dos_tick_clicks()
++{
++    static const int px[12] = { 40, 280, 100, 220, 160, 60, 260, 130, 190, 80, 240, 160 };
++    static const int py[12] = { 180, 170, 150, 185, 160, 140, 175, 190, 145, 165, 155, 185 };
++    if (dos_tc_mode < 0)
++    {
++        const char *e = getenv("DOSAGS_TICKCLICKS");
++        dos_tc_mode = (e != nullptr && sscanf(e, "%ld,%ld,%ld", &dos_tc_first, &dos_tc_period, &dos_tc_count) == 3 &&
++                       dos_tc_first >= 0 && dos_tc_period > 0 && dos_tc_count > 0) ? 1 : 0;
++        if (dos_tc_mode)
++            Debug::Printf("DOS-PORT tickclicks first=%ld period=%ld count=%ld", dos_tc_first, dos_tc_period, dos_tc_count);
++    }
++    if (dos_tc_mode != 1 || dos_tc_next >= dos_tc_count)
++        return;
++    const long lc = (long)get_loop_counter();
++    if (lc < dos_tc_first + dos_tc_next * dos_tc_period)
++        return;
++    const int k = (int)(dos_tc_next % 12);
++    dos_tc_next++;
++    SetMousePosition(px[k], py[k]);
++    SimulateMouseClick(kMouseLeft);
++    Debug::Printf("DOS-PORT tickclick lc=%ld n=%ld x=%d y=%d", lc, dos_tc_next, px[k], py[k]);
++}
++#endif
++
+ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int extra_x, int extra_y, bool skip_render_and_wait)
+ {
+     // DOS-PORT patch 0082: whole-function bracket, first line so it
+@@ -1945,6 +1981,7 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+     {
+ #ifdef __DJGPP__
+         DosPortTickScope _dos_port_input_scope(dos_port_tick_timing.input_poll);
++        dos_tick_clicks();   // patch 0247: no-op unless DOSAGS_TICKCLICKS is set
+ #endif
+         sys_evt_process_pending();
+     }
+-- 
+2.47.3
+

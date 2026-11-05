@@ -1,0 +1,18 @@
+capture-check.py sha256 33133f390a4b2338ad7b18a1e7b3ef97c317ea1199dce5f6f958894584ead4d2 (archive/lab-wb-2026-11-04 LAB-WB-data/ = lab/wb caff563d), audio-compare.py 27b329ff7d9109fd...
+$ capture-check.py CAPR8-seg01.ogg CAPR8.LOG build/lab/renders/trilby_sound11.wav
+span 337.50-430.25 s (held run 336.50-432.25); floor from 457-517 s
+K1 locked: 0 digital-zero frames -> PASS
+K2 no gap: 0 frames >= 25 dB under the local or span median (worst 16.6 dB) -> PASS
+K3 PCM fidelity: effect NCC 0.41 at 331.03 s, reversed-clip null 0.13 -> PASS
+K4 sources audible: 18 windows; low band >= 51.0 dB, high band >= 44.0 dB over the floor (-76.9 / -72.6 dB) -> PASS
+K5 counters: pcm_irqs=2053 silent_irqs=0 overwrites=0 underruns=0 midi=opl3 midi_tick=isr late_writes=0
+CAPTURE CHECK (K1-K4): PASS
+
+control: the same scorer on CAPS8-2026-09-30 reproduces CAPS8's record:
+span 254.75-348.00 s (held run 253.75-350.00); floor from 375-435 s
+K1 locked: 0 digital-zero frames -> PASS
+K2 no gap: 0 frames >= 25 dB under the local or span median (worst 24.7 dB) -> PASS
+K3 PCM fidelity: effect NCC 0.41 at 248.56 s, reversed-clip null 0.14 -> PASS
+K4 sources audible: 18 windows; low band >= 52.8 dB, high band >= 47.8 dB over the floor (-78.6 / -76.0 dB) -> PASS
+K5 counters: pcm_irqs=2069 silent_irqs=0 overwrites=0 underruns=0 midi=opl3 midi_tick=isr late_writes=0
+CAPTURE CHECK (K1-K4): PASS

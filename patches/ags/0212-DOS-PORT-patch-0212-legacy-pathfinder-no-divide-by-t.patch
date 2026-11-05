@@ -1,0 +1,99 @@
+From f3aff4153274b6a5603d07d1148a736832b73a95 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 17:43:41 -0700
+Subject: [PATCH 212/212] DOS-PORT: patch 0212 -- legacy pathfinder: no divide
+ by the mask width per visited cell per pass
+
+find_route_dijkstra() re-scans every visited cell on every pass and
+recovered each cell's x and y from its packed index with a % and a / by the
+mask width -- one idiv (~43 cycles on a 486) per visited cell per pass. A
+long walk request in 5 Days a Stranger makes 20000-51000 such visits
+(dosags RT2a iter_sum), so ~1-2 million cycles of divides, which an
+emulator's cycle count hides (DOSBox-X's normal core charges a divide like
+a move) but the target machine pays.
+
+Each visited cell's x and y are now stored beside its index when it is
+recorded (taken before the loop's edge-of-screen adjustment, exactly the
+values the % and / produced) and read back in the pass. Same cells in the
+same order with the same values; routes unchanged (witness: route hashes).
+---
+ Engine/ac/route_finder_impl_legacy.cpp | 20 ++++++++++++++++++--
+ 1 file changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/Engine/ac/route_finder_impl_legacy.cpp b/Engine/ac/route_finder_impl_legacy.cpp
+index 92b0da982..d9ff0089c 100644
+--- a/Engine/ac/route_finder_impl_legacy.cpp
++++ b/Engine/ac/route_finder_impl_legacy.cpp
+@@ -519,8 +519,15 @@ static int find_route_dijkstra(const Bitmap *wallscreen, int fromx, int fromy, i
+   int *parent = (int *)malloc(allocsize);
+   int min = 999999, cheapest[40], newcell[40], replace[40];
+   int *visited = (int *)malloc(MAX_TRAIL_LENGTH * sizeof(int));
++  // DOS-PORT patch 0212: each visited cell's x and y, kept beside its index, so the main loop does
++  // not divide by the mask width for every visited cell on every pass (an idiv, ~43 cycles on a 486,
++  // times the ~20000-51000 cell visits of a long request). Same cells, same order, same values.
++  int *visx = (int *)malloc(MAX_TRAIL_LENGTH * sizeof(int));
++  int *visy = (int *)malloc(MAX_TRAIL_LENGTH * sizeof(int));
+   int iteration = 1;
+   visited[0] = fromy * wallscreen->GetWidth() + fromx;
++  visx[0] = fromx;
++  visy[0] = fromy;
+   parent[visited[0]] = -1;
+ 
+   int granularity = 3, newx = -1, newy, foundAnswer = -1, numreplace;
+@@ -543,8 +550,8 @@ static int find_route_dijkstra(const Bitmap *wallscreen, int fromx, int fromy, i
+       if (visited[n] == -1)
+         continue;
+ 
+-      i = visited[n] % wallscreen->GetWidth();
+-      j = visited[n] / wallscreen->GetWidth();
++      i = visx[n];
++      j = visy[n];
+       granularity = walk_area_granularity[wallscreen->GetScanLine(j)[i]];
+       adjcount = 1;
+ 
+@@ -580,6 +587,8 @@ static int find_route_dijkstra(const Bitmap *wallscreen, int fromx, int fromy, i
+ 
+     if (numfound == 0) {
+       free(visited);
++      free(visx);
++      free(visy);
+       free(parent);
+       return 0;
+     }
+@@ -588,6 +597,7 @@ static int find_route_dijkstra(const Bitmap *wallscreen, int fromx, int fromy, i
+     for (int p = 0; p < numfound; p++) {
+       newx = newcell[p] % wallscreen->GetWidth();
+       newy = newcell[p] / wallscreen->GetWidth();
++      const int cellx = newx, celly = newy; // DOS-PORT patch 0212: before the edge adjustment below
+       beenhere[newy][newx] = beenhere[cheapest[p] / wallscreen->GetWidth()][cheapest[p] % wallscreen->GetWidth()] + 1;
+ //      int wal = walk_area_granularity[->GetPixel(wallscreen, newx, newy)];
+ //      beenhere[newy - newy%wal][newx - newx%wal] = beenhere[newy][newx];
+@@ -626,12 +636,16 @@ static int find_route_dijkstra(const Bitmap *wallscreen, int fromx, int fromy, i
+         changeiter = iteration;
+ 
+       visited[changeiter] = newcell[p];
++      visx[changeiter] = cellx;
++      visy[changeiter] = celly;
+       if (changeiter == iteration)
+         iteration++;
+ 
+       changeiter = iteration;
+       if (iteration >= MAX_TRAIL_LENGTH) {
+         free(visited);
++        free(visx);
++        free(visy);
+         free(parent);
+         return 0;
+       }
+@@ -641,6 +655,8 @@ static int find_route_dijkstra(const Bitmap *wallscreen, int fromx, int fromy, i
+     }
+   }
+   free(visited);
++  free(visx);
++  free(visy);
+ 
+   int on;
+   pathbackstage = 0;
+-- 
+2.47.3
+

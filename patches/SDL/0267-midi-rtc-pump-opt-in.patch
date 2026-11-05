@@ -1,0 +1,76 @@
+From 0a8f3ba3f0e91b41667ee2f4748007c8e1a38321 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 25 Sep 2026 11:10:32 -0700
+Subject: [PATCH] dos: patch 0267 -- the RTC pump is opt-in
+ (SDL_HINT_DOS_AUDIO_WB_RTC_PUMP=1)
+
+Until now kind 3 was the default for any WaveBlaster on the paced
+direct-port transport (the 320 us TX delay), with
+SDL_HINT_DOS_AUDIO_WB_RTC_PUMP=0 as a killswitch. The player asks for kind
+3 whenever kind 2 is refused, so any WB setup without the blind overrides
+got the pump without asking.
+
+The pump has been measured on one card only: the PicoGUS firmware MPU
+feeding a DreamBlaster S2 (dosags WBF1/WBF2 passed the on-time gate there,
+with SDL 0265), in cells that forced the paced transport. The case it
+exists for, a Creative MPU UART feeding the header (the Vibra16S lane), is
+untested. A transport that owns IRQ 8 and services BIOS waits must not
+reach an untested setup by default.
+
+So Enable(3) now refuses unless SDL_HINT_DOS_AUDIO_WB_RTC_PUMP=1 (strict
+"1"), and the port keeps its main-loop poll as before 0260. Nothing else
+changes:
+- with the hint, the pump behaves exactly as without this patch;
+- OPL3 (kind 1) and the blind MPU replay (kind 2) never reach this check;
+- the poll path is what a refused kind 3 always fell back to.
+Revisit the default after the Vibra16S cells.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ include/SDL3/SDL_dosmidi_tick.h |  5 +++--
+ src/audio/dos/SDL_dosaudio_sb.c | 10 ++++++----
+ 2 files changed, 9 insertions(+), 6 deletions(-)
+
+diff --git a/include/SDL3/SDL_dosmidi_tick.h b/include/SDL3/SDL_dosmidi_tick.h
+index 475994ed7..829b12735 100644
+--- a/include/SDL3/SDL_dosmidi_tick.h
++++ b/include/SDL3/SDL_dosmidi_tick.h
+@@ -317,8 +317,9 @@ extern SDL_DECLSPEC Uint32 SDLCALL SDL_DOSMidiDeferKeysOn(void);
+    tick (IRQ 8, 2048 Hz), never closer than the transport's byte spacing. The
+    PIT is not touched (uclock() unaffected). While enabled the pump owns IRQ 8
+    and services the AT BIOS INT 15h/86h wait (DJGPP delay(), SDL_Delay) itself.
+-   Enable(3) returns false for any other transport, when the killswitch
+-   SDL_HINT_DOS_AUDIO_WB_RTC_PUMP=0 is set, or while a BIOS wait is in progress.
++   Enable(3) returns false for any other transport, unless SDL_HINT_DOS_AUDIO_WB_RTC_PUMP=1
++   opts in (patch 0267; before it, "0" was a killswitch and the pump the default), or while
++   a BIOS wait is in progress.
+    Stats (run totals; rate and spacing of the last install, 0 if never
+    installed): the pump's rate, byte spacing, RTC ticks taken, BIOS waits
+    completed, and the longest release-to-write of an on-time byte in us (+- one
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index 4874c07f2..384921878 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -2893,12 +2893,14 @@ bool SDL_DOSMidiDeferEnable(int kind)
+     }
+     if (kind == 3) {
+         /* DOS-PORT patch 0260: the TIMED-DELAY transport, paced by the RTC pump.
+-           Killswitch SDL_HINT_DOS_AUDIO_WB_RTC_PUMP=0 (strict "0"): refused, so
+-           the port keeps its main-loop poll. */
++           DOS-PORT patch 0267: opt-in. Only SDL_HINT_DOS_AUDIO_WB_RTC_PUMP=1 (strict "1")
++           enables it; otherwise kind 3 is refused and the port keeps its main-loop poll. The
++           pump is measured only on one card (PicoGUS + DreamBlaster, with the hint's effect
++           forced); an untested header must not get it by default. */
+         const char *h = SDL_GetHint("SDL_HINT_DOS_AUDIO_WB_RTC_PUMP");
+         Uint32 gap_us = 0;
+-        if (h && h[0] == '0' && h[1] == 0) {
+-            dos_port_dbg_log("audio: patch 0260 RTC pump off (SDL_HINT_DOS_AUDIO_WB_RTC_PUMP=0)");
++        if (!(h && h[0] == '1' && h[1] == 0)) {
++            dos_port_dbg_log("audio: patch 0267 RTC pump not enabled (opt-in: SDL_HINT_DOS_AUDIO_WB_RTC_PUMP=1)");
+             return false;
+         }
+         if (!SDL_DOSMpu401PacedDirectBase(&g_mdq_mpu_base, &gap_us)) {
+-- 
+2.47.3
+

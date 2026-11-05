@@ -1,0 +1,609 @@
+From 698777be35632c25a9e7787ff192a0120475ff6a Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sun, 13 Sep 2026 02:03:16 -0700
+Subject: [PATCH] [AGS] Wire WaveBlaster backend into dos_midi_backend (Sound
+ milestone S5)
+
+Extends S4's dos_midi_backend dispatch to a second hardware GM sink,
+shared/audio/waveblaster_sink.{c,h} (hub S5 hoist), selected the same way
+opl3 already is via SDL_HINT_DOS_AUDIO_BACKEND=wb -- previously this hint
+value failed closed (no MIDI output) only because the sink didn't exist.
+
+waveblaster_sink's own contract (see its header) forced a real design
+change beyond "add a case to the existing dispatch": SDL_DOSMpu401Init()'s
+default cold-init sequence must run BEFORE the SB16 PCM device opens (it
+declines unconditionally once SDL_DOSAudioSB_IsDeviceHot() is true), but
+dos_midi_backend_open() is only ever called lazily, per type-5 clip, well
+after sys_audio_init() has already opened the PCM device at engine
+startup -- every such lazy call would see a hot bus and always fail, wb
+hardware present or not. Fixed with a new dos_midi_backend_cold_init(),
+called from sys_audio_init() strictly before SDL_InitSubSystem(
+SDL_INIT_AUDIO)/dos_audio_mixer_init() -- no-op, touching no
+WaveBlaster-related SDL call at all, unless the hint is actually "wb".
+
+The same one-shot constraint means Stop()'s existing "close the sink,
+reopen on next Play()" pattern (S4's own design for opl3, since opl3_sink
+has no partial silence-without-close primitive) cannot apply to wb: a
+second waveblaster_sink_open() after the bus is hot would fail even with
+real hardware present. dos_midi_backend gained dos_midi_backend_end_song()
+to make this backend-aware: opl3 gets a real close+null (unchanged
+behavior); wb gets waveblaster_sink_silence() only, handle left alive and
+bound, reused directly on the next Play() with no reopen. A new
+dos_midi_backend_shutdown() (called from sys_audio_shutdown()) does wb's
+one real, whole-session teardown.
+
+AudioPlayer no longer touches a backend-specific sink type at all --
+_midiSink is now void*, and dos_midi_backend_open()/_end_song() do the
+binding/closing internally. This is a real generalization of S4's own
+dos_midi_backend surface (its own comment already anticipated "once S5
+gives them different failure kinds"), not scope creep: opl3's own
+behavior at every call site is unchanged, confirmed by the DOSBox-X
+regression run below.
+
+CMakeLists.txt: added waveblaster_sink.c to the same target_sources block
+midi_sched.c/opl3_sink.c already use (DOS_PORT_SHARED_AUDIO_DIR).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/CMakeLists.txt                    |  14 +--
+ Engine/media/audio/audioplayer.cpp       |  63 ++++++------
+ Engine/media/audio/audioplayer.h         |  28 ++++--
+ Engine/platform/base/sys_main.cpp        |  17 ++++
+ Engine/platform/dos/dos_midi_backend.cpp | 119 +++++++++++++++++++++--
+ Engine/platform/dos/dos_midi_backend.h   | 114 +++++++++++++++-------
+ 6 files changed, 265 insertions(+), 90 deletions(-)
+
+diff --git a/Engine/CMakeLists.txt b/Engine/CMakeLists.txt
+index 4437494cd..ab772a7e0 100644
+--- a/Engine/CMakeLists.txt
++++ b/Engine/CMakeLists.txt
+@@ -476,16 +476,18 @@ target_sources(engine
+     platform/dos/dos_midi_backend.cpp
+     platform/dos/dos_midi_backend.h
+ 
+-    # DOS-PORT (Sound milestone, S4): shared/audio's midi_sched.c/opl3_sink.c
+-    # (SDL-DOS-ports hub, plain C, hoisted into .sdl-dos-ports/shared/audio
+-    # by S3) are the actual SMF scheduler + OPL3 GM sink -- real compiled
+-    # sources, not just headers, so they need a target_sources entry same as
+-    # any Engine .cpp file. DOS_PORT_SHARED_AUDIO_DIR is set by this port's
+-    # own top-level Makefile (-DDOS_PORT_SHARED_AUDIO_DIR=<repo>/.sdl-dos-ports/
++    # DOS-PORT (Sound milestone, S4/S5): shared/audio's midi_sched.c/
++    # opl3_sink.c/waveblaster_sink.c (SDL-DOS-ports hub, plain C, hoisted
++    # into .sdl-dos-ports/shared/audio by S3/S5) are the actual SMF
++    # scheduler + hardware GM sinks -- real compiled sources, not just
++    # headers, so they need a target_sources entry same as any Engine .cpp
++    # file. DOS_PORT_SHARED_AUDIO_DIR is set by this port's own top-level
++    # Makefile (-DDOS_PORT_SHARED_AUDIO_DIR=<repo>/.sdl-dos-ports/
+     # shared/audio) rather than hardcoded here, so this CMakeLists.txt does
+     # not need to know the hub subtree's path relative to Engine/.
+     ${DOS_PORT_SHARED_AUDIO_DIR}/midi_sched.c
+     ${DOS_PORT_SHARED_AUDIO_DIR}/opl3_sink.c
++    ${DOS_PORT_SHARED_AUDIO_DIR}/waveblaster_sink.c
+ 
+     platform/windows/win_ex_handling.cpp
+     platform/windows/win_ex_handling.h
+diff --git a/Engine/media/audio/audioplayer.cpp b/Engine/media/audio/audioplayer.cpp
+index 50bef5982..3bc5c90a9 100644
+--- a/Engine/media/audio/audioplayer.cpp
++++ b/Engine/media/audio/audioplayer.cpp
+@@ -37,23 +37,19 @@ AudioPlayer::AudioPlayer(int handle, std::unique_ptr<SDLDecoder> decoder)
+         _decoder->GetFormat(), _decoder->GetChannels(), _decoder->GetFreq());
+ }
+ 
+-// DOS-PORT (Sound milestone, S4): MIDI-mode constructor -- see audioplayer.h.
++// DOS-PORT (Sound milestone, S4/S5): MIDI-mode constructor -- see
++// audioplayer.h. dos_midi_backend_open() resolves the active backend and
++// binds `sink` for us -- this class never touches a backend-specific sink
++// type (see dos_midi_backend.h's own doc comment for why that stopped
++// being possible once wb's lifecycle genuinely diverged from opl3's).
+ AudioPlayer::AudioPlayer(int handle, const AGS::Common::String &midi_path, bool repeat)
+     : handle_(handle), _isMidi(true), _midiRepeat(repeat), _midiPath(midi_path)
+ {
+     _midiSched = midi_sched_open(_midiPath.GetCStr());
+-    _midiSink = dos_midi_backend_open(&_midiBackendKind);
++    midi_sched_sink sink;
++    _midiSink = dos_midi_backend_open(&_midiBackendKind, &sink);
+     if (_midiSched && _midiSink)
+-    {
+-        midi_sched_sink sink;
+-        opl3_sink_bind(_midiSink, &sink);
+-        // Best-effort GM bank, staged alongside the exe -- same convention
+-        // shared/tests/probes/opl3midi.c already established. Missing file
+-        // or a bad header just keeps the sink's built-in 8-patch fallback
+-        // (opl3_sink_load_bank()'s own documented contract); not fatal.
+-        opl3_sink_load_bank(_midiSink, "OPL3BANK.DAT", nullptr);
+         midi_sched_set_sink(_midiSched, &sink);
+-    }
+ }
+ 
+ AudioPlayer::~AudioPlayer()
+@@ -61,7 +57,13 @@ AudioPlayer::~AudioPlayer()
+     if (!_isMidi)
+         return;
+     if (_midiSched) midi_sched_close(_midiSched);
+-    if (_midiSink)  opl3_sink_close(_midiSink);
++    // DOS-PORT (S5): dos_midi_backend_end_song(), not a direct close --
++    // for opl3 this closes and nulls the handle exactly as the old direct
++    // opl3_sink_close() call did; for wb it only silences (the port itself
++    // is a session-lifetime singleton owned by dos_midi_backend, torn down
++    // once at engine shutdown, not per AudioPlayer instance). See
++    // dos_midi_backend.h's own doc comment.
++    dos_midi_backend_end_song(_midiSink, _midiBackendKind);
+ }
+ 
+ uint64_t AudioPlayer::MidiNowMsRaw()
+@@ -177,18 +179,18 @@ void AudioPlayer::MidiPlay()
+         _onLoadPlayState = PlayStatePlaying;
+         break;
+     case PlayStateStopped:
+-        // MidiStop() closed the sink to guarantee real silence (see its
+-        // own comment) -- reopen + rebind before restarting the song.
++        // DOS-PORT (S5): _midiSink is only ever NULL here for a backend
++        // whose dos_midi_backend_end_song() call actually closed it
++        // (opl3) -- wb's own handle survives MidiStop() (silenced, not
++        // closed; see dos_midi_backend.h) so this reopen block is simply
++        // skipped for wb, going straight to midi_sched_start() below with
++        // the still-valid, still-bound handle.
+         if (!_midiSink)
+         {
+-            _midiSink = dos_midi_backend_open(&_midiBackendKind);
++            midi_sched_sink sink;
++            _midiSink = dos_midi_backend_open(&_midiBackendKind, &sink);
+             if (_midiSink && _midiSched)
+-            {
+-                midi_sched_sink sink;
+-                opl3_sink_bind(_midiSink, &sink);
+-                opl3_sink_load_bank(_midiSink, "OPL3BANK.DAT", nullptr);
+                 midi_sched_set_sink(_midiSched, &sink);
+-            }
+         }
+         if (_midiSched && _midiSink)
+             midi_sched_start(_midiSched, MidiNowMs());
+@@ -277,18 +279,15 @@ void AudioPlayer::MidiStop()
+     case PlayStatePlaying:
+     case PlayStatePaused:
+         _playState = PlayStateStopped;
+-        // opl3_sink has no partial "silence everything, keep the chip
+-        // open" entry point -- only per-note NOTE_OFF via a real MIDI
+-        // event, or a full close() that unconditionally KEY-OFFs all 18
+-        // voices (opl3_sink.h's own documented contract). Reusing close()
+-        // is the only way, with today's shared/ surface, to guarantee a
+-        // Stop() doesn't leave a note physically hanging; MidiPlay()
+-        // reopens and rebinds on the next Stopped -> Playing transition.
+-        if (_midiSink)
+-        {
+-            opl3_sink_close(_midiSink);
+-            _midiSink = nullptr;
+-        }
++        // DOS-PORT (S5): dos_midi_backend_end_song() -- opl3 has no
++        // partial "silence everything, keep the chip open" entry point of
++        // its own (only per-note NOTE_OFF via a real MIDI event, or a full
++        // close() that unconditionally KEY-OFFs all 18 voices), so for
++        // opl3 this is a real close+null exactly like the old direct
++        // opl3_sink_close() call (MidiPlay() reopens and rebinds on the
++        // next Stopped -> Playing transition, unchanged). For wb this is
++        // silence-only and the handle survives -- see dos_midi_backend.h.
++        dos_midi_backend_end_song(_midiSink, _midiBackendKind);
+         _midiPauseOffsetMs = 0;
+         _midiPauseStartedMs = 0;
+         break;
+diff --git a/Engine/media/audio/audioplayer.h b/Engine/media/audio/audioplayer.h
+index 6a8bfcb7a..3291b1a4d 100644
+--- a/Engine/media/audio/audioplayer.h
++++ b/Engine/media/audio/audioplayer.h
+@@ -20,18 +20,21 @@
+ // implementations, and also substitute default implementations
+ // (e.g. with plugins).
+ //
+-// DOS-PORT (Sound milestone, S4): a second, MIDI-mode constructor below
+-// makes this same class drive a shared/audio midi_sched + opl3_sink pair
++// DOS-PORT (Sound milestone, S4/S5): a second, MIDI-mode constructor below
++// makes this same class drive a shared/audio midi_sched + a hardware GM
++// sink (opl3_sink, or as of S5 waveblaster_sink -- see dos_midi_backend.h)
+ // instead of a SDLDecoder/OpenAlSource pair -- PLAN.md's own Architecture
+ // section calls this "the music channel's AudioPlayer becomes a thin
+ // adapter". SoundClip (soundclip.cpp) only ever calls the methods already
+ // declared below via audio_core_get_player(slot), so it needed NO changes
+-// at all -- every method here branches internally on _isMidi instead.
+-// MIDI has no PCM bytes to decode (OPL3 output is direct hardware register
+-// writes, never an SDL3 audio stream), so trying to force it through
+-// SDLDecoder/OpenAlSource's PCM-shaped interface (PutData/GetFormat/...)
+-// would mean software-synthesizing FM into a byte stream just to satisfy
+-// an interface built for byte streams -- not this port's architecture.
++// at all -- every method here branches internally on _isMidi instead, and
++// never on which backend is active: dos_midi_backend.h hides that
++// distinction behind an opaque handle. MIDI has no PCM bytes to decode
++// (a hardware GM sink is direct register/port writes, never an SDL3 audio
++// stream), so trying to force it through SDLDecoder/OpenAlSource's
++// PCM-shaped interface (PutData/GetFormat/...) would mean
++// software-synthesizing into a byte stream just to satisfy an interface
++// built for byte streams -- not this port's architecture.
+ //
+ //=============================================================================
+ #ifndef __AGS_EE_MEDIA__AUDIOPLAYER_H
+@@ -148,7 +151,14 @@ private:
+     bool _midiRepeat = false;
+     AGS::Common::String _midiPath;
+     midi_sched *_midiSched = nullptr;
+-    opl3_sink *_midiSink = nullptr;
++    // DOS-PORT (S5): opaque -- dos_midi_backend.h's own handle, whose real
++    // type (opl3_sink* or waveblaster_sink*) and lifecycle both depend on
++    // _midiBackendKind. This class never touches a backend-specific sink
++    // type directly; see dos_midi_backend_open()/_end_song()'s own doc
++    // comments for why a plain opl3_sink* stopped being the right shape
++    // once a second backend (wb) had a genuinely different lifecycle
++    // (session-lifetime singleton, silence-not-close between songs).
++    void *_midiSink = nullptr;
+     DosMidiBackendKind _midiBackendKind = DOS_MIDI_BACKEND_NONE;
+     uint64_t _midiPauseOffsetMs = 0;   // total ms spent paused so far
+     uint64_t _midiPauseStartedMs = 0;  // MidiNowMsRaw() at the last Pause()
+diff --git a/Engine/platform/base/sys_main.cpp b/Engine/platform/base/sys_main.cpp
+index e5fefc132..96b20e983 100644
+--- a/Engine/platform/base/sys_main.cpp
++++ b/Engine/platform/base/sys_main.cpp
+@@ -26,6 +26,7 @@
+ #include "debug/out.h"
+ #include "platform/base/agsplatformdriver.h"
+ #include "platform/dos/dos_audio_mixer.h"
++#include "platform/dos/dos_midi_backend.h"
+ #include "util/geometry.h"
+ #include "util/string.h"
+ 
+@@ -243,6 +244,16 @@ bool sys_audio_init(const String &driver_name)
+     (void)driver_name;
+     if ((gl_SysMainInfo.SDLSubsystems & SDL_INIT_AUDIO) != 0)
+         return true;
++
++    // DOS-PORT (Sound milestone, S5): MUST run before anything below opens
++    // the SB16 PCM device -- shared/audio/waveblaster_sink.h's own
++    // cold-init contract declines unconditionally once that device is hot,
++    // and dos_midi_backend_open() (called much later, per-clip, from
++    // AudioPlayer's MIDI constructor) is far too late for it. No-op unless
++    // SDL_HINT_DOS_AUDIO_BACKEND=wb is set, so every other backend/session
++    // is unaffected. See dos_midi_backend.h's own doc comment.
++    dos_midi_backend_cold_init();
++
+     if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
+     {
+         Debug::Printf(kDbgMsg_Error, "Failed to init SDL audio subsystem: %s", SDL_GetError());
+@@ -264,6 +275,12 @@ void sys_audio_shutdown()
+     // Close the mixer's stream/device BEFORE quitting the SDL audio
+     // subsystem underneath it.
+     dos_audio_mixer_shutdown();
++    // DOS-PORT (S5): true session-end teardown for the wb backend's
++    // session-lifetime singleton (a no-op if wb was never cold-inited this
++    // session -- see dos_midi_backend_cold_init()). opl3 needs no
++    // equivalent call: every opl3 AudioPlayer instance already owns and
++    // fully closes its own handle via dos_midi_backend_end_song().
++    dos_midi_backend_shutdown();
+     // Note: a subsystem that failed to initialize, doesn't increment ref-count
+     // Additionally, we may not have init it at all, see engine_init_audio
+     if ((gl_SysMainInfo.SDLSubsystems & SDL_INIT_AUDIO) != 0)
+diff --git a/Engine/platform/dos/dos_midi_backend.cpp b/Engine/platform/dos/dos_midi_backend.cpp
+index 31495921d..bbff3d573 100644
+--- a/Engine/platform/dos/dos_midi_backend.cpp
++++ b/Engine/platform/dos/dos_midi_backend.cpp
+@@ -24,36 +24,105 @@ namespace
+ DosMidiBackendKind g_last_kind = DOS_MIDI_BACKEND_NONE;
+ uint64_t g_events_dispatched = 0;
+ 
++// DOS-PORT (S5): the wb backend is a session-lifetime singleton, unlike
++// opl3's per-AudioPlayer-instance handles -- see dos_midi_backend_cold_init()
++// and dos_midi_backend_end_song()'s own doc comments in the header for why.
++waveblaster_sink *g_wb_sink = nullptr;
++bool g_wb_cold_init_attempted = false;
++
+ const char *kind_name(DosMidiBackendKind k)
+ {
+     switch (k)
+     {
+     case DOS_MIDI_BACKEND_OPL3: return "opl3";
++    case DOS_MIDI_BACKEND_WB:   return "wb";
+     default:                    return "none";
+     }
+ }
+ 
+-} // namespace
+-
+-opl3_sink *dos_midi_backend_open(DosMidiBackendKind *out_kind)
++const char *resolve_backend_hint()
+ {
+     const char *hint = SDL_GetHint("SDL_HINT_DOS_AUDIO_BACKEND");
+     if (!hint || !hint[0])
+         hint = "auto";
++    return hint;
++}
++
++} // namespace
++
++void dos_midi_backend_cold_init()
++{
++    if (g_wb_cold_init_attempted)
++        return; // idempotent -- meaningful once per session only
++    g_wb_cold_init_attempted = true;
++
++    const char *hint = resolve_backend_hint();
++    if (SDL_strcasecmp(hint, "wb") != 0)
++        return; // every other backend: zero WaveBlaster-related SDL calls
++
++    g_wb_sink = waveblaster_sink_open();
++    if (g_wb_sink)
++    {
++        Debug::Printf(kDbgMsg_Info,
++            "DosMidiBackend: WaveBlaster/MPU-401 cold-init succeeded "
++            "(ran before the PCM device opened, as required)");
++    }
++    else
++    {
++        Debug::Printf(kDbgMsg_Info,
++            "DosMidiBackend: WaveBlaster/MPU-401 cold-init declined -- no "
++            "MPU-401 responded (or this ran too late; see "
++            "waveblaster_sink.h). wb backend unavailable this session.");
++    }
++}
++
++void *dos_midi_backend_open(DosMidiBackendKind *out_kind, midi_sched_sink *out_sink)
++{
++    const char *hint = resolve_backend_hint();
+ 
+     DosMidiBackendKind kind = DOS_MIDI_BACKEND_NONE;
+-    opl3_sink *sink = nullptr;
++    void *handle = nullptr;
+ 
+     if (SDL_strcasecmp(hint, "none") == 0)
+     {
+         // Explicit opt-out -- do not even probe for a chip.
+     }
++    else if (SDL_strcasecmp(hint, "wb") == 0)
++    {
++        // Never opened lazily here -- dos_midi_backend_cold_init() is the
++        // only place SDL_DOSMpu401Init() may run (see its own header
++        // comment for why: it must happen before the PCM device is hot).
++        handle = g_wb_sink;
++        if (handle)
++        {
++            kind = DOS_MIDI_BACKEND_WB;
++            if (out_sink)
++                waveblaster_sink_bind(g_wb_sink, out_sink);
++            Debug::Printf(kDbgMsg_Info, "DosMidiBackend: WaveBlaster/MPU-401 backend active");
++        }
++        else
++        {
++            Debug::Printf(kDbgMsg_Info,
++                "DosMidiBackend: SDL_HINT_DOS_AUDIO_BACKEND=wb requested, but "
++                "cold-init did not succeed (see the earlier log line from "
++                "engine startup) -- MIDI disabled this session");
++        }
++    }
+     else if (SDL_strcasecmp(hint, "opl3") == 0 || SDL_strcasecmp(hint, "auto") == 0)
+     {
+-        sink = opl3_sink_open();
++        opl3_sink *sink = opl3_sink_open();
+         if (sink)
+         {
+             kind = DOS_MIDI_BACKEND_OPL3;
++            handle = sink;
++            // Best-effort GM bank, staged alongside the exe -- same
++            // convention shared/tests/probes/opl3midi.c already
++            // established. Missing file or a bad header just keeps the
++            // sink's built-in 8-patch fallback (opl3_sink_load_bank()'s
++            // own documented contract); not fatal.
++            opl3_sink_load_bank(sink, "OPL3BANK.DAT", nullptr);
++            if (out_sink)
++                opl3_sink_bind(sink, out_sink);
+             Debug::Printf(kDbgMsg_Info, "DosMidiBackend: OPL3/OPL2 chip detected and initialized");
+         }
+         else
+@@ -64,18 +133,48 @@ opl3_sink *dos_midi_backend_open(DosMidiBackendKind *out_kind)
+     }
+     else
+     {
+-        // "wb" / "gus" / "adlib": real semantics, but no such sink is
+-        // hoisted into shared/ yet (S5). Fail closed rather than silently
+-        // falling back to OPL3, which the hint did not ask for.
++        // "adlib" / "gus": real semantics, but no such sink is hoisted
++        // into shared/ yet. Fail closed rather than silently falling back
++        // to a different backend the hint did not ask for.
+         Debug::Printf(kDbgMsg_Info,
+-            "DosMidiBackend: SDL_HINT_DOS_AUDIO_BACKEND=%s requested, no such backend hoisted yet (S5) -- MIDI disabled this session",
++            "DosMidiBackend: SDL_HINT_DOS_AUDIO_BACKEND=%s requested, no such backend hoisted yet -- MIDI disabled this session",
+             hint);
+     }
+ 
+     g_last_kind = kind;
+     if (out_kind)
+         *out_kind = kind;
+-    return sink;
++    return handle;
++}
++
++void dos_midi_backend_end_song(void *&handle, DosMidiBackendKind kind)
++{
++    if (!handle)
++        return;
++
++    switch (kind)
++    {
++    case DOS_MIDI_BACKEND_OPL3:
++        opl3_sink_close((opl3_sink *)handle);
++        handle = nullptr;
++        break;
++    case DOS_MIDI_BACKEND_WB:
++        // Silence only -- handle stays alive and bound; see this
++        // function's own doc comment in the header for why.
++        waveblaster_sink_silence((waveblaster_sink *)handle);
++        break;
++    default:
++        break;
++    }
++}
++
++void dos_midi_backend_shutdown()
++{
++    if (g_wb_sink)
++    {
++        waveblaster_sink_close(g_wb_sink);
++        g_wb_sink = nullptr;
++    }
+ }
+ 
+ void dos_midi_backend_add_dispatched(uint64_t delta)
+diff --git a/Engine/platform/dos/dos_midi_backend.h b/Engine/platform/dos/dos_midi_backend.h
+index 8ec7687fe..b9cb184a6 100644
+--- a/Engine/platform/dos/dos_midi_backend.h
++++ b/Engine/platform/dos/dos_midi_backend.h
+@@ -12,22 +12,28 @@
+ //
+ //=============================================================================
+ //
+-// DOS-PORT (Sound milestone, S4): backend-selection policy + lifecycle for
+-// the shared OPL3 GM sink (.sdl-dos-ports/shared/audio/opl3_sink.{c,h},
+-// hoisted from doskutsu by S3) and cumulative status bookkeeping for
+-// RUNMANIFEST's audio_vital_status "midi=" field.
++// DOS-PORT (Sound milestone, S4/S5): backend-selection policy + lifecycle
++// for the shared GM sinks (.sdl-dos-ports/shared/audio/{opl3,waveblaster}_
++// sink.{c,h}) and cumulative status bookkeeping for RUNMANIFEST's
++// audio_vital_status "midi=" field.
+ //
+ // Reads "SDL_HINT_DOS_AUDIO_BACKEND" (auto/opl3/wb/adlib/gus/none), reusing
+ // doskutsu's own hint semantics (PLAN.md's Sound milestone Architecture
+ // section) as a plain string passed to SDL_GetHint() -- same convention
+ // SDL_dosaudio_sb.c's own SDL_HINT_DOS_SILENCE_DETECT already uses (there
+ // is no SDL-core #define for either; both are engine/port-side policy
+-// knobs SDL itself never branches on). Only "opl3" (and "auto", which
+-// currently resolves the same way) can succeed today -- WaveBlaster/AdLib/
+-// GUS sinks are S5, not yet hoisted into shared/. Selecting one of those
+-// explicitly with no such sink available fails CLOSED (silent, no MIDI
+-// output) rather than silently substituting a different backend the game
+-// didn't ask for.
++// knobs SDL itself never branches on). "opl3"/"auto" and, as of S5, "wb"
++// can succeed -- AdLib/GUS sinks are not yet hoisted into shared/.
++// Selecting one of those explicitly with no such sink available fails
++// CLOSED (silent, no MIDI output) rather than silently substituting a
++// different backend the game didn't ask for.
++//
++// DOS-PORT (S5): the caller (AudioPlayer) no longer touches a
++// backend-specific sink type directly -- every handle here is an opaque
++// void* dos_midi_backend_open() binds to a generic midi_sched_sink for the
++// caller. This exists because wb's own lifecycle genuinely differs from
++// opl3's (see dos_midi_backend_cold_init()'s and dos_midi_backend_end_song()'s
++// own comments below) in a way AudioPlayer should not need to know about.
+ //
+ //=============================================================================
+ #ifndef __AGS_EE_PLATFORM_DOS__DOS_MIDI_BACKEND_H
+@@ -35,35 +41,78 @@
+ #include <cstddef>
+ #include <cstdint>
+ 
+-// midi_sched.h / opl3_sink.h (shared/audio) are plain C with no extern "C"
+-// guard of their own (confirmed empty on both this session) -- wrap the
+-// includes here on the C++ consumer side rather than editing the shared
+-// headers, which is a hub-side change with its own review, not a dosags
+-// patch. audioplayer.cpp/.h (the only other DOS-PORT file needing the
+-// shared MIDI API) includes this header rather than either shared header
+-// directly, so this wrapper only has to exist in one place.
++// midi_sched.h / opl3_sink.h / waveblaster_sink.h (shared/audio) are plain
++// C with no extern "C" guard of their own -- wrap the includes here on the
++// C++ consumer side rather than editing the shared headers, which is a
++// hub-side change with its own review, not a dosags patch. audioplayer.cpp/
++// .h (the only other DOS-PORT file needing the shared MIDI API) includes
++// this header rather than any shared header directly, so this wrapper only
++// has to exist in one place.
+ extern "C" {
+ #include "midi_sched.h"
+ #include "opl3_sink.h"
++#include "waveblaster_sink.h"
+ }
+ 
+ enum DosMidiBackendKind
+ {
+     DOS_MIDI_BACKEND_NONE = 0,
+-    DOS_MIDI_BACKEND_OPL3
++    DOS_MIDI_BACKEND_OPL3,
++    DOS_MIDI_BACKEND_WB
+ };
+ 
+-// Resolves SDL_HINT_DOS_AUDIO_BACKEND and attempts to open the matching
+-// sink. Returns NULL (with *out_kind == DOS_MIDI_BACKEND_NONE) if the hint
+-// selects a backend not yet hoisted (wb/adlib/gus), if "none" is set, or if
+-// OPL3 detection itself fails (no chip present) -- every one of those is a
+-// legitimate "no MIDI this session" outcome, not an error. Records the
+-// resolved kind for dos_midi_backend_status_fragment() regardless of
+-// success, so a "wanted wb, none available" session is distinguishable from
+-// "wanted opl3, chip missing" once S5 gives them different failure kinds --
+-// both currently collapse to midi=none, but this keeps the seam ready
+-// without revisiting this function's callers.
+-opl3_sink *dos_midi_backend_open(DosMidiBackendKind *out_kind);
++// DOS-PORT (S5): call exactly once, as EARLY as possible in engine startup
++// -- strictly BEFORE anything opens the SB16 PCM device (sys_audio_init()'s
++// own SDL_InitSubSystem(SDL_INIT_AUDIO) / dos_audio_mixer_init() calls; see
++// sys_main.cpp). No-op, touching no WaveBlaster-related SDL call at all,
++// unless SDL_HINT_DOS_AUDIO_BACKEND=wb is set at the time this runs -- so
++// every other backend/session pays zero cost and zero risk.
++//
++// Why this exists as its own function, called well before
++// dos_midi_backend_open(): shared/audio/waveblaster_sink.h's own contract
++// requires SDL_DOSMpu401Init()'s cold-init sequence to run on a COLD ISA
++// bus (before SDL_DOSAudioSB_IsDeviceHot() becomes true) -- it declines
++// unconditionally once the bus is hot. dos_midi_backend_open() is called
++// lazily, per clip, well after sys_audio_init() has already opened the PCM
++// device -- far too late for wb's own one-shot cold-init. This function is
++// the only correct place to attempt it; a WB handle created here is cached
++// and handed back by dos_midi_backend_open() later, never re-created.
++void dos_midi_backend_cold_init();
++
++// Opens the backend resolved from SDL_HINT_DOS_AUDIO_BACKEND (or, for "wb",
++// returns the handle dos_midi_backend_cold_init() already created, if any)
++// and binds *out_sink to it. Returns an opaque handle (NULL on failure)
++// and records *out_kind regardless of success (so a "wanted wb, none
++// available" session is distinguishable from "wanted opl3, chip missing"
++// in dos_midi_backend_status_fragment(), even though both currently
++// collapse to midi=none).
++void *dos_midi_backend_open(DosMidiBackendKind *out_kind, midi_sched_sink *out_sink);
++
++// Ends a handle between songs (Stop(), a loop restart, this AudioPlayer's
++// own destructor) -- the only safe way to guarantee no note is left
++// physically sounding, per each backend's own contract:
++//   - opl3: a REAL close (opl3_sink_close) -- matches this backend's
++//     existing S4 behavior exactly. `handle` is set to NULL; the caller
++//     must call dos_midi_backend_open() again before the next Play().
++//   - wb: SILENCE ONLY (waveblaster_sink_silence) -- `handle` is left
++//     UNCHANGED (still non-NULL, still bound, ready for immediate reuse).
++//     A real close()/reopen here would try to cold-init the MPU-401 port
++//     a second time, which fails once the PCM device is already hot (see
++//     waveblaster_sink.h) -- so for wb, reopening is neither necessary
++//     (the port stays usable) nor safe (a second cold-init would fail even
++//     with real hardware present). The actual wb teardown happens once,
++//     for the whole session, in dos_midi_backend_shutdown().
++// `handle` is a void*& so this function can null it out for opl3 without
++// the caller needing its own backend-specific logic.
++void dos_midi_backend_end_song(void *&handle, DosMidiBackendKind kind);
++
++// True session-end teardown: closes whatever dos_midi_backend_cold_init()
++// created this session (a no-op if nothing was, or if the backend was
++// never "wb"). Call once, from sys_audio_shutdown(). opl3 handles need no
++// equivalent call here -- every opl3 AudioPlayer instance already owns and
++// fully closes its own handle via dos_midi_backend_end_song() at Stop()/
++// destruction, unlike wb's session-lifetime singleton.
++void dos_midi_backend_shutdown();
+ 
+ // Adds `delta` newly-dispatched MIDI events to the session-cumulative count
+ // used by dos_midi_backend_status_fragment()'s "events=" field. Callers
+@@ -73,11 +122,10 @@ opl3_sink *dos_midi_backend_open(DosMidiBackendKind *out_kind);
+ // play (sequentially -- see audioplayer.cpp) in one session.
+ void dos_midi_backend_add_dispatched(uint64_t delta);
+ 
+-// Builds "midi=<backend>,events=<n>" (e.g. "midi=opl3,events=42") into buf.
++// Builds "midi=<backend>,events=<n>" (e.g. "midi=wb,events=42") into buf.
+ // Reports the LAST backend kind dos_midi_backend_open() resolved this
+-// session -- persists after that sink is closed (e.g. by Stop() or the
+-// owning clip's own destructor), so a RUNMANIFEST read at quit time, after
+-// every clip has already been torn down, still names what was actually
++// session -- persists after that handle is torn down (opl3) or silenced
++// (wb), so a RUNMANIFEST read at quit time still names what was actually
+ // used. Reads "midi=none,events=0" if dos_midi_backend_open() was never
+ // called, or never resolved to a real backend, this session.
+ void dos_midi_backend_status_fragment(char *buf, size_t bufsize);
+-- 
+2.47.3
+

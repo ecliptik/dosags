@@ -1,0 +1,54 @@
+From 091fc99fa59d37714cc1dac119e866d4f6405db6 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 28 Sep 2026 21:14:23 -0700
+Subject: [PATCH] DOS-PORT: patch 0249 -- 0246's large reads on the DOS handle
+ are on by default (DOSAGS_READDIRECT=0 kills)
+
+Round Y on the 486 (S16-IOARMS2, same binary, env-only arms) read 0246
+as registered: it HOLDS -- first-play asset reads saved 9.95 ms summed
+over the four clips both OFF cells played (music0 -6.65, sound3 -1.31,
+sound1 -1.20, sound2 -0.79 ms), which clears the registered falsifier
+(25% of the summed prediction midpoints, 20.13 ms) -- and its arm was
+audio clean by the registered comparative rule. The saving is below the
+predicted bands: about 0.4-0.5 ms per KB of overshoot removed, roughly
+half the 0.75-1.0 ms/KB that was registered. Every clip saved, in the
+predicted direction.
+
+Exactness does not depend on the target: the lab gates showed identical
+bytes for every package section with it on and off (S32P 14/14, S16
+15/15) and a table of end-of-file, ungetc, text-mode, buffered and
+seek-into-buffer cases that match fread or take it (8/8). One listed
+difference remains, and only on a DOS read error: the bypass returns 0
+with the FILE's error flag set, where fread could first return the bytes
+of buffers that did fill.
+
+DOSAGS_READDIRECT=0 restores the fread path for every read.
+---
+ Common/util/filestream.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/Common/util/filestream.cpp b/Common/util/filestream.cpp
+index 3990202c3..c7312ca68 100644
+--- a/Common/util/filestream.cpp
++++ b/Common/util/filestream.cpp
+@@ -38,7 +38,7 @@ long long dos_port_file_rd_calls = 0;
+ // fread could first return the bytes of buffers that did fill; that is
+ // the one difference, and only on a disk error. Only reads over 8 KB
+ // (BufferedStream's direct reads; its 8 KB refills stay on fread) and
+-// only binary-mode handles. Default OFF: DOSAGS_READDIRECT=1 turns it on.
++// only binary-mode handles. Default ON since patch 0249; DOSAGS_READDIRECT=0 restores the fread path.
+ #include <stdlib.h>
+ #include <unistd.h>
+ #include <fcntl.h>
+@@ -52,7 +52,7 @@ static bool dos_readdirect_ok(FILE *f)
+     if (dos_port_readdirect_mode < 0)
+     {
+         const char *e = getenv("DOSAGS_READDIRECT");
+-        dos_port_readdirect_mode = (e != nullptr && e[0] == '1') ? 1 : 0;
++        dos_port_readdirect_mode = (e != nullptr && e[0] == '0') ? 0 : 1;   /* default ON, =0 kills (patch 0249) */
+     }
+     return dos_port_readdirect_mode == 1 && f->_cnt == 0 && (f->_flag & _IOREAD) &&
+         !(f->_flag & (_IOWRT | _IORW | _IOUNGETC | _IOEOF | _IOERR)) && (__file_handle_modes[fileno(f)] & O_BINARY);
+-- 
+2.47.3
+

@@ -1,0 +1,918 @@
+Adventure Game Studio v3.6 Interpreter
+Copyright (c) 1999-2011 Chris Jones and 2011-2026 others
+Engine version 3.6.3.13, 32-bit LE
+
+Initializing backend libs
+SDL Version: 3.5.0
+DOS-PORT: SDL_DOS_ALLOW_DIRECT_FRAMEBUFFER=1 (from environment)
+DOS-PORT: SDL_DOS_PREFER_LFB=1 (port default)
+Initializing game data
+Using provided game data path: NOTES.AGS
+Opened game data file: ac2game.dta
+Game data version: 27
+Compiled with: 2.62
+Startup directory: ./
+Data directory: ./
+Setting up game configuration
+User data directory: C:\DOSAGS
+Game : (room:-10) SetSaveGameDirectory: failed to create all subdirectories: ./C:\DOSAGS
+Was not able to init voice pack 'speech.vox': file not found or of unknown format.
+Registered asset libraries:
+- LIB:	c:/dosags/NOTES.AGS
+	Filters: ,audio
+- DIR:	c:/dosags/
+	Filters: ,audio,voice
+Initializing TTF renderer
+Initializing mouse: number of buttons reported is 3
+Initializing audio
+DosMidiBackend: WaveBlaster/MPU-401 cold-init succeeded (ran before the PCM device opened, as required)
+DOSAudioMixer: opened 11025 Hz mono S16, 8 voices
+DOS audio device opened: pcm=sb@11025m16,voices=8,underruns=0,drains=0,pcm_irqs=0,silent_irqs=0,overwrites=0,ring_max_ms=0/743,skipped_silent=0,idle_pauses=0,underflow_pads=0,partial_pulls=0,mixed=0,mixed_zero=0,mixed_quiet=0,inflight=0;midi=none,events=0,midi_tick=poll,late_max_ms=0,late_hist=0/0/0/0/0/0,late50=0,burst=0@0,clk=0/-1s
+AudioCore: DOS mixer status: pcm=sb@11025m16,voices=8,underruns=0,drains=0,pcm_irqs=0,silent_irqs=0,overwrites=0,ring_max_ms=0/743,skipped_silent=0,idle_pauses=0,underflow_pads=0,partial_pulls=0,mixed=0,mixed_zero=0,mixed_quiet=0,inflight=0;midi=none,events=0,midi_tick=poll,late_max_ms=0,late_hist=0/0/0/0/0/0,late50=0,burst=0@0,clk=0/-1s
+Sound cache set: 2048 KB
+Install exit handler
+Load game data
+Game title: 'Trilby's Notes'
+Game uid (old format): `1112392103`
+Game guid: ''
+Game GUI version: 105
+	WFN: item at off 116 -- pixel data overlaps next known item (at 120, +9)
+	WFN: item at off 1468 -- pixel data exceeds available data (at 1472, +0)
+WARNING: font 'agsfnt0.wfn' has mistakes in data format, some characters may be displayed incorrectly
+Loaded font 0: agsfnt0.wfn, req size: 0; nominal h: 9, real h: 9, vextent: 0,8, aabb: 0,0 - 16,8
+Loaded font 1: agsfnt1.wfn, req size: 0; nominal h: 7, real h: 8, vextent: 0,7, aabb: 0,0 - 7,7
+Loaded font 2: agsfnt2.wfn, req size: 0; nominal h: 9, real h: 10, vextent: 0,9, aabb: 0,0 - 17,9
+ERROR: Unable to load font 3 using available asset(s), file does not exist or no renderer could load a matching file.
+	WFN: item at off 116 -- pixel data overlaps next known item (at 120, +9)
+	WFN: item at off 1468 -- pixel data exceeds available data (at 1472, +0)
+WARNING: font 'agsfnt0.wfn' has mistakes in data format, some characters may be displayed incorrectly
+Loaded font 3: agsfnt0.wfn, req size: 0; nominal h: 9, real h: 9, vextent: 0,8, aabb: 0,0 - 16,8
+Set game text language: 
+Set locale: 
+Initializing resolution settings
+Game native resolution: 320 x 240 (8 bit) letterbox-by-design
+Mouse cursor graphic area: (0,0)-(319,239) (320x240)
+Created global script
+Checking for disk space
+Device display resolution: 640 x 480
+Graphic settings: driver: OGL, windowed: no, screen size: 0 x 0, game scale: round
+Graphic settings: refresh rate (optional): 0, vsync: 0
+Requested graphics driver 'OGL' not found, will try existing drivers instead
+Using graphics factory: Software
+Created graphics driver: SDL 2D Software renderer
+Supported gfx modes for display 0 (8-bit): 
+	1280x1024;1024x768;800x600;640x480;640x400;512x384;320x200;
+Attempt to find nearest supported resolution for screen size 640 x 480 (8-bit) fullscreen, on display 0
+Attempt to switch gfx mode to 640 x 480 (8-bit) fullscreen, on display 0
+Window surface pixel format: SDL_PIXELFORMAT_INDEX8
+Graphics driver set: SDL 2D Software renderer
+Graphics mode set: 640 x 480 (8-bit) fullscreen desktop, on display 0
+Graphics mode set: refresh rate (optional): 0, vsync: 0
+DOS-PORT: DOSAGS_MAX_SCALE=1 -> render frame 320x240 (natural scale 2)
+Render frame set, render dest (160, 120, 479, 359 : 320 x 240)
+Requested gfx filter: StdScale
+Graphics filter set: 'StdScale', filter dest (160, 120, 479, 359 : 320 x 240)
+Using gfx filter: StdScale
+Mouse speed control: enabled, unit: 1.000000, user value: 1.000000
+Touch-to-mouse motion mode: absolute
+Mouse cursor graphic area: (160,120)-(479,359) (320x240)
+Multitasking mode set: 0
+Setting up window
+Multitasking mode set: 0
+Initialize sprites
+Sprite file info: compression: none, storage flags: 0x00000000, total sprites: 763
+Sprite cache set: 4096 KB
+Initialize game settings
+Game text encoding: ASCII, text language: not set
+Precache view 0 (loops 0-4) with 10 frames, total = 7 ms, average file->mem = 0 ms, bm->tx = 0 ms,
+		loaded 0 sounds = 0 ms
+	Sprite cache: 0 -> 8 KB, texture cache: 0 -> 0 KB
+Runtime behavior switches:
+	smooth_walk = 0
+	gui_text_direction = 0
+	dialog_opt_text_alignment = 0
+Prepare to start game
+Game : (room:-10) Cursor mode set to 0
+Engine initialization complete
+Starting game
+Game : (room:-10) Cursor mode set to 0
+Game : (room:-10) Playing music 0
+Game : (room:-10) [Global script:63] GlobalInt 6 set to 1
+Game : (room:-10) [Global script:64] GlobalInt 8 set to 1
+Game : (room:-10) [Global script:65] GlobalString 1 set to 'Matthew'
+Game : (room:-10) [Global script:66] GlobalInt 10 set to 5
+Game : (room:-10) [Global script:67] GUI 3 turned off
+Game : (room:-10) [Global script:68] GUI 4 turned off
+Game : (room:-10) [Global script:69] GUI 5 turned off
+Game : (room:-10) [Global script:70] GUI 2 turned off
+Game : (room:-10) [Global script:71] GUI 7 turned off
+Game : (room:-10) Transition-out in room -10 (DOS-PORT 0106: placeholder, animation skipped)
+Game : (room:-10) Loading room 40
+Game : (room:-10) DOSAGS_XT t_ms=217 phase=load_begin room=40
+Mouse cursor graphic area: (160,140)-(479,339) (320x200)
+Game : (room:40) Mouse bounds constrained to (0,0)-(319,199)
+Game : (room:40) DOSAGS_LIGHTTABLE call=1 action=skipped ms=0 rebuilt_total=0
+Initialize legacy path finder library
+Game : (room:40) Now in room 40
+Game : (room:40) DOSAGS_XT t_ms=906 phase=load_end room=40
+DOS-PORT fixed-timestep: ENABLED (logic decoupled from render)
+Game : (room:40) [Room script:95] Playing music 10
+DosMidiBackend: WaveBlaster/MPU-401 backend active
+DOS-PORT vscreen alias ON x=160 y=120 320x240 pitch=640
+Game : (room:40) Transition-in in room 40
+Game : (room:40) DOSAGS_XT t_ms=973 phase=fadein_begin room=40
+DosMidiBackend: MIDI tick poll (main loop)
+Game : (room:40) DOSAGS_XT t_ms=1291 phase=fadein_end room=40
+DOS-PORT stallwhat tick=1 self_ms=407 children_ms=0 script_us=0 events_us=0 scene_us=2989 rb_us=0 present_us=0
+DOS-PORT skipframe owed=15 prev_us total=407691 present=0 rb=0 scene=2989 script=0 events=0 sprite_px=0 present_px=1075200 sprites=0 maxspr=0x0
+Game : (room:40) DOS-PORT room_transition t_ms=27563 event=ready room=40
+Game : (room:40) [DOS-PORT-STARTUP-BEGIN]
+Game : (room:40) schema_version=1
+Game : (room:40) subsystem_init_ms=71
+Game : (room:40) gamedata_asset_load_ms=21487
+Game : (room:40) script_vm_init_ms=1654
+Game : (room:40) gfxmode_init_ms=459
+Game : (room:40) sprite_index_init_ms=798
+Game : (room:40) sprite_precache_ms=26
+Game : (room:40) sprite_precache_view_count=1
+Game : (room:40) sprite_precache_frame_count=10
+Game : (room:40) sprite_precache_slowest1_view=0 sprite_precache_slowest1_ms=7
+Game : (room:40) sprite_precache_slowest2_view=-1 sprite_precache_slowest2_ms=-1
+Game : (room:40) sprite_precache_slowest3_view=-1 sprite_precache_slowest3_ms=-1
+Game : (room:40) first_room_load_ms=1106
+Game : (room:40) preloop_game_start_script_ms=13
+Game : (room:40) preloop_restart_point_ms=201
+Game : (room:40) preloop_placeholder_fade_ms=1
+Game : (room:40) preloop_room_load_ms=690
+Game : (room:40) preloop_first_room_init_ms=0
+Game : (room:40) preloop_skipmissed_ms=0
+Game : (room:40) preloop_start_game_ms=907
+Game : (room:40) restart_diskcheck_ms=0
+Game : (room:40) restart_screenshot_ms=0
+Game : (room:40) restart_savegame_ms=199
+Game : (room:40) restart_total_ms=201
+Game : (room:40) roomload_loadroom_ms=595
+Game : (room:40) roomload_bgprep_ms=0
+Game : (room:40) roomload_maskprep_ms=56
+Game : (room:40) roomload_objsetup_ms=2
+Game : (room:40) roomload_script_ms=5
+Game : (room:40) roomload_lighttable_ms=9
+Game : (room:40) roomload_drawdata_ms=1
+Game : (room:40) roomload_total_ms=688
+Game : (room:40) total_to_first_frame_ms=27563
+Game : (room:40) [DOS-PORT-STARTUP-END]
+Game : (room:40) [Room script:83] GUI 4 turned on
+DOS-PORT skipframe owed=1 prev_us total=175943 present=0 rb=0 scene=37426 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=182318 present=0 rb=0 scene=37146 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=1 prev_us total=0 present=0 rb=0 scene=37055 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=37228 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=179310 present=0 rb=0 scene=37193 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=1 prev_us total=0 present=0 rb=0 scene=37269 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=37296 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=1 prev_us total=23990 present=0 rb=0 scene=37075 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=37278 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=1 prev_us total=23645 present=0 rb=0 scene=37361 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=185445 present=0 rb=0 scene=37280 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=37151 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=50646 present=0 rb=0 scene=37309 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=113192 present=0 rb=0 scene=74735 script=0 events=0 sprite_px=38408 present_px=153600 sprites=4 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=183817 present=0 rb=0 scene=37340 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=185763 present=0 rb=0 scene=37254 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=37270 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=1 prev_us total=24058 present=0 rb=0 scene=37333 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=191928 present=0 rb=0 scene=37516 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=1 prev_us total=28036 present=0 rb=0 scene=37337 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=185895 present=0 rb=0 scene=37493 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=115410 present=0 rb=0 scene=74139 script=0 events=0 sprite_px=38408 present_px=153600 sprites=4 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=184395 present=0 rb=0 scene=37491 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=185240 present=0 rb=0 scene=37222 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=37322 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=54107 present=0 rb=0 scene=37510 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=115384 present=0 rb=0 scene=73897 script=0 events=0 sprite_px=38408 present_px=153600 sprites=4 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=183600 present=0 rb=0 scene=37527 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=184079 present=0 rb=0 scene=37252 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=37294 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=54058 present=0 rb=0 scene=37311 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=115241 present=0 rb=0 scene=74434 script=0 events=0 sprite_px=38408 present_px=153600 sprites=4 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=187686 present=0 rb=0 scene=37506 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=183933 present=0 rb=0 scene=37041 script=0 events=0 sprite_px=19204 present_px=76800 sprites=2 maxspr=320x60
+Game : (room:40) [Room script:73] GUI 5 turned on
+DOS-PORT skipframe owed=3 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=117340 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=109040 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=112697 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=80879 present=0 rb=0 scene=64872 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=81568 present=0 rb=0 scene=64708 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=23754 present=0 rb=0 scene=64736 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=5 prev_us total=177726 present=0 rb=0 scene=129461 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=176375 present=0 rb=0 scene=65047 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=28093 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=117958 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=114184 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=23647 present=0 rb=0 scene=64479 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=5 prev_us total=178078 present=0 rb=0 scene=129916 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=178649 present=0 rb=0 scene=64817 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=4 prev_us total=0 present=0 rb=0 scene=64922 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=64714 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=123513 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=25798 present=0 rb=0 scene=64821 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=5 prev_us total=184810 present=0 rb=0 scene=129423 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=177022 present=0 rb=0 scene=65010 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=27871 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=119430 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=112374 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=5 prev_us total=172855 present=0 rb=0 scene=129419 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=172084 present=0 rb=0 scene=64698 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=116934 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=104599 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=106090 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=4 prev_us total=0 present=0 rb=0 scene=64318 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=110159 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=5 prev_us total=169006 present=0 rb=0 scene=129446 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=168999 present=0 rb=0 scene=64719 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=83541 present=0 rb=0 scene=64912 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=69626 present=0 rb=0 scene=55868 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=23081 present=0 rb=0 scene=55378 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=55611 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=101570 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=55379 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=163805 present=0 rb=0 scene=111217 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=92577 present=0 rb=0 scene=55438 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=163390 present=0 rb=0 scene=111150 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=93496 present=0 rb=0 scene=55632 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=156272 present=0 rb=0 scene=111345 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=89576 present=0 rb=0 scene=55463 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=158727 present=0 rb=0 scene=111183 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=89219 present=0 rb=0 scene=55475 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=158874 present=0 rb=0 scene=111416 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=97349 present=0 rb=0 scene=55414 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=102658 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=55499 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=100722 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=96920 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=96816 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=72475 present=0 rb=0 scene=55770 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=75938 present=0 rb=0 scene=55688 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=159519 present=0 rb=0 scene=111418 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=55504 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=70143 present=0 rb=0 scene=55688 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=93551 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=103372 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=55427 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=151757 present=0 rb=0 scene=111020 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=89534 present=0 rb=0 scene=55322 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=96906 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=55425 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=150593 present=0 rb=0 scene=110974 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=100163 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=53203 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=145086 present=0 rb=0 scene=106748 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=94215 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=53529 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT rbstruct calls=500 batches=3416 clears=0 clear_px=0 sprites=1188 sprite_px=13518736 clipped=0 flagged=0 noflag=1188 notvs=0 novalid=0 isfull=0 guimiss=0 guihit=0 hitpx=0 fullpx=0 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT dirtypresent narrow=119 full=381 px_narrow=246777 px_full=29260800 nocam=0 rej scaled=0 noscene=12 latched=369 norects=0 pal=0 clip=0 multi=119 px_multi=44271 px_multi_bbox=246777 boxes=125 out=0 whole=0 rowfr=119 px_bands=157440 bands=125 mg0=125/118878 mg2k=125/118878 mg5k5=125/118878 mg12k=125/118878
+DOS-PORT skipframe owed=1 prev_us total=68762 present=0 rb=0 scene=53535 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=53244 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=96196 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=53508 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT midilate tick=1382 gap_ms=226 events=7
+DOS-PORT bgstruct calls=500 whole=381 px=24389551 slow_px=0
+DOS-PORT skipframe owed=3 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=99740 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=53307 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=160711 present=0 rb=0 scene=106887 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=53307 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=23964 present=0 rb=0 scene=53328 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=94471 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=53369 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=107044 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=53605 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=154135 present=0 rb=0 scene=107147 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=87723 present=0 rb=0 scene=53361 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=152392 present=0 rb=0 scene=106982 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=53349 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=150912 present=0 rb=0 scene=106809 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=53313 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=92503 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=53385 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=95782 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=53561 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT midilate tick=1598 gap_ms=289 events=5
+DOS-PORT stallwhat tick=1598 self_ms=281 children_ms=14 script_us=0 events_us=0 scene_us=53561 rb_us=0 present_us=0
+DOS-PORT skipframe owed=1 prev_us total=71287 present=0 rb=0 scene=53481 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=53352 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=4 prev_us total=146620 present=0 rb=0 scene=106815 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=83861 present=0 rb=0 scene=53281 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=53232 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=93616 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=55274 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=95994 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=92967 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=55325 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=106075 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=55320 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=154913 present=0 rb=0 scene=110859 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=55327 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=75326 present=0 rb=0 scene=55668 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=74455 present=0 rb=0 scene=55435 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=72025 present=0 rb=0 scene=55469 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=72703 present=0 rb=0 scene=55456 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=157896 present=0 rb=0 scene=111053 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=89310 present=0 rb=0 scene=55445 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=157947 present=0 rb=0 scene=110836 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=93579 present=0 rb=0 scene=55594 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=108978 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=55585 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=108444 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=55358 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=99715 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=55388 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=98613 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=55308 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=99187 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=55345 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=154411 present=0 rb=0 scene=110730 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=55292 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=93426 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=55584 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=98764 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=55303 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=23984 present=0 rb=0 scene=55281 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=55524 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=45408 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45423 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45372 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=212603 present=0 rb=0 scene=45447 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45403 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45418 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=1 prev_us total=0 present=0 rb=0 scene=45279 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=77965 present=0 rb=0 scene=45438 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45466 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45497 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45480 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45483 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45467 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45339 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45533 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45353 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45532 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45314 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45487 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45270 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45543 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=45480 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=45413 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=94661 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=45482 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=45448 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=45449 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=45359 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45382 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45416 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=216451 present=0 rb=0 scene=45480 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45419 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=45414 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=218418 present=0 rb=0 scene=48800 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=48532 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=48543 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=147183 present=0 rb=0 scene=96927 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=87291 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=4 prev_us total=141882 present=0 rb=0 scene=97211 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=48566 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=48500 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=48605 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=90360 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=4 prev_us total=142538 present=0 rb=0 scene=97470 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=81371 present=0 rb=0 scene=48544 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=48639 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=89406 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=23757 present=0 rb=0 scene=48604 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=48452 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=48629 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=95009 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=48646 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=48648 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=88775 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=4 prev_us total=140578 present=0 rb=0 scene=97133 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=48619 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=48587 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=48892 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=48621 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=48562 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=137529 present=0 rb=0 scene=97232 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=87093 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=136941 present=0 rb=0 scene=96991 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=86192 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=4 prev_us total=137730 present=0 rb=0 scene=96952 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=89921 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=97155 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=104655 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=102660 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=95620 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=96147 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=98684 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=76826 present=0 rb=0 scene=56745 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT rbstruct calls=1000 batches=6916 clears=0 clear_px=0 sprites=2688 sprite_px=32720736 clipped=0 flagged=0 noflag=2688 notvs=0 novalid=0 isfull=0 guimiss=0 guihit=0 hitpx=0 fullpx=0 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT dirtypresent narrow=119 full=881 px_narrow=246777 px_full=67660800 nocam=0 rej scaled=0 noscene=12 latched=869 norects=0 pal=0 clip=0 multi=119 px_multi=44271 px_multi_bbox=246777 boxes=125 out=0 whole=0 rowfr=119 px_bands=157440 bands=125 mg0=125/118878 mg2k=125/118878 mg5k5=125/118878 mg12k=125/118878
+DOS-PORT skipframe owed=4 prev_us total=167549 present=0 rb=0 scene=113529 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=99033 present=0 rb=0 scene=56610 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=102807 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=107652 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT bgstruct calls=1000 whole=881 px=56389551 slow_px=0
+DOS-PORT skipframe owed=1 prev_us total=74903 present=0 rb=0 scene=57571 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=73977 present=0 rb=0 scene=56760 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=160656 present=0 rb=0 scene=113501 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=94630 present=0 rb=0 scene=56605 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=103791 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=118358 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=56522 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=164036 present=0 rb=0 scene=113546 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=93436 present=0 rb=0 scene=56925 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=101446 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=56520 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=99058 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=56522 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=153276 present=0 rb=0 scene=113415 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=87175 present=0 rb=0 scene=56807 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=31658 present=0 rb=0 scene=56506 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=93870 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=56459 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=99116 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=56656 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=90569 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=65730 present=0 rb=0 scene=52412 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=52186 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=4 prev_us total=148893 present=0 rb=0 scene=104634 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=87778 present=0 rb=0 scene=52252 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=91441 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=68097 present=0 rb=0 scene=52414 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=95088 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=52272 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=149762 present=0 rb=0 scene=104800 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=96689 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=52101 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=97070 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=52443 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=70186 present=0 rb=0 scene=52453 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=4 prev_us total=152193 present=0 rb=0 scene=104637 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=94345 present=0 rb=0 scene=52207 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=150991 present=0 rb=0 scene=104901 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=85887 present=0 rb=0 scene=52477 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=100784 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=52222 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=147407 present=0 rb=0 scene=104607 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=95475 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=52460 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=93877 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=66878 present=0 rb=0 scene=52391 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=52210 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=144510 present=0 rb=0 scene=104615 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=93666 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=52161 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=52196 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=142855 present=0 rb=0 scene=104580 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=94100 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=53158 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=53144 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=148190 present=0 rb=0 scene=106479 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=95529 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=53230 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=4 prev_us total=148747 present=0 rb=0 scene=106593 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=85121 present=0 rb=0 scene=53230 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=102411 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=53214 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=96893 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=53259 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=151638 present=0 rb=0 scene=106725 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=53286 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=104166 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=94841 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=53220 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=104879 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=53282 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=162104 present=0 rb=0 scene=106692 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=88340 present=0 rb=0 scene=53479 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=70188 present=0 rb=0 scene=53469 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=94369 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=53258 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=159701 present=0 rb=0 scene=106947 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=87428 present=0 rb=0 scene=53275 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=91498 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=67201 present=0 rb=0 scene=53357 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=100887 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=23348 present=0 rb=0 scene=53183 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=53152 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=145172 present=0 rb=0 scene=106763 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=94304 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=52969 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=99278 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=74780 present=0 rb=0 scene=61219 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=162824 present=0 rb=0 scene=122601 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=95817 present=0 rb=0 scene=61126 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=109050 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=103847 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=61237 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=116707 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=5 prev_us total=169292 present=0 rb=0 scene=122922 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=105749 present=0 rb=0 scene=61217 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=99129 present=0 rb=0 scene=61521 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=110064 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=5 prev_us total=168842 present=0 rb=0 scene=122510 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=98828 present=0 rb=0 scene=61555 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=100731 present=0 rb=0 scene=61248 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=112260 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=116398 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=108028 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=110780 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=5 prev_us total=170840 present=0 rb=0 scene=122582 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=170665 present=0 rb=0 scene=61293 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=27841 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=77165 present=0 rb=0 scene=61435 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=79675 present=0 rb=0 scene=61295 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=168045 present=0 rb=0 scene=122463 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=102161 present=0 rb=0 scene=61259 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=108101 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=5 prev_us total=164497 present=0 rb=0 scene=122733 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=96089 present=0 rb=0 scene=61243 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=97294 present=0 rb=0 scene=61507 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=111018 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=101266 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=78537 present=0 rb=0 scene=61209 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=164286 present=0 rb=0 scene=122518 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=101371 present=0 rb=0 scene=61180 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=105636 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=1 prev_us total=0 present=0 rb=0 scene=37788 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=67623 present=0 rb=0 scene=37846 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=37604 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=196464 present=0 rb=0 scene=37821 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=1 prev_us total=24468 present=0 rb=0 scene=37431 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=68694 present=0 rb=0 scene=37681 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=83204 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=1 prev_us total=0 present=0 rb=0 scene=37900 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=73596 present=0 rb=0 scene=37921 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=69309 present=0 rb=0 scene=37929 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=191297 present=0 rb=0 scene=37872 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=53051 present=0 rb=0 scene=37721 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=53135 present=0 rb=0 scene=37695 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=54287 present=0 rb=0 scene=37430 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=1 prev_us total=23956 present=0 rb=0 scene=37700 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=72118 present=0 rb=0 scene=37719 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=74870 present=0 rb=0 scene=37729 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=71968 present=0 rb=0 scene=37937 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=72956 present=0 rb=0 scene=37882 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=71317 present=0 rb=0 scene=37932 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=71227 present=0 rb=0 scene=37700 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=70504 present=0 rb=0 scene=37927 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=70115 present=0 rb=0 scene=37909 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=195705 present=0 rb=0 scene=37899 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=194500 present=0 rb=0 scene=37624 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=52665 present=0 rb=0 scene=37680 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=125898 present=0 rb=0 scene=75773 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=37700 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT rbstruct calls=1500 batches=10416 clears=0 clear_px=0 sprites=4188 sprite_px=51922736 clipped=0 flagged=0 noflag=4188 notvs=0 novalid=0 isfull=0 guimiss=0 guihit=0 hitpx=0 fullpx=0 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT dirtypresent narrow=119 full=1381 px_narrow=246777 px_full=106060800 nocam=0 rej scaled=0 noscene=12 latched=1369 norects=0 pal=0 clip=0 multi=119 px_multi=44271 px_multi_bbox=246777 boxes=125 out=0 whole=0 rowfr=119 px_bands=157440 bands=125 mg0=125/118878 mg2k=125/118878 mg5k5=125/118878 mg12k=125/118878
+DOS-PORT skipframe owed=1 prev_us total=55587 present=0 rb=0 scene=37859 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=1 prev_us total=24189 present=0 rb=0 scene=37728 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=192179 present=0 rb=0 scene=37840 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT bgstruct calls=1500 whole=1381 px=88389551 slow_px=0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=1 prev_us total=0 present=0 rb=0 scene=38441 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=66393 present=0 rb=0 scene=37903 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=182093 present=0 rb=0 scene=37346 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=37643 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=1 prev_us total=25420 present=0 rb=0 scene=37874 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=189437 present=0 rb=0 scene=37798 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT stallwhat tick=4784 self_ms=1656 children_ms=14 script_us=0 events_us=0 scene_us=37879 rb_us=0 present_us=0
+DOS-PORT skipframe owed=1 prev_us total=192138 present=0 rb=0 scene=38280 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=1 prev_us total=0 present=0 rb=0 scene=38016 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=67089 present=0 rb=0 scene=38027 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=38246 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=195855 present=0 rb=0 scene=38290 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=38053 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=54095 present=0 rb=0 scene=38383 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=1 prev_us total=31982 present=0 rb=0 scene=38321 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=72159 present=0 rb=0 scene=38241 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=74522 present=0 rb=0 scene=38328 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=70868 present=0 rb=0 scene=38036 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=70975 present=0 rb=0 scene=38284 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=195719 present=0 rb=0 scene=38399 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=196166 present=0 rb=0 scene=38402 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=204944 present=0 rb=0 scene=38422 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=198905 present=0 rb=0 scene=38368 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=203077 present=0 rb=0 scene=38101 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=200450 present=0 rb=0 scene=37944 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=207933 present=0 rb=0 scene=38136 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=1 prev_us total=0 present=0 rb=0 scene=38054 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=71111 present=0 rb=0 scene=38284 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=70915 present=0 rb=0 scene=38294 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=70562 present=0 rb=0 scene=38346 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=202201 present=0 rb=0 scene=38404 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=196037 present=0 rb=0 scene=38109 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=200930 present=0 rb=0 scene=38306 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=195280 present=0 rb=0 scene=38301 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=52200 present=0 rb=0 scene=38311 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=1 prev_us total=24646 present=0 rb=0 scene=38033 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=193569 present=0 rb=0 scene=38340 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=190657 present=0 rb=0 scene=38306 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=52327 present=0 rb=0 scene=38277 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=123314 present=0 rb=0 scene=76242 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=38056 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=75035 present=0 rb=0 scene=62221 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=76234 present=0 rb=0 scene=62151 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=77455 present=0 rb=0 scene=62249 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=166986 present=0 rb=0 scene=124312 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=98403 present=0 rb=0 scene=61872 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=116943 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=5 prev_us total=170600 present=0 rb=0 scene=124393 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=107968 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=27575 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=118989 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=5 prev_us total=172663 present=0 rb=0 scene=124275 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=108117 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=27706 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=119378 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=5 prev_us total=174507 present=0 rb=0 scene=124204 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=184909 present=0 rb=0 scene=62162 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=79692 present=0 rb=0 scene=62110 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=79702 present=0 rb=0 scene=62324 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=5 prev_us total=172138 present=0 rb=0 scene=123998 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=172888 present=0 rb=0 scene=62383 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=28130 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=110341 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=5 prev_us total=167780 present=0 rb=0 scene=124232 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=167949 present=0 rb=0 scene=62358 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=77640 present=0 rb=0 scene=62091 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=108113 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=108446 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=100308 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=75388 present=0 rb=0 scene=62033 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=5 prev_us total=163514 present=0 rb=0 scene=124291 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=96106 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=79854 present=0 rb=0 scene=62036 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=5 prev_us total=166607 present=0 rb=0 scene=124040 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=100109 present=0 rb=0 scene=59627 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=106043 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=104396 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=74451 present=0 rb=0 scene=59625 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=173697 present=0 rb=0 scene=119443 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=95767 present=0 rb=0 scene=59609 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=102363 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=99393 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=101566 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=112469 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=59727 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=110206 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=104905 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=102022 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=109177 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=109252 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=105180 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=100631 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=75356 present=0 rb=0 scene=59878 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=75458 present=0 rb=0 scene=59658 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=75255 present=0 rb=0 scene=59778 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=5 prev_us total=169148 present=0 rb=0 scene=119107 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=95936 present=0 rb=0 scene=59415 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=59659 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=162439 present=0 rb=0 scene=119308 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=98220 present=0 rb=0 scene=59657 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=102528 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=97218 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=97152 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=24976 present=0 rb=0 scene=59189 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=78078 present=0 rb=0 scene=59393 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=73632 present=0 rb=0 scene=59431 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=162942 present=0 rb=0 scene=118634 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=101108 present=0 rb=0 scene=59245 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=102678 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=99562 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=100209 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=3 prev_us total=76985 present=0 rb=0 scene=59452 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=76665 present=0 rb=0 scene=59645 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=5 prev_us total=168503 present=0 rb=0 scene=118722 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=101553 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=27810 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=4 prev_us total=0 present=0 rb=0 scene=59450 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=108750 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=111170 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=100878 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=28513 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT rbstruct calls=2000 batches=13530 clears=0 clear_px=0 sprites=5495 sprite_px=68666876 clipped=0 flagged=0 noflag=5495 notvs=0 novalid=0 isfull=0 guimiss=0 guihit=0 hitpx=0 fullpx=0 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT dirtypresent narrow=120 full=1880 px_narrow=300537 px_full=144384000 nocam=0 rej scaled=0 noscene=75 latched=1805 norects=0 pal=0 clip=0 multi=120 px_multi=75951 px_multi_bbox=300537 boxes=127 out=0 whole=0 rowfr=120 px_bands=189120 bands=127 mg0=127/158040 mg2k=127/158040 mg5k5=127/158040 mg12k=127/158040
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=107537 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=74416 present=0 rb=0 scene=59451 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=167867 present=0 rb=0 scene=118932 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=96020 present=0 rb=0 scene=59246 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=159179 present=0 rb=0 scene=118981 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe owed=3 prev_us total=93412 present=0 rb=0 scene=59507 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=100511 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=59462 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=2 prev_us total=102529 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=96117 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=100405 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=3 prev_us total=0 present=0 rb=0 scene=56122 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=152831 present=0 rb=0 scene=111912 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=0 present=0 rb=0 scene=55896 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=72326 present=0 rb=0 scene=56058 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=100934 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=24141 present=0 rb=0 scene=55964 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=96130 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=2 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT skipframe NESTED=outer-call-still-in-flight owed=2 prev_us total=23756 present=0 rb=0 scene=56255 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=1 prev_us total=0 present=0 rb=0 scene=0 script=0 events=0 sprite_px=0 present_px=0 sprites=0 maxspr=0x0
+DOS-PORT bgstruct calls=2000 whole=1880 px=120350831 slow_px=0
+DOS-PORT skipframe owed=2 prev_us total=77135 present=0 rb=0 scene=56154 script=0 events=0 sprite_px=38404 present_px=76800 sprites=3 maxspr=320x60
+DOS-PORT skipframe owed=4 prev_us total=161302 present=0 rb=0 scene=112394 script=0 events=0 sprite_px=76808 present_px=153600 sprites=6 maxspr=320x60
+Quitting the game...
+Set game text language: 
+Set locale: 
+***** ENGINE HAS SHUTDOWN
+DOS-PORT bgstruct_final calls=2004 whole=1884 px=120606831 slow_px=0
+DOS-PORT bgspans n=450 lt16=357 lt64=0 ge64=93 mean_px=268015
+DOS-PORT evtype none n=0 us=0
+DOS-PORT evtype script n=2127 us=0
+DOS-PORT evtype object n=4257 us=0
+DOS-PORT evtype fadein n=1 us=0
+DOS-PORT evtype gui n=0 us=0
+DOS-PORT evtype newroom n=0 us=0
+DOS-PORT evobj room n=2129 us=0
+DOS-PORT evobj hotspot n=2128 us=0
+DOS-PORT afterfadein gui_n=1 gui_us=0 log_n=1 log_us=0 line_n=1 line_us=0
+DOS-PORT afterfadein_script us=0
+DOS-PORT afterfadein onevent_n=1 onevent_us=0 nested_us=0
+DOS-PORT dirtysrc other n=0 px=0
+DOS-PORT dirtysrc roomsprite n=0 px=0
+DOS-PORT dirtysrc uisprite n=3629 px=71059449
+DOS-PORT dirtysrc cursor n=2002 px=18018
+DOS-PORT dirtysrc screen n=0 px=0
+DOS-PORT dirtysrc carry n=4700 px=70906440
+DOS-PORT vblank vsync_leg=0 dac_leg=0 called=0 skipped=0
+DOS-PORT vblank2 vsync_leg=0 dac_leg=0 called=0 skipped=0
+DOS-PORT fade8 steps=77 interp_us=51528 setpal_us=5722
+DOS-PORT flushpath banked=0 lfb=0 vblank_entered=0 fb_created=1
+DOS-PORT objsetup setview_n=0 setview_us=0 animate_n=0 animate_us=0 visible_n=0 visible_us=0
+DOS-PORT scfile open_n=0 open_us=0 write_n=0 write_us=0 close_n=0 close_us=0
+DOS-PORT dirtycarry presents=2001 boxes=4700 full=0
+DOS-PORT guiskip flushed=9 late=0 hidden=0 props=6 flag=3
+DOS-PORT guiidem refused=0 alpha_binary=0 alpha_partial=0
+DOS-PORT wordscan=-1
+DOS-PORT existfast mode=1 misses=24 stat=12 shadow=0 compared=0 mismatches=0
+DOS-PORT dircache mode=0 listings=0 entries=0 hits=0 events=1 drops=0 shadow=0 compared=0 mismatches=0
+DOS-PORT pakhandle opened=1 reused=9 fallback=0 closed=1
+DOS-PORT readdirect mode=0 reads=0 bytes=0 short=0 errors=0
+DOS-PORT guiflush idx=4 n=7
+DOS-PORT guiflush idx=5 n=2
+DOS-PORT overskip mode=1 skipped=0 marked=0 refused=0 hidden=0 props=0 flag=0 late=0 end=0
+DOS-PORT bigguiopaque opaque=0 masked=0
+DOS-PORT biggui_final n=0 unchanged=0 changed=0 pct=0
+DOS-PORT screenshot n=0 us=0
+DOS-PORT evinteraction n=4257 us=0
+DOS-PORT evroom firstenter n=1 us=0
+DOS-PORT evroom beforefadein n=1 us=0
+DOS-PORT evroom repexec n=2126 us=0
+DOS-PORT evroom afterfadein n=1 us=0
+DOS-PORT blackfill skipped=113 done=1891 px=144765760 rects=1892 whole=1884

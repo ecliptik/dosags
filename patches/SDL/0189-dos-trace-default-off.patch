@@ -1,0 +1,101 @@
+From 0f51e13f1f556149250f654fb7c4d49767be2994 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 21 Sep 2026 11:17:38 -0700
+Subject: [PATCH] dos: patch 0189 -- the SDL debug trace defaults OFF
+ (DOS_PORT_LOG=1 turns it on)
+
+Consolidates 0188 and 0189 in video/dos/SDL_dosdbg.c.
+
+Every trace line is an fprintf + fflush + fsync on purpose, so a trace
+survives a hard reset. On a CF card that is not free, and some callers are in
+hot code: DOSVESA_UpdateWindowFramebuffer writes five lines per 100 flushes
+from INSIDE the present. Cell FPT1 measured that batch at ~10 ms and, once in
+twenty-four, at 227 ms, which was the whole ~250 ms present stall the
+campaign had been chasing since Gate 2 opened.
+
+Cell LOGAB, four cells and one binary with the arms set by this environment
+variable: with the trace on, both cells stalled ~277 ms at tick 2403 and
+dropped 12 and 17 frames; with it off, neither stalled and both dropped 4.
+
+The flag is resolved once and cached, since a getenv per log line would itself
+be a cost inside the present. Every diagnostic the trace ever produced is
+still reachable with DOS_PORT_LOG=1. A diagnostic that defaults off in a
+shipping build is ordinary, and this one is instrumentation the project
+added rather than part of the port's function, so no gate figure should mix
+a build that carries the instrument with one that does not.
+
+Behaviour change: the trace is OFF by default.
+
+Provenance of this export (2026-09-21): these edits sat uncommitted in the
+vendor tree from patch 0123 onward, which is why every gate cell since said
+build_dirty=1. They were made under one campaign-wide patch counter shared
+with vendor/SDL, and each hunk carries its number in an in-source comment.
+Intermediate states were never committed, so this patch is a hunk-level
+partition of the final tree by concern, attributed by those comments -- not a
+replay of the order the edits were made in, and its intermediate state was not
+built on its own. The numbers named below are the ones found in its hunks.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ src/video/dos/SDL_dosdbg.c | 43 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 43 insertions(+)
+
+diff --git a/src/video/dos/SDL_dosdbg.c b/src/video/dos/SDL_dosdbg.c
+index 8d9af0aa5..ecfdfe458 100644
+--- a/src/video/dos/SDL_dosdbg.c
++++ b/src/video/dos/SDL_dosdbg.c
+@@ -103,8 +103,51 @@ static const char *dos_port_dbg_resolve_path(void)
+     return g_dbg_log_path;
+ }
+ 
++// DOS-PORT patch 0188/0189: the trace is OFF unless DOS_PORT_LOG=1.
++//
++// Every line below costs an fprintf + fflush + fsync, deliberately, so a
++// trace survives a hard reset. On a CF card that is not free, and the
++// callers are not all in cold code: DOSVESA_UpdateWindowFramebuffer writes
++// five lines per 100 flushes from INSIDE the present. dosags cell FPT1
++// measured that batch at ~10 ms every time, and once in twenty-four at
++// 227 ms -- which was the entire ~250 ms present stall this campaign had
++// been chasing since Gate 2 opened.
++//
++// DEFAULT FLIPPED TO OFF, 2026-09-20, after LOGAB measured what it costs.
++// DOS_PORT_LOG=1 turns it back on and everything it ever diagnosed is still
++// reachable that way.
++//
++// LOGAB, four cells, one binary, arms by this env var: with the trace on,
++// both cells stalled ~277 ms at tick 2403 and dropped 12 and 17 frames;
++// with it off, neither stalled at all and both dropped 4. Three to four
++// times fewer dropped frames on a 40 Hz target, from removing one disk
++// write from inside the present.
++//
++// A diagnostic that defaults off in a shipping build is ordinary. This one
++// is also, specifically, instrumentation this project added rather than
++// part of the port's function -- the same class as the fixture's own
++// logging, which the operator already ruled on, and for the same reason
++// they ruled: so that no gate figure mixes provenance between a build that
++// carries the instrument and one that does not.
++//
++// Resolved once, on first use, and cached: a getenv per log line would
++// itself be a cost inside the present.
++static int g_dbg_enabled = -1;
++
++static int dos_port_dbg_enabled(void)
++{
++    if (g_dbg_enabled < 0) {
++        const char *e = SDL_getenv("DOS_PORT_LOG");
++        g_dbg_enabled = (e && e[0] == '1' && e[1] == 0) ? 1 : 0;
++    }
++    return g_dbg_enabled;
++}
++
+ void dos_port_dbg_open(void)
+ {
++    if (!dos_port_dbg_enabled()) {
++        return;
++    }
+     if (!g_dbg_log) {
+         g_dbg_log = fopen(dos_port_dbg_resolve_path(), "wb");
+     }
+-- 
+2.47.3
+

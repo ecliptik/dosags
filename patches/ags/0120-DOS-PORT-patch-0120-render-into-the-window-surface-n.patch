@@ -1,0 +1,243 @@
+From 528af662955b4b6f10f52cab9babb99eee36212d Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sat, 19 Sep 2026 01:31:45 -0700
+Subject: [PATCH] DOS-PORT: patch 0120 -- render into the window surface, not
+ into a copy of it
+
+present_blit was measured at 26.78 ms on AGS Quest (640x360x16), 26.61 of
+it fastblit_vmemcpy: a full-frame RAM-to-RAM memcpy of 460,800 bytes that
+produces no visible output. It existed only to move pixels from AGS's own
+virtual screen into the SDL window surface -- and for a 1x centred game
+those are the same pixel format (RGB565), the same pitch (1280), and the
+destination region is contiguous. So AGS can render into those bytes
+directly and the copy disappears.
+
+The arithmetic this comes from: present_blit 26.78 + present_update_window
+16.74 = 43.52 ms against a 25 ms budget for 40 fps -- the present alone
+was 1.74x the whole frame budget, while engine work (scene_construct) was
+9.42 ms. Gate 3 was never an engine-speed problem. Removing this copy puts
+the present near 16.7 ms, inside budget, at full resolution.
+
+The second copy is deliberately left alone: 16.74 ms for 460,800 bytes is
+27.5 MB/s, matching this machine's own measured LFB near-pointer ceiling.
+It is at the hardware limit and no code change reduces it -- only sending
+fewer bytes would.
+
+THE FALLBACK IS THE DEFAULT, not an afterthought. _origVirtualScreen stays
+allocated and owned. The alias is adopted only after a frame has actually
+presented with steady 1x geometry -- observed, never predicted -- and every
+condition is checked: full-width contiguous destination, 1x scale,
+matching surface format, destination inside the window. Any deviation
+(screen shake moving dst, a flip needing a scratch, a scaled rung, a card
+offering 555 where AGS is hardwired 565) reverts to the owned buffer. The
+worst case is a single frame presented without a shake displacement: a
+bounded cosmetic deviation, never corruption.
+
+Hint-gated per the operator's standing "fastest by default, tunable
+options" instruction: DOSAGS_DIRECT_VSCREEN=0 disables it. That also makes
+the measurement a within-build A/B -- identical binary, identical layout,
+identical cache behaviour -- which matters because this render path was
+measured today to shift by ~1 fps on code changes of any kind.
+
+Correctness gate, AGS Quest under DOSBox-X, same binary with the hint
+toggled: alias engages at y=60 640x360 pitch=1280, and PH01/PH02/PH03 are
+byte-identical to the hint-off run (7ac5213ff8b4, 3b2651677ea1,
+623fc3a701e2).
+
+1x only. It is worth nothing to the 2x-scaled 8-bit fixtures, where the
+blit is genuine scaling work rather than redundancy.
+---
+ Engine/gfx/ali3dsw.cpp             | 117 +++++++++++++++++++++++++++++
+ Engine/gfx/ali3dsw.h               |  12 +++
+ Engine/main/dos_port_tick_timing.h |   7 +-
+ 3 files changed, 135 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index 20561a36d..b0c662c8f 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -192,6 +192,98 @@ void SDLRendererGraphicsDriver::UpdateDeviceScreen(const Size &screen_sz)
+   _mode.Height = screen_sz.Height;
+ }
+ 
++
++#ifdef __DJGPP__
++// DOS-PORT patch 0120: render straight into the window surface.
++//
++// present_blit measured 26.78 ms on AGS Quest (640x360x16), 26.61 of it
++// fastblit_vmemcpy -- a full-frame RAM->RAM memcpy of 460,800 bytes that
++// produces no visible output. It exists only to move pixels from AGS's
++// virtual screen into the SDL window surface, and for a 1x centred game
++// those are the same format (RGB565), the same pitch, and the destination
++// is contiguous. Pure redundancy: AGS can render into those bytes.
++//
++// present_blit 26.78 + present_update_window 16.74 = 43.52 ms against a
++// 25 ms budget for 40 fps. Removing the first copy puts the present near
++// 16.7 ms, inside budget. The SECOND copy is NOT removable -- 27.5 MB/s
++// matches this machine's measured LFB near-pointer ceiling, so only
++// sending fewer bytes shrinks it.
++//
++// THE FALLBACK IS THE DEFAULT. _origVirtualScreen stays allocated and
++// owned; the alias is adopted only when every condition holds, and any
++// deviation reverts to it. A missed case here would be visible corruption
++// rather than a slowdown -- the same reasoning that made the light
++// table's identity fallback load-bearing.
++void SDLRendererGraphicsDriver::DosPortAliasDeactivate()
++{
++    if (!_aliasActive)
++        return;
++    _aliasActive = false;
++    _aliasY = _aliasW = _aliasH = -1;
++    _aliasBase = nullptr;
++    virtualScreen = _origVirtualScreen.get();
++    _stageVirtualScreen = virtualScreen;
++    if (_vscreenSurface) { SDL_DestroySurface(_vscreenSurface); _vscreenSurface = nullptr; }
++    if (virtualScreen)
++    {
++        const SDL_PixelFormat f =
++            (_srcColorDepth == 8) ? SDL_PIXELFORMAT_INDEX8 :
++            (_srcColorDepth == 16) ? SDL_PIXELFORMAT_RGB565 : SDL_PIXELFORMAT_XRGB8888;
++        _vscreenSurface = SDL_CreateSurfaceFrom(virtualScreen->GetWidth(),
++            virtualScreen->GetHeight(), f, virtualScreen->GetDataForWriting(),
++            virtualScreen->GetPitch());
++        if (_vscreenSurface && f == SDL_PIXELFORMAT_INDEX8)
++            SDL_CreateSurfacePalette(_vscreenSurface);
++    }
++    _aliasVScreen.reset();
++    dos_port_tick_timing.vscreen_alias_off++;
++    Debug::Printf("DOS-PORT vscreen alias OFF");
++}
++
++bool SDLRendererGraphicsDriver::DosPortAliasTryActivate(SDL_Surface *win, const SDL_Rect &dst)
++{
++    if (!_aliasHintRead)
++    {
++        const char *h = getenv("DOSAGS_DIRECT_VSCREEN");
++        _aliasHint = !(h && h[0] == '0');   // fastest by default; hint disables
++        _aliasHintRead = true;
++    }
++    if (!_aliasHint || _aliasActive || !win || !_origVirtualScreen || !_vscreenSurface)
++        return false;
++    // Contiguity: the picture must span the full window width, so aliased
++    // rows sit exactly win->pitch apart with nothing beside them.
++    if (dst.x != 0 || dst.w != win->w)
++        return false;
++    if (dst.w != _origVirtualScreen->GetWidth() || dst.h != _origVirtualScreen->GetHeight())
++        return false;   // 1x only; a scaled rung needs the real blit
++    if (_vscreenSurface->format != win->format)
++        return false;   // e.g. a card offering 555 where AGS is hardwired 565
++    if (dst.y < 0 || dst.y + dst.h > win->h)
++        return false;
++    uint8_t *base = (uint8_t *)win->pixels + (size_t)dst.y * (size_t)win->pitch;
++    BITMAP *al = create_bitmap_userdata(_srcColorDepth, dst.w, dst.h, base,
++                                        (size_t)win->pitch * (size_t)dst.h,
++                                        (size_t)win->pitch, nullptr);
++    if (!al)
++        return false;
++    Bitmap *bmp = BitmapHelper::CreateRawBitmapWrapper(al);
++    if (!bmp)
++        return false;
++    _aliasVScreen.reset(bmp);
++    virtualScreen = _aliasVScreen.get();
++    _stageVirtualScreen = virtualScreen;
++    SDL_DestroySurface(_vscreenSurface);
++    _vscreenSurface = SDL_CreateSurfaceFrom(dst.w, dst.h, win->format, base, win->pitch);
++    if (_vscreenSurface && win->format == SDL_PIXELFORMAT_INDEX8)
++        SDL_CreateSurfacePalette(_vscreenSurface);
++    _aliasActive = true;
++    _aliasY = dst.y; _aliasW = dst.w; _aliasH = dst.h; _aliasBase = win->pixels;
++    dos_port_tick_timing.vscreen_alias_on++;
++    Debug::Printf("DOS-PORT vscreen alias ON y=%d %dx%d pitch=%d", dst.y, dst.w, dst.h, win->pitch);
++    return true;
++}
++#endif
++
+ void SDLRendererGraphicsDriver::CreateVirtualScreen()
+ {
+   if (!IsNativeSizeValid())
+@@ -1239,9 +1331,26 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+         // patch 0104: the window surface already holds these exact pixels.
+         blitted = true;
+     }
++#ifdef __DJGPP__
++    else if (_aliasActive && blit_src == _vscreenSurface &&
++             _aliasBase == win_surface->pixels && dst.x == 0 && dst.y == _aliasY &&
++             dst.w == _aliasW && dst.h == _aliasH)
++    {
++        blitted = true;   // already rendered in place: nothing to copy
++        dos_port_tick_timing.blits_aliased++;
++    }
++#endif
+     else
+     {
+ #ifdef __DJGPP__
++        // Any deviation from the aliased geometry -- screen shake moving
++        // dst, a flip needing a scratch, a scaled rung -- reverts to the
++        // owned virtual screen. The NEXT frame is then rendered into our
++        // own buffer and copied normally. Worst case is one frame without
++        // a shake displacement: a bounded cosmetic deviation, never
++        // corruption, and the hint exists to switch it off entirely.
++        if (_aliasActive)
++            DosPortAliasDeactivate();
+         DosPortTickScope _dos_port_blit_scope(dos_port_tick_timing.present_blit);
+         blitted = TryFastIntegerNearestBlit(blit_src, win_surface, dst);
+         // patch 0093: which path, and at what source depth.
+@@ -1258,6 +1367,14 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+             Debug::Printf(kDbgMsg_Error, "SDLRenderer: blit to window surface failed: %s", SDL_GetError());
+     }
+ 
++#ifdef __DJGPP__
++    // Adopt for the NEXT frame once a frame has presented with steady 1x
++    // geometry -- after the fact, never predicted: we alias only geometry
++    // we have actually just seen.
++    if (!_aliasActive && blitted)
++        DosPortAliasTryActivate(win_surface, dst);
++#endif
++
+     {
+ #ifdef __DJGPP__
+         DosPortTickScope _dos_port_updatewin_scope(dos_port_tick_timing.present_update_window);
+diff --git a/Engine/gfx/ali3dsw.h b/Engine/gfx/ali3dsw.h
+index a6b850bf6..a5eaa6fda 100644
+--- a/Engine/gfx/ali3dsw.h
++++ b/Engine/gfx/ali3dsw.h
+@@ -409,6 +409,18 @@ private:
+ 
+     // Original virtual screen created and managed by the renderer.
+     std::unique_ptr<Bitmap> _origVirtualScreen;
++#ifdef __DJGPP__
++    // patch 0120: alias the virtual screen onto the window surface.
++    // _origVirtualScreen stays allocated as the always-available fallback.
++    std::unique_ptr<Bitmap> _aliasVScreen;
++    bool _aliasActive = false;
++    bool _aliasHint = true;      // DOSAGS_DIRECT_VSCREEN=0 disables
++    bool _aliasHintRead = false;
++    int  _aliasY = -1, _aliasW = -1, _aliasH = -1;
++    void *_aliasBase = nullptr;
++    void DosPortAliasDeactivate();
++    bool DosPortAliasTryActivate(SDL_Surface *win, const SDL_Rect &dst);
++#endif
+     // Current virtual screen bitmap; may be either pointing to _origVirtualScreen,
+     // or provided by external user (for example - plugin).
+     // Its pixel buffer is wrapped directly by _vscreenSurface and blitted to
+diff --git a/Engine/main/dos_port_tick_timing.h b/Engine/main/dos_port_tick_timing.h
+index 3d288487e..dc70fc3d5 100644
+--- a/Engine/main/dos_port_tick_timing.h
++++ b/Engine/main/dos_port_tick_timing.h
+@@ -383,7 +383,12 @@ struct DosPortTickTiming
+     // off the log rather than inferred from two other phases' call counts.
+     long blits_fast = 0;
+     long blits_generic = 0;
+-    long blits_unscaled = 0; // patch 0100: fast-path blits that were 1:1 row copies
++    long blits_unscaled = 0;
++    // patch 0120: the redundant RAM->RAM present copy, eliminated by
++    // aliasing AGS's virtual screen onto the window surface.
++    long blits_aliased = 0;      // presents where the copy had nothing to do
++    long vscreen_alias_on = 0;   // times the alias was adopted
++    long vscreen_alias_off = 0;  // times geometry deviated and it reverted // patch 0100: fast-path blits that were 1:1 row copies
+     int blit_src_bytes_per_pixel = 0; // last real present's source format
+ };
+ 
+-- 
+2.47.3
+

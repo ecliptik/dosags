@@ -1,0 +1,58 @@
+From 5796daf6be5ef18f07ca56b98c0a6215d8ae0b29 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 02:36:58 -0700
+Subject: [PATCH] dos: patch 0222 -- SDL_HINT_DOS_MOUSE_LEVEL_ONLY: switch
+ 0221's press delivery off at run time
+
+WHY: with 0221 in every build, a check that lost clicks stay at 0 (dosags
+tests/ratchet.yaml lost-inputs) can no longer be shown to fail: the quick
+clicks that used to be lost now arrive. A check whose control cannot make
+it fail proves nothing (the ratchet reports it NOPOWER). The control needs
+the pre-0221 behaviour in the same binary, not an old binary that the
+nightly build cannot reproduce. The same switch is the field fallback if
+0221's delivery ever misbehaves with some mouse driver.
+
+WHAT: SDL_HINT_DOS_MOUSE_LEVEL_ONLY=1 (environment, read once) makes the
+pump use the level read alone, as before 0221. 0220's counters stay:
+function 5 is still read every pump into hw, seen counts level edges only,
+so lost = hw - seen shows what the level read missed. Unset (the default),
+0221 runs unchanged.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ src/video/dos/SDL_dosevents.c | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/src/video/dos/SDL_dosevents.c b/src/video/dos/SDL_dosevents.c
+index fe49c401e..e6b75c611 100644
+--- a/src/video/dos/SDL_dosevents.c
++++ b/src/video/dos/SDL_dosevents.c
+@@ -512,6 +512,24 @@ void DOSVESA_PumpEvents(SDL_VideoDevice *device)
+            presses DELIVERED (level edges + these), so 0220's lost = hw -
+            seen reads 0 when nothing is missed, and a negative value would
+            be a phantom press. Position: the current one. */
++        /* dosags patch 0222: SDL_HINT_DOS_MOUSE_LEVEL_ONLY=1 turns 0221's
++           delivery off (read once): the level read alone, as before 0221,
++           with 0220's counters still kept (read every pump, seen = level
++           edges only), so lost = hw - seen shows what the level read missed.
++           For controls that must prove a lost-click check can fail, and as a
++           field fallback. */
++        static int level_only = -1;
++        if (level_only < 0) {
++            const char *e = SDL_getenv("SDL_HINT_DOS_MOUSE_LEVEL_ONLY");
++            level_only = (e && e[0] == '1' && e[1] == 0) ? 1 : 0;
++        }
++        if (level_only) {
++            const Uint16 down_edges = (Uint16)(buttons & ~dos_mouse_prev_buttons);
++            DOS_ReadMousePressCounters();
++            dos_mouse_new_presses[0] = dos_mouse_new_presses[1] = 0;
++            dos_mouse_seen_presses += (Uint32)(((down_edges >> 0) & 1) + ((down_edges >> 1) & 1));
++            dos_mouse_prev_buttons = buttons;
++        } else
+         {
+             static const Uint8 sdl_button[2] = { SDL_BUTTON_LEFT, SDL_BUTTON_RIGHT };
+             int b;
+-- 
+2.47.3
+

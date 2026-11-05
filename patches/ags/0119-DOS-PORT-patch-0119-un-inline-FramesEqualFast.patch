@@ -1,0 +1,52 @@
+From d03bf9d935d043f809fd48428f146e19dd169c79 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sat, 19 Sep 2026 00:06:41 -0700
+Subject: [PATCH] DOS-PORT: patch 0119 -- un-inline FramesEqualFast
+
+One attribute, +1.20 fps on bench8 anim12 at Mode 13h: 38.92 (baseline
+ensemble of four) to 40.12, with two layout variants returning the
+IDENTICAL 40.12 -- tighter than the 0.19 layout floor would predict.
+
+Why it works, as far as we can tell. This render path behaves as though it
+is bound by instruction-cache footprint rather than by instructions
+retired, on a 486DX2-66 with an 8 KB unified cache. Three separate small
+additions of EXECUTED code to it each cost about a frame (patch 0104
+-1.21, a dirty-bbox latch -1.05, repaint counters -1.07) while
+size-matched code that is emitted but NEVER EXECUTED costs only -0.23. So
+the cost tracks what occupies cache lines at run time, not what the code
+does -- and removing a large body from the hot function should therefore
+gain about a frame, which is what this measures.
+
+That is a hypothesis fitting seven observations, not a proven mechanism:
+a 486 gives us no cache-miss counter. It is recorded as the reason this
+patch exists, not as a claim.
+
+Note what this recovers rather than wins: 40.12 is the same figure patch
+0103 measured before 0104 existed. This gives back the ground 0104 took,
+whose own mechanism remains unexplained after five dead hypotheses.
+
+Screening note for future candidates: verify a function is actually
+inlined in the baseline before spending cells on un-inlining it. A second
+candidate here, TryFastIntegerNearestBlit, was already out-of-line (2
+symbols in the baseline binary), so the attribute changed nothing and its
+null result is no evidence either way.
+---
+ Engine/gfx/ali3dsw.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index 88237d841..20561a36d 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -967,7 +967,7 @@ static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const
+ // x86 tolerates unaligned reads (just potentially slower, never
+ // incorrect), so no alignment precondition is required for
+ // correctness, only for best-case speed.
+-static bool FramesEqualFast(const void *a, const void *b, size_t n)
++static __attribute__((noinline)) bool FramesEqualFast(const void *a, const void *b, size_t n)
+ {
+     const size_t nwords = n / 4;
+     const Uint32 *wa = (const Uint32 *)a;
+-- 
+2.47.3
+

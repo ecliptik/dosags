@@ -1,0 +1,90 @@
+From 0a7ec940ef43b9ec72ca38af8884730da75d6622 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 22 Sep 2026 16:48:52 -0700
+Subject: [PATCH] dos: patch 0190 -- count SB ring writes that overrun unplayed
+ audio
+
+WHY: dosags UR1 (PLAN.md step 8, 2026-09-22) read SDL_DOSAudioRingFillMs() rising past the ring's
+own capacity (232 -> 4086 ms against 743). The fill is isr_ring_write - isr_ring_read with both
+cursors monotonic, so a value above ring_size means the writer lapped the reader. The source chain
+that allows it: DOSSOUNDBLASTER_PlayDevice copies a chunk into the ring with no room check; room is
+checked only in DOSSOUNDBLASTER_WaitDevice, which only the background thread's
+while (Iterate()) WaitDevice() loop runs; SDL_DOSAudioPump() (patch 0067) calls
+SDL_PlaybackAudioThreadIterate() directly and looks at room only afterwards, for its return value.
+A caller that pumps while the ring is full therefore overwrites the chunk the IRQ handler plays
+next. Nothing counted that event, so whether it happens on real hardware -- and whether a fix for
+it works -- could only be argued, not measured.
+
+WHAT: a monotonic dos_port_audio_ring_overwrite_count (SDL_dos_audio_synth.c, beside the other
+per-IRQ audio counters), incremented in PlayDevice once per write where
+(ring_write - isr_ring_read) + buffer_size > ring_size, before the copy. Counting only; behaviour is
+unchanged. The ISR may advance isr_ring_read between the check and the copy, so the count can
+over-state by a write that raced a drain, never under-state. The engine surfaces it in
+audio_vital_status. The fix itself is the next patch, so the "before" is measurable on the same
+counter.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ src/audio/dos/SDL_dosaudio_sb.c    | 9 +++++++++
+ src/core/dos/SDL_dos_audio_synth.c | 8 ++++++++
+ src/core/dos/SDL_dos_audio_synth.h | 4 ++++
+ 3 files changed, 21 insertions(+)
+
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index 0d9a8e0d1..ec3392b36 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -4229,6 +4229,15 @@ static bool DOSSOUNDBLASTER_PlayDevice(SDL_AudioDevice *device, const Uint8 *buf
+     const int pos = hidden->ring_write & mask;
+     const int first = (pos + buffer_size <= hidden->ring_size) ? buffer_size : (hidden->ring_size - pos);
+ 
++    /* DOS-PORT patch 0190: this write has no room check of its own (the
++       background thread's WaitDevice checks room before its Iterate, but
++       SDL_DOSAudioPump's Iterate does not), so count every write that lands
++       on bytes the ISR has not played yet. isr_ring_read only grows, so a
++       stale read here can only over-state the fill, never hide an overrun. */
++    if ((hidden->ring_write - isr_ring_read) + buffer_size > hidden->ring_size) {
++        dos_port_audio_ring_overwrite_count++;
++    }
++
+     SDL_memcpy(hidden->ring_buffer + pos, buffer, first);
+     if (first < buffer_size) {
+         SDL_memcpy(hidden->ring_buffer, buffer + first, buffer_size - first);
+diff --git a/src/core/dos/SDL_dos_audio_synth.c b/src/core/dos/SDL_dos_audio_synth.c
+index 47c5b668a..8e040e863 100644
+--- a/src/core/dos/SDL_dos_audio_synth.c
++++ b/src/core/dos/SDL_dos_audio_synth.c
+@@ -1940,6 +1940,14 @@ volatile uint32_t dos_port_mpu_drr_cap = 10000;
+    Per docs/internal/PIXTONE-MULTISOURCE-DESIGN.md sec.2.1 #2. */
+ volatile uint32_t dos_port_audio_silent_irq_count = 0;
+ 
++/* DOS-PORT patch 0190: cumulative ring-overwrite counter. Incremented by
++   DOSSOUNDBLASTER_PlayDevice once per write whose chunk does not fit in the
++   ring's free space (write - read + chunk > ring_size): that write lands on
++   bytes the IRQ handler has not played yet. Written only from PlayDevice
++   (audio thread or the engine's SDL_DOSAudioPump call, both under
++   device->lock), read by the engine. Monotonic; never reset. */
++volatile uint32_t dos_port_audio_ring_overwrite_count = 0;
++
+ /* DOSKUTSU patch (Phase 11 patch 0071): Lever 3 ISR-channel-pool
+    active counter. Dual-writer (engine ++ in SDL_DOSSfxSynthStart, ISR
+    -- at end-of-buffer). Atomicity required: both writers use
+diff --git a/src/core/dos/SDL_dos_audio_synth.h b/src/core/dos/SDL_dos_audio_synth.h
+index e4f19fb28..d47c13162 100644
+--- a/src/core/dos/SDL_dos_audio_synth.h
++++ b/src/core/dos/SDL_dos_audio_synth.h
+@@ -422,6 +422,10 @@ extern volatile uint32_t dos_port_audio_sfx_active_count;
+    probe contract. */
+ extern volatile uint32_t dos_port_audio_silent_irq_count;
+ 
++/* DOS-PORT patch 0190: PlayDevice writes that overran unplayed ring data.
++   See SDL_dos_audio_synth.c. */
++extern volatile uint32_t dos_port_audio_ring_overwrite_count;
++
+ /* DOSKUTSU patch (SDL/0096): cumulative WaveBlaster MIDI byte-dispatch
+    counter. Incremented once per SDL_DOSMpu401WriteByte (every MIDI byte
+    handed to the WB transport -- direct-port 0x330 or DSP-mediated). Single
+-- 
+2.47.3
+

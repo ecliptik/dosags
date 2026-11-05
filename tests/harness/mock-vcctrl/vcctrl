@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""mock vcctrl -- a stand-in for ../../../vcctrl/bin/vcctrl that touches NO
+hardware, so the reboot guard's failure branches can be driven end to end
+(run-probe-hw.sh / run-hw.sh / hw_guard.py all take VCCTRL_BIN) without a
+real fault and without sending the real target a single power or input
+command. It models just enough of the rig: a PS/2 link that can die, an LED
+trace whose Scroll Lock edges mark POST and RDYPULSE, a screen, and file
+jobs whose RETURN reboot can silently fail -- the 2026-09-16/17 fault.
+
+State lives in $MOCK_VC_STATE (required). Every command received is appended
+to $MOCK_VC_STATE/calls.log, which is what the tests assert on ("exactly one
+power cycle", "no verify-input").
+
+$MOCK_VC_SCENARIO, comma separated:
+  hang_return:send | hang_return:collect   that job's return reboot never
+        takes: one completed boot (NET) only, screen left on the FTP log,
+        link dead afterwards. Consumed once.
+  alive_no_reboot:collect   as above but the link stays alive (verify true)
+  dead_before_send          the link is already dead when the run starts
+  power_cycle_fails         a power cycle does not bring the link back
+  exited_dead_link          the game has exited (screen = a DOS prompt) and the PS/2 link is dead: every get-file is
+        refused until a power cycle brings the link back (the 2026-09-21 C1A2 fault)
+  game_running:N            the first N get-file jobs are REFUSED, as vcctrl
+        refuses them while an SDL3-DOS game owns the keyboard IRQ: no reboot,
+        no edges, nothing fetched. The link is fine. The guard must send
+        NOTHING in response -- verify-input would land in the game as input.
+"""
+import json, os, subprocess, sys, time
+
+STATE_DIR = os.environ.get("MOCK_VC_STATE")
+if not STATE_DIR:
+    sys.exit("mock vcctrl: MOCK_VC_STATE not set")
+os.makedirs(STATE_DIR, exist_ok=True)
+SP = os.path.join(STATE_DIR, "state.json")
+SCEN = [x.strip() for x in os.environ.get("MOCK_VC_SCENARIO", "").split(",") if x.strip()]
+
+
+def load():
+    if os.path.exists(SP):
+        return json.load(open(SP))
+    return {"seq": 100, "changes": [], "link": "dead_before_send" not in SCEN, "screen": "ready",
+            "scroll": 1, "job": None, "used": [], "pulled": []}
+
+
+def save(st):
+    json.dump(st, open(SP, "w"))
+
+
+def edge(st, to_scroll):
+    st["seq"] += 1
+    st["changes"].insert(0, {"seq": st["seq"], "t": time.time(), "epoch": 1,
+                             "from": {"capslock": 0, "numlock": 1, "scrolllock": st["scroll"]},
+                             "to": {"capslock": 0, "numlock": 1, "scrolllock": to_scroll}})
+    st["scroll"] = to_scroll
+
+
+def boot(st):
+    edge(st, 0)
+    edge(st, 1)
+    st["screen"] = "ready"
+
+
+def out(obj, code=0):
+    print(json.dumps(obj, indent=2))
+    sys.exit(code)
+
+
+def file_job(st, kind, names):
+    st["job"] = {"kind": kind, "running": False, "started_at": time.time(), "ok": False,
+                 "files": [{"name": n, "ok": False} for n in names]}
+    if not st["link"]:
+        return                      # first reboot never happens: job refused
+    if kind == "pull" and "exited_dead_link" in SCEN and "exited_dead_link" not in st["used"]:
+        st["used"].append("exited_dead_link")
+        st["link"] = False          # the game exited, the console shows a prompt, and the link is dead
+        st["screen"] = "dosprompt"
+    if kind == "pull" and not st["link"]:
+        return                      # refused: no reboot, nothing fetched
+    if kind == "pull":
+        n = next((int(x.split(":")[1]) for x in SCEN if x.startswith("game_running:")), 0)
+        st["refused"] = st.get("refused", 0) + 1
+        if st["refused"] <= n:
+            st["screen"] = "game"   # the game owns the screen: a picture, not a prompt
+            return                  # game still running: refused, target untouched
+    boot(st)                        # into NET
+    st["screen"] = "ftp"
+    st["job"]["ok"] = True
+    for f in st["job"]["files"]:
+        f["ok"] = True
+    if kind == "pull":
+        st["pulled"] = names
+    for flag, keeps_link in (("hang_return:" + ("send" if kind == "send" else "collect"), False),
+                             ("alive_no_reboot:" + ("send" if kind == "send" else "collect"), True)):
+        if flag in SCEN and flag not in st["used"]:
+            st["used"].append(flag)
+            st["link"] = keeps_link  # the return chord goes nowhere; screen stays on the FTP log
+            return
+    boot(st)                        # the return reboot took
+
+
+def main():
+    a = sys.argv[1:]
+    with open(os.path.join(STATE_DIR, "calls.log"), "a") as f:
+        f.write(" ".join(a) + "\n")
+    st = load()
+    cmd = a[0] if a else ""
+    if cmd == "power":
+        act = a[1] if len(a) > 1 else "state"
+        if act == "cycle" and "power_cycle_fails" not in SCEN:
+            st["link"] = True
+            boot(st)
+        save(st)
+        out({"ok": True, "power": {"on": True}})
+    if cmd == "led-changes":
+        n = int(a[1]) if len(a) > 1 else 20
+        out({"changes": st["changes"][:n], "bounded_at": 200})
+    if cmd == "verify-input":
+        save(st)
+        out({"ok": True, "verified": bool(st["link"]),
+             "note": "mock: link %s" % ("alive" if st["link"] else "dead")}, 0 if st["link"] else 1)
+    if cmd == "lock":
+        out({"ok": True, "owner": None, "held_s": None})
+    if cmd in ("stage-file", "type", "key", "file-cancel", "file-queue"):
+        out({"ok": True})
+    if cmd == "combo":
+        if st["link"]:
+            boot(st)
+        save(st)
+        out({"ok": True})
+    if cmd == "send-file":
+        file_job(st, "send", ["(staged)"])
+        save(st)
+        out({"ok": True, "started": True})
+    if cmd == "get-file":
+        names = [x for x in a[1:] if not x.startswith("--") and x != a[a.index("--from") + 1 if "--from" in a else -1]]
+        file_job(st, "pull", names)
+        save(st)
+        out({"ok": True, "started": True})
+    if cmd == "file-status":
+        out({"ok": True, "job": st["job"] or {"running": False, "ok": None, "files": []}})
+    if cmd == "pulled":
+        if len(a) >= 5 and a[1] == "save" and a[2] in st.get("pulled", []):
+            with open(a[4], "w") as f:
+                f.write("mock content of %s\n" % a[2])
+            out({"ok": True})
+        out({"ok": False}, 1)
+    if cmd == "shot":
+        dst = a[a.index("--out") + 1] if "--out" in a else os.path.join(STATE_DIR, "shot.jpg")
+        if st["screen"] == "dosprompt":
+            text = "MSCDEX Version 2.23\n\nC:\\\\DOSAGS>"
+        elif st["screen"] == "game":
+            text = "Now I should be able to get into the\nTreehouse.   ***  I guess I would better look for it"
+        else:
+            text = ("Drive D: = Driver OPTICAL unit 0\n\n[PGSB] ready.\nC:\\\\>" if st["screen"] == "ready"
+                    else "put C:\\\\DOSAGS\\\\PH03.BMP\nTransfer complete\n221 Goodbye\nServer closed control connection")
+        subprocess.run(["convert", "-size", "640x240", "xc:black", "-fill", "white", "-font", "DejaVu-Sans-Mono",
+                        "-pointsize", "18", "-annotate", "+8+40", text, dst], check=True)
+        out({"ok": True, "picture": True, "out": dst})
+    out({"ok": True, "note": "mock: unmodelled command"})
+
+
+main()

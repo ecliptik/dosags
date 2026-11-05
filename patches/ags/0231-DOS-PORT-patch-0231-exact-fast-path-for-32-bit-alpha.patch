@@ -1,0 +1,224 @@
+From 1485c59414f360fdb2a8541e83484bcb4fbd7594 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 18:15:51 -0700
+Subject: [PATCH] DOS-PORT: patch 0231 -- exact fast path for 32-bit alpha
+ blends whose alpha is 0 or 255
+
+Why not just what: at colour depth >= 24 AGS gives every transparent-
+background GUI, and its control textures, an alpha channel
+(GUIMain::HasAlphaChannel). The software renderer then composites it on
+every render through set_alpha_blender() + draw_trans_sprite: one call
+through a function pointer, with multiplies and divides, for EVERY
+source pixel. At 16 bpp the same GUI is a masked blit. On AGS Quest
+forced to 32 bpp that is 11.3k px per render (lab work vector, S2Q1
+fixture). A lab count over the whole demo found no alpha other than 0
+and 255 in any blended texture, and 82% of the pixels are alpha 0. Gate
+S32 needs about 4-6 ms per render cut on the 486, and render_backbuffer
+is 7.9 ms of it.
+
+For those two values _blender_alpha32 (colblend.c) reduces to
+dst & 0x00FFFFFF (alpha 0) and src & 0x00FFFFFF (alpha 255), bit for
+bit: checked over 5e7 random pixel pairs plus edge values against a
+verbatim copy of the function. So the new loop:
+- skips the mask colour, as Allegro's loop does;
+- writes those two results directly (alpha 0 only when dst's top byte
+  is set, which leaves memory identical);
+- calls the installed blender for any other alpha.
+Its output equals draw_trans_sprite's for every input. There is no
+per-texture flag and nothing that can go stale when a bitmap is
+redrawn. The clipping and the use of dst->line mirror
+_linear_draw_trans_sprite32 (cspr.h; this Allegro fork has memory
+bitmaps only).
+
+It is taken only when src and dst are 32-bit and the blender installed
+is exactly _blender_alpha32. A global-alpha blend, or any other blender,
+goes to Allegro unchanged. DOSAGS_ALPHAFAST=0 turns it off, so one
+binary serves both arms of an A/B. RUNMANI.LOG gets
+`DOS-PORT alphafast calls= fallback= px= mid_px=`.
+
+Validated in the lab (dosags LAB-S32.md 7, gate G1: forced-32 AutoPilot,
+A B A B at fixed cycles, PH*.BMP byte-identical; and a 16-bit pass). The
+486 price is a hardware pair.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Common/gfx/allegrobitmap.cpp | 114 +++++++++++++++++++++++++++++++++++
+ Common/gfx/allegrobitmap.h   |   5 ++
+ Engine/main/quit.cpp         |   5 ++
+ 3 files changed, 124 insertions(+)
+
+diff --git a/Common/gfx/allegrobitmap.cpp b/Common/gfx/allegrobitmap.cpp
+index 053534b06..8ffece22c 100644
+--- a/Common/gfx/allegrobitmap.cpp
++++ b/Common/gfx/allegrobitmap.cpp
+@@ -15,6 +15,7 @@
+ #include <memory>
+ #include <stdexcept>
+ #include <string.h> // memcpy
++#include <stdlib.h> // getenv -- DOS-PORT patch 0231
+ #include <aastr.h>
+ #include "gfx/allegrobitmap.h"
+ #include "util/filestream.h"
+@@ -399,6 +400,117 @@ long dos_port_litblend_calls = 0;
+ // That matters because cspr.h:545 dereferences color_map before the pixel
+ // loop -- there is no graceful degradation available at the Allegro end.
+ void (*dos_port_ensure_color_map)(void) = nullptr;
++
++// DOS-PORT patch 0231: exact fast path for a 32-bit alpha blend whose
++// source alpha is 0 or 255.
++//
++// At colour depth >= 24 AGS gives every transparent-background GUI (and
++// its control textures) an alpha channel (GUIMain::HasAlphaChannel), and
++// the software renderer composites it every render through
++// set_alpha_blender() + draw_trans_sprite: a blender call through a
++// function pointer, with multiplies and divides, for EVERY source pixel.
++// On AGS Quest forced to 32 bpp that is 11.3k px per render, and a lab
++// count over the whole demo found no alpha other than 0 and 255 in any
++// blended texture (82% of the pixels are alpha 0).
++//
++// For those two values _blender_alpha32 (colblend.c) reduces to
++// dst & 0x00FFFFFF (alpha 0) and src & 0x00FFFFFF (alpha 255), bit for
++// bit (checked over 5e7 random pixel pairs plus edge values against a
++// verbatim copy of the function). Any other alpha still calls the
++// installed blender, and the mask colour is skipped as the Allegro loop
++// skips it, so the result equals draw_trans_sprite's for every input: no
++// per-texture flag, nothing to go stale when a bitmap is redrawn. The
++// loop, the clipping and the use of dst->line mirror Allegro's
++// _linear_draw_trans_sprite32 (cspr.h, 32-bit source branch; this Allegro
++// fork has memory bitmaps only). Taken only when both bitmaps are 32-bit
++// and the blender installed is exactly _blender_alpha32; anything else
++// goes to Allegro unchanged.
++// DOSAGS_ALPHAFAST=0 turns it off (same binary for an A/B).
++extern "C" uint32_t _blender_alpha32(uint32_t x, uint32_t y, uint32_t n);
++extern "C" BLENDER_FUNC _blender_func32;
++extern "C" int _blender_alpha;
++long dos_port_alphafast_calls = 0;
++long dos_port_alphafast_fallback = 0;
++long long dos_port_alphafast_px = 0;
++long long dos_port_alphafast_mid = 0;
++
++static int dos_port_alphafast_enabled(void)
++{
++	static int enabled = -1;
++	if (enabled < 0)
++	{
++		const char *e = getenv("DOSAGS_ALPHAFAST");
++		enabled = (e != nullptr && e[0] == '0') ? 0 : 1;
++	}
++	return enabled;
++}
++
++static bool dos_port_trans_blend_fast32(BITMAP *dst, BITMAP *src, int dx, int dy)
++{
++	if (!dos_port_alphafast_enabled() ||
++		bitmap_color_depth(dst) != 32 || bitmap_color_depth(src) != 32 ||
++		_blender_func32 != _blender_alpha32)
++	{
++		dos_port_alphafast_fallback++;
++		return false;
++	}
++	int w, h, sxbeg, sybeg, dxbeg, dybeg;
++	if (dst->clip)
++	{
++		int tmp = dst->cl - dx;
++		sxbeg = ((tmp < 0) ? 0 : tmp);
++		dxbeg = sxbeg + dx;
++		tmp = dst->cr - dx;
++		w = ((tmp > src->w) ? src->w : tmp) - sxbeg;
++		if (w <= 0)
++			return true;
++		tmp = dst->ct - dy;
++		sybeg = ((tmp < 0) ? 0 : tmp);
++		dybeg = sybeg + dy;
++		tmp = dst->cb - dy;
++		h = ((tmp > src->h) ? src->h : tmp) - sybeg;
++		if (h <= 0)
++			return true;
++	}
++	else
++	{
++		w = src->w; h = src->h;
++		sxbeg = 0; sybeg = 0;
++		dxbeg = dx; dybeg = dy;
++	}
++	const BLENDER_FUNC blender = _blender_func32;
++	const uint32_t n = (uint32_t)_blender_alpha;
++	long mid = 0;
++	for (int y = 0; y < h; y++)
++	{
++		const uint32_t *s = (const uint32_t *)src->line[sybeg + y] + sxbeg;
++		uint32_t *d = (uint32_t *)dst->line[dybeg + y] + dxbeg;
++		for (int x = 0; x < w; x++)
++		{
++			const uint32_t c = s[x];
++			if (c == MASK_COLOR_32)
++				continue;
++			const uint32_t a = c >> 24;
++			if (a == 0)
++			{
++				const uint32_t o = d[x];
++				if (o & 0xFF000000u)       // blender result: o & 0x00FFFFFF
++					d[x] = o & 0x00FFFFFFu;
++			}
++			else if (a == 0xFF)
++				d[x] = c & 0x00FFFFFFu;    // blender result: c & 0x00FFFFFF
++			else
++			{
++				d[x] = blender(c, d[x], n);
++				mid++;
++			}
++		}
++	}
++	dos_port_alphafast_calls++;
++	dos_port_alphafast_px += (long long)w * h;
++	dos_port_alphafast_mid += mid;
++	return true;
++}
+ #endif
+ 
+ void Bitmap::TransBlendBlt(const Bitmap *src, int dst_x, int dst_y)
+@@ -413,6 +525,8 @@ void Bitmap::TransBlendBlt(const Bitmap *src, int dst_x, int dst_y)
+ 	// hooking only the lit path would leave it as the crash.
+ 	if (dos_port_ensure_color_map != nullptr)
+ 		dos_port_ensure_color_map();
++	if (dos_port_trans_blend_fast32(_alBitmap, al_src_bmp, dst_x, dst_y))
++		return;                                 // patch 0231
+ #endif
+ 	draw_trans_sprite(_alBitmap, al_src_bmp, dst_x, dst_y);
+ }
+diff --git a/Common/gfx/allegrobitmap.h b/Common/gfx/allegrobitmap.h
+index 2689a2044..c2922a580 100644
+--- a/Common/gfx/allegrobitmap.h
++++ b/Common/gfx/allegrobitmap.h
+@@ -42,6 +42,11 @@ extern long dos_port_litblend_calls;
+ // points can build the light table on demand without Common depending on
+ // Engine. Null is safe -- see allegrobitmap.cpp.
+ extern void (*dos_port_ensure_color_map)(void);
++// patch 0231: the exact 32-bit alpha-blend fast path (allegrobitmap.cpp).
++extern long dos_port_alphafast_calls;
++extern long dos_port_alphafast_fallback;
++extern long long dos_port_alphafast_px;
++extern long long dos_port_alphafast_mid;
+ #endif
+ 
+ class Bitmap
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index f0024c6b9..75673dd41 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -858,6 +858,11 @@ void quit(const char *quitmsg)
+                 fprintf(run_manifest_log,
+                     "DOS-PORT colormap_consumers transblend=%ld litblend=%ld\n",
+                     dos_port_transblend_calls, dos_port_litblend_calls);
++                // patch 0231: how many 32-bit alpha blends took the exact fast path
++                fprintf(run_manifest_log,
++                    "DOS-PORT alphafast calls=%ld fallback=%ld px=%lld mid_px=%lld\n",
++                    AGS::Common::dos_port_alphafast_calls, AGS::Common::dos_port_alphafast_fallback,
++                    AGS::Common::dos_port_alphafast_px, AGS::Common::dos_port_alphafast_mid);
+             }
+ #endif
+             fprintf(run_manifest_log, "DOS-PORT video_banked_mode=%d bank_switches=%lu\n",
+-- 
+2.47.3
+

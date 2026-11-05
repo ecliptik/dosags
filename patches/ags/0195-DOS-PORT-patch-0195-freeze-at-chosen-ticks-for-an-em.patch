@@ -1,0 +1,178 @@
+From d43e6b7b05574f5b8653186105667acb9b1ffba6 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 21 Sep 2026 15:56:53 -0700
+Subject: [PATCH] DOS-PORT: patch 0195 -- freeze at chosen ticks for an
+ emulated-screen capture; DOSAGS_BREAK_0193 as the gate's control
+
+Instrument only; both knobs are off unless their variable is set, and neither is for a timed cell. Both are in the
+manifest env allowlist, and tests/harness/run-hw.sh refuses to start a hardware cell that sets either unless its tag begins
+DIAG.
+
+Why. The present verifier (ags 0192) answers "do the pushed rects cover what the engine drew". It cannot answer "did the
+screen come out the same as a full push", and the alias-rung screen was found incomplete while it read zero: with the alias
+on, the engine's frame IS the window surface, so a region never drawn into it reads equal to a shadow that was never
+written. A screen-level comparison needs two runs captured at the SAME tick, which a wall-clock capture cannot give
+because content changes every tick.
+
+DOSAGS_FREEZE_TICKS=a,b,c: the first rendered tick at or after each value writes FRZnn.TXT (idx, wanted tick, actual tick)
+into the current directory and spins for DOSAGS_FREEZE_MS (default 1200), so the screen is static while a host watcher
+photographs it. On DOSBox-X the current directory is a host directory. The fixed-timestep loop then catches up at most
+MAX_CATCHUP ticks and resyncs, the same in both runs being compared; a "DOS-PORT freeze" line records the actual tick so
+a comparison whose ticks differ is void rather than silently wrong.
+
+DOSAGS_BREAK_0193=1 turns off both parts of ags 0193 (carried marks and the full latch at the two whole-surface
+invalidators), reproducing the 0192-era under-push, so the screen-equality gate can be shown to FAIL on a known-bad
+build instead of only ever being seen to pass.
+
+Removal condition. A switch that re-breaks a shipped fix should not exist in a shipped binary. Both knobs are to be REMOVED
+(not merely defaulted off) by the release-packaging patch series, before any release artefact is cut; PLAN.md's
+instrumentation inventory tracks it as open. Until then they are diagnostics: allowlisted so a run that used one hashes
+differently, and refused on hardware outside a DIAG-tagged cell.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_017rABavUPepUfapaKZYKPvD
+---
+ Engine/ac/draw_software.cpp | 19 +++++++++++++--
+ Engine/main/game_run.cpp    | 47 ++++++++++++++++++++++++++++++++++++-
+ Engine/main/quit.cpp        |  3 +++
+ 3 files changed, 66 insertions(+), 3 deletions(-)
+
+diff --git a/Engine/ac/draw_software.cpp b/Engine/ac/draw_software.cpp
+index fdeb4886d..83a337106 100644
+--- a/Engine/ac/draw_software.cpp
++++ b/Engine/ac/draw_software.cpp
+@@ -244,10 +244,14 @@ void set_invalidrects_cameraoffs(int view_index, int x, int y)
+     }
+ }
+ 
++#ifdef __DJGPP__
++static bool dos_port_break_0193();   // patch 0195: defined below
++#endif
++
+ void invalidate_all_rects()
+ {
+ #ifdef __DJGPP__
+-    dos_port_dirty_set_full("invalidate_all_rects");   // patch 0193: the accumulator never heard of this
++    if (!dos_port_break_0193()) dos_port_dirty_set_full("invalidate_all_rects");   // patch 0193: the accumulator never heard of this
+ #endif
+     for (auto &rects : RoomCamRects)
+     {
+@@ -260,7 +264,7 @@ void invalidate_all_rects()
+ void invalidate_all_camera_rects(int view_index)
+ {
+ #ifdef __DJGPP__
+-    dos_port_dirty_set_full("invalidate_all_camera_rects");   // patch 0193
++    if (!dos_port_break_0193()) dos_port_dirty_set_full("invalidate_all_camera_rects");   // patch 0193
+ #endif
+     if (view_index < 0)
+         return;
+@@ -600,6 +604,16 @@ void dos_port_dirty_set_full(const char *why)
+     }
+ }
+ 
++// DOS-PORT patch 0195: DOSAGS_BREAK_0193=1 turns off BOTH parts of ags 0193 (the carried marks and the full latch at the two
++// whole-surface invalidators), reproducing the 0192-era under-push. A positive control for the screen-equality gate, which
++// must FAIL with it set; a diagnostic, never for a timed cell.
++static bool dos_port_break_0193()
++{
++    static int b = -1;
++    if (b < 0) { const char *e = getenv("DOSAGS_BREAK_0193"); b = (e && e[0] == '1') ? 1 : 0; }
++    return b != 0;
++}
++
+ void dos_port_dirty_note_restore()
+ {
+     dos_port_dirty.restore_seen = true;   // patch 0193
+@@ -611,6 +625,7 @@ void dos_port_dirty_note_restore()
+ void dos_port_dirty_merge_carry()
+ {
+     DosPortDirtyState &d = dos_port_dirty;
++    if (dos_port_break_0193()) { d.carry_nbox = 0; d.carry_full = false; return; }   // patch 0195 control
+     const bool rs = d.restore_seen;
+     d.restore_seen = false;
+     if (d.carry_full)
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index cbec047dc..3d6d01469 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -2144,6 +2144,51 @@ static bool dos_fixed_timestep_active()
+ // half off a latch set by the logic half; AGS's UpdateGameOnce re-reads
+ // real state itself on every call, paused or not, so there is no
+ // stale-latch hazard to guard.
++// DOS-PORT patch 0195: stall at chosen ticks so an EMULATED-SCREEN capture can be taken at a known tick.
++//
++// The present verifier (ags 0192) answers "do the pushed rects cover what the engine drew"; it cannot answer "did
++// the screen come out the same as a full push", because with the alias on the engine's frame IS the window surface.
++// A screen-level comparison needs both runs captured at the SAME tick, which a wall-clock capture cannot give
++// (content changes every tick). So: DOSAGS_FREEZE_TICKS=a,b,c makes the FIRST rendered tick at or after each value
++// write FRZnn.TXT (idx, wanted tick, actual tick) into the current directory -- on DOSBox-X that is a host
++// directory the harness watches -- and spin for DOSAGS_FREEZE_MS (default 1200), so the screen is static while it
++// is photographed. The fixed-timestep loop then catches up at most MAX_CATCHUP ticks and resyncs, identically in
++// both runs. A DIAGNOSTIC: off unless the variable is set, never for a timed cell.
++static void dos_port_freeze_check()
++{
++    static bool init = false;
++    static long ticks[64];
++    static int n = 0, next = 0;
++    static long freeze_ms = 1200;
++    if (!init)
++    {
++        init = true;
++        const char *e = getenv("DOSAGS_FREEZE_TICKS");
++        while (e && *e && n < 64)
++        {
++            char *end = nullptr;
++            const long v = strtol(e, &end, 10);
++            if (end == e) break;
++            ticks[n++] = v;
++            if (*end != ',') break;
++            e = end + 1;
++        }
++        const char *m = getenv("DOSAGS_FREEZE_MS");
++        if (m && atol(m) > 0) freeze_ms = atol(m);
++    }
++    if (next >= n) return;
++    const long lc = (long)get_loop_counter();
++    if (lc < ticks[next]) return;
++    char name[16];
++    snprintf(name, sizeof(name), "FRZ%02d.TXT", next);
++    FILE *f = fopen(name, "wb");
++    if (f) { fprintf(f, "idx=%d want=%ld tick=%ld\n", next, ticks[next], lc); fclose(f); }
++    Debug::Printf("DOS-PORT freeze idx=%d want=%ld tick=%ld ms=%ld", next, ticks[next], lc, freeze_ms);
++    const uclock_t t0 = uclock();
++    while ((long long)(uclock() - t0) * 1000LL / UCLOCKS_PER_SEC < freeze_ms) { }
++    ++next;
++}
++
+ static void dos_run_tick_fixed()
+ {
+     static Clock::time_point epoch_ns;
+@@ -2359,7 +2404,7 @@ static void dos_run_tick_fixed()
+ 
+     // The one tick that actually renders + paces via WaitForNextFrame().
+     UpdateGameOnce(true);
+-
++    dos_port_freeze_check();   // patch 0195
+ }
+ #endif // __DJGPP__
+ 
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 46e400cae..17faf89b7 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -391,9 +391,12 @@ void quit(const char *quitmsg)
+             // timed span, but a cell that ran with it is still a cell
+             // that ran differently -- hashed like the rest. Unset
+             // variables contribute nothing, so older cells' hashes stand.
++            "DOSAGS_BREAK_0193",      // patch 0195: control for the screen-equality gate; a diagnostic
+             "DOSAGS_CLOCK_CROSSCHECK",
+             "DOSAGS_FIXED_TIMESTEP",
+             "DOSAGS_FORCE_COLOR_DEPTH",
++            "DOSAGS_FREEZE_MS",       // patch 0195: stalls at chosen ticks for an emulated-screen capture
++            "DOSAGS_FREEZE_TICKS",
+             "DOSAGS_MAX_SCALE",       // patch 0101: caps the render-frame scale (bake-off candidate c)
+             "DOSAGS_PRESENT_NO_SKIP", // patch 0099: forces real presents -- changes every fps figure
+             "DOSAGS_PRESENT_VERIFY",  // patch 0192: reads the surface twice per present -- a diagnostic, never a timed cell
+-- 
+2.47.3
+

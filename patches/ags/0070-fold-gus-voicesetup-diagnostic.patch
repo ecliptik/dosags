@@ -1,0 +1,271 @@
+From a61a3aaa9d5aa05583e42588689e0ac53af85eb9 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 15 Sep 2026 06:58:17 -0700
+Subject: [PATCH] DOS-PORT: patch 0070 -- fold SDL/0146's GUS voice-setup cost
+ diagnostic into AUDIOPRB.LOG (S7-GUS)
+
+Same rollup-of-rollups pattern as patch 0069's own gusscan fold-in:
+snapshots SDL_DOSGusSetVoiceFreqDiagSnapshot/SetVoiceVolDiagSnapshot/
+SetVoicePanDiagSnapshot/StartVoiceDiagSnapshot/StopVoiceDiagSnapshot
+once per audio_core_entry_poll() poll() call, discard-snapshotting
+first (same attribution-correctness reasoning as the OPL3 regwrite and
+GUS-scan discards) so a call triggered outside this function's own slot
+loop is never misattributed. Adds five new fields to the existing
+DOS-PORT audioprb log line: voicefreq, voicevol, voicepan, voicestart,
+voicestop (calls/min_us/mean_us/max_us each) -- one per SDL patch
+SDL/0146 accessor, kept independent (not combined into one aggregate)
+so the real-hardware result can attribute the ~6.89s slots_us outlier
+to a specific function rather than just their combined total.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01VVzc2V3qXnVbYZC693CTWt
+---
+ Engine/media/audio/audio_core.cpp | 170 +++++++++++++++++++++++++++++-
+ 1 file changed, 168 insertions(+), 2 deletions(-)
+
+diff --git a/Engine/media/audio/audio_core.cpp b/Engine/media/audio/audio_core.cpp
+index 9ec711cef..4a26296a2 100644
+--- a/Engine/media/audio/audio_core.cpp
++++ b/Engine/media/audio/audio_core.cpp
+@@ -221,6 +221,26 @@ extern "C" void SDL_DOSOpl3RegWriteDiagSnapshot(
+ extern "C" void SDL_DOSGusGetStateDiagSnapshot(
+     uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us);
+ 
++// DOS-PORT (S7-GUS, continuation): SDL_DOSGusGetState() came back
++// exonerated on real hardware (tag GUSD1) -- the 6.9s slots_us outlier is
++// ONE single call, not call-volume, and nearly identical across two
++// independent runs (175us apart out of 6.89s). Same idiom, for the five
++// SDL_DOSGus* voice-setup/-teardown functions gus_sink.c's sink_note_on/
++// sink_note_off/reap_finished_voices/sink_on_tick call (SDL patches/SDL/
++// 0146, vendor/SDL/src/audio/dos/SDL_dosaudio_gus.c) -- five independent
++// accessors so the log can attribute the outlier to a specific one rather
++// than their combined total. See PLAN.md's "S7-GUS" work-order item.
++extern "C" void SDL_DOSGusSetVoiceFreqDiagSnapshot(
++    uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us);
++extern "C" void SDL_DOSGusSetVoiceVolDiagSnapshot(
++    uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us);
++extern "C" void SDL_DOSGusSetVoicePanDiagSnapshot(
++    uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us);
++extern "C" void SDL_DOSGusStartVoiceDiagSnapshot(
++    uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us);
++extern "C" void SDL_DOSGusStopVoiceDiagSnapshot(
++    uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us);
++
+ // TEMPORARY DIAGNOSTIC (AUDIOPRB.LOG): S7's real-hardware ABBA
+ // (2026-09-13, tests/games/trilbysnotes/results/S7-abba-2026-09-13.md)
+ // found dos_run_tick_fixed()'s catch-up loop (patch 0047, game_run.cpp)
+@@ -306,6 +326,18 @@ struct AudioPollWindow
+     uint64_t regwrite_min_us, regwrite_mean_us, regwrite_max_us;
+     uint32_t gusscan_calls;
+     uint64_t gusscan_min_us, gusscan_mean_us, gusscan_max_us;
++    // S7-GUS continuation: same rollup-of-rollups shape, one per SDL_DOSGus*
++    // voice-setup/-teardown function (SDL patches/SDL/0146).
++    uint32_t voicefreq_calls;
++    uint64_t voicefreq_min_us, voicefreq_mean_us, voicefreq_max_us;
++    uint32_t voicevol_calls;
++    uint64_t voicevol_min_us, voicevol_mean_us, voicevol_max_us;
++    uint32_t voicepan_calls;
++    uint64_t voicepan_min_us, voicepan_mean_us, voicepan_max_us;
++    uint32_t voicestart_calls;
++    uint64_t voicestart_min_us, voicestart_mean_us, voicestart_max_us;
++    uint32_t voicestop_calls;
++    uint64_t voicestop_min_us, voicestop_mean_us, voicestop_max_us;
+ };
+ 
+ struct AudioPollDiag
+@@ -326,6 +358,18 @@ struct AudioPollDiag
+     // (S7-GUS).
+     uint32_t gusscan_calls_sum = 0;
+     uint64_t gusscan_us_sum = 0, gusscan_min_us = UINT64_MAX, gusscan_max_us = 0;
++    // S7-GUS continuation: same rollup-of-rollups shape as gusscan_*, one per
++    // SDL_DOSGus* voice-setup/-teardown function (SDL patches/SDL/0146).
++    uint32_t voicefreq_calls_sum = 0;
++    uint64_t voicefreq_us_sum = 0, voicefreq_min_us = UINT64_MAX, voicefreq_max_us = 0;
++    uint32_t voicevol_calls_sum = 0;
++    uint64_t voicevol_us_sum = 0, voicevol_min_us = UINT64_MAX, voicevol_max_us = 0;
++    uint32_t voicepan_calls_sum = 0;
++    uint64_t voicepan_us_sum = 0, voicepan_min_us = UINT64_MAX, voicepan_max_us = 0;
++    uint32_t voicestart_calls_sum = 0;
++    uint64_t voicestart_us_sum = 0, voicestart_min_us = UINT64_MAX, voicestart_max_us = 0;
++    uint32_t voicestop_calls_sum = 0;
++    uint64_t voicestop_us_sum = 0, voicestop_min_us = UINT64_MAX, voicestop_max_us = 0;
+ 
+     AudioPollWindow windows[AUDIO_POLL_DIAG_MAX_WINDOWS];
+     uint32_t windows_recorded = 0;
+@@ -365,6 +409,26 @@ void dos_diag_close_window()
+         w.gusscan_min_us = (d.gusscan_min_us == UINT64_MAX ? 0 : d.gusscan_min_us);
+         w.gusscan_mean_us = (d.gusscan_calls_sum > 0) ? (d.gusscan_us_sum / d.gusscan_calls_sum) : 0;
+         w.gusscan_max_us = d.gusscan_max_us;
++        w.voicefreq_calls = d.voicefreq_calls_sum;
++        w.voicefreq_min_us = (d.voicefreq_min_us == UINT64_MAX ? 0 : d.voicefreq_min_us);
++        w.voicefreq_mean_us = (d.voicefreq_calls_sum > 0) ? (d.voicefreq_us_sum / d.voicefreq_calls_sum) : 0;
++        w.voicefreq_max_us = d.voicefreq_max_us;
++        w.voicevol_calls = d.voicevol_calls_sum;
++        w.voicevol_min_us = (d.voicevol_min_us == UINT64_MAX ? 0 : d.voicevol_min_us);
++        w.voicevol_mean_us = (d.voicevol_calls_sum > 0) ? (d.voicevol_us_sum / d.voicevol_calls_sum) : 0;
++        w.voicevol_max_us = d.voicevol_max_us;
++        w.voicepan_calls = d.voicepan_calls_sum;
++        w.voicepan_min_us = (d.voicepan_min_us == UINT64_MAX ? 0 : d.voicepan_min_us);
++        w.voicepan_mean_us = (d.voicepan_calls_sum > 0) ? (d.voicepan_us_sum / d.voicepan_calls_sum) : 0;
++        w.voicepan_max_us = d.voicepan_max_us;
++        w.voicestart_calls = d.voicestart_calls_sum;
++        w.voicestart_min_us = (d.voicestart_min_us == UINT64_MAX ? 0 : d.voicestart_min_us);
++        w.voicestart_mean_us = (d.voicestart_calls_sum > 0) ? (d.voicestart_us_sum / d.voicestart_calls_sum) : 0;
++        w.voicestart_max_us = d.voicestart_max_us;
++        w.voicestop_calls = d.voicestop_calls_sum;
++        w.voicestop_min_us = (d.voicestop_min_us == UINT64_MAX ? 0 : d.voicestop_min_us);
++        w.voicestop_mean_us = (d.voicestop_calls_sum > 0) ? (d.voicestop_us_sum / d.voicestop_calls_sum) : 0;
++        w.voicestop_max_us = d.voicestop_max_us;
+     }
+     else
+     {
+@@ -377,6 +441,16 @@ void dos_diag_close_window()
+     d.regwrite_us_sum = 0; d.regwrite_min_us = UINT64_MAX; d.regwrite_max_us = 0;
+     d.gusscan_calls_sum = 0;
+     d.gusscan_us_sum = 0; d.gusscan_min_us = UINT64_MAX; d.gusscan_max_us = 0;
++    d.voicefreq_calls_sum = 0;
++    d.voicefreq_us_sum = 0; d.voicefreq_min_us = UINT64_MAX; d.voicefreq_max_us = 0;
++    d.voicevol_calls_sum = 0;
++    d.voicevol_us_sum = 0; d.voicevol_min_us = UINT64_MAX; d.voicevol_max_us = 0;
++    d.voicepan_calls_sum = 0;
++    d.voicepan_us_sum = 0; d.voicepan_min_us = UINT64_MAX; d.voicepan_max_us = 0;
++    d.voicestart_calls_sum = 0;
++    d.voicestart_us_sum = 0; d.voicestart_min_us = UINT64_MAX; d.voicestart_max_us = 0;
++    d.voicestop_calls_sum = 0;
++    d.voicestop_us_sum = 0; d.voicestop_min_us = UINT64_MAX; d.voicestop_max_us = 0;
+ }
+ 
+ void dos_diag_record_audio_poll(uint64_t slots_us, uint64_t pump_us)
+@@ -424,6 +498,63 @@ void dos_diag_record_gusscan(uint32_t calls, uint32_t min_us, uint32_t mean_us,
+     if ((uint64_t)max_us > d.gusscan_max_us) d.gusscan_max_us = max_us;
+ }
+ 
++// S7-GUS continuation: same rollup-of-rollups shape as dos_diag_record_
++// gusscan, one per SDL_DOSGus* voice-setup/-teardown function.
++void dos_diag_record_voicefreq(uint32_t calls, uint32_t min_us, uint32_t mean_us, uint32_t max_us)
++{
++    if (calls == 0)
++        return;
++    AudioPollDiag &d = g_audio_poll_diag;
++    d.voicefreq_calls_sum += calls;
++    d.voicefreq_us_sum += (uint64_t)mean_us * calls;
++    if ((uint64_t)min_us < d.voicefreq_min_us) d.voicefreq_min_us = min_us;
++    if ((uint64_t)max_us > d.voicefreq_max_us) d.voicefreq_max_us = max_us;
++}
++
++void dos_diag_record_voicevol(uint32_t calls, uint32_t min_us, uint32_t mean_us, uint32_t max_us)
++{
++    if (calls == 0)
++        return;
++    AudioPollDiag &d = g_audio_poll_diag;
++    d.voicevol_calls_sum += calls;
++    d.voicevol_us_sum += (uint64_t)mean_us * calls;
++    if ((uint64_t)min_us < d.voicevol_min_us) d.voicevol_min_us = min_us;
++    if ((uint64_t)max_us > d.voicevol_max_us) d.voicevol_max_us = max_us;
++}
++
++void dos_diag_record_voicepan(uint32_t calls, uint32_t min_us, uint32_t mean_us, uint32_t max_us)
++{
++    if (calls == 0)
++        return;
++    AudioPollDiag &d = g_audio_poll_diag;
++    d.voicepan_calls_sum += calls;
++    d.voicepan_us_sum += (uint64_t)mean_us * calls;
++    if ((uint64_t)min_us < d.voicepan_min_us) d.voicepan_min_us = min_us;
++    if ((uint64_t)max_us > d.voicepan_max_us) d.voicepan_max_us = max_us;
++}
++
++void dos_diag_record_voicestart(uint32_t calls, uint32_t min_us, uint32_t mean_us, uint32_t max_us)
++{
++    if (calls == 0)
++        return;
++    AudioPollDiag &d = g_audio_poll_diag;
++    d.voicestart_calls_sum += calls;
++    d.voicestart_us_sum += (uint64_t)mean_us * calls;
++    if ((uint64_t)min_us < d.voicestart_min_us) d.voicestart_min_us = min_us;
++    if ((uint64_t)max_us > d.voicestart_max_us) d.voicestart_max_us = max_us;
++}
++
++void dos_diag_record_voicestop(uint32_t calls, uint32_t min_us, uint32_t mean_us, uint32_t max_us)
++{
++    if (calls == 0)
++        return;
++    AudioPollDiag &d = g_audio_poll_diag;
++    d.voicestop_calls_sum += calls;
++    d.voicestop_us_sum += (uint64_t)mean_us * calls;
++    if ((uint64_t)min_us < d.voicestop_min_us) d.voicestop_min_us = min_us;
++    if ((uint64_t)max_us > d.voicestop_max_us) d.voicestop_max_us = max_us;
++}
++
+ } // anonymous namespace
+ 
+ // Declared in audio_core.h (DJGPP-gated); called from quit.cpp right
+@@ -449,14 +580,29 @@ void dos_diag_dump_audio_poll(FILE *fp)
+             "slots_us(min=%lu mean=%lu max=%lu) "
+             "pump_us(min=%lu mean=%lu max=%lu) "
+             "regwrite(calls=%lu min_us=%lu mean_us=%lu max_us=%lu) "
+-            "gusscan(calls=%lu min_us=%lu mean_us=%lu max_us=%lu)\n",
++            "gusscan(calls=%lu min_us=%lu mean_us=%lu max_us=%lu) "
++            "voicefreq(calls=%lu min_us=%lu mean_us=%lu max_us=%lu) "
++            "voicevol(calls=%lu min_us=%lu mean_us=%lu max_us=%lu) "
++            "voicepan(calls=%lu min_us=%lu mean_us=%lu max_us=%lu) "
++            "voicestart(calls=%lu min_us=%lu mean_us=%lu max_us=%lu) "
++            "voicestop(calls=%lu min_us=%lu mean_us=%lu max_us=%lu)\n",
+             (unsigned long)w.total_calls_at_close, (unsigned long)w.window_calls,
+             (unsigned long)w.slots_min_us, (unsigned long)w.slots_mean_us, (unsigned long)w.slots_max_us,
+             (unsigned long)w.pump_min_us, (unsigned long)w.pump_mean_us, (unsigned long)w.pump_max_us,
+             (unsigned long)w.regwrite_calls, (unsigned long)w.regwrite_min_us,
+             (unsigned long)w.regwrite_mean_us, (unsigned long)w.regwrite_max_us,
+             (unsigned long)w.gusscan_calls, (unsigned long)w.gusscan_min_us,
+-            (unsigned long)w.gusscan_mean_us, (unsigned long)w.gusscan_max_us);
++            (unsigned long)w.gusscan_mean_us, (unsigned long)w.gusscan_max_us,
++            (unsigned long)w.voicefreq_calls, (unsigned long)w.voicefreq_min_us,
++            (unsigned long)w.voicefreq_mean_us, (unsigned long)w.voicefreq_max_us,
++            (unsigned long)w.voicevol_calls, (unsigned long)w.voicevol_min_us,
++            (unsigned long)w.voicevol_mean_us, (unsigned long)w.voicevol_max_us,
++            (unsigned long)w.voicepan_calls, (unsigned long)w.voicepan_min_us,
++            (unsigned long)w.voicepan_mean_us, (unsigned long)w.voicepan_max_us,
++            (unsigned long)w.voicestart_calls, (unsigned long)w.voicestart_min_us,
++            (unsigned long)w.voicestart_mean_us, (unsigned long)w.voicestart_max_us,
++            (unsigned long)w.voicestop_calls, (unsigned long)w.voicestop_min_us,
++            (unsigned long)w.voicestop_mean_us, (unsigned long)w.voicestop_max_us);
+     }
+ }
+ #endif // __DJGPP__
+@@ -485,6 +631,13 @@ void audio_core_entry_poll()
+     // poll of GUS state), so reset before the slot loop for the same
+     // attribution-correctness reason as the OPL3 regwrite discard above.
+     SDL_DOSGusGetStateDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
++    // S7-GUS continuation: same discard-snapshot reasoning, one per
++    // SDL_DOSGus* voice-setup/-teardown function.
++    SDL_DOSGusSetVoiceFreqDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
++    SDL_DOSGusSetVoiceVolDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
++    SDL_DOSGusSetVoicePanDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
++    SDL_DOSGusStartVoiceDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
++    SDL_DOSGusStopVoiceDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
+ #endif
+ 
+     for (auto &entry : g_acore.slots_) {
+@@ -509,6 +662,19 @@ void audio_core_entry_poll()
+         SDL_DOSGusGetStateDiagSnapshot(&gs_calls, &gs_min_us, &gs_mean_us, &gs_max_us);
+         dos_diag_record_gusscan(gs_calls, gs_min_us, gs_mean_us, gs_max_us);
+     }
++    {
++        uint32_t c, mn, me, mx;
++        SDL_DOSGusSetVoiceFreqDiagSnapshot(&c, &mn, &me, &mx);
++        dos_diag_record_voicefreq(c, mn, me, mx);
++        SDL_DOSGusSetVoiceVolDiagSnapshot(&c, &mn, &me, &mx);
++        dos_diag_record_voicevol(c, mn, me, mx);
++        SDL_DOSGusSetVoicePanDiagSnapshot(&c, &mn, &me, &mx);
++        dos_diag_record_voicepan(c, mn, me, mx);
++        SDL_DOSGusStartVoiceDiagSnapshot(&c, &mn, &me, &mx);
++        dos_diag_record_voicestart(c, mn, me, mx);
++        SDL_DOSGusStopVoiceDiagSnapshot(&c, &mn, &me, &mx);
++        dos_diag_record_voicestop(c, mn, me, mx);
++    }
+ #endif
+ 
+     // DOS-PORT (Sound milestone, S1): mix every active voice into the
+-- 
+2.47.3
+

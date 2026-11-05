@@ -1,0 +1,77 @@
+From e03d339f038600dd49b02b2703dd5eef84d92642 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 13:33:49 -0700
+Subject: [PATCH] [AGS] Gate SDL2_sound acquisition out for DOS
+
+FetchSDL_Sound.cmake FetchContent's icculus/SDL_sound and its own
+CMakeLists.txt calls find_package(SDL2) internally -- fails the same
+way AGS's own SDL2 acquisition did before patch 0003, confirmed by
+build ("Could not find a package configuration file provided by SDL2"
+at sdlsound_content-src/CMakeLists.txt:31, once configure got past
+every earlier blocker).
+
+This port wants hardware MIDI passthrough (MPU-401/OPL3/GUS) per this
+hub's existing audio architecture, not SDL2_sound's own force-enabled
+software MIDI decoder (FetchSDL_Sound.cmake sets
+SDLSOUND_DECODER_MIDI=on via a CACHE variable, citing an upstream
+issue about it not defaulting on) -- porting/vendoring SDL2_sound for
+DJGPP is real work that belongs at the Sound milestone, not COMPILES.
+Decode call sites are stubbed instead (patches/ags/0016, paired with
+this patch per PATCH-SEQUENCE.md).
+
+Introduces AGS_SDL2_SOUND_LINK_TARGET (empty for DOS) so
+Engine/CMakeLists.txt's link line needs only a single-token
+substitution, same pattern as patches 0003/0005.
+---
+ CMakeLists.txt        | 18 +++++++++++++++++-
+ Engine/CMakeLists.txt |  2 +-
+ 2 files changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f94be254c..046f4f2b6 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -342,10 +342,26 @@ else()
+     set(AGS_SDLMAIN_LINK_TARGET ${SDL2MAIN_LIBRARY})
+ endif()
+ 
+-if(NOT AGS_USE_LOCAL_SDL2_SOUND)
++if (DOS)
++    # DOS-PORT: SDL2_sound is real audio-decode code (not SDL_mixer) --
++    # FetchSDL_Sound.cmake FetchContent's icculus/SDL_sound and (per its
++    # own comment citing an upstream issue) force-enables its software
++    # MIDI decoder, then its own CMakeLists.txt calls find_package(SDL2)
++    # internally, which fails the same way AGS's own SDL2 acquisition did
++    # (confirmed by build: "Could not find a package configuration file
++    # provided by SDL2" at sdlsound_content-src/CMakeLists.txt:31, once
++    # patches 0001-0005 got configure past every earlier blocker). This
++    # port wants hardware MIDI passthrough (MPU-401/OPL3/GUS), not a
++    # software decoder, so porting/vendoring SDL2_sound for DJGPP is
++    # Sound-milestone work, not something COMPILES needs. Decode call
++    # sites are stubbed instead (patches/ags/0016).
++    set(AGS_SDL2_SOUND_LINK_TARGET "")
++elseif(NOT AGS_USE_LOCAL_SDL2_SOUND)
+     include(FetchSDL_Sound)
++    set(AGS_SDL2_SOUND_LINK_TARGET SDL2_sound::SDL2_sound)
+ else()
+     find_package(SDL2_sound REQUIRED)
++    set(AGS_SDL2_SOUND_LINK_TARGET SDL2_sound::SDL2_sound)
+ endif()
+ 
+ # DOS-PORT: this port always configures with AGS_NO_VIDEO_PLAYER=ON (no
+diff --git a/Engine/CMakeLists.txt b/Engine/CMakeLists.txt
+index 97e4824c3..856bf1d64 100644
+--- a/Engine/CMakeLists.txt
++++ b/Engine/CMakeLists.txt
+@@ -547,7 +547,7 @@ target_link_libraries(engine PUBLIC
+     Cda::Cda
+     ${AGS_OPENAL_LINK_TARGET}
+     ${AGS_SDL_LINK_TARGET}
+-    SDL2_sound::SDL2_sound
++    ${AGS_SDL2_SOUND_LINK_TARGET}
+ )
+ 
+ if(NOT AGS_DISABLE_THREADS)
+-- 
+2.47.3
+

@@ -1,0 +1,89 @@
+From f11b809f38094f73101385d346c3cfaceecb4681 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 18 Sep 2026 13:42:08 -0700
+Subject: [PATCH 112/113] DOS-PORT: patch 0112 -- time every
+ generate_light_table() call
+
+Measurement only. The table is still rebuilt unconditionally; this only
+reports what each build cost.
+
+Split out from the fix that uses it, for two reasons. One concern per
+patch is the repo's own convention and the previous draft mixed an
+instrument with a behaviour change. More importantly, the metric has to
+exist in the arm WITHOUT the fix or the A/B cannot be scored at all: a
+threshold cannot be set on a number only one arm emits. The first attempt
+put the per-call timing inside the fix, and the A cell came back with no
+ms= line to compare against.
+
+A per-call line with a sequence number, rather than a once-per-run
+summary, is also what makes the recurrence visible in the first place:
+the startup report is emitted once at first-room-ready, so it shows only
+the first room load and makes a per-event cost look like a one-off.
+---
+ Engine/ac/region.cpp                  | 24 ++++++++++++++++++++++++
+ Engine/main/dos_port_startup_timing.h |  4 ++++
+ 2 files changed, 28 insertions(+)
+
+diff --git a/Engine/ac/region.cpp b/Engine/ac/region.cpp
+index 4f05c836a..e32e5fdb1 100644
+--- a/Engine/ac/region.cpp
++++ b/Engine/ac/region.cpp
+@@ -25,6 +25,7 @@
+ #include "script/runtimescriptvalue.h"
+ #ifdef __DJGPP__
+ #include "debug/debug_log.h"   // patch 0111: debug_script_log() for the palette-change counter
++#include "main/dos_port_startup_timing.h"  // patch 0112: per-call light-table counters
+ #endif
+ 
+ using namespace AGS::Common;
+@@ -192,9 +193,32 @@ void generate_light_table()
+             }
+             dp_verify_have = true;
+         }
++#endif
++#ifdef __DJGPP__
++        // DOS-PORT patch 0112: time EVERY generate_light_table() call.
++        // Measurement only; the table is still rebuilt unconditionally.
++        //
++        // This is deliberately its own patch, applied before the fix that
++        // uses it. The startup report fires once at first-room-ready and
++        // so reports only the FIRST load, which makes a recurring cost
++        // look like a one-off. A per-call line with a sequence number is
++        // what makes the recurrence visible.
++        //
++        // It has to live HERE, in the arm WITHOUT the fix, or an A/B
++        // cannot be scored: a metric emitted by only one arm cannot be
++        // compared. Same control rule as measuring in both states.
++        const uclock_t _dp_lt0 = uclock();
++        dos_port_startup_timing.lighttable_rebuilt++;
+ #endif
+         create_light_table(&maincoltable, palette, 0, 0, 0, nullptr);
+         color_map = &maincoltable;
++#ifdef __DJGPP__
++        debug_script_log("DOSAGS_LIGHTTABLE call=%ld action=rebuilt ms=%ld rebuilt_total=%ld",
++                         dos_port_startup_timing.lighttable_rebuilt +
++                             dos_port_startup_timing.lighttable_reused,
++                         (long)((uclock() - _dp_lt0) * 1000 / UCLOCKS_PER_SEC),
++                         dos_port_startup_timing.lighttable_rebuilt);
++#endif
+     }
+ }
+ 
+diff --git a/Engine/main/dos_port_startup_timing.h b/Engine/main/dos_port_startup_timing.h
+index 3f630fda1..dd500b1d8 100644
+--- a/Engine/main/dos_port_startup_timing.h
++++ b/Engine/main/dos_port_startup_timing.h
+@@ -70,6 +70,10 @@ struct DosPortStartupTiming
+     long preloop_first_room_init_ms = -1;   // first_room_initialization()
+     // patch 0110: the two brackets that make the pre-loop's accounting
+     // closed rather than assumed. See game_start.cpp for why.
++    // patch 0112: light-table build accounting. Present in BOTH arms of
++    // the 0113 A/B -- a metric only one arm emits cannot be compared.
++    long lighttable_rebuilt = 0;
++    long lighttable_reused = 0;
+     long preloop_skipmissed_ms = -1;  // skipMissedTicks(), between the anchor and the five phases
+     long preloop_start_game_ms = -1;  // anchor .. end of start_game(); preloop_ms minus this is time AFTER it returns
+     // patch 0107: SetRestartPoint()'s own internals. It is 690 ms of the
+-- 
+2.47.3
+

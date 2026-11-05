@@ -1,0 +1,367 @@
+From 08c3af155b5f69e4f14a6543912a710a7fbb8c15 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 14:21:50 -0700
+Subject: [PATCH] [AGS] sys_main.cpp: port window/display management to SDL3
+
+Phase D. Rename-only sites plus real signature/semantic changes, all
+confirmed against this port's own vendored SDL3 headers directly
+(vendor/SDL/include/SDL3/), not assumed from general SDL3 knowledge:
+
+- SDL_GetVersion() returns a single packed int now, not an out-param
+  SDL_version struct -- decoded via SDL_VERSIONNUM_MAJOR/MINOR/MICRO.
+- SDL_INIT_TIMER is gone (timer functions no longer need subsystem
+  init); SDL_InitSubSystem/SDL_SetWindowFullscreen/SDL_SetWindowResizable/
+  SDL_GetDisplayBounds and friends all return bool now (true=success),
+  the inverse of SDL2's 0-on-success convention -- every call site that
+  checked a return value, not just renamed calls, needed inverting.
+- SDL3 identifies a display by an opaque SDL_DisplayID, not a
+  sequential index: SDL_GetNumVideoDisplays()/SDL_GetDisplayMode(index,
+  i, &mode) are both gone, replaced by SDL_GetDisplays()/
+  SDL_GetFullscreenDisplayModes(). AGS's own int-index calling
+  convention is kept as-is; a new sys_get_display_id() is the one place
+  that resolves an index to a real SDL_DisplayID, so no caller needs to
+  change. This DOS backend is fullscreen-only, single-display
+  (VIDEO_DEVICE_CAPS_FULLSCREEN_ONLY, vendor/SDL/src/video/dos/SDL_dosvideo.c)
+  and AGS_SUPPORT_MULTIDISPLAY is 0 for DOS (platform.h), so
+  display_index is always 0 in practice.
+- SDL_CreateWindow() dropped its x/y params -- position is now set via
+  a separate SDL_SetWindowPosition() call with the same
+  SDL_WINDOWPOS_CENTERED_DISPLAY macro as before.
+- SDL_WINDOW_FULLSCREEN_DESKTOP is gone entirely -- only one
+  SDL_WINDOW_FULLSCREEN flag remains. SDL2's exclusive-vs-borderless
+  distinction is expressed via SDL_SetWindowFullscreenMode() instead
+  (a real mode = exclusive, nullptr = borderless/window-sized), so
+  kWnd_Fullscreen and kWnd_FullDesktop become the same two calls -- a
+  real upstream SDL3 API collapse, not something invented here.
+- SDL_SetWindowGrab(SDL_bool) splits into SDL_SetWindowMouseGrab()/
+  SDL_SetWindowKeyboardGrab() (plain bool); only the mouse half is
+  ported here (function name and doc comment are mouse-specific, AGS
+  never grabbed the keyboard through this call).
+- SDL_ShowCursor(SDL_ENABLE/SDL_DISABLE) splits into two void-arg
+  functions. SDL_FreeSurface renamed SDL_DestroySurface. The
+  SDL_VERSION_ATLEAST(2, 0, 18) guard around SDL_SetWindowMouseRect is
+  removed -- an SDL2 minor-version check with no SDL3 equivalent; the
+  function has existed since SDL3's first release.
+- #include <SDL.h>/<SDL_syswm.h> -> <SDL3/SDL.h> (no bare SDL.h exists
+  in this vendored SDL3's include tree at all). SDL3 removed
+  SDL_syswm.h entirely (a real upstream change, not DOS-specific); its
+  only consumer, sys_win_get_window(), is already excluded for every
+  non-Windows platform including DOS (AGS_PLATFORM_OS_WINDOWS is 0), so
+  the include only needed to follow that same existing guard, not be
+  ported -- this DOS port never builds for Windows and never will.
+
+Deliberately excludes the audio half of this file (try_init_audio_driver()
+and friends) -- that's patch 0016, per PATCH-SEQUENCE.md's own split (a
+COMPILES-stage stub, not a real port, since the real SDL2->SDL3 audio
+API rewrite and this port's audio architecture are both Sound-milestone
+decisions). Also excludes the AGS_SUPPORT_MULTIDISPLAY-gated bodies in
+sys_window_center()/sys_window_fit_in_display() and the
+AGS_PLATFORM_OS_WINDOWS-gated sys_win_get_window() -- none of those
+branches are ever compiled for DOS (both macros are 0), so their still-
+SDL2-shaped bodies are dead code here, not a gap.
+
+Verified in isolation (not just by reasoning): with Engine/ac/sys_events.h
+temporarily swapped for a scratch stub exposing only the one function
+sys_main.cpp actually calls from it (sys_evt_on_config_set() -- the real
+header's patch is 0017, not yet written and unrelated to this file's own
+content), sys_main.cpp.obj compiles clean except for the untouched audio
+section (try_init_audio_driver(), unchanged, still SDL2-shaped) -- proving
+this patch's own changes are correct and isolating the remaining errors
+to exactly the deferred 0016 scope, nothing more.
+---
+ Engine/platform/base/sys_main.cpp | 154 +++++++++++++++++++++++-------
+ 1 file changed, 120 insertions(+), 34 deletions(-)
+
+diff --git a/Engine/platform/base/sys_main.cpp b/Engine/platform/base/sys_main.cpp
+index 70f804684..b8430bd1e 100644
+--- a/Engine/platform/base/sys_main.cpp
++++ b/Engine/platform/base/sys_main.cpp
+@@ -12,8 +12,16 @@
+ //
+ //=============================================================================
+ #include "platform/base/sys_main.h"
+-#include <SDL.h>
+-#include <SDL_syswm.h>
++#include <SDL3/SDL.h>
++#if AGS_PLATFORM_OS_WINDOWS
++// DOS-PORT: unconditional in the original SDL2-era code, but SDL3 removed
++// SDL_syswm.h entirely (real upstream change, not a DOS-specific one) --
++// its only consumer, sys_win_get_window() below, is already excluded for
++// every non-Windows platform including DOS, so the include only needs to
++// follow the same guard, not be ported. This build never compiles this
++// branch (AGS_PLATFORM_OS_WINDOWS is 0 for DOS).
++#include <SDL3/SDL_syswm.h>
++#endif
+ #include "ac/sys_events.h"
+ #include "debug/out.h"
+ #include "platform/base/agsplatformdriver.h"
+@@ -38,9 +46,11 @@ SystemConfig gl_SysConfig;
+ // ----------------------------------------------------------------------------
+ 
+ int sys_main_init(/*config*/) {
+-    SDL_version version;
+-    SDL_GetVersion(&version);
+-    Debug::Printf(kDbgMsg_Info, "SDL Version: %d.%d.%d", version.major, version.minor, version.patch);
++    // DOS-PORT: SDL3's SDL_GetVersion() returns a single packed int, not an
++    // out-param SDL_version struct (removed) -- decode with the real macros.
++    const int sdl_ver = SDL_GetVersion();
++    Debug::Printf(kDbgMsg_Info, "SDL Version: %d.%d.%d",
++        SDL_VERSIONNUM_MAJOR(sdl_ver), SDL_VERSIONNUM_MINOR(sdl_ver), SDL_VERSIONNUM_MICRO(sdl_ver));
+     // Disable SDL2's own touch-to-mouse emulation:
+     // we are going to use our own in the engine, and only if requested by the user config
+ #if defined (SDL_HINT_TOUCH_MOUSE_EVENTS) && defined (SDL_HINT_MOUSE_TOUCH_EVENTS)
+@@ -49,13 +59,16 @@ int sys_main_init(/*config*/) {
+ #elif defined (SDL_HINT_ANDROID_SEPARATE_MOUSE_AND_TOUCH)
+     SDL_SetHint(SDL_HINT_ANDROID_SEPARATE_MOUSE_AND_TOUCH, "1");
+ #endif
++    // DOS-PORT: SDL_INIT_TIMER was removed in SDL3 (timer functions no
++    // longer need a subsystem init); SDL_InitSubSystem now returns bool
++    // (true on success), the inverse of SDL2's 0-on-success convention.
+     // TODO: setup these subsystems in config rather than keep hardcoded?
+-    if (SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_EVENTS) != 0) {
++    if (!SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
+         Debug::Printf(kDbgMsg_Error, "Unable to initialize SDL: %s", SDL_GetError());
+         return -1;
+     }
+     gl_SysMainInfo.SDLSubsystems =
+-        SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_EVENTS;
++        SDL_INIT_VIDEO | SDL_INIT_EVENTS;
+     return 0;
+ }
+ 
+@@ -93,12 +106,38 @@ void sys_set_background_mode(bool /*on*/) {
+ // ----------------------------------------------------------------------------
+ const int DEFAULT_DISPLAY_INDEX = 0;
+ 
++// DOS-PORT: SDL3 identifies a display by an opaque SDL_DisplayID, not a
++// sequential index -- SDL_GetNumVideoDisplays()/SDL_GetDisplayMode(index, ...)
++// are both gone. AGS's own calling convention here (display_index, a plain
++// int ordinal) predates that change and is kept as-is -- every function
++// below still takes/returns an int index; this is the one place that
++// resolves an index to the real SDL_DisplayID via SDL_GetDisplays(), so a
++// caller never has to know the difference. Returns 0 (SDL3's documented
++// invalid-ID value) if display_index is out of range for the current
++// result -- this DOS backend is fullscreen-only, single-display
++// (VIDEO_DEVICE_CAPS_FULLSCREEN_ONLY, vendor/SDL/src/video/dos/SDL_dosvideo.c),
++// so in practice display_index is always 0 here, but every caller already
++// treats index 0 as "the" display rather than assuming multi-display
++// support (AGS_SUPPORT_MULTIDISPLAY is 0 for DOS -- see platform.h).
++static SDL_DisplayID sys_get_display_id(int display_index) {
++    int count = 0;
++    SDL_DisplayID *ids = SDL_GetDisplays(&count);
++    if (!ids)
++        return 0;
++    const SDL_DisplayID id = (display_index >= 0 && display_index < count) ? ids[display_index] : 0;
++    SDL_free(ids);
++    return id;
++}
++
+ int sys_get_display_count() {
+-    return SDL_GetNumVideoDisplays();
++    int count = 0;
++    SDL_DisplayID *ids = SDL_GetDisplays(&count);
++    SDL_free(ids);
++    return count;
+ }
+ 
+ bool sys_is_display_valid(int display_index) {
+-    return display_index >= 0 && display_index < SDL_GetNumVideoDisplays();
++    return sys_get_display_id(display_index) != 0;
+ }
+ 
+ int sys_get_window_display_index() {
+@@ -118,8 +157,11 @@ bool sys_get_desktop_resolution(int &width, int &height) {
+ }
+ 
+ bool sys_get_desktop_resolution(int display_index, int &width, int &height) {
++    // DOS-PORT: SDL3's bool-returning functions report success as true (the
++    // inverse of SDL2's 0-on-success convention) -- inverted, not just renamed.
+     SDL_Rect r;
+-    if (SDL_GetDisplayBounds(display_index, &r) != 0) {
++    const SDL_DisplayID id = sys_get_display_id(display_index);
++    if (id == 0 || !SDL_GetDisplayBounds(id, &r)) {
+         Debug::Printf(kDbgMsg_Error, "SDL_GetDisplayBounds failed: %s", SDL_GetError());
+         return false;
+     }
+@@ -129,26 +171,34 @@ bool sys_get_desktop_resolution(int display_index, int &width, int &height) {
+ }
+ 
+ void sys_get_desktop_modes(int display_index, std::vector<AGS::Engine::DisplayMode> &dms, int color_depth) {
+-    SDL_DisplayMode mode;
+-    const int count = SDL_GetNumDisplayModes(display_index);
++    // DOS-PORT: SDL_GetNumDisplayModes()+SDL_GetDisplayMode(index, i, &mode)
++    // (an enumerate-by-count loop) is gone in SDL3 -- replaced by a single
++    // SDL_GetFullscreenDisplayModes() call returning an owned SDL_DisplayMode**
++    // array the caller must SDL_free().
+     dms.clear();
++    const SDL_DisplayID id = sys_get_display_id(display_index);
++    if (id == 0)
++        return;
++    int count = 0;
++    SDL_DisplayMode **modes = SDL_GetFullscreenDisplayModes(id, &count);
++    if (!modes)
++        return;
+     for (int i = 0; i < count; ++i) {
+-        if (SDL_GetDisplayMode(display_index, i, &mode) != 0) {
+-            Debug::Printf(kDbgMsg_Error, "SDL_GetDisplayMode failed: %s", SDL_GetError());
+-            continue;
+-        }
+-        const int bitsdepth = SDL_BITSPERPIXEL(mode.format);
++        const SDL_DisplayMode *mode = modes[i];
++        const int bitsdepth = SDL_BITSPERPIXEL(mode->format);
+         if ((color_depth == 0) || (bitsdepth != color_depth)) {
+             continue;
+         }
+         AGS::Engine::DisplayMode dm;
+         dm.DisplayIndex = display_index;
+-        dm.Width = mode.w;
+-        dm.Height = mode.h;
++        dm.Width = mode->w;
++        dm.Height = mode->h;
+         dm.ColorDepth = bitsdepth;
+-        dm.RefreshRate = mode.refresh_rate;
++        // DOS-PORT: SDL_DisplayMode::refresh_rate is now a float, not an int.
++        dm.RefreshRate = static_cast<int>(mode->refresh_rate);
+         dms.push_back(dm);
+     }
++    SDL_free(modes);
+ }
+ 
+ void sys_renderer_set_output(const String &name)
+@@ -256,12 +306,18 @@ SDL_Window *sys_window_create(const char *window_title, int display_index, int w
+         sys_window_destroy();
+     }
+     // TODO: support display index selection (?)
+-    Uint32 flags = 0;
++    // DOS-PORT: SDL_WINDOW_FULLSCREEN_DESKTOP is gone in SDL3 -- there is
++    // only one SDL_WINDOW_FULLSCREEN flag now. The exclusive-vs-borderless
++    // distinction SDL2 expressed via that separate flag is expressed in
++    // SDL3 via SDL_SetWindowFullscreenMode() instead (a real mode pointer
++    // = exclusive; nullptr = borderless, sized to match the window) -- see
++    // sys_window_set_style() below, where that call actually happens.
++    SDL_WindowFlags flags = 0;
+     switch (mode)
+     {
+     case kWnd_Windowed: flags |= SDL_WINDOW_RESIZABLE; break;
+     case kWnd_Fullscreen: flags |= SDL_WINDOW_FULLSCREEN; break;
+-    case kWnd_FullDesktop: flags |= SDL_WINDOW_FULLSCREEN_DESKTOP; break;
++    case kWnd_FullDesktop: flags |= SDL_WINDOW_FULLSCREEN; break;
+     }
+     flags |= ex_flags;
+ #if (AGS_PLATFORM_MOBILE)
+@@ -276,14 +332,21 @@ SDL_Window *sys_window_create(const char *window_title, int display_index, int w
+     assert(display_index == DEFAULT_DISPLAY_INDEX);
+     display_index = DEFAULT_DISPLAY_INDEX;
+ #endif
++    // DOS-PORT: SDL3's SDL_CreateWindow() dropped the x/y position params --
++    // position is set separately below, same CENTERED_DISPLAY macro as before.
+     window = SDL_CreateWindow(
+         window_title,
+-        SDL_WINDOWPOS_CENTERED_DISPLAY(display_index),
+-        SDL_WINDOWPOS_CENTERED_DISPLAY(display_index),
+         w,
+         h,
+         flags
+     );
++    if (window) {
++        SDL_SetWindowPosition(
++            window,
++            SDL_WINDOWPOS_CENTERED_DISPLAY(display_index),
++            SDL_WINDOWPOS_CENTERED_DISPLAY(display_index)
++        );
++    }
+ #if (AGS_SUPPORT_MULTIDISPLAY)
+     // CHECKME: this is done because SDL2 has some bug(s) during
+     // centering. See: https://github.com/libsdl-org/SDL/issues/6875
+@@ -307,22 +370,32 @@ void sys_window_set_style(WindowMode mode, Size size) {
+     // actions may be different; e.g. if we are going windowed mode, then
+     // we first should disable fullscreen and set new size only after;
+     // if we are going fullscreen we first tell required display mode.
++    // DOS-PORT: SDL_SetWindowFullscreen() takes a plain bool now, not a
++    // flags word; SDL_SetWindowResizable() takes plain bool too (SDL_bool/
++    // SDL_TRUE/SDL_FALSE are gone). SDL_SetWindowDisplayMode() was renamed
++    // SDL_SetWindowFullscreenMode(). kWnd_Fullscreen and kWnd_FullDesktop
++    // become the same two calls -- SDL3 folded SDL2's separate
++    // SDL_WINDOW_FULLSCREEN_DESKTOP flag away entirely (see
++    // sys_window_create()'s comment); there is no longer a distinct
++    // "borderless desktop" flag to ask for, only "fullscreen, with or
++    // without an explicit display mode."
+     switch (mode)
+     {
+     case kWnd_Windowed:
+-        SDL_SetWindowFullscreen(window, 0);
++        SDL_SetWindowFullscreen(window, false);
+         if (!size.IsNull()) // resize + center
+             sys_window_set_size(size.Width, size.Height, true);
+-        SDL_SetWindowResizable(window, SDL_TRUE);
++        SDL_SetWindowResizable(window, true);
+         break;
+     case kWnd_Fullscreen:
+         if (!size.IsNull())
+             SDL_SetWindowSize(window, size.Width, size.Height);
+-        SDL_SetWindowDisplayMode(window, nullptr); // use window size
+-        SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN);
++        SDL_SetWindowFullscreenMode(window, nullptr); // use window size
++        SDL_SetWindowFullscreen(window, true);
+         break;
+     case kWnd_FullDesktop:
+-        SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
++        SDL_SetWindowFullscreenMode(window, nullptr); // use window size
++        SDL_SetWindowFullscreen(window, true);
+         break;
+     }
+ }
+@@ -333,7 +406,12 @@ void sys_window_bring_to_front() {
+ }
+ 
+ void sys_window_show_cursor(bool on) {
+-    SDL_ShowCursor(on ? SDL_ENABLE : SDL_DISABLE);
++    // DOS-PORT: SDL3 splits this into two void-arg functions instead of one
++    // taking an SDL_ENABLE/SDL_DISABLE flag.
++    if (on)
++        SDL_ShowCursor();
++    else
++        SDL_HideCursor();
+ }
+ 
+ bool sys_window_lock_mouse(bool on) {
+@@ -342,8 +420,17 @@ bool sys_window_lock_mouse(bool on) {
+ 
+ bool sys_window_lock_mouse(bool on, const Rect &bounds) {
+     if (!window) return false;
+-    SDL_SetWindowGrab(window, static_cast<SDL_bool>(on));
+-#if SDL_VERSION_ATLEAST(2, 0, 18)
++    // DOS-PORT: SDL3 splits SDL2's single SDL_SetWindowGrab() (SDL_bool)
++    // into SDL_SetWindowMouseGrab()/SDL_SetWindowKeyboardGrab() (plain
++    // bool) -- a real semantic split, not just a rename. This function is
++    // specifically about the mouse (see its name and doc comment in
++    // sys_main.h), so only the mouse half is ported; AGS never grabbed the
++    // keyboard through this call.
++    SDL_SetWindowMouseGrab(window, on);
++    // DOS-PORT: the original SDL_VERSION_ATLEAST(2, 0, 18) guard around
++    // SDL_SetWindowMouseRect is gone -- that was an SDL2 minor-version
++    // check with no SDL3 equivalent; the function has been present since
++    // SDL3's first release (confirmed: vendor/SDL/include/SDL3/SDL_video.h).
+     if (on && !bounds.IsEmpty())
+     {
+         SDL_Rect rect;
+@@ -357,7 +444,6 @@ bool sys_window_lock_mouse(bool on, const Rect &bounds) {
+     {
+         SDL_SetWindowMouseRect(window, nullptr);
+     }
+-#endif // SDL_VERSION_ATLEAST(2, 0, 18)
+     return on; // TODO: test if successful?
+ }
+ 
+@@ -385,7 +471,7 @@ void sys_window_set_icon() {
+         SDL_Surface *icon = platform->CreateWindowIcon();
+         if (!icon) return; // no icon
+         SDL_SetWindowIcon(window, icon);
+-        SDL_FreeSurface(icon);
++        SDL_DestroySurface(icon); // DOS-PORT: SDL_FreeSurface was renamed in SDL3
+     }
+ }
+ 
+-- 
+2.47.3
+

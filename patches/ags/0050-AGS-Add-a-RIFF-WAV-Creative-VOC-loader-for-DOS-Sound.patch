@@ -1,0 +1,368 @@
+From f5a0cbb14a1c5250771999809af8254eb491ed36 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sat, 12 Sep 2026 09:23:36 -0700
+Subject: [PATCH] [AGS] Add a RIFF WAV + Creative VOC loader for DOS (Sound
+ milestone S1)
+
+SDL2_sound is gated out on DOS (patch 0006) -- AGS's real clip formats
+that stay in scope for native DOS playback are WAV/VOC only (OGG/MP3 are
+host-pre-converted per PLAN.md's Sound milestone decision 2, tracker
+formats are S6's own question). Rather than port SDL2_sound, this adds
+a small standalone loader: sniffs the actual file header (RIFF/WAVE or
+"Creative Voice File") regardless of the clip's own extension or
+fileType hint -- PLAN.md's own requirement, since v361_objnames games
+can carry an unreliable fileName/fileType pairing -- and decodes
+whatever PCM it contains.
+
+Supported sub-formats: WAV PCM (format tag 1) 8/16-bit; VOC codec 0
+(unsigned 8-bit, old format) and type-9 new-format signed 16-bit, plus
+type 2 (continuation), 3 (silence), 8 (extended/stereo) blocks. Loop
+markers (type 6/7) are read past but not honored -- AGS's own clip-level
+`repeat` flag already covers whole-clip looping, and a mid-file VOC loop
+is a rare authoring feature not needed for this milestone. Anything else
+(ADPCM, mu-law, a genuinely corrupt file, or a WAV/VOC sub-format this
+loader doesn't recognize) fails cleanly, matching how a missing decoder
+already fails today ("AudioClip.Play: unable to load sound file").
+
+Every clip is resampled/downmixed ONCE, at decode time, to the mixer's
+fixed device format (dos_audio_mixer.h, previous patch) via linear
+interpolation -- adequate for the short SFX/chime-class content this
+decoder handles; real music is MIDI/tracker, later Sound-milestone
+slices. This is dossage's own 0039 lesson applied up front: converting
+per-chunk cost 43% of every frame there until it moved to load time.
+
+Nothing calls this yet -- wired into sdldecoder.cpp in the next patch.
+Standalone and independently buildable, same as the mixer patch.
+---
+ Engine/CMakeLists.txt                    |   2 +
+ Engine/platform/dos/dos_audio_decode.cpp | 253 +++++++++++++++++++++++
+ Engine/platform/dos/dos_audio_decode.h   |  44 ++++
+ 3 files changed, 299 insertions(+)
+ create mode 100644 Engine/platform/dos/dos_audio_decode.cpp
+ create mode 100644 Engine/platform/dos/dos_audio_decode.h
+
+diff --git a/Engine/CMakeLists.txt b/Engine/CMakeLists.txt
+index fb8856844..ce9484c62 100644
+--- a/Engine/CMakeLists.txt
++++ b/Engine/CMakeLists.txt
+@@ -469,6 +469,8 @@ target_sources(engine
+     platform/bsd/acplbsd.cpp
+ 
+     platform/dos/acpldos.cpp
++    platform/dos/dos_audio_decode.cpp
++    platform/dos/dos_audio_decode.h
+     platform/dos/dos_audio_mixer.cpp
+     platform/dos/dos_audio_mixer.h
+ 
+diff --git a/Engine/platform/dos/dos_audio_decode.cpp b/Engine/platform/dos/dos_audio_decode.cpp
+new file mode 100644
+index 000000000..b64986181
+--- /dev/null
++++ b/Engine/platform/dos/dos_audio_decode.cpp
+@@ -0,0 +1,253 @@
++//=============================================================================
++//
++// Adventure Game Studio (AGS)
++//
++// Copyright (C) 1999-2011 Chris Jones and 2011-2026 various contributors
++// The full list of copyright holders can be found in the Copyright.txt
++// file, which is part of this source code distribution.
++//
++// The AGS source code is provided under the Artistic License 2.0.
++// A copy of this license can be found in the file License.txt and at
++// https://opensource.org/license/artistic-2-0/
++//
++//=============================================================================
++#include "platform/dos/dos_audio_decode.h"
++#include "platform/dos/dos_audio_mixer.h" // DOS_AUDIO_MIXER_RATE
++#include <cstring>
++
++namespace
++{
++
++uint16_t rd_u16le(const uint8_t *p)
++{
++    return static_cast<uint16_t>(p[0] | (p[1] << 8));
++}
++
++uint32_t rd_u32le(const uint8_t *p)
++{
++    return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
++        (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
++}
++
++// Appends mono, already-signed-16-bit PCM at src_rate into out_pcm,
++// resampling to DOS_AUDIO_MIXER_RATE via linear interpolation -- adequate
++// for the short SFX/chime-class content this decoder handles in S1 (real
++// music is MIDI/tracker, later Sound-milestone slices).
++void append_resampled_mono(const std::vector<int16_t> &src_mono, int src_rate,
++    std::vector<int16_t> &out_pcm)
++{
++    if (src_mono.empty() || src_rate <= 0)
++        return;
++    if (src_rate == DOS_AUDIO_MIXER_RATE)
++    {
++        out_pcm.insert(out_pcm.end(), src_mono.begin(), src_mono.end());
++        return;
++    }
++    const size_t src_n = src_mono.size();
++    const size_t dst_n = static_cast<size_t>(
++        (static_cast<uint64_t>(src_n) * DOS_AUDIO_MIXER_RATE) / static_cast<uint32_t>(src_rate));
++    out_pcm.reserve(out_pcm.size() + dst_n);
++    for (size_t i = 0; i < dst_n; i++)
++    {
++        const double src_pos = (static_cast<double>(i) * src_rate) / DOS_AUDIO_MIXER_RATE;
++        const size_t i0 = static_cast<size_t>(src_pos);
++        if (i0 + 1 >= src_n)
++        {
++            out_pcm.push_back(src_mono[src_n - 1]);
++            continue;
++        }
++        const double frac = src_pos - static_cast<double>(i0);
++        const int32_t s0 = src_mono[i0];
++        const int32_t s1 = src_mono[i0 + 1];
++        out_pcm.push_back(static_cast<int16_t>(s0 + static_cast<double>(s1 - s0) * frac));
++    }
++}
++
++// Downmixes a raw PCM byte run (given channels/bits, native container
++// layout) to mono signed-16, then resamples/appends it.
++void decode_pcm_block(const uint8_t *data, size_t bytes, int rate, int channels, int bits,
++    std::vector<int16_t> &out_pcm)
++{
++    if (channels <= 0 || (bits != 8 && bits != 16) || rate <= 0)
++        return; // caller already validated the sub-format before calling
++    const size_t bytes_per_frame = static_cast<size_t>(channels) * static_cast<size_t>(bits / 8);
++    if (bytes_per_frame == 0)
++        return;
++    const size_t frames = bytes / bytes_per_frame;
++    std::vector<int16_t> mono;
++    mono.reserve(frames);
++    for (size_t f = 0; f < frames; f++)
++    {
++        int32_t sum = 0;
++        const uint8_t *frame = data + f * bytes_per_frame;
++        for (int c = 0; c < channels; c++)
++        {
++            int32_t sample;
++            if (bits == 8)
++                sample = (static_cast<int32_t>(frame[c]) - 128) * 256; // unsigned 8-bit -> signed 16
++            else
++                sample = static_cast<int16_t>(rd_u16le(frame + c * 2));
++            sum += sample;
++        }
++        mono.push_back(static_cast<int16_t>(sum / channels));
++    }
++    append_resampled_mono(mono, rate, out_pcm);
++}
++
++bool decode_wav(const uint8_t *data, size_t size, std::vector<int16_t> &out_pcm)
++{
++    if (size < 12 || std::memcmp(data + 8, "WAVE", 4) != 0)
++        return false;
++
++    int fmt_channels = 0, fmt_bits = 0;
++    uint32_t fmt_rate = 0;
++    bool have_fmt = false;
++    size_t pos = 12;
++    while (pos + 8 <= size)
++    {
++        const uint8_t *id = data + pos;
++        uint32_t chunk_size = rd_u32le(data + pos + 4);
++        const size_t body = pos + 8;
++        if (body > size)
++            break;
++        if (chunk_size > size - body)
++            chunk_size = static_cast<uint32_t>(size - body); // tolerate a truncated trailing chunk
++
++        if (std::memcmp(id, "fmt ", 4) == 0 && chunk_size >= 16)
++        {
++            const uint16_t audio_format = rd_u16le(data + body);
++            fmt_channels = rd_u16le(data + body + 2);
++            fmt_rate = rd_u32le(data + body + 4);
++            fmt_bits = rd_u16le(data + body + 14);
++            have_fmt = (audio_format == 1 /* PCM */) && (fmt_bits == 8 || fmt_bits == 16) && fmt_channels > 0;
++        }
++        else if (std::memcmp(id, "data", 4) == 0)
++        {
++            if (!have_fmt)
++                return false; // fmt must precede data; also rejects non-PCM formats
++            decode_pcm_block(data + body, chunk_size, static_cast<int>(fmt_rate), fmt_channels, fmt_bits, out_pcm);
++            return !out_pcm.empty();
++        }
++        pos = body + chunk_size + (chunk_size & 1u); // chunks are word-aligned
++    }
++    return false;
++}
++
++bool decode_voc(const uint8_t *data, size_t size, std::vector<int16_t> &out_pcm)
++{
++    if (size < 26)
++        return false;
++    const uint16_t data_offset = rd_u16le(data + 20);
++    if (data_offset < 26 || data_offset > size)
++        return false;
++
++    size_t pos = data_offset;
++    int cur_rate = 0, cur_channels = 1, cur_bits = 8; // block type 8 overrides these for the NEXT type-1 block
++    bool any_block = false;
++    while (pos < size)
++    {
++        const uint8_t block_type = data[pos];
++        if (block_type == 0) // terminator
++            break;
++        if (pos + 4 > size)
++            break; // truncated block header
++        const uint32_t block_len = static_cast<uint32_t>(data[pos + 1]) |
++            (static_cast<uint32_t>(data[pos + 2]) << 8) | (static_cast<uint32_t>(data[pos + 3]) << 16);
++        const size_t body = pos + 4;
++        if (block_len > size - body)
++            break; // truncated block body
++
++        switch (block_type)
++        {
++        case 1: // sound data (old format): rate byte + codec byte + data
++            if (block_len >= 2)
++            {
++                const uint8_t rate_byte = data[body];
++                const uint8_t codec = data[body + 1];
++                if (codec == 0) // unsigned 8-bit PCM -- the common case
++                {
++                    cur_rate = rate_byte > 0 ? (1000000 / (256 - rate_byte)) : 0;
++                    cur_channels = 1;
++                    cur_bits = 8;
++                    decode_pcm_block(data + body + 2, block_len - 2, cur_rate, cur_channels, cur_bits, out_pcm);
++                    any_block = true;
++                }
++            }
++            break;
++        case 2: // sound data continuation: same format as the last type-1/9 block
++            if (cur_rate > 0)
++            {
++                decode_pcm_block(data + body, block_len, cur_rate, cur_channels, cur_bits, out_pcm);
++                any_block = true;
++            }
++            break;
++        case 8: // extended: describes the NEXT type-1 block (old-format stereo files)
++            if (block_len >= 4)
++            {
++                const uint16_t time_const = rd_u16le(data + body);
++                const uint8_t codec = data[body + 2];
++                const uint8_t is_stereo = data[body + 3];
++                if (codec == 0 && time_const < 65536)
++                {
++                    cur_channels = is_stereo ? 2 : 1;
++                    cur_rate = time_const > 0 ? static_cast<int>(256000000L / (65536 - time_const)) : 0;
++                    cur_bits = 8;
++                }
++            }
++            break;
++        case 9: // sound data (new format): rate(u32) + bits(u8) + channels(u8) + format(u16) + reserved(4)
++            if (block_len >= 12)
++            {
++                const uint32_t rate = rd_u32le(data + body);
++                const uint8_t bits = data[body + 4];
++                const uint8_t channels = data[body + 5];
++                const uint16_t format = rd_u16le(data + body + 6);
++                // format 0 = unsigned 8-bit PCM, format 4 = signed 16-bit PCM
++                if ((format == 0 && bits == 8) || (format == 4 && bits == 16))
++                {
++                    cur_rate = static_cast<int>(rate);
++                    cur_channels = channels > 0 ? channels : 1;
++                    cur_bits = bits;
++                    decode_pcm_block(data + body + 12, block_len - 12, cur_rate, cur_channels, cur_bits, out_pcm);
++                    any_block = true;
++                }
++            }
++            break;
++        case 3: // silence: length(u16 samples) + rate byte
++            if (block_len >= 3)
++            {
++                const uint16_t silence_samples = rd_u16le(data + body);
++                const uint8_t rate_byte = data[body + 2];
++                const int rate = rate_byte > 0 ? (1000000 / (256 - rate_byte)) : DOS_AUDIO_MIXER_RATE;
++                std::vector<int16_t> silence(silence_samples, 0);
++                append_resampled_mono(silence, rate, out_pcm);
++                any_block = true;
++            }
++            break;
++        // 4 (marker), 5 (text), 6/7 (repeat loop start/end) carry no audio
++        // of their own -- skipped via the block_len advance below. Loop
++        // markers are not honored: AGS's own clip-level `repeat` flag
++        // already covers whole-clip looping, and a mid-file VOC loop is a
++        // rare authoring feature not needed for S1.
++        default:
++            break;
++        }
++
++        pos = body + block_len;
++    }
++    return any_block && !out_pcm.empty();
++}
++
++} // namespace
++
++bool dos_audio_decode_pcm(const uint8_t *data, size_t size, std::vector<int16_t> &out_pcm)
++{
++    out_pcm.clear();
++    if (!data || size == 0)
++        return false;
++    if (size >= 12 && std::memcmp(data, "RIFF", 4) == 0)
++        return decode_wav(data, size, out_pcm);
++    if (size >= 20 && std::memcmp(data, "Creative Voice File", 19) == 0)
++        return decode_voc(data, size, out_pcm);
++    return false;
++}
+diff --git a/Engine/platform/dos/dos_audio_decode.h b/Engine/platform/dos/dos_audio_decode.h
+new file mode 100644
+index 000000000..8673feaf6
+--- /dev/null
++++ b/Engine/platform/dos/dos_audio_decode.h
+@@ -0,0 +1,44 @@
++//=============================================================================
++//
++// Adventure Game Studio (AGS)
++//
++// Copyright (C) 1999-2011 Chris Jones and 2011-2026 various contributors
++// The full list of copyright holders can be found in the Copyright.txt
++// file, which is part of this source code distribution.
++//
++// The AGS source code is provided under the Artistic License 2.0.
++// A copy of this license can be found in the file License.txt and at
++// https://opensource.org/license/artistic-2-0/
++//
++//=============================================================================
++//
++// DOS-PORT (Sound milestone, S1): a small RIFF WAV + Creative Voice File
++// (VOC) loader. Sniffs the actual file header rather than trusting the
++// clip's own extension/fileType hint (PLAN.md's own requirement, since
++// AGS's ScriptAudioClip fileType is not always reliable), and converts
++// whatever PCM it finds ONCE into the mixer's fixed Tier-2 device format
++// -- never per chunk (dossage's own 0039 lesson: per-chunk resampling
++// cost 43% of every frame until it moved to load time).
++//
++// Only uncompressed PCM is supported: WAV PCM (format tag 1) 8/16-bit,
++// and VOC codec 0 (unsigned 8-bit) / new-format (type 9) signed 16-bit.
++// OGG/MP3/ADPCM/etc. are never decoded on DOS (host-side pre-conversion,
++// PLAN.md decision 2) -- any of those, or a genuinely corrupt file, fails
++// this call cleanly, matching how a missing decoder already fails today
++// ("AudioClip.Play: unable to load sound file").
++//
++//=============================================================================
++#ifndef __AGS_EE_PLATFORM_DOS__DOS_AUDIO_DECODE_H
++#define __AGS_EE_PLATFORM_DOS__DOS_AUDIO_DECODE_H
++#include <cstddef>
++#include <cstdint>
++#include <vector>
++
++// Sniffs and decodes `data` (the complete raw file bytes) as WAV or VOC,
++// resampling/downmixing to mono S16 @ DOS_AUDIO_MIXER_RATE (see
++// dos_audio_mixer.h). Returns true and fills out_pcm on success; returns
++// false (out_pcm left empty) on any unrecognized header, unsupported
++// sub-format, or truncated/corrupt data.
++bool dos_audio_decode_pcm(const uint8_t *data, size_t size, std::vector<int16_t> &out_pcm);
++
++#endif // __AGS_EE_PLATFORM_DOS__DOS_AUDIO_DECODE_H
+-- 
+2.47.3
+

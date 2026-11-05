@@ -1,0 +1,184 @@
+From 5e0bbdb38c799db5a41a475037036ff5e0bbfce0 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 14:22:56 -0700
+Subject: [PATCH] [AGS] sys_main.cpp: stub the audio driver for COMPILES,
+ define g_dos_sfx_synth_active_count
+
+Phase D, pairs with patch 0006 (SDL2_sound gated out of the link).
+
+Audio is explicitly allowed to be stubbed at the COMPILES milestone
+(see PATCH-SEQUENCE.md's tl;dr). try_init_audio_driver()/sys_audio_init()
+were SDL2-shaped in a way that isn't a simple rename: SDL_setenv is now
+SDL_setenv_unsafe, SDL_FALSE/SDL_AUDIO_ALLOW_ANY_CHANGE don't exist, and
+SDL_OpenAudioDevice collapses from a 5-param negotiated-format call to a
+2-param call returning an SDL_AudioStream -- a real API redesign SDL3
+made to audio device opening, not a rename. Porting that now would also
+prejudge this port's own audio architecture (hardware MIDI/OPL3/MPU-401
+passthrough vs. mojoAL), which PLAN.md's open questions defers to the
+Sound milestone. try_init_audio_driver() is deleted rather than ported
+-- there's nothing in its SDL2 shape for a real Sound-milestone rewrite
+to reuse.
+
+sys_audio_init() now just logs and returns false. This is an
+already-handled path, not a new failure mode: engine_init_audio()
+(Engine/main/engine.cpp) sets usetup.AudioEnabled = res and continues
+normally either way -- confirmed by reading that call site directly,
+not assumed.
+
+Also defines g_dos_sfx_synth_active_count (extern "C", always zero).
+This DOS SDL3 sysroot's audio backend (vendor/SDL/src/audio/dos/SDL_dosaudio_sb.c:292)
+declares this as an extern the consuming engine is expected to define
+-- a doskutsu/NXEngine PixTone active-voice counter. It's pulled in by
+SDL_audio.c's always-linked driver bootstrap table, so it's an
+unresolved symbol at link time for ANY DJGPP program linked against
+libSDL3.a, even one that never touches SDL_INIT_AUDIO -- found by
+tests/probes/window-surface-smoke/ (a video-only probe) well before
+this file had any audio code at all. AGS has no equivalent counter, so
+this is a permanent stub, landed here per PATCH-SEQUENCE.md's own note
+that it belongs "alongside patch 0016's audio stub."
+
+Removes the now-unused #include "util/string_compat.h" -- its only
+caller (ags_stricmp, in the deleted try_init_audio_driver()) is gone.
+
+Verified in isolation, same method as 0015: with Engine/ac/sys_events.h
+temporarily swapped for a scratch stub (patch 0017's job, not yet
+written, unrelated to this file), sys_main.cpp.obj compiles clean --
+zero errors, zero warnings (the extern "C" { ... } block form avoids
+GCC's "initialized and declared extern" warning that a bare
+`extern "C" ... = 0;` triggers on this DJGPP toolchain).
+---
+ Engine/platform/base/sys_main.cpp | 104 ++++++++++--------------------
+ 1 file changed, 33 insertions(+), 71 deletions(-)
+
+diff --git a/Engine/platform/base/sys_main.cpp b/Engine/platform/base/sys_main.cpp
+index b8430bd1e..b35ed6a42 100644
+--- a/Engine/platform/base/sys_main.cpp
++++ b/Engine/platform/base/sys_main.cpp
+@@ -26,12 +26,27 @@
+ #include "debug/out.h"
+ #include "platform/base/agsplatformdriver.h"
+ #include "util/geometry.h"
+-#include "util/string_compat.h"
+ #include "util/string.h"
+ 
+ using namespace AGS::Common;
+ using namespace AGS::Engine;
+ 
++// DOS-PORT: this DOS SDL3 sysroot's audio backend (vendor/SDL/src/audio/dos/SDL_dosaudio_sb.c:292)
++// declares "extern volatile uint32_t g_dos_sfx_synth_active_count;" and
++// expects the *consuming engine* to define it -- a doskutsu/NXEngine PixTone
++// active-voice counter this DOS backend was originally built against. That
++// extern is pulled in by SDL_audio.c's always-linked driver bootstrap table,
++// so it is an unresolved symbol at link time for ANY DJGPP program linked
++// against libSDL3.a, even one that never touches SDL_INIT_AUDIO -- found by
++// tests/probes/window-surface-smoke/ (a video-only probe) before this file
++// had any audio code at all. AGS has no equivalent counter of its own, so
++// this defines it as a permanent, always-zero stub. extern "C" is required:
++// the real declaration is in a .c translation unit (no C++ name mangling),
++// so this definition has to match that exact, unmangled symbol name.
++extern "C" {
++volatile uint32_t g_dos_sfx_synth_active_count = 0;
++}
++
+ // TODO: prehaps refactor the whole sys_main into the singleton class at some point
+ struct SysMainInfo
+ {
+@@ -211,78 +226,25 @@ void sys_renderer_set_output(const String &name)
+ // AUDIO UTILS
+ // ----------------------------------------------------------------------------
+ 
+-static bool try_init_audio_driver(const char *driver_name)
+-{
+-    if (driver_name)
+-        SDL_setenv("SDL_AUDIODRIVER", driver_name, 1);
+-    if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0)
+-        return false;
+-    SDL_AudioSpec desired {};
+-    SDL_AudioDeviceID device = SDL_OpenAudioDevice(NULL, SDL_FALSE, &desired, NULL, SDL_AUDIO_ALLOW_ANY_CHANGE);
+-    if (device)
+-    {
+-        SDL_CloseAudioDevice(device);
+-        return true;
+-    }
+-    else
+-    {
+-        Debug::Printf(kDbgMsg_Error, "Failed to open audio device; error: %s", SDL_GetError());
+-        SDL_QuitSubSystem(SDL_INIT_AUDIO);
+-        return false;
+-    }
+-}
+-
++// DOS-PORT: audio is stubbed for the COMPILES milestone (explicitly allowed
++// by that milestone's own definition -- see PATCH-SEQUENCE.md's tl;dr).
++// The real SDL2->SDL3 audio device rewrite is a Sound-milestone task, not a
++// COMPILES one: SDL3 collapses SDL2's 5-param negotiated-format
++// SDL_OpenAudioDevice() into a 2-param call returning an SDL_AudioStream,
++// a real API redesign, not a rename -- and this DOS port's own audio
++// architecture (hardware MIDI/OPL3/MPU-401 passthrough vs. mojoAL, see
++// PLAN.md's open questions) isn't decided yet either. try_init_audio_driver()
++// (SDL2-shaped: SDL_setenv, 5-param SDL_OpenAudioDevice, SDL_AUDIO_ALLOW_ANY_CHANGE)
++// is deleted rather than ported now -- there is nothing for a real audio
++// rewrite to reuse from it once that milestone's own API shape is chosen.
++// sys_audio_init() returning false is an already-handled path, not a new
++// failure mode: engine_init_audio() (Engine/main/engine.cpp) sets
++// usetup.AudioEnabled = res and continues normally either way.
+ bool sys_audio_init(const String &driver_name)
+ {
+-    if ((gl_SysMainInfo.SDLSubsystems & SDL_INIT_AUDIO) != 0)
+-        return true;
+-    // IMPORTANT: we must use a combination of SDL_setenv and SDL_InitSubSystem
+-    // here, and NOT use SDL_AudioInit, because SDL_AudioInit does not increment
+-    // subsystem's reference count. Which in turn may cause problems down the
+-    // way when initializing any additional SDL-based audio lib or plugin;
+-    // at the very least - the mojoAl (OpenAL's implementation we're using).
+-    bool res = false;
+-    // If user config contained a driver request, then apply one for a try;
+-    // then try to initialize audio driver, with either requested driver name,
+-    // or a driver name set by an enviroment variable, or default driver.
+-    if (!driver_name.IsEmpty())
+-    {
+-        Debug::Printf("Requested audio driver: %s", driver_name.GetCStr());
+-        res = try_init_audio_driver(driver_name.GetCStr());
+-    }
+-    else
+-    {
+-        const char *env_drv = SDL_getenv("SDL_AUDIODRIVER");
+-        Debug::Printf("Requested audio driver: %s", env_drv ? env_drv : "default");
+-        res = try_init_audio_driver(nullptr);
+-    }
+-    // If there have been an explicit request that failed, then try to force
+-    // SDL to go through a list of supported drivers and see if that succeeds.
+-    const char *env_drv = SDL_getenv("SDL_AUDIODRIVER");
+-    if (!res && env_drv)
+-    {
+-        Debug::Printf(kDbgMsg_Error, "Failed to initialize requested audio driver '%s'; error: %s",
+-            env_drv, SDL_GetError());
+-        Debug::Printf("Attempt to initialize any audio driver from the known list");
+-        res = try_init_audio_driver("");
+-    }
+-    // Finally, if that failed, also try "dummy" driver. SDL2 does not try that
+-    // unless explicitly asked for.
+-    if (!res && (!env_drv || ags_stricmp(env_drv, "dummy") != 0))
+-    {
+-        Debug::Printf(kDbgMsg_Error, "Failed to initialize any audio driver suitable for this plaform; error: %s",
+-            SDL_GetError());
+-        Debug::Printf("Attempt to initialize \"dummy\" audio driver");
+-        res = try_init_audio_driver("dummy");
+-    }
+-
+-    if (res)
+-        Debug::Printf(kDbgMsg_Info, "Audio driver: %s", SDL_GetCurrentAudioDriver());
+-    else
+-        Debug::Printf(kDbgMsg_Error, "Failed to initialize any audio driver; error: %s",
+-            SDL_GetError());
+-    gl_SysMainInfo.SDLSubsystems |= SDL_INIT_AUDIO * res;
+-    return res;
++    (void)driver_name;
++    Debug::Printf(kDbgMsg_Info, "Audio is stubbed for this DOS build (COMPILES milestone) -- no audio device");
++    return false;
+ }
+ 
+ void sys_audio_shutdown()
+-- 
+2.47.3
+

@@ -1,0 +1,19 @@
+# cap3c-score.py + audio-compare.py as committed at lab/journeys 0189a4f7 (unchanged at lab head), run 2026-09-25 after round H
+PASS     binary               78683aa4c501 (CAP3c 78683aa4c501)
+PASS     choice               pgdetect=1 opl_reads=4 budget=448 (need 1 / 4 / 448)
+FAIL     cost_window          25.5 us per write (20.1-22.3)
+PASS     mechanism            101 arrivals per 2.57 ms window (<= 128)
+PASS     BOUND_10ms           isr_burst 390 x 25467 ns = 9.93 ms (<= 10 ms)
+PASS     late_writes          0
+PASS     underruns            0
+PASS     overwrites           0
+PASS     sb_alive_clock       0.963 (>= 0.90)
+PASS     sb_alive_pcm         2188 (>= 1961)
+PASS     silent               3 at ticks 1006 (<= 3)
+REPORT   isr_max_us           52788 (not judged; PIT-read artefact finding)
+REPORT   audio 44 vs 66a    chroma 0.9596 (controls: transposed 0.6545, reversed 0.8201); tempo_ratio 1.0
+REPORT   audio 44 vs 66b    chroma 0.8238 (controls: transposed 0.6569, reversed 0.8229); tempo_ratio 0.973
+REPORT   audio 66b vs 66a   chroma 0.8246 (controls: transposed 0.6543, reversed 0.8342); tempo_ratio 1.0278
+REPORT   audio loud windows   66a=106 44=106 66b=107 (reported, not judged)
+REPORT   audio                VOID on hardware: 66-vs-66 chroma 0.8246 < 0.905; the mechanism check stands alone
+VERDICT CAP3c FAIL; audio VOID (486 same-music noise too high)

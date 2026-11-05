@@ -1,0 +1,131 @@
+From b144e8aa7f2948bfdb3ab595263741888ff6a21d Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 13:31:45 -0700
+Subject: [PATCH] [AGS] Point the DOS build at this port's own SDL3, not AGS's
+ stock SDL2
+
+AGS's top-level CMakeLists.txt either FetchContent's SDL2 from the
+internet or (AGS_USE_LOCAL_SDL2=ON) calls find_package(SDL2 REQUIRED) --
+a package literally named SDL2, which never resolves against a sysroot
+that only has SDL3 installed, regardless of CMAKE_PREFIX_PATH. Confirmed
+by build: with only patches 0001-0002 applied, configure gets past both
+CMAKE_SYSTEM_NAME gates and fails at "Target SDL2::SDL2 ... not found"
+across five consuming CMakeLists.txt sites.
+
+Adds a DOS branch to the acquisition block that calls
+find_package(SDL3 REQUIRED CONFIG) against this port's own DJGPP sysroot
+(resolved via CMAKE_PREFIX_PATH/CMAKE_FIND_ROOT_PATH, set by
+shared/build/sdl3-dos.mk's CMAKE_COMMON) instead, and introduces two
+compat variables (AGS_SDL_LINK_TARGET, AGS_SDLMAIN_LINK_TARGET) so the
+three real consuming target_link_libraries sites (Engine/CMakeLists.txt
+x2, Common/CMakeLists.txt) need only a single-token substitution each,
+with no CMake generator-expression risk. SDL3::SDL3 is a real,
+always-present compat alias this port's own SDL3Config.cmake creates
+to whichever of SDL3::SDL3-shared/SDL3::SDL3-static the sysroot has
+(static-only here) -- confirmed against this port's own SDL3 build
+output (PLAN.md's Measured constants), not assumed. No SDL3main-
+equivalent target exists in this sysroot's CMake package output, so
+AGS_SDLMAIN_LINK_TARGET is empty for DOS -- a plain int main() is
+sufficient under DJGPP, same as Linux.
+
+Engine/libsrc/apeg-1.2.1's own CMakeLists.txt is a fourth site that
+still references ${SDL2_LIBRARY} (found by this same build run) --
+deliberately not touched here. It's gated out entirely by an expanded
+patches/ags/0004 instead (apeg is Theora-video-cutscene-only code,
+meaningless once AGS_NO_VIDEO_PLAYER=ON drops its own dependencies)
+rather than repointed, since nothing should compile it for DOS at all.
+---
+ CMakeLists.txt        | 26 +++++++++++++++++++++++++-
+ Common/CMakeLists.txt |  2 +-
+ Engine/CMakeLists.txt | 12 ++++++------
+ 3 files changed, 32 insertions(+), 8 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 2384b1c9d..a156b0ab8 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -311,11 +311,35 @@ endif()
+ ###############################################################################
+ # dependencies we download the source or not depending on settings
+ 
+-if(NOT AGS_USE_LOCAL_SDL2 AND NOT EMSCRIPTEN)
++if(DOS)
++    # DOS-PORT: point this build at this port's own DJGPP-cross SDL3
++    # sysroot instead of AGS's stock SDL2 acquisition -- a package
++    # literally named SDL2 will never resolve against a sysroot that only
++    # has SDL3 installed, regardless of AGS_USE_LOCAL_SDL2/prefix path.
++    # find_package(SDL3) resolves via CMAKE_PREFIX_PATH/CMAKE_FIND_ROOT_PATH,
++    # both pointed at the sysroot by shared/build/sdl3-dos.mk's
++    # CMAKE_COMMON. SDL3::SDL3 is a real, always-present compat alias
++    # SDL3Config.cmake creates to whichever of SDL3::SDL3-shared/
++    # SDL3::SDL3-static this sysroot actually has (static-only here) --
++    # confirmed against this port's own SDL3 build output, not assumed.
++    # AGS_SDL_LINK_TARGET/AGS_SDLMAIN_LINK_TARGET are consumed by the
++    # three real link sites this pairs with (Engine/CMakeLists.txt,
++    # Common/CMakeLists.txt) -- no SDL3main-equivalent target exists in
++    # this sysroot's CMake package output (not requested by
++    # shared/build/sdl3-dos.mk), so AGS_SDLMAIN_LINK_TARGET is empty for
++    # DOS; a plain int main() is enough under DJGPP, same as Linux.
++    find_package(SDL3 REQUIRED CONFIG)
++    set(AGS_SDL_LINK_TARGET SDL3::SDL3)
++    set(AGS_SDLMAIN_LINK_TARGET "")
++elseif(NOT AGS_USE_LOCAL_SDL2 AND NOT EMSCRIPTEN)
+     include(FetchSDL2)
++    set(AGS_SDL_LINK_TARGET ${SDL2_LIBRARY})
++    set(AGS_SDLMAIN_LINK_TARGET ${SDL2MAIN_LIBRARY})
+ else()
+     find_package(SDL2 REQUIRED)
+     include_directories("${SDL2_INCLUDE_DIRS}")
++    set(AGS_SDL_LINK_TARGET ${SDL2_LIBRARY})
++    set(AGS_SDLMAIN_LINK_TARGET ${SDL2MAIN_LIBRARY})
+ endif()
+ 
+ if(NOT AGS_USE_LOCAL_SDL2_SOUND)
+diff --git a/Common/CMakeLists.txt b/Common/CMakeLists.txt
+index 3cb08ff7b..e1b51cde1 100644
+--- a/Common/CMakeLists.txt
++++ b/Common/CMakeLists.txt
+@@ -197,7 +197,7 @@ target_sources(common
+ )
+ 
+ target_link_libraries(common PUBLIC
+-        ${SDL2_LIBRARY}
++        ${AGS_SDL_LINK_TARGET}
+         Allegro::Allegro
+         AlFont::AlFont
+         AAStr::AAStr
+diff --git a/Engine/CMakeLists.txt b/Engine/CMakeLists.txt
+index 7faa4a239..61b82a944 100644
+--- a/Engine/CMakeLists.txt
++++ b/Engine/CMakeLists.txt
+@@ -540,13 +540,13 @@ if (AGS_BUILD_STR)
+ endif()
+ 
+ 
+-target_link_libraries(engine PUBLIC 
+-    AGS::Common 
+-    ${CMAKE_DL_LIBS} 
+-    Allegro::Allegro 
++target_link_libraries(engine PUBLIC
++    AGS::Common
++    ${CMAKE_DL_LIBS}
++    Allegro::Allegro
+     Cda::Cda
+     External::OpenAL
+-    ${SDL2_LIBRARY}
++    ${AGS_SDL_LINK_TARGET}
+     SDL2_sound::SDL2_sound
+ )
+ 
+@@ -613,7 +613,7 @@ target_sources(ags
+     main/main_sdl2.cpp
+ )
+ 
+-target_link_libraries(ags PRIVATE engine ${SDL2MAIN_LIBRARY})
++target_link_libraries(ags PRIVATE engine ${AGS_SDLMAIN_LINK_TARGET})
+ 
+ if (LINUX)
+     # We may override `allegro_icon` and `load_midi_pf` depending on the version
+-- 
+2.47.3
+

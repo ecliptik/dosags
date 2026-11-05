@@ -1,0 +1,46 @@
+From a2f6de20aef5ee6a690f0323aa40ba3d61b2f2f5 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 06:37:01 -0700
+Subject: [PATCH] DOS-PORT: patch 0214 -- the freeze instrument also runs when
+ the fixed timestep is off
+
+Patch 0195's freeze instrument (DOSAGS_FREEZE_TICKS: stall at chosen ticks so
+the harness can photograph the screen) is called from exactly one place, the
+end of dos_run_tick_fixed(). With DOSAGS_FIXED_TIMESTEP unset, GameTick() runs
+a bare UpdateGameOnce(true) and the instrument never fires: a freeze-capture run
+completes with no FRZ markers and no frames (dosags, a Shards sweep at fixed
+40000 cycles: 1000 ticks, 1012 presents, zero freezes, both arms).
+
+That per-tick-render mode is the one screen-equality needs at fixed cycles: the
+fixed-timestep catch-up skips rendered ticks when the emulated CPU cannot keep
+up (AGS Quest skipped 1305 frames at fixed 40000), so a freeze lands late,
+while without it every tick renders and a freeze lands on its target tick. So
+the check is now also called after UpdateGameOnce(true) in that branch, under
+__DJGPP__, exactly as the fixed path calls it. It is a no-op when
+DOSAGS_FREEZE_TICKS is unset (it returns at its first check), so a run without
+the diagnostic behaves as before.
+---
+ Engine/main/game_run.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 3d6d01469..b08a661f8 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -2430,6 +2430,13 @@ static void GameTick()
+     }
+ #endif
+     UpdateGameOnce(true);
++#ifdef __DJGPP__
++    // DOS-PORT patch 0214: the freeze instrument (patch 0195) in this per-tick-render mode too, not
++    // only in dos_run_tick_fixed(). Here every tick renders, so a freeze lands on its target tick
++    // exactly -- the lab's screen-equality standard at fixed cycles. A no-op without
++    // DOSAGS_FREEZE_TICKS (it returns at its first check).
++    dos_port_freeze_check();
++#endif
+ }
+ 
+ // This function is called from lot of various functions
+-- 
+2.47.3
+

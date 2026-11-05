@@ -1,0 +1,62 @@
+fsprobe: sweep path = FSSWEEP.TMP
+fsprobe: default drive = C:, interrogating the default drive
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14582 volume_bytes=2014511104 free_bytes=477822976
+fsprobe: GEOMETRY MATCHES THE CF VOLUME (32768-byte clusters, 61478 total) -- this is C:, NOT a different device.
+fsprobe: FSPROBE_E1   len= 72 [SMARTDRV /S#SMARTDRV C- ;SMARTDRV /S#SMARTDRV /S#SMARTDRV C ;SMARTDRV /S]
+fsprobe: FSPROBE_E2   len= 72 [SMARTDRV /SxSMARTDRV C- ySMARTDRV /SxSMARTDRV /SxSMARTDRV C ySMARTDRV /S]
+fsprobe: FSPROBE_E3   len= 17 [abcdefghijkXlmnop]
+fsprobe: FSPROBE_E13  len= 17 [abcdefghijkXlmnop]
+fsprobe: FSPROBE_E14  len= 72 [SMARTDRV /S#SMARTDRV C- ;SMARTDRV /S#SMARTDRV /S#SMARTDRV C ;SMARTDRV /S]
+fsprobe: FSPROBE_E15  len= 11 [SMARTDRV /S]
+
+===== PRE: SET =====
+CONFIG=PGSB
+COMSPEC=C:\DOS\COMMAND.COM
+TEMP=C:\TEMP
+TMP=C:\TEMP
+ULTRADIR=C:\ULTRASND
+PROMPT=$p$g
+PATH=C:\DOS;C:\WINDOWS;C:\PICOGUS;C:\UNISOUND;C:\UNIVBE;C:\DRIVERS
+SDL_HINT_DOS_AUDIO_MIDI_SOURCE=wiimidi
+DOSKUTSU_USE_JOYSTICK=0
+BLASTER=A220 I7 D3 P330 T3
+SDL_HINT_DOS_AUDIO_SB_FORCE_8BIT=1
+FSPROBE_E1=SMARTDRV /S#SMARTDRV C- ;SMARTDRV /S#SMARTDRV /S#SMARTDRV C ;SMARTDRV /S
+FSPROBE_E2=SMARTDRV /SxSMARTDRV C- ySMARTDRV /SxSMARTDRV /SxSMARTDRV C ySMARTDRV /S
+FSPROBE_E3=abcdefghijkXlmnop
+FSPROBE_ORDER=none
+FSPROBE_SWEEP_KB=4
+FSPROBE_SYS_PRE=SET
+FSPROBE_E14=SMARTDRV /S#SMARTDRV C- ;SMARTDRV /S#SMARTDRV /S#SMARTDRV C ;SMARTDRV /S
+FSPROBE_E15=SMARTDRV /S
+FSPROBE_E13=abcdefghijkXlmnop
+TZ=UTC0
+===== PRE rc=0 =====
+fsprobe: 200 iterations per arm, line length 128 bytes
+fsprobe: UCLOCKS_PER_SEC=1193180
+fsprobe: arm order = none
+fsprobe: arms SKIPPED -- the sweep's fsync'd bytes are then
+fsprobe: the only bytes forced to the device in this run.
+
+raw     n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+flush   n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+sync    n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+reopen  n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+
+fsprobe: fsync cost per call = mean_us(sync) - mean_us(flush) = 0.0 us
+fsprobe: 240 such calls in a gate run = 0.0 ms
+
+fsprobe: sweep -- 800-byte records to 4096 bytes, spikes >= 20000 us
+fsprobe: at this record size, byte 6400 is record 8 and byte 58400 is record 73; record 8 is byte 6400 and record 73 is byte 58400
+  FIRST rec=1     end_off=800     us=222041   cum_ms=222.0  (first cluster + directory entry)
+  SPIKE rec=1     end_off=800     us=222041   cum_ms=222.0
+fsprobe: sweep done -- 6 records, 4800 device bytes, 1 spikes, worst 222041 us at off=800
+fsprobe: sweep elapsed 276.1 ms by uclock, 260.5 ms summed per-record; quiet records n=5 mean_us=7688.0
+fsprobe: events=1 bytes=4800 (NO rate printed: detection is intermittent -- 7, 10 and 14 events across three runs of one configuration)
+fsprobe: volume after sweep:
+fsprobe: default drive = C:, interrogating the default drive
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14582 volume_bytes=2014511104 free_bytes=477822976
+fsprobe: GEOMETRY MATCHES THE CF VOLUME (32768-byte clusters, 61478 total) -- this is C:, NOT a different device.
+fsprobe: done

@@ -1,0 +1,92 @@
+From 09632241e9a6f3f0e88dcac5f36b1be649299135 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 17 Sep 2026 18:26:06 -0700
+Subject: [PATCH] DOS-PORT: patch 0101 -- DOSAGS_MAX_SCALE caps the
+ render-frame scale
+
+Nothing in AGS's config surface can ask for a 1x picture centred in a
+mode that could hold 2x: "round" at 640x480 gives a 320-wide game 2x,
+"proportional" the same, and the only way down is a smaller mode --
+which the target's own card does not have below 512x384. A centred
+unscaled picture is what doskutsu shipped on this Mach64 and is
+candidate (c) in the 40/40 plan's presentation bake-off; P2.0
+measured such a frame at 2.2-2.7 ms to push against 10.7 ms for the
+2x one. DOSAGS_MAX_SCALE=N forces "round" scaling with the integer
+scale capped at N (never below 1), logs the frame it chose, and is in
+the RUNMANIFEST env allowlist. A measurement/config knob, off unless
+set; game-visible only when a cell asks for it.
+---
+ Engine/main/graphics_mode.cpp | 36 +++++++++++++++++++++++++++++++++++
+ Engine/main/quit.cpp          |  1 +
+ 2 files changed, 37 insertions(+)
+
+diff --git a/Engine/main/graphics_mode.cpp b/Engine/main/graphics_mode.cpp
+index dc027a2d3..5998c0647 100644
+--- a/Engine/main/graphics_mode.cpp
++++ b/Engine/main/graphics_mode.cpp
+@@ -37,6 +37,9 @@
+ #include "main/config.h"
+ #include "main/engine_setup.h"
+ #include "main/graphics_mode.h"
++#ifdef __DJGPP__
++#include <stdlib.h> // getenv/atoi -- patch 0101
++#endif
+ #include "platform/base/agsplatformdriver.h"
+ #include "platform/base/sys_main.h"
+ 
+@@ -576,7 +579,40 @@ bool graphics_mode_update_render_frame()
+     DisplayMode dm = gfxDriver->GetDisplayMode();
+     Size screen_size = Size(dm.Width, dm.Height);
+     Size native_size = gfxDriver->GetNativeSize();
++#ifdef __DJGPP__
++    // DOS-PORT patch 0101: DOSAGS_MAX_SCALE=N caps the integer scale of the
++    // render frame (and forces "round" scaling while it does). Nothing in
++    // the config surface can ask for a 1x picture centred in a mode that
++    // could hold 2x: "round" at 640x480 gives a 320-wide game 2x, and the
++    // alternative -- a smaller mode -- does not exist on the target's own
++    // card below 512x384. A centred unscaled picture is the presentation
++    // doskutsu shipped on this Mach64 and one of the 40/40 plan's bake-off
++    // candidates; this is the smallest change that lets a cell ask for it.
++    // Measurement/config knob, off unless set, in the RUNMANIFEST allowlist.
++    Size frame_size;
++    {
++        static int s_max_scale = -1;
++        if (s_max_scale < 0)
++        {
++            const char *e = getenv("DOSAGS_MAX_SCALE");
++            s_max_scale = (e && e[0]) ? atoi(e) : 0;
++            if (s_max_scale < 0) s_max_scale = 0;
++        }
++        if (s_max_scale > 0 && native_size.Width > 0 && native_size.Height > 0)
++        {
++            const int natural = std::min(screen_size.Width / native_size.Width,
++                                         screen_size.Height / native_size.Height);
++            const int capped = std::max(1, std::min(natural, s_max_scale));
++            frame_size = get_game_frame_from_screen_size(native_size, screen_size, kFrame_Round, capped);
++            Debug::Printf("DOS-PORT: DOSAGS_MAX_SCALE=%d -> render frame %dx%d (natural scale %d)",
++                s_max_scale, frame_size.Width, frame_size.Height, natural);
++        }
++        else
++            frame_size = get_game_frame_from_screen_size(native_size, screen_size, CurFrameSetup);
++    }
++#else
+     Size frame_size = get_game_frame_from_screen_size(native_size, screen_size, CurFrameSetup);
++#endif
+     Rect render_frame = CenterInRect(RectWH(screen_size), RectWH(frame_size));
+ 
+     if (!gfxDriver->SetRenderFrame(render_frame))
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 8af5b5a69..283c7ab22 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -319,6 +319,7 @@ void quit(const char *quitmsg)
+             "DOSAGS_CLOCK_CROSSCHECK",
+             "DOSAGS_FIXED_TIMESTEP",
+             "DOSAGS_FORCE_COLOR_DEPTH",
++            "DOSAGS_MAX_SCALE",       // patch 0101: caps the render-frame scale (bake-off candidate c)
+             "DOSAGS_PRESENT_NO_SKIP", // patch 0099: forces real presents -- changes every fps figure
+             "DOSAGS_TAS_AUTO_EXIT_TICK",
+             "DOS_PORT_ENVIRONMENT",
+-- 
+2.47.3
+

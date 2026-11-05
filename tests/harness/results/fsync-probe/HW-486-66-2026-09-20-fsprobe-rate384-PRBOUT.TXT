@@ -1,0 +1,32 @@
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14584 volume_bytes=2014511104 free_bytes=477888512
+fsprobe: 200 iterations per arm, line length 128 bytes
+fsprobe: UCLOCKS_PER_SEC=1193180
+fsprobe: arm order = none
+fsprobe: arms SKIPPED -- the sweep's fsync'd bytes are then
+fsprobe: the only bytes forced to the device in this run.
+
+raw     n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+flush   n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+sync    n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+reopen  n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+
+fsprobe: fsync cost per call = mean_us(sync) - mean_us(flush) = 0.0 us
+fsprobe: 240 such calls in a gate run = 0.0 ms
+
+fsprobe: sweep -- 800-byte records to 393216 bytes, spikes >= 20000 us
+fsprobe: at this record size, byte 6400 is record 8 and byte 58400 is record 73; record 8 is byte 6400 and record 73 is byte 58400
+  FIRST rec=1     end_off=800     us=13873  (first cluster + directory entry)
+  SPIKE rec=66    end_off=52800   us=33359
+  SPIKE rec=184   end_off=147200  us=220391
+  SPIKE rec=246   end_off=196800  us=222811
+  SPIKE rec=256   end_off=204800  us=218821
+  SPIKE rec=287   end_off=229600  us=225566
+  SPIKE rec=358   end_off=286400  us=220405
+  SPIKE rec=431   end_off=344800  us=223590
+fsprobe: sweep done -- 492 records, 393600 device bytes, 7 spikes, worst 225566 us at off=229600
+fsprobe: RATE = one event per 56228 device bytes (54 KB)
+fsprobe: volume after sweep:
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14583 volume_bytes=2014511104 free_bytes=477855744
+fsprobe: done

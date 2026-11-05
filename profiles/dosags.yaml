@@ -1,0 +1,152 @@
+# DOSAGS -- the target-software profile for the vcctrl harness.
+#
+# Modeled on doskutsu's own profiles/doskutsu.yaml (in doskutsu's own
+# repo, not vcctrl's -- every port tracks its profile in its own repo;
+# vcctrl's copy moved out 2026-09-11). Everything in this file is a fact
+# about YOUR DOS program and the machine it runs on -- nothing here is
+# a fact about vcctrl itself, and nothing here belongs in the rig's
+# vcctrl.yaml (that file stays machine-local and is not tracked in any repo).
+#
+# See sdl-dos-ports' docs/hardware-testing.md before using this: the
+# harness/vcctrl-sweep|-cell|-collect orchestration scripts are
+# profile-driven as of 2026-09-11 (this port's own slice 6) -- they
+# read this file, not a hardcoded doskutsu path. That said, vcctrl-cell
+# specifically only fits an executable that takes no CLI args and is
+# configured via env vars/a config file (doskutsu's shape); AGS.EXE
+# needs real CLI args and stdout redirection, so this port's own
+# real-hardware runs use the manual stage-file/send-file/get-file
+# workflow (tests/harness/run-hw.sh) instead of vcctrl-cell, regardless
+# of what's filled in below. The `target`/`timing`/`machines` sections
+# are still real, useful facts either way. The `sweeps` section only
+# matters once you have a scripted/TAS-driven unattended MULTI-CELL run
+# to describe -- this port's own tests/harness/ AutoPilot module drives
+# one package through all its phases in a single run instead, closer in
+# shape to one vcctrl-cell invocation than to a doskutsu-style sweep, so
+# it's correctly left out below.
+
+version: 1
+name: dosags
+
+# ------------------------------------------------------------------ target
+target:
+  # Where the program lives and is run from, on the DOS target. 6 chars --
+  # fits DOS 8.3 with room to spare (the scaffold's original
+  # "ADVENTURE_GAME_STUDIO" default was 21 chars and would never have
+  # worked as a real DOS path).
+  dir: "C:\\DOSAGS"
+  configs: "CFGS"
+  ftp_put: "C:\\MTCP\\PUT.BAT"
+
+  # The executable a single cell launches (vcctrl's harness/vcctrl-cell).
+  exe: "AGS.EXE"
+
+  # Per-card config switching (vcctrl-cell's --cfg). Null/absent: dosags has
+  # no config-file-switching mechanism yet (no per-card CFG files exist) --
+  # a cell run against this profile skips the copy step entirely rather
+  # than copying a file that means nothing on this target. Fill in once
+  # (if ever) dosags gains an equivalent of doskutsu's CFGS\*.CFG switching.
+  default_cfg: null
+  cfg_dest: null
+
+  # The command that resets the environment before a cell sets its own
+  # (vcctrl-cell). Null/absent: dosags has no CLRENV.BAT equivalent -- there
+  # is currently only a small, fully-enumerable set of DOSAGS_* env vars
+  # (see `env:` below), so nothing yet needs a bulk-clear step. Revisit if
+  # that set grows past what --forbid can reasonably enumerate per cell.
+  env_clear_cmd: null
+
+  # The unattended-sweep harness's own entry point (vcctrl-sweep). Null/
+  # absent: dosags has no multi-cell TAS-replay sweep harness -- its own
+  # `tests/harness/` AutoPilot module drives one package through all its
+  # phases in a single run, closer in shape to one vcctrl-cell invocation
+  # than to a doskutsu-style sweep. vcctrl-sweep already refuses cleanly for
+  # a profile with no `sweeps:`/`machines:` section (see below); this field
+  # is just the command name for if/when a sweep-shaped run ever exists.
+  sweep_entry_cmd: null
+
+  # Per-video-card env overrides (vcctrl-cell). Empty: no per-card findings
+  # exist for dosags yet -- unlike doskutsu's Mach64/PIN_NATIVE_MODE
+  # requirement, nothing here has been measured. An empty map means every
+  # --card value gets no override, which is the honest state until a real
+  # card-specific finding shows up.
+  card_overrides: {}
+
+  # THE BOOT-PROFILE WITNESS. Whatever env var or file your CONFIG.SYS/
+  # AUTOEXEC.BAT boot-menu profiles set differently is what proves which
+  # profile is currently loaded -- a cell must verify this before trusting
+  # its results. Keep this ONE-DIRECTIONAL: presence should prove one
+  # specific positive fact (e.g. "a sound profile is loaded, so this is
+  # NOT the network profile"), never be read backwards as proof of absence
+  # of some other profile. See vcctrl's docs/HARNESS-STANDARD.md sec. 12
+  # and docs/OPEN-FAULTS.md sec. 15 for why this matters -- a naive
+  # "prove NET by an absent BLASTER" check will happily accept a profile
+  # with no network stack at all and fail silently later.
+  # Filled 2026-11-04 for PLAN-NEXT R1. The Gateway 2000's boot menu has
+  # more than one profile, and its default, PGSB, runs the PicoGUS as a
+  # Sound Blaster 2.0. dinspect (job scan-20261104T174839.141Z, PGSB boot)
+  # read this BLASTER value. Check the VALUE, not just its presence: any
+  # sound profile sets BLASTER, and a changed default VOIDs the cell
+  # rather than being measured (doskutsu's profile and vcctrl
+  # docs/OPEN-FAULTS.md sec. 15). One-way: a match proves that the PGSB
+  # Sound Blaster settings the 09-30 gate cells ran under are loaded. A
+  # mismatch proves nothing about which other profile it is.
+  profile_witness:
+    variable: BLASTER
+    value: "A220 I7 D3 P330 T3"
+    proves: "the PGSB profile's Sound Blaster settings are loaded (as the 09-30 gate cells)"
+    direction: one-way
+
+  # The env var names YOUR program itself consults -- do not invent names
+  # here that nothing on the target reads. Fill in only what your port
+  # actually implements (TAS replay / deterministic seed / auto-exit /
+  # log tagging / native-mode pin / screenshot ticks are doskutsu's set;
+  # yours may differ or be a subset).
+  #
+  # auto_exit_tick and log_tag (plus the new `scene` entry below) are now
+  # implemented (patches/ags/0044, ninth session's test-harness slice 3):
+  # honored at quit()'s clean-shutdown path / once per game loop. The
+  # rest (replay, seed, pin_native_mode, shot_ticks) are still
+  # placeholders -- update this comment as each one lands.
+  env:
+    replay: DOSAGS_TAS_REPLAY
+    seed: DOSAGS_TAS_PRNG_SEED
+    auto_exit_tick: DOSAGS_TAS_AUTO_EXIT_TICK
+    log_tag: DOSAGS_LOG_TAG
+    scene: DOSAGS_SCENE
+    pin_native_mode: DOSAGS_PIN_NATIVE_MODE
+    shot_ticks: DOSAGS_SHOT_TICKS
+    # Harness-side capture-mode flag (see doskutsu's own DKTCAP). Null:
+    # dosags's own tests/harness/run-dosbox.sh and vcctrl-cell's mode
+    # restore already handle console-mode/capture concerns without a
+    # DOS-side env var, so there is nothing for this to name yet.
+    capture_flag: null
+
+timing:
+  # How long your boot menu waits before timing out and picking a default,
+  # in seconds -- this is target physics, not rig physics. The keystroke
+  # budget for hitting a menu choice in time is derived from this plus the
+  # rig's own keyboard-buffer depth (declared in vcctrl.yaml), not here.
+  menu_window_s: 14
+
+# ----------------------------------------------------------------- machines
+# Tag and display name per CPU your project targets. Match sdl-dos-ports'
+# HARDWARE.md matrix where possible so results stay comparable across ports.
+machines:
+  "1": {tag: "P", name: "Pentium OverDrive 83"}
+  "2": {tag: "A", name: "Am5x86-133"}
+  "3": {tag: "6", name: "486DX2-66"}
+  "4": {tag: "5", name: "486DX2-50"}
+
+# ------------------------------------------------------------------- sweeps
+# Optional. Only meaningful once you have a scripted/TAS-driven unattended
+# run and the harness scripts have been generalized to read it (see
+# docs/hardware-testing.md "Current gap"). Per-sweep wall-clock budgets
+# should be measured, not guessed -- state which machine/run the timeout
+# was derived from.
+#
+# sweeps:
+#   <SWEEP_NAME>:
+#     cells: <count>
+#     timeout_min: <budget, ~2x the slowest machine's measured time>
+#     measured: "<Xm Ys> on <machine>"
+#     tags: ["<cell-tag>", ...]

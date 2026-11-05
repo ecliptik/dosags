@@ -1,0 +1,97 @@
+From 8d6fde95f66b6ec26e8175f7daa66f8d0043f9a9 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 22 Sep 2026 22:23:01 -0700
+Subject: [PATCH] DOS-PORT: patch 0205 -- report which FM chip answered at 388h
+ (OPL2 or OPL3) and the voices driven
+
+WHY: 8.3's melody score on the PicoGUS stayed at 0.674 against the DOSBox-X reference even when the
+two captures were aligned from the music's start (PLAN.md, step 8). One way to get dropped notes and
+a different timbre: the shared opl3_sink's detection (SDL_DOSOpl3Detect, the AdLib timer-1 test)
+passes for an OPL2 and an OPL3 alike, and SDL_DOSOpl3InitChip then sets OPL3 mode and drives 18 two-op
+voices, 9-17 through the second register bank at 38Ah/38Bh. On an OPL2, or an emulation that ignores
+the second bank, every note the sink puts on voices 9-17 is silent. "OPL3/OPL2 chip detected" did not
+say which chip answered.
+
+WHAT: right after the sink opens, one status read at 388h: with the timers reset and masked, as the
+detection leaves them, an OPL3 reads 0x00 in bits 1-2 and an OPL2 reads 0x06. The init log line says
+which, and audio_vital_status's MIDI fragment gains ",chip=opl3|opl2,voices=18" for the OPL backend
+(18 is the sink's constant). Reporting only; the chip is still driven as before. The mixer's MIDI
+fragment buffer grows 96 -> 192 bytes.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/platform/dos/dos_audio_mixer.cpp  |  2 +-
+ Engine/platform/dos/dos_midi_backend.cpp | 24 +++++++++++++++++++++---
+ 2 files changed, 22 insertions(+), 4 deletions(-)
+
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index 516ff4505..22c45d3d2 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -161,7 +161,7 @@ void format_status_string(char *buf, size_t bufsize)
+     const int bits = static_cast<int>(SDL_AUDIO_BITSIZE(fmt));
+     const char chan_letter = (DOS_AUDIO_MIXER_CHANNELS == 1) ? 'm' : 's';
+     const char *device = g_gus_backend ? "gus" : "sb";
+-    char midi_fragment[96];
++    char midi_fragment[192];
+     // DOS-PORT (Sound milestone, S4): dos_midi_backend owns the real
+     // "midi=<backend>,events=<n>" fragment now -- S1 hardcoded ";midi=none"
+     // here since no MIDI backend existed yet.
+diff --git a/Engine/platform/dos/dos_midi_backend.cpp b/Engine/platform/dos/dos_midi_backend.cpp
+index e28e3abbf..cd4bc3aa3 100644
+--- a/Engine/platform/dos/dos_midi_backend.cpp
++++ b/Engine/platform/dos/dos_midi_backend.cpp
+@@ -17,6 +17,7 @@
+ #include <SDL3/SDL.h>
+ #include "debug/out.h"
+ #include <time.h> // uclock(), UCLOCKS_PER_SEC -- TEMPORARY DIAGNOSTIC (S7-GUS), see dos_midi_backend_prepare_song() below
++#include <pc.h> // inportb() -- DOS-PORT (patch 0205), the OPL status read
+ 
+ using namespace AGS::Common;
+ 
+@@ -25,6 +26,15 @@ namespace
+ 
+ DosMidiBackendKind g_last_kind = DOS_MIDI_BACKEND_NONE;
+ uint64_t g_events_dispatched = 0;
++// DOS-PORT (patch 0205): what the FM chip at 388h actually is. The shared
++// opl3_sink's detection (SDL_DOSOpl3Detect: the AdLib timer-1 test) passes for
++// an OPL2 and an OPL3 alike, and SDL_DOSOpl3InitChip then drives 18 voices,
++// 9-17 through the second register bank (38Ah/38Bh), which an OPL2 does not
++// have -- notes on those voices would simply not sound. The OPL3 test: with
++// both timers reset and masked (as the detection leaves them) the status
++// register reads 0x00 on an OPL3 and 0x06 in bits 1-2 on an OPL2.
++// 0 = not probed, 2 = OPL2, 3 = OPL3.
++int g_opl_chip = 0;
+ 
+ // DOS-PORT (S5): the wb backend is a session-lifetime singleton, unlike
+ // opl3's per-AudioPlayer-instance handles -- see dos_midi_backend_cold_init()
+@@ -134,7 +144,9 @@ void *dos_midi_backend_open(DosMidiBackendKind *out_kind, midi_sched_sink *out_s
+             opl3_sink_load_bank(sink, "OPL3BANK.DAT", nullptr);
+             if (out_sink)
+                 opl3_sink_bind(sink, out_sink);
+-            Debug::Printf(kDbgMsg_Info, "DosMidiBackend: OPL3/OPL2 chip detected and initialized");
++            g_opl_chip = ((inportb(0x388) & 0x06) == 0) ? 3 : 2;
++            Debug::Printf(kDbgMsg_Info, "DosMidiBackend: OPL3/OPL2 chip detected and initialized "
++                "(status bits 1-2 say OPL%d; driven as OPL3, 18 two-op voices)", g_opl_chip);
+         }
+         else
+         {
+@@ -313,6 +325,12 @@ void dos_midi_backend_add_dispatched(uint64_t delta)
+ 
+ void dos_midi_backend_status_fragment(char *buf, size_t bufsize)
+ {
+-    std::snprintf(buf, bufsize, "midi=%s,events=%llu",
+-        kind_name(g_last_kind), (unsigned long long)g_events_dispatched);
++    // DOS-PORT (patch 0205): for the OPL backend, which chip answered and how
++    // many voices the sink drives (always 18, 9-17 in the OPL3-only bank).
++    if (g_last_kind == DOS_MIDI_BACKEND_OPL3 && g_opl_chip != 0)
++        std::snprintf(buf, bufsize, "midi=%s,events=%llu,chip=opl%d,voices=18",
++            kind_name(g_last_kind), (unsigned long long)g_events_dispatched, g_opl_chip);
++    else
++        std::snprintf(buf, bufsize, "midi=%s,events=%llu",
++            kind_name(g_last_kind), (unsigned long long)g_events_dispatched);
+ }
+-- 
+2.47.3
+

@@ -1,0 +1,160 @@
+From 3833dd99211a279f19995830adb98e16b3a4aafa Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 11 Sep 2026 00:12:48 -0700
+Subject: [PATCH] [AGS] Track DPMI free-memory minimum for the peak-footprint
+ KPI
+
+PLAN.md's "Test harness (AGS Quest)" slice 3 scopes DPMI free-memory
+tracking as the last of the four instrumentation items (fps p50/p95:
+0041, room-transition ms timestamps: 0042, this, then run-identity env
+vars). dos_memory_sample_tick() (game_run.cpp, called from the same
+game_loop_update_fps() call site as dos_fps_sample_tick(), its own
+independent once-per-real-second gate) reads
+__dpmi_get_free_memory_information()'s largest_available_free_block_in_bytes
+-- the field DPMI hosts (including CWSDPMI, this port's own) most
+reliably support; DJGPP's own long-documented experience with this call
+is that several of the struct's other fields commonly read back as
+0xFFFFFFFF ("unknown") on DPMI 0.9 hosts, so that sentinel is treated
+as "no usable reading" here, never a real zero -- and tracks the
+smallest value seen across the run.
+
+Not a RUNMANIFEST struct field -- the shared schema
+(.sdl-dos-ports/shared/include/runmanifest.h) has no memory slot, and
+runmanifest_emit() is one monolithic call with no mid-block extension
+hook, so reimplementing its field-by-field sequence for one more line
+isn't worth the footprint. Written as its own "DOS-PORT
+memory_min_free_kb=<n>" line in the same RUNMANI.LOG file, right after
+the standard [RUNMANIFEST-BEGIN]..[RUNMANIFEST-END] block -- any
+consumer that only reads between those markers is unaffected.
+
+Confirmed by a real DOSBox-X run against the tests/harness AGS Quest
+package: RUNMANI.LOG shows memory_min_free_kb=158000 -- a real, sane
+reading (DOSBox-X's generous default memory configuration, not this
+port's 16 MB real-hardware target, so the absolute number isn't a KPI
+datum yet, but the mechanism itself -- a real, non-0xFFFFFFFF, non-
+constant value -- is confirmed working).
+---
+ Engine/main/game_run.cpp | 46 ++++++++++++++++++++++++++++++++++++++++
+ Engine/main/game_run.h   | 10 +++++++++
+ Engine/main/quit.cpp     | 13 ++++++++++++
+ 3 files changed, 69 insertions(+)
+
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 65988fba0..8039547ba 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -20,6 +20,9 @@
+ #include <cmath>
+ #include <limits>
+ #include <chrono>
++#ifdef __DJGPP__
++#include <dpmi.h> // __dpmi_get_free_memory_information -- DOS-PORT memory KPI
++#endif
+ #include <SDL3/SDL.h>
+ #include "ac/button.h"
+ #include "ac/common.h"
+@@ -1168,6 +1171,7 @@ static void game_loop_update_fps()
+ 
+ #ifdef __DJGPP__
+     dos_fps_sample_tick();
++    dos_memory_sample_tick();
+ #endif
+ }
+ 
+@@ -1219,6 +1223,48 @@ void dos_fps_percentiles(double *p50_out, double *p95_out)
+     if (p50_out) *p50_out = (double)sorted[p50_idx];
+     if (p95_out) *p95_out = (double)sorted[p95_idx];
+ }
++
++// DOS-PORT: DPMI free-memory minimum tracker (peak-footprint KPI). Same
++// once-per-real-second self-gating convention as dos_fps_sample_tick()
++// above, its own independent timer so either can be called without the
++// other. largest_available_free_block_in_bytes is the field DPMI hosts
++// (including CWSDPMI, this port's own) most reliably support; some
++// other __dpmi_free_mem_info fields are commonly 0xFFFFFFFF ("unknown")
++// on DPMI 0.9 hosts, per DJGPP's own long-documented experience with
++// this call -- treated as "no usable reading" here, not a real zero.
++static Clock::time_point dos_mem_last_sample_time;
++static bool dos_mem_have_last_sample_time = false;
++static long dos_mem_min_free_kb = -1;
++
++void dos_memory_sample_tick()
++{
++    const auto now = Clock::now();
++    if (!dos_mem_have_last_sample_time)
++    {
++        dos_mem_last_sample_time = now;
++        dos_mem_have_last_sample_time = true;
++        return;
++    }
++    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - dos_mem_last_sample_time) < std::chrono::milliseconds(1000))
++        return;
++    dos_mem_last_sample_time = now;
++
++    __dpmi_free_mem_info info;
++    if (__dpmi_get_free_memory_information(&info) != 0)
++        return; // call itself failed -- leave the running minimum untouched
++
++    if (info.largest_available_free_block_in_bytes == 0xFFFFFFFFUL)
++        return; // this DPMI host doesn't support this field -- not a real zero
++
++    const long free_kb = (long)(info.largest_available_free_block_in_bytes / 1024UL);
++    if (dos_mem_min_free_kb < 0 || free_kb < dos_mem_min_free_kb)
++        dos_mem_min_free_kb = free_kb;
++}
++
++long dos_memory_min_free_kb()
++{
++    return dos_mem_min_free_kb;
++}
+ #endif // __DJGPP__
+ 
+ float get_game_fps()
+diff --git a/Engine/main/game_run.h b/Engine/main/game_run.h
+index cbd0f177e..5dd78aeae 100644
+--- a/Engine/main/game_run.h
++++ b/Engine/main/game_run.h
+@@ -78,6 +78,16 @@ void set_runtime_start();
+ // were ever taken (e.g. the engine quit before any game loop ran).
+ void dos_fps_sample_tick();
+ void dos_fps_percentiles(double *p50_out, double *p95_out);
++
++// DOS-PORT: DPMI free-memory minimum tracker (peak-footprint KPI).
++// dos_memory_sample_tick() self-gates to once per real second, same
++// convention as dos_fps_sample_tick() above -- call it as often as
++// convenient. dos_memory_min_free_kb() returns the smallest
++// largest_available_free_block_in_bytes seen so far, in KB, or -1 if
++// no sample was ever taken or DPMI never returned a usable reading
++// (some DPMI hosts report 0xFFFFFFFF/"unknown" for some fields).
++void dos_memory_sample_tick();
++long dos_memory_min_free_kb();
+ #endif
+ // Tells if the runtime counter was initialized
+ bool is_runtime_set();
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 41f5a7b35..831bfdf62 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -340,6 +340,19 @@ void quit(const char *quitmsg)
+         if (run_manifest_log)
+         {
+             runmanifest_emit(run_manifest_log, &manifest);
++
++            // DOS-PORT: peak-footprint KPI (PLAN.md's "Test harness (AGS
++            // Quest)" slice 3). Not a RUNMANIFEST field -- the shared
++            // schema (.sdl-dos-ports/shared/include/runmanifest.h) has no
++            // memory slot, and runmanifest_emit() is a single monolithic
++            // call with no mid-block extension hook, so reimplementing
++            // its field-by-field sequence just to insert one more line
++            // isn't worth the footprint. Written as its own line, right
++            // after the standard block in the same RUNMANI.LOG file --
++            // any consumer that only reads between [RUNMANIFEST-BEGIN]
++            // and [RUNMANIFEST-END] is unaffected.
++            fprintf(run_manifest_log, "DOS-PORT memory_min_free_kb=%ld\n", dos_memory_min_free_kb());
++
+             fclose(run_manifest_log);
+         }
+     }
+-- 
+2.47.3
+

@@ -1,0 +1,86 @@
+ratchet 20261104T190430Z PASS: 41 pass (12 improved), 0 fail, 0 blocked, 3 quarantined
+
+ratchet.sh report
+run:    20261104T190430Z
+root:   /home/claude/git/dosags
+file:   /home/claude/git/dosags/tests/ratchet.yaml
+host:   claude
+state:  /home/claude/git/dosags/build/ratchet/state.tsv
+lock:   /tmp/dos-port-dosbox.lock, exclusive per unit; no ps quiet-wait
+
+RUN                            KIND     STATUS         RC   WAIT   SECS  LOCK
+gate-alias                     capture  OK              1      0    972  exclusive
+gate-aq-fixed                  capture  OK              1      1    439  shared, asserted by the author (no conf on the command line to check)
+aq-journeys                    plain    OK              0      0    203  shared, verified (cycles=fixed 40000 in /home/claude/git/dosags/tests/harness/confs/dosbox-x-fixed40k-opl3.conf)
+sb-5days                       sb-live  OK              0      0     80  exclusive
+mi-stall-isr                   sb-live  OK              0      0    169  shared, verified (cycles=fixed 40000 in /home/claude/git/dosags/tests/harness/confs/dosbox-x-fixed40k-opl3.conf)
+mi-throttle-isr                sb-live  OK              0      0    221  shared, verified (cycles=fixed 40000 in /home/claude/git/dosags/tests/harness/confs/dosbox-x-fixed40k-opl3.conf)
+clicks                         capture  OK              0     58    113  exclusive
+clicks-throttled-quick         capture  OK              0      0    205  exclusive
+
+CHECK                              KIND     STATUS       VALUE        CMP   LIMIT      HISTORY       WAIT   SECS  NOTE
+screen-bench8-alias-idle           capture  PASS         0            eq    0          P                0    972  run=gate-alias
+screen-bench8-alias-walk           capture  PASS         0            eq    0          P                0      0  run=gate-alias
+screen-bench8-alias-anim4          capture  PASS         0            eq    0          P                0      0  run=gate-alias
+screen-bench8-alias-anim12         capture  PASS         0            eq    0          P                0      0  run=gate-alias
+screen-bench8-alias-text           capture  PASS         0            eq    0          P                0      0  run=gate-alias
+screen-bench8-alias-gui            capture  PASS         0            eq    0          P                0      0  run=gate-alias
+screen-bench8-alias-full           capture  PASS         0            eq    0          P                0      0  run=gate-alias
+screen-agsquest-alias-y60-fixed40k capture  ERROR(q)     -            eq    0          E                1    439  run=gate-aq-fixed
+screen-bench8-alias-512x384-idle   capture  PASS         0            eq    0          P                0      0  run=gate-alias
+screen-bench8-alias-512x384-anim12 capture  PASS         0            eq    0          P                0      0  run=gate-alias
+screen-bench16-alias-512x384-idle  capture  PASS         0            eq    0          P                0      0  run=gate-alias
+screen-bench16-alias-512x384-anim12 capture  PASS         0            eq    0          P                0      0  run=gate-alias
+screen-5days-alias-512x384         capture  PASS         0            eq    0          P                0      0  run=gate-alias
+screen-shards-alias-512x384        capture  FAIL(q)      4            eq    0          F                0      0  run=gate-alias
+stale-frames-aq-journeys           plain    PASS         0            eq    0          P                0    203  run=aq-journeys
+journeys-room-n                    plain    PASS         8            eq    8          P                0      0  run=aq-journeys
+journeys-save-n                    plain    PASS         1            eq    1          P                0      0  run=aq-journeys
+journeys-load-n                    plain    PASS         1            eq    1          P                0      0  run=aq-journeys
+journeys-boot-n                    plain    PASS         1            eq    1          P                0      0  run=aq-journeys
+journeys-unfinished                plain    PASS         0            eq    0          P                0      0  run=aq-journeys
+journey-boot-p95-ms-fixed          plain    IMPROVED     7538         le    7901       I                0      0  run=aq-journeys
+journey-room-p95-ms-fixed          plain    IMPROVED     11717        le    12295      I                0      0  run=aq-journeys
+journey-save-p95-ms-fixed          plain    IMPROVED     890          le    913        I                0      0  run=aq-journeys
+journey-load-p95-ms-fixed          plain    IMPROVED     10088        le    10929      I                0      0  run=aq-journeys
+pcm-accounting-sb-5days            sb-live  IMPROVED     0            le    1          I                0     80  run=sb-5days
+pcm-mixed-sb-5days                 sb-live  IMPROVED     275          ge    50         I                0      0  run=sb-5days
+overwrites-sb-5days                sb-live  PASS(q)      0            eq    0          P                0      0  run=sb-5days
+underruns-sb-5days                 sb-live  PASS         0            eq    0          P                0      0  run=sb-5days
+underruns-stall                    sb-live  PASS         0            eq    0          P                0    169  run=mi-stall-isr
+underruns-throttle                 sb-live  PASS         0            eq    0          P                0    221  run=mi-throttle-isr
+midi-late-sb-5days                 sb-live  PASS         0            eq    0          P                0      0  run=sb-5days
+midi-late-stall                    sb-live  PASS         0            eq    0          P                0      0  run=mi-stall-isr
+midi-stall-fired                   sb-live  IMPROVED     19           ge    10         I                0      0  run=mi-stall-isr
+midi-late-throttle                 sb-live  PASS         0            eq    0          P                0      0  run=mi-throttle-isr
+lost-inputs                        capture  PASS         0            eq    0          P               58    113  run=clicks
+lost-clicks-driver-vs-poll         capture  PASS         0            eq    0          P                0      0  run=clicks
+clicks-injected                    capture  PASS         21           eq    21         P                0      0  run=clicks
+keys-injected                      capture  PASS         5            eq    5          P                0      0  run=clicks
+lost-inputs-throttled-quick        capture  PASS         0            eq    0          P                0    205  run=clicks-throttled-quick
+sb-alive-clk-sb-5days              sb-live  IMPROVED     1001         ge    900        I                0      0  run=sb-5days
+sb-alive-clk-stall                 sb-live  IMPROVED     997          ge    900        I                0      0  run=mi-stall-isr
+sb-alive-clk-throttle              sb-live  IMPROVED     999          ge    900        I                0      0  run=mi-throttle-isr
+exe-bytes                          plain    IMPROVED     8633512      le    8670630    I                0      1  
+code-lock-bytes                    sb-live  IMPROVED     5150832      le    5181776    I                0      0  run=sb-5days
+
+HISTORY letters, oldest first, last 10 recorded results (BLOCKED/INTERRUPTED not counted):
+  P pass  I improved  F fail  E error  T timeout.  (q) = quarantined, never gating.
+
+--- screen-agsquest-alias-y60-fixed40k: ERROR (value none, eq 0; from run.gate-aq-fixed)
+    log:     /home/claude/git/dosags/build/ratchet/20261104T190430Z/run.gate-aq-fixed/output.txt
+    | gate-alias: 1 failing row(s); controls that failed as required: 0 of 0; table in /home/claude/git/dosags/build/ratchet/20261104T190430Z/run.gate-aq-fixed/summary.txt
+    | agsquest-alias-y60     A==B: VOID(skipped 1291/1301) | screen-equal: 0 pair(s) compared, 11 problem(s) frames_skipped A/B: 1291/1301 | -
+    | ratchet.sh: screen-agsquest-alias-y60-fixed40k ERROR: no number (missing field) in /home/claude/git/dosags/build/ratchet/20261104T190430Z/run.gate-aq-fixed/summary.txt
+--- screen-shards-alias-512x384: FAIL (value 4, eq 0; from run.gate-alias)
+    log:     /home/claude/git/dosags/build/ratchet/20261104T190430Z/run.gate-alias/output.txt
+    | bench8-alias-gui       A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | bench8-alias-full      A==B: ok   | screen-equal: 2 pair(s) compared, 0 problem(s)  | -
+    | bench8-alias-512x384-idle A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | bench8-alias-512x384-anim12 A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | bench16-alias-512x384-idle A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | bench16-alias-512x384-anim12 A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | 5days-alias-512x384    A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | shards-alias-512x384   A==B: FAIL | screen-equal: 2 pair(s) compared, 4 problem(s)  | -
+
+12 check(s) IMPROVED on their limit; rerun with --propose-lower to write a proposed file.

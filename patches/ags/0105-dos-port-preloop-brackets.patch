@@ -1,0 +1,157 @@
+From 9a247f17f05fbb838cca65619814c1007e71edf9 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 18 Sep 2026 09:04:10 -0700
+Subject: [PATCH] DOS-PORT: patch 0105 -- bracket the pre-loop's five internal
+ costs
+
+The pre-loop -- set_runtime_start() to the first GameTick() -- is the
+only startup cost inside tick_rate's denominator, and so the only one
+the whole-run gate can see. It was a single opaque number (~3.0 s on
+HW-486-66) while every phase patch 0078 already brackets sits BEFORE the
+anchor and is invisible to that gate.
+
+start_game() (main/game_start.cpp) makes the five components plain:
+the game_start script, SetRestartPoint() (a save written to disk, for
+< 3.6.1 games only -- Trilby's Notes at DataVersion 27 qualifies),
+current_fade_out_effect() on the PLACEHOLDER room, load_new_room(), and
+first_room_initialization(). Each is now bracketed at its call site with
+uclock() directly -- this runs once, outside any tick, so a
+DosPortTickScope would be the wrong report to land in.
+
+Measurement only, no behaviour change. DOSBox-X (not a performance
+proxy, quoted only to show the fields emit): script 1 ms, restart point
+98, placeholder fade 311, room load 351, first room init 0.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hnodGZ6cg8CWuFXEDTsUq
+---
+ Engine/ac/event.cpp                   |  9 ++++++
+ Engine/main/dos_port_startup_timing.h | 11 +++++++
+ Engine/main/game_start.cpp            | 45 +++++++++++++++++++++++++++
+ 3 files changed, 65 insertions(+)
+
+diff --git a/Engine/ac/event.cpp b/Engine/ac/event.cpp
+index a60dd2958..83a740e02 100644
+--- a/Engine/ac/event.cpp
++++ b/Engine/ac/event.cpp
+@@ -272,6 +272,15 @@ void process_event(const AGSEvent *evp)
+                             debug_script_log("sprite_precache_slowest%d_view=%d sprite_precache_slowest%d_ms=%ld",
+                                 i + 1, st.precache_slowest[i].view, i + 1, st.precache_slowest[i].ms);
+                         debug_script_log("first_room_load_ms=%ld", st.first_room_load_ms);
++                        // patch 0105: the pre-loop's own split. These five
++                        // are the only startup costs inside tick_rate's
++                        // denominator; every phase above them is engine
++                        // init, which the whole-run gate cannot see.
++                        debug_script_log("preloop_game_start_script_ms=%ld", st.preloop_game_start_script_ms);
++                        debug_script_log("preloop_restart_point_ms=%ld", st.preloop_restart_point_ms);
++                        debug_script_log("preloop_placeholder_fade_ms=%ld", st.preloop_placeholder_fade_ms);
++                        debug_script_log("preloop_room_load_ms=%ld", st.preloop_room_load_ms);
++                        debug_script_log("preloop_first_room_init_ms=%ld", st.preloop_first_room_init_ms);
+                         debug_script_log("total_to_first_frame_ms=%ld", t_ms);
+                         debug_script_log("[DOS-PORT-STARTUP-END]");
+                     }
+diff --git a/Engine/main/dos_port_startup_timing.h b/Engine/main/dos_port_startup_timing.h
+index 6a0e99f5d..b65c79d5b 100644
+--- a/Engine/main/dos_port_startup_timing.h
++++ b/Engine/main/dos_port_startup_timing.h
+@@ -57,6 +57,17 @@ struct DosPortStartupTiming
+     // Slowest 3 precache_view() calls by their own total ms (view id, ms),
+     // insertion-sorted descending in ac/game.cpp. -1/-1 means "no Nth call".
+     struct { int view = -1; long ms = -1; } precache_slowest[3];
++    // patch 0105: the PRE-LOOP's own internal split. Everything above
++    // happens before set_runtime_start() and so sits OUTSIDE
++    // tick_rate's denominator; everything here is inside it, which is
++    // why these five are the only startup costs the whole-run gate can
++    // see. Bracketed at their call sites in main/game_start.cpp's
++    // start_game(), in source order.
++    long preloop_game_start_script_ms = -1; // RunScriptFunctionInModules("game_start")
++    long preloop_restart_point_ms = -1;     // SetRestartPoint() -- writes a save to disk; < 3.6.1 games only
++    long preloop_placeholder_fade_ms = -1;  // current_fade_out_effect() on the PLACEHOLDER room
++    long preloop_room_load_ms = -1;         // load_new_room() as called from start_game()
++    long preloop_first_room_init_ms = -1;   // first_room_initialization()
+     long first_room_load_start_ms = -1;    // room.cpp load_new_room()'s own t_ms, first call only (temp holding value)
+     long first_room_load_ms = -1;          // room.cpp load_new_room() start .. event.cpp AfterFadein ready (final)
+     bool reported = false;            // report emitted once, at the first room-ready event
+diff --git a/Engine/main/game_start.cpp b/Engine/main/game_start.cpp
+index 5aca6c05c..e7277f765 100644
+--- a/Engine/main/game_start.cpp
++++ b/Engine/main/game_start.cpp
+@@ -37,6 +37,10 @@
+ #include "main/game_start.h"
+ #include "media/audio/audio_system.h"
+ #include "script/script.h"
++#ifdef __DJGPP__
++#include <time.h>  // uclock() -- patch 0105's pre-loop brackets
++#include "main/dos_port_startup_timing.h"
++#endif
+ 
+ using namespace AGS::Common;
+ using namespace AGS::Engine;
+@@ -78,23 +82,64 @@ void start_game()
+     // skip ticks to account for initialisation or a restored game.
+     skipMissedTicks();
+ 
++    // DOS-PORT patch 0105: bracket each of the five things that happen
++    // between set_runtime_start() (just above) and the first GameTick().
++    // They are the whole of the pre-loop -- the only startup cost inside
++    // tick_rate's denominator -- and until now it was one opaque ~3.0 s
++    // number. uclock() directly rather than a DosPortTickScope: this runs
++    // once, outside any tick, and the tick phases are a different report.
++#ifdef __DJGPP__
++#define DOS_PORT_PRELOOP_T0() (uclock())
++#define DOS_PORT_PRELOOP_MS(t0) \
++    ((long)((uclock() - (t0)) * 1000 / UCLOCKS_PER_SEC))
++    uclock_t _dp_t0 = DOS_PORT_PRELOOP_T0();
++#endif
+     RunScriptFunctionInModules("game_start");
++#ifdef __DJGPP__
++    dos_port_startup_timing.preloop_game_start_script_ms = DOS_PORT_PRELOOP_MS(_dp_t0);
++#endif
+ 
+     set_our_eip(-43);
+ 
+     // Only auto-set first restart point in < 3.6.1 games,
+     // since 3.6.1+ users are suggested to set one manually in script.
+     if (loaded_game_file_version < kGameVersion_361_10)
++    {
++#ifdef __DJGPP__
++        _dp_t0 = DOS_PORT_PRELOOP_T0();
++#endif
+         SetRestartPoint();
++#ifdef __DJGPP__
++        dos_port_startup_timing.preloop_restart_point_ms = DOS_PORT_PRELOOP_MS(_dp_t0);
++#endif
++    }
+ 
+     set_our_eip(-3);
+ 
+     if (displayed_room < 0) {
++#ifdef __DJGPP__
++        _dp_t0 = DOS_PORT_PRELOOP_T0();
++#endif
+         current_fade_out_effect();
++#ifdef __DJGPP__
++        dos_port_startup_timing.preloop_placeholder_fade_ms = DOS_PORT_PRELOOP_MS(_dp_t0);
++        _dp_t0 = DOS_PORT_PRELOOP_T0();
++#endif
+         load_new_room(playerchar->room,playerchar);
++#ifdef __DJGPP__
++        dos_port_startup_timing.preloop_room_load_ms = DOS_PORT_PRELOOP_MS(_dp_t0);
++#endif
+     }
+ 
++#ifdef __DJGPP__
++    _dp_t0 = DOS_PORT_PRELOOP_T0();
++#endif
+     first_room_initialization();
++#ifdef __DJGPP__
++    dos_port_startup_timing.preloop_first_room_init_ms = DOS_PORT_PRELOOP_MS(_dp_t0);
++#undef DOS_PORT_PRELOOP_T0
++#undef DOS_PORT_PRELOOP_MS
++#endif
+ }
+ 
+ void initialize_start_and_play_game(int override_start_room, const String &load_save)
+-- 
+2.47.3
+

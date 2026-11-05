@@ -1,0 +1,93 @@
+From 98cc49a9097a5f06ca08fa134ab2a4f47b8dd068 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 13:28:11 -0700
+Subject: [PATCH] [AGS] Make the vendored Allegro subset buildable under DJGPP
+
+One concern, two hunks -- both needed together, neither sufficient
+alone (confirmed by real isolated build, tests/probes/allegro-isolated/):
+
+1. libsrc/allegro/CMakeLists.txt has its own, second, independent
+   CMAKE_SYSTEM_NAME gate (separate from the top-level one patches/ags/0001
+   fixes), reached via the top-level add_subdirectory(libsrc/allegro
+   EXCLUDE_FROM_ALL) -- EXCLUDE_FROM_ALL only excludes a target from the
+   default build, it does not defer this configure-time FATAL_ERROR.
+   Uses the same quoted-STREQUAL fix as 0001, for the identical reason
+   (CMake's bundled Platform/DOS-Initialize.cmake collides with an
+   unquoted MATCHES "DOS" comparison).
+
+2. The actually load-bearing fix is in a completely different, separate
+   mechanism: include/allegro/internal/alconfig.h's own C-preprocessor
+   platform-autodetect chain (evaluated by the compiler, not CMake) has
+   no DJGPP branch at all. Without it, the ALLEGRO_UNIX *macro* (distinct
+   from the CMake variable of the same name in CMakeLists.txt, which does
+   nothing downstream) is never defined, and the very first file compiled
+   hits alconfig.h's own "#error platform not supported" before anything
+   else -- confirmed this is the real blocker, not the CMake-level one,
+   by bisection.
+
+Verified: liballeg.a links with zero errors (one pre-existing, unrelated
+macro-redefinition warning in ufile.c). Full findings, including why
+Allegro's CMake-level if(UNIX) feature-probe block turns out not to
+matter for the alucfg.h path DOS actually takes:
+tests/probes/allegro-isolated/README.md.
+---
+ libsrc/allegro/CMakeLists.txt                   | 17 +++++++++++++++++
+ .../allegro/include/allegro/internal/alconfig.h | 14 ++++++++++++++
+ 2 files changed, 31 insertions(+)
+
+diff --git a/libsrc/allegro/CMakeLists.txt b/libsrc/allegro/CMakeLists.txt
+index 1a80ff4ed..073d1716c 100644
+--- a/libsrc/allegro/CMakeLists.txt
++++ b/libsrc/allegro/CMakeLists.txt
+@@ -160,6 +160,23 @@ elseif (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+     set(ALLEGRO_MACOSX TRUE)
+ elseif (${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
+     set(ALLEGRO_UNIX TRUE)
++elseif ("${CMAKE_SYSTEM_NAME}" STREQUAL "DOS")
++    # DOS-PORT: quoted STREQUAL, not this chain's own unquoted MATCHES
++    # pattern -- identical landmine to the top-level CMakeLists.txt's own
++    # gate (patches/ags/0001): CMake's bundled Platform/DOS-Initialize.cmake
++    # defines a variable literally named DOS whenever CMAKE_SYSTEM_NAME is
++    # the string "DOS", which an unquoted MATCHES silently dereferences
++    # instead of comparing. Confirmed by bisection -- see
++    # tests/probes/allegro-isolated/README.md, Finding 2.
++    #
++    # This CMake-level ALLEGRO_UNIX variable is kept only to match every
++    # sibling branch's shape; it is never read anywhere in this directory
++    # except the diagnostic message() below it (confirmed: not passed to
++    # any -D flag, and PLATFORM_SOURCES selection branches on the
++    # different variable ALLEGRO_WINDOWS instead). The C-preprocessor
++    # macro of the same name in alconfig.h is what actually matters --
++    # see that file's own DOS-PORT comment.
++    set(ALLEGRO_UNIX TRUE)
+ else ()
+     message(FATAL_ERROR "Unsupported system: ${CMAKE_SYSTEM_NAME}")
+ endif ()
+diff --git a/libsrc/allegro/include/allegro/internal/alconfig.h b/libsrc/allegro/include/allegro/internal/alconfig.h
+index a3c9a2529..11d0694e5 100644
+--- a/libsrc/allegro/include/allegro/internal/alconfig.h
++++ b/libsrc/allegro/include/allegro/internal/alconfig.h
+@@ -55,6 +55,20 @@
+    #define ALLEGRO_UNIX
+ #elif defined(__FreeBSD__)
+     #define ALLEGRO_UNIX
++#elif defined(__DJGPP__)
++    /* DOS-PORT: the load-bearing fix, not the CMakeLists.txt gate above --
++     * this is the actual chain that decides ALLEGRO_UNIX at compile time.
++     * DJGPP is not Unix (__unix__ is deliberately not defined by DJGPP's
++     * GCC) but ALLEGRO_UNIX is still the right branch to take: it routes
++     * to allegro/platform/alucfg.h, which matches what FileList.cmake's
++     * own PLATFORM_SOURCES selection already assumes for any non-Windows
++     * target, and hardcodes every ALLEGRO_HAVE_* macro it needs rather
++     * than reading CMake-probed feature-check results (which never run
++     * for DOS -- CMake's own builtin UNIX variable is unset under this
++     * cross-compile). Confirmed via a real isolated build -- see
++     * tests/probes/allegro-isolated/README.md, Finding 1.
++     */
++    #define ALLEGRO_UNIX
+ #elif defined(__MINGW32__)
+     #define ALLEGRO_MINGW
+     #define ALLEGRO_WINDOWS
+-- 
+2.47.3
+

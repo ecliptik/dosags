@@ -1,0 +1,165 @@
+     1                                  ; int13hook.asm -- a real-mode INT 13h timing stub, installed by a DJGPP
+     2                                  ; program into DOS memory it allocates itself. Assembled flat with nasm and
+     3                                  ; embedded in the probe as a byte array, so there is no separate TSR binary
+     4                                  ; and no second toolchain.
+     5                                  ;
+     6                                  ; WHY NOT DPMI INTERCEPTION: hooking the real-mode vector from protected mode
+     7                                  ; needs a real-mode callback, which is a mode transition on EVERY call. The
+     8                                  ; instrument would become the cost. This stub runs entirely in real/V86 mode
+     9                                  ; and costs a few port reads per call.
+    10                                  ;
+    11                                  ; WHY NOT uclock(): it is DJGPP libc and is not callable from a real-mode
+    12                                  ; interrupt handler.
+    13                                  ;
+    14                                  ; THE TIMESTAMP COMPOSES, IT DOES NOT DISCARD. PIT counter 0 wraps every
+    15                                  ; 54.9 ms and the phenomenon being hunted is ~220 ms -- FOUR wraps. An
+    16                                  ; earlier design discarded wrapped records, which would have thrown away
+    17                                  ; 100% of the events and returned a clean, guarded, wrong answer. So:
+    18                                  ; BIOS tick at 0040:006C is the high word, (65536 - PIT counter) is the low
+    19                                  ; word, giving an unbounded monotonic count at ~0.838 us per unit. The
+    20                                  ; tick/latch/tick re-read resolves the race against the BIOS tick ISR.
+    21                                  ;
+    22                                  ; THE COUNTER COUNTS DOWN. PIT channel 0 in mode 3 counts 65535->0 and the
+    23                                  ; tick fires at the wrap, so elapsed-within-tick is (65536 - counter).
+    24                                  
+    25                                  BITS 16
+    26                                  ORG 0
+    27                                  
+    28                                  ; ---------------------------------------------------------------------------
+    29                                  ; DATA -- fixed offsets, read directly by the DJGPP side via dosmemget.
+    30                                  ; ---------------------------------------------------------------------------
+    31 00000000 0000                    old_off:    dw 0            ; +0x00  original INT 13h vector
+    32 00000002 0000                    old_seg:    dw 0            ; +0x02
+    33 00000004 0000                    total_lo:   dw 0            ; +0x04  total calls seen (32-bit)
+    34 00000006 0000                    total_hi:   dw 0            ; +0x06
+    35 00000008 0000                    slow_lo:    dw 0            ; +0x08  calls at or over threshold
+    36 0000000A 0000                    slow_hi:    dw 0            ; +0x0A
+    37 0000000C 0000                    thresh_lo:  dw 0            ; +0x0C  threshold in PIT units
+    38 0000000E 0000                    thresh_hi:  dw 0            ; +0x0E
+    39 00000010 0000                    ring_head:  dw 0            ; +0x10  next slot index
+    40 00000012 0000                    ring_max:   dw 0            ; +0x12  slot count, set by the installer
+    41 00000014 0000                    t0_lo:      dw 0            ; +0x14  scratch
+    42 00000016 0000                    t0_hi:      dw 0            ; +0x16
+    43 00000018 0000                    in_ax:      dw 0            ; +0x18  scratch: the call's input registers
+    44 0000001A 0000                    in_cx:      dw 0            ; +0x1A
+    45 0000001C 0000                    in_dx:      dw 0            ; +0x1C
+    46 0000001E 0000                    busy:       dw 0            ; +0x1E  reentrancy guard
+    47                                  RING_OFF    equ 0x40        ; +0x40  ring records start here, 16 bytes each:
+    48                                                              ;        dd t0, dd delta, dw ax, dw cx, dw dx, dw pad
+    49                                  
+    50 00000020 00<rep 10h>             times 0x30-($-$$) db 0
+    51                                  
+    52                                  ; ---------------------------------------------------------------------------
+    53                                  ; read_ts -- composed timestamp into DX:AX. Clobbers AX, DX only.
+    54                                  ; ---------------------------------------------------------------------------
+    55                                  read_ts:
+    56 00000030 1E                          push ds
+    57 00000031 51                          push cx
+    58 00000032 53                          push bx
+    59 00000033 B84000                      mov  ax, 0x40
+    60 00000036 8ED8                        mov  ds, ax
+    61                                  .retry:
+    62 00000038 8B0E6C00                    mov  cx, [0x6C]         ; BIOS tick, low word
+    63 0000003C B000                        mov  al, 0              ; latch counter 0
+    64 0000003E E643                        out  0x43, al
+    65 00000040 E440                        in   al, 0x40
+    66 00000042 88C3                        mov  bl, al
+    67 00000044 E440                        in   al, 0x40
+    68 00000046 88C7                        mov  bh, al             ; BX = counter (counts down)
+    69 00000048 3B0E6C00                    cmp  cx, [0x6C]
+    70 0000004C 75EA                        jne  .retry             ; the tick moved under us -- re-read
+    71 0000004E 89D8                        mov  ax, bx
+    72 00000050 F7D8                        neg  ax                 ; AX = 65536 - counter = elapsed within the tick
+    73 00000052 89CA                        mov  dx, cx             ; DX = tick low word
+    74 00000054 5B                          pop  bx
+    75 00000055 59                          pop  cx
+    76 00000056 1F                          pop  ds
+    77 00000057 C3                          ret
+    78                                  
+    79                                  ; ---------------------------------------------------------------------------
+    80                                  ; handler -- the installed INT 13h vector.
+    81                                  ; ---------------------------------------------------------------------------
+    82                                  handler:
+    83                                      ; REENTRANCY: a nested INT 13h would corrupt the scratch slots. Chain
+    84                                      ; straight through if we are already inside one, and count nothing --
+    85                                      ; a wrong record is worse than a missing one, and the total-call counter
+    86                                      ; is what the probe uses to prove the hook is live.
+    87 00000058 2E833E[1E00]00              cmp  word [cs:busy], 0
+    88 0000005E 7405                        je   .take
+    89 00000060 2EFF2E[0000]                jmp  far [cs:old_off]
+    90                                  
+    91                                  .take:
+    92 00000065 2EFF06[1E00]                inc  word [cs:busy]
+    93 0000006A 2EA3[1800]                  mov  [cs:in_ax], ax
+    94 0000006E 2E890E[1A00]                mov  [cs:in_cx], cx
+    95 00000073 2E8916[1C00]                mov  [cs:in_dx], dx
+    96                                  
+    97 00000078 50                          push ax
+    98 00000079 52                          push dx
+    99 0000007A E8B3FF                      call read_ts
+   100 0000007D 2EA3[1400]                  mov  [cs:t0_lo], ax
+   101 00000081 2E8916[1600]                mov  [cs:t0_hi], dx
+   102 00000086 5A                          pop  dx
+   103 00000087 58                          pop  ax
+   104                                  
+   105                                      ; ----- the original call, with the caller's registers intact -----
+   106 00000088 9C                          pushf
+   107 00000089 2EFF1E[0000]                call far [cs:old_off]
+   108                                      ; AX and the flags are now the RESULT and must reach the caller unchanged.
+   109 0000008E 9C                          pushf
+   110 0000008F 50                          push ax
+   111 00000090 51                          push cx
+   112 00000091 52                          push dx
+   113                                  
+   114 00000092 E89BFF                      call read_ts
+   115 00000095 2E2B06[1400]                sub  ax, [cs:t0_lo]
+   116 0000009A 2E1B16[1600]                sbb  dx, [cs:t0_hi]     ; DX:AX = delta in PIT units
+   117                                  
+   118                                      ; total++
+   119 0000009F 2E8306[0400]01              add  word [cs:total_lo], 1
+   120 000000A5 2E8316[0600]00              adc  word [cs:total_hi], 0
+   121                                  
+   122                                      ; delta >= threshold ?
+   123 000000AB 2E3B16[0E00]                cmp  dx, [cs:thresh_hi]
+   124 000000B0 7709                        ja   .slow
+   125 000000B2 7268                        jb   .done
+   126 000000B4 2E3B06[0C00]                cmp  ax, [cs:thresh_lo]
+   127 000000B9 7261                        jb   .done
+   128                                  
+   129                                  .slow:
+   130 000000BB 2E8306[0800]01              add  word [cs:slow_lo], 1
+   131 000000C1 2E8316[0A00]00              adc  word [cs:slow_hi], 0
+   132 000000C7 2E8B1E[1000]                mov  bx, [cs:ring_head]
+   133 000000CC 2E3B1E[1200]                cmp  bx, [cs:ring_max]
+   134 000000D1 7349                        jae  .done              ; ring full -- keep counting, stop recording
+   135 000000D3 50                          push ax
+   136 000000D4 52                          push dx
+   137 000000D5 89D8                        mov  ax, bx
+   138 000000D7 B91000                      mov  cx, 16
+   139 000000DA F7E1                        mul  cx
+   140 000000DC 83C040                      add  ax, RING_OFF
+   141 000000DF 89C3                        mov  bx, ax             ; BX = record offset
+   142 000000E1 5A                          pop  dx
+   143 000000E2 58                          pop  ax
+   144 000000E3 2E8B0E[1400]                mov  cx, [cs:t0_lo]
+   145 000000E8 2E890F                      mov  [cs:bx],   cx
+   146 000000EB 2E8B0E[1600]                mov  cx, [cs:t0_hi]
+   147 000000F0 2E894F02                    mov  [cs:bx+2], cx
+   148 000000F4 2E894704                    mov  [cs:bx+4], ax
+   149 000000F8 2E895706                    mov  [cs:bx+6], dx
+   150 000000FC 2E8B0E[1800]                mov  cx, [cs:in_ax]
+   151 00000101 2E894F08                    mov  [cs:bx+8], cx
+   152 00000105 2E8B0E[1A00]                mov  cx, [cs:in_cx]
+   153 0000010A 2E894F0A                    mov  [cs:bx+10], cx
+   154 0000010E 2E8B0E[1C00]                mov  cx, [cs:in_dx]
+   155 00000113 2E894F0C                    mov  [cs:bx+12], cx
+   156 00000117 2EFF06[1000]                inc  word [cs:ring_head]
+   157                                  
+   158                                  .done:
+   159 0000011C 2EFF0E[1E00]                dec  word [cs:busy]
+   160 00000121 5A                          pop  dx
+   161 00000122 59                          pop  cx
+   162 00000123 58                          pop  ax
+   163 00000124 9D                          popf
+   164 00000125 CA0200                      retf 2                  ; discard the INT-pushed flags; ours carry the
+   165                                                              ; original call's CF/AH status to the caller

@@ -1,0 +1,88 @@
+From b56b330c1cc93bfab74e5efac260aa40c49004ce Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 13:26:52 -0700
+Subject: [PATCH] [AGS] Add CMAKE_SYSTEM_NAME=DOS branch to the top-level
+ platform gate
+
+The top-level CMakeLists.txt has its own CMAKE_SYSTEM_NAME elseif chain
+(separate from Common/platform/platform.h's AGS_PLATFORM_OS_* macros),
+hit at configure time before any compiler invocation, with a
+FATAL_ERROR "Unsupported system" fallback that a DOS-target configure
+run hits first, before anything else in this port's patch sequence is
+even reachable.
+
+Uses a quoted STREQUAL comparison, not this chain's own unquoted
+MATCHES pattern the other branches use -- CMake's bundled
+Platform/DOS-Initialize.cmake defines a variable literally named DOS
+whenever CMAKE_SYSTEM_NAME is the string "DOS", and an unquoted
+`elseif (${CMAKE_SYSTEM_NAME} MATCHES "DOS")` auto-dereferences that
+into `1 MATCHES "DOS"`, silently never matching. Found and confirmed
+by BOOTSTRAP-0 probe 2's real isolated Allegro build (which hit the
+identical landmine in libsrc/allegro/CMakeLists.txt's own copy of this
+same chain), not by reading alone.
+
+Also mirrors the existing Emscripten block's AGS_DISABLE_THREADS
+handling: this build is single-threaded by construction (DJGPP's
+libstdc++ has no std::mutex/condition_variable/std::thread at all,
+confirmed by tests/probes/djgpp-runtime/), and only an explicit
+add_compile_definitions() call -- not just setting the CMake variable --
+actually defines AGS_DISABLE_THREADS for the preprocessor.
+
+AGS_DESKTOP deliberately does not gain a DOS branch: it gates things
+like `install(TARGETS ags RUNTIME DESTINATION bin)` that assume a
+desktop-style install layout DOS does not have.
+---
+ CMakeLists.txt | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 044fcb343..2384b1c9d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -85,10 +85,35 @@ elseif (${CMAKE_SYSTEM_NAME} MATCHES "Emscripten")
+     set(EMSCRIPTEN TRUE)
+ elseif (${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
+     set(FREEBSD TRUE)
++elseif ("${CMAKE_SYSTEM_NAME}" STREQUAL "DOS")
++    # DOS-PORT: quoted STREQUAL, not this chain's own unquoted MATCHES
++    # pattern -- CMake ships a bundled Platform/DOS-Initialize.cmake that
++    # defines a variable literally named DOS (value 1) whenever
++    # CMAKE_SYSTEM_NAME is the string "DOS". An unquoted
++    # `elseif (${CMAKE_SYSTEM_NAME} MATCHES "DOS")` auto-dereferences that
++    # bare DOS token, silently testing `1 MATCHES "DOS"` instead of
++    # `"DOS" MATCHES "DOS"`, and never matches. Found and confirmed by a
++    # real isolated build, not by reading alone -- see
++    # tests/probes/allegro-isolated/README.md (Finding 2), which hit the
++    # identical landmine in libsrc/allegro/CMakeLists.txt's own copy of
++    # this same chain.
++    set(DOS TRUE)
++    # DOS-PORT: mirrors the EMSCRIPTEN block below (AGS_DISABLE_THREADS +
++    # its compile definition) -- this build is single-threaded by
++    # construction (tests/probes/djgpp-runtime/ confirms DJGPP's libstdc++
++    # has no std::mutex/condition_variable/thread at all, not just that
++    # threads are undesired here). Setting AGS_DISABLE_THREADS alone does
++    # NOT add the compile definition; only an explicit
++    # add_compile_definitions() call does, same as EMSCRIPTEN's own block.
++    set(AGS_DISABLE_THREADS TRUE)
++    add_compile_definitions("AGS_DISABLE_THREADS=1")
+ else()
+     message(FATAL_ERROR "Unsupported system: ${CMAKE_SYSTEM_NAME}")
+ endif ()
+ 
++# DOS-PORT: deliberately NOT added to this list. AGS_DESKTOP gates things
++# a DOS build must not get, e.g. `install(TARGETS ags RUNTIME DESTINATION
++# bin)` further down -- DOS has no such install layout.
+ if(LINUX OR MACOS OR WIN32 OR FREEBSD)
+     set(AGS_DESKTOP TRUE)
+ endif()
+@@ -100,6 +125,7 @@ message( "MACOS:" ${MACOS} )
+ message( "ANDROID:" ${ANDROID} )
+ message( "EMSCRIPTEN:" ${EMSCRIPTEN} )
+ message( "FREEBSD:" ${FREEBSD} )
++message( "DOS:" ${DOS} )
+ message("----------------------------------------")
+ message( "AGS_DESKTOP:" ${AGS_DESKTOP} )
+ message("----------------------------------------")
+-- 
+2.47.3
+

@@ -1,0 +1,119 @@
+From 01636264598c27feb9366a60c0c02957f02bc661 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <services.claude@accounts.ecliptik.com>
+Date: Sat, 26 Sep 2026 07:28:28 -0700
+Subject: [PATCH] DOS-PORT: patch 0239 -- do not repay the time a screen
+ transition took (DOSAGS_FADE_RESYNC, default off)
+
+A screen transition (fade, box-out, crossfade, dissolve) runs its own loop
+outside update_game_once: 0316's per-tick log shows the fade-in's tick
+closing at 2 ms while its 13 presents hold 534 ms. No logic tick advances
+while it runs, and the stall detector never sees it, so the fixed-timestep
+accumulator counts the whole fade as debt and repays up to MAX_CATCHUP
+ticks with no render right after it -- the 4-5 skipped frames after every
+room entry on S32's fixture. 0163's stall resync cannot remove them
+(docs/lab/s32.md slices 2 and 4).
+
+Nothing is owed: the game was paused behind the transition, which is how
+the fixed-timestep loop already treats IsGamePaused(). So when a transition
+ran since the last call, rebase the epoch instead of repaying.
+
+Why a switch and default off: it is a pacing change. It removes those
+catch-up ticks and so lowers the whole-run tick figure slightly, which the
+gates judge. The operator approved a lab A/B first (2026-09-26); the default
+flips only on its registered rule. DOSAGS_FADE_RESYNC=1 enables, in the same
+binary. The manifest reports "DOS-PORT faderesync mode= transitions=
+resyncs=" in both arms.
+---
+ Engine/ac/screen.cpp     |  6 ++++++
+ Engine/main/game_run.cpp | 44 ++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 50 insertions(+)
+
+diff --git a/Engine/ac/screen.cpp b/Engine/ac/screen.cpp
+index 77c0dcd61..859753cc5 100644
+--- a/Engine/ac/screen.cpp
++++ b/Engine/ac/screen.cpp
+@@ -114,6 +114,12 @@ public:
+     // Update the state during a game tick
+     bool Run() override
+     {
++#ifdef __DJGPP__
++        {   // DOS-PORT patch 0239: tell the fixed-timestep loop a transition ran (main/game_run.cpp)
++            extern bool dos_port_transition_ran;
++            dos_port_transition_ran = true;
++        }
++#endif
+         if (!RunImpl())
+             return false;
+ 
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index c499d21d2..7b3aa3ab7 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1558,6 +1558,12 @@ static int dos_tick_depth = 0;
+ // patch 0163: set when a tick is recorded as a blocking stall, so the
+ // fixed-timestep loop can decline to carry debt across it.
+ static bool dos_tick_prev_was_stall = false;
++// DOS-PORT patch 0239: a screen transition (fade in/out, box-out, crossfade, dissolve) ran since the last
++// fixed-timestep call. Set by ScreenTransition::Run (ac/screen.cpp) on every step; read and cleared in
++// dos_run_tick_fixed(). DOSAGS_FADE_RESYNC=1 rebases the epoch when it is set; see the comment there.
++bool dos_port_transition_ran = false;
++static int dos_fade_resync_mode = -1;   // -1 unread, 0 off (default), 1 on
++static long dos_fade_seen = 0, dos_fade_resyncs = 0;
+ static uclock_t dos_tick_first_entry = 0;
+ static uclock_t dos_tick_last_exit = 0;
+ static bool dos_tick_have_first = false;
+@@ -1795,6 +1801,8 @@ void dos_port_yardstick_emit(FILE *log)
+     fprintf(log, "DOS-PORT catchup ticks=%ld events=%ld clamped=%ld resyncs=%ld sumcheck_fail=%ld sumcheck_worst_us=%ld\n",
+         dos_catchup_ticks, dos_catchup_events, dos_catchup_clamped, dos_stall_resyncs,
+         dos_tick_sumcheck_fail, (long)dos_tick_sumcheck_worst_us);
++    fprintf(log, "DOS-PORT faderesync mode=%d transitions=%ld resyncs=%ld\n",   // patch 0239
++        dos_fade_resync_mode, dos_fade_seen, dos_fade_resyncs);
+     fprintf(log, "DOS-PORT tick_rate_steady=%.2f ticks=%ld stall_ticks=%ld loop_ms=%ld stall_ms=%ld preloop_ms=%lu threshold_ms=%ld\n",
+         steady_rate, dos_tick_count, dos_tick_stall_total,
+         (long)(loop_us / 1000), (long)(dos_tick_stall_us / 1000),
+@@ -2362,6 +2370,42 @@ static void dos_run_tick_fixed()
+         dos_tick_prev_was_stall = false;
+     }
+ 
++    // DOS-PORT patch 0239: do not repay the time a screen transition took.
++    //
++    // A transition runs its own loop (ScreenTransition::Run, one render and
++    // one WaitForNextFrame per step) outside update_game_once, so no logic
++    // tick advances while it runs and the stall detector above never sees it
++    // (0316's per-tick log: the fade-in's tick closes at 2 ms while its 13
++    // presents hold 534 ms). The accumulator then counts the whole fade as
++    // debt and repays up to MAX_CATCHUP ticks with no render right after it:
++    // 4-5 skipped frames after every room entry on S32's fixture, which
++    // 0163 cannot remove (docs/lab/s32.md, slices 2 and 4). Nothing was owed
++    // -- the game was paused behind the transition, exactly as the paused
++    // branch above treats IsGamePaused() -- so rebase instead of repaying.
++    //
++    // A pacing change: it removes those catch-up ticks, and so lowers the
++    // whole-run tick figure slightly. Default OFF until a lab A/B and the
++    // operator say otherwise; DOSAGS_FADE_RESYNC=1 enables, so both arms
++    // live in one binary.
++    {
++        if (dos_fade_resync_mode < 0)
++        {
++            const char *h = getenv("DOSAGS_FADE_RESYNC");
++            dos_fade_resync_mode = (h && h[0] == '1') ? 1 : 0;
++        }
++        if (dos_port_transition_ran)
++        {
++            dos_fade_seen++;
++            if (dos_fade_resync_mode == 1)
++            {
++                epoch_ns = Clock::now();
++                epoch_tick = get_loop_counter();
++                dos_fade_resyncs++;
++            }
++        }
++        dos_port_transition_ran = false;
++    }
++
+     const auto now_ns = Clock::now();
+     const long expected_ticks = (long)((now_ns - epoch_ns) / tick_dur);
+     const long actual_ticks = (long)(get_loop_counter() - epoch_tick);
+-- 
+2.47.3
+

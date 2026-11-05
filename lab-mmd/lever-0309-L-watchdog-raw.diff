@@ -1,0 +1,103 @@
+diff --git a/Engine/script/cc_instance.cpp b/Engine/script/cc_instance.cpp
+index c2cb3d44d..1e4ea59a3 100644
+--- a/Engine/script/cc_instance.cpp
++++ b/Engine/script/cc_instance.cpp
+@@ -618,7 +618,11 @@ ccInstError ccInstance::Run(int32_t curpc)
+     unsigned loopCheckIterations = 0u; // loop iterations accumulated only if check is enabled
+ 
+     const auto timeout = std::chrono::milliseconds(_timeoutCheckMs);
++#ifdef __DJGPP__
++    _lastAliveRaw = FastClock::now_raw(); // DOS-PORT patch 0309: raw; converted only where compared
++#else
+     _lastAliveTs = FastClock::now();
++#endif
+ 
+ #if defined(__DJGPP__) && defined(DOSAGS_WORK_SCRIPT_INS)
+     // DOS-PORT patch 0230: instructions dispatched, for the work vector. LAB BUILDS
+@@ -1109,12 +1113,20 @@ ccInstError ccInstance::Run(int32_t curpc)
+                 }
+                 else if ((loopIterations & 0x3FF) == 0 && // test each 1024 loops (arbitrary)
+                     (std::chrono::duration_cast<std::chrono::milliseconds>(
++#ifdef __DJGPP__
++                        FastClock::now() - FastClock::from_raw(_lastAliveRaw)) > timeout)) // patch 0309
++#else
+                         FastClock::now() - _lastAliveTs) > timeout))
++#endif
+                 { // minimal timeout occured
+                     // NOTE: removed timeout_abort check for now: was working *logically* wrong;
+                     // at least let user to manipulate the game window
+                     sys_evt_process_pending();
++#ifdef __DJGPP__
++                    _lastAliveRaw = FastClock::now_raw(); // patch 0309
++#else
+                     _lastAliveTs = FastClock::now();
++#endif
+                 }
+             }
+             break;
+@@ -1737,7 +1749,11 @@ bool ccInstance::IsBeingRun() const
+ void ccInstance::NotifyAlive()
+ {
+     _flags |= INSTF_RUNNING;
++#ifdef __DJGPP__
++    _lastAliveRaw = FastClock::now_raw(); // patch 0309
++#else
+     _lastAliveTs = FastClock::now();
++#endif
+ }
+ 
+ bool ccInstance::_Create(PScript scri, const ccInstance *joined)
+diff --git a/Engine/script/cc_instance.h b/Engine/script/cc_instance.h
+index 8f84bc136..c103431f6 100644
+--- a/Engine/script/cc_instance.h
++++ b/Engine/script/cc_instance.h
+@@ -305,7 +305,13 @@ private:
+     // after which the interpreter will abort
+     static unsigned _maxWhileLoops;
+     // Last time the script was noted of being "alive"
++#ifdef __DJGPP__
++    // DOS-PORT patch 0309: the watchdog's "last alive" reading, kept raw (FastClock::now_raw());
++    // converted with FastClock::from_raw() only where it is compared.
++    uclock_t _lastAliveRaw;
++#else
+     AGS::Engine::FastClock::time_point _lastAliveTs;
++#endif
+ 
+ #if (DEBUG_CC_EXEC)
+     // Execution logger, optional, shared among all the ccInstances
+diff --git a/Engine/util/time_util.h b/Engine/util/time_util.h
+index b4ca3bc25..5a0913038 100644
+--- a/Engine/util/time_util.h
++++ b/Engine/util/time_util.h
+@@ -75,7 +75,11 @@ struct DosUclockClock
+     typedef std::chrono::time_point<DosUclockClock> time_point;
+     static constexpr bool is_steady = true;
+ 
+-    static time_point now() noexcept
++    // DOS-PORT patch 0309: now() split in two, same values. now_raw() is the clamped uclock()
++    // reading (one monotonic clamp, shared by every caller as before); from_raw() is the conversion,
++    // two 64-bit divides. A caller that only compares readings occasionally (the script watchdog,
++    // ccInstance::Run) can store raw readings and convert them only when it compares.
++    static uclock_t now_raw() noexcept
+     {
+         static uclock_t last = 0;
+         uclock_t t = uclock();
+@@ -83,10 +87,18 @@ struct DosUclockClock
+             t = last;
+         else
+             last = t;
++        return t;
++    }
++    static time_point from_raw(uclock_t t) noexcept
++    {
+         const long long secs = t / UCLOCKS_PER_SEC;
+         const long long rem = t - secs * UCLOCKS_PER_SEC;
+         return time_point(duration(secs * 1000000000LL + rem * 1000000000LL / UCLOCKS_PER_SEC));
+     }
++    static time_point now() noexcept
++    {
++        return from_raw(now_raw());
++    }
+ };
+ using Clock = DosUclockClock;
+ #else

@@ -1,0 +1,78 @@
+From 87d7b79058d0dea5b3f29db09a8251d8cc63a651 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 18:16:27 -0700
+Subject: [PATCH] DOS-PORT: patch 0213 -- audio status reports underflow
+ padding dropped and partial pulls
+
+SDL patch 0197 stops the SB driver writing the core's underflow padding while
+content is active (a stall longer than the ring used to insert that silence
+into the middle of a sound). audio_vital_status now carries its two counters
+from the device open, next to skipped_silent: underflow_pads (padded buffers
+the gate dropped while content was owed -- nonzero means the stream ran dry
+under a stall; each is time the sound did NOT get stretched by) and
+partial_pulls (buffers the stream only partly filled, written with a padded
+tail of at most one chunk). NA on the GUS path, like the other ring fields.
+---
+ Engine/platform/dos/dos_audio_mixer.cpp | 18 ++++++++++++++----
+ 1 file changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index fceefe328..54d1a2612 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -45,6 +45,10 @@ extern "C" volatile uint32_t dos_port_audio_ring_overwrite_count;
+ // DOS-PORT (patch 0204): SDL patch 0192's silence-gate skip and DSP idle-pause counts.
+ extern "C" volatile uint32_t dos_port_audio_skipped_silent_count;
+ extern "C" volatile uint32_t dos_port_audio_idle_pause_count;
++// DOS-PORT (patch 0213): SDL patch 0197's underflow padding dropped while content was active,
++// and partly filled pulls written with their padded tail.
++extern "C" volatile uint32_t dos_port_audio_underflow_pads;
++extern "C" volatile uint32_t dos_port_audio_partial_pulls;
+ 
+ // DOS-PORT (patch 0202): where a silent-IRQ run happened, for its log line.
+ extern uint32_t get_loop_counter();
+@@ -141,6 +145,8 @@ int g_ring_max_ms = 0;
+ // DOS-PORT (patch 0204): bases for skipped_silent / idle_pauses.
+ uint32_t g_skipped_base = 0;
+ uint32_t g_idle_pause_base = 0;
++uint32_t g_underflow_pad_base = 0; // DOS-PORT (patch 0213)
++uint32_t g_partial_pull_base = 0;
+ 
+ // DOS-PORT (patch 0203): room-change tracking for the silentirq line.
+ int g_room_seen = -1000;
+@@ -172,17 +178,19 @@ void format_status_string(char *buf, size_t bufsize)
+     else
+         std::snprintf(irq_fragment, sizeof(irq_fragment), "pcm_irqs=%u,silent_irqs=%u",
+             (unsigned)(dos_port_audio_sfx_active_count - g_pcm_irq_base), (unsigned)g_owed_silent_irqs);
+-    char ring_fragment[112];
++    char ring_fragment[160];
+     if (g_gus_backend)
+         std::snprintf(ring_fragment, sizeof(ring_fragment),
+-            "overwrites=NA,ring_max_ms=NA,skipped_silent=NA,idle_pauses=NA");
++            "overwrites=NA,ring_max_ms=NA,skipped_silent=NA,idle_pauses=NA,underflow_pads=NA,partial_pulls=NA");
+     else
+         std::snprintf(ring_fragment, sizeof(ring_fragment),
+-            "overwrites=%u,ring_max_ms=%d/%d,skipped_silent=%u,idle_pauses=%u",
++            "overwrites=%u,ring_max_ms=%d/%d,skipped_silent=%u,idle_pauses=%u,underflow_pads=%u,partial_pulls=%u",
+             (unsigned)(dos_port_audio_ring_overwrite_count - g_overwrite_base), g_ring_max_ms,
+             SDL_DOSAudioRingCapacityMs(),
+             (unsigned)(dos_port_audio_skipped_silent_count - g_skipped_base),
+-            (unsigned)(dos_port_audio_idle_pause_count - g_idle_pause_base));
++            (unsigned)(dos_port_audio_idle_pause_count - g_idle_pause_base),
++            (unsigned)(dos_port_audio_underflow_pads - g_underflow_pad_base),
++            (unsigned)(dos_port_audio_partial_pulls - g_partial_pull_base));
+     std::snprintf(buf, bufsize, "pcm=%s@%d%c%d,voices=%d,underruns=%d,drains=%d,%s,%s;%s",
+         device, DOS_AUDIO_MIXER_RATE, chan_letter, bits, DOS_AUDIO_MIXER_MAX_VOICES, g_underruns,
+         g_drains, irq_fragment, ring_fragment, midi_fragment);
+@@ -215,6 +223,8 @@ bool dos_audio_mixer_init()
+     g_ring_max_ms = 0;
+     g_skipped_base = dos_port_audio_skipped_silent_count;
+     g_idle_pause_base = dos_port_audio_idle_pause_count;
++    g_underflow_pad_base = dos_port_audio_underflow_pads; // DOS-PORT (patch 0213)
++    g_partial_pull_base = dos_port_audio_partial_pulls;
+ 
+     if (g_gus_backend)
+     {
+-- 
+2.47.3
+

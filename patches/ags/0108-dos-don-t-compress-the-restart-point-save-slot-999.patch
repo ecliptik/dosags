@@ -1,0 +1,86 @@
+From a38178a02c1fa78b845bd8f3d04d250014f48c96 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 18 Sep 2026 10:33:49 -0700
+Subject: [PATCH] dos: don't compress the restart-point save (slot 999)
+
+SetRestartPoint() runs at every startup for pre-3.6.1 games and sits on
+the pre-loop critical path, which is in tick_rate's denominator. Measured
+on HW-486-66 with patch 0107's brackets: 688 ms total, 686 of it inside
+SaveGame(). Disabling compression through the existing [misc]
+compress_saves key cut that call to 194 ms and the whole pre-loop by
+426 ms.
+
+The cost is disk, not correctness: the save grows from about 9.4 KB to
+about 61.2 KB (9,396 vs 61,199 bytes, measured under DOSBox-X).
+Compression is doing real work on these saves -- roughly 85% -- so this
+is a deliberate trade of ~52 KB for ~426 ms on every launch. It is worth
+making only for this particular file, which is rewritten from scratch at
+each startup and read only if the player chooses Restart.
+
+Scoped to slot 999 on purpose, not folded into the usetup.CompressSaves
+default. Precisely because compression is effective, player saves keep
+it: they are kept indefinitely, can be numerous, and in a game with
+OPT_SAVESCREENSHOT on also carry a compressible bitmap.
+
+Semantics preserved. The file is still written to disk, so
+SetSaveGameDirectory()'s copy of it still works, and the save format
+records compression per component. Verified under DOSBox-X by restoring
+an uncompressed slot 999 through try_restore_save(), the same function
+restart_game() calls: it loaded the global script, entered room 1 and ran
+room script with no error.
+---
+ Engine/ac/game.cpp | 36 +++++++++++++++++++++++++++++++++++-
+ 1 file changed, 35 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/ac/game.cpp b/Engine/ac/game.cpp
+index 7f1690a09..61febe5f8 100644
+--- a/Engine/ac/game.cpp
++++ b/Engine/ac/game.cpp
+@@ -1324,9 +1324,43 @@ void save_game(int slotn, const String &descript, std::unique_ptr<Bitmap> &&imag
+     }
+ #endif
+ 
++#ifdef __DJGPP__
++    // DOS-PORT patch 0108: do not compress the RESTART-POINT save.
++    //
++    // SetRestartPoint() runs at every startup for pre-3.6.1 games, on the
++    // pre-loop critical path. Measured on HW-486-66 (patch 0107's
++    // brackets): 688 ms, of which 686 is inside SaveGame(). It is not
++    // dominated by file I/O -- the compressed save is ~9.4 KB. Disabling
++    // compression via the existing [misc] compress_saves key cut the call
++    // to 194 ms and the whole pre-loop by 426 ms.
++    //
++    // What it costs: the save grows from ~9.4 KB to ~61.2 KB (measured
++    // under DOSBox-X, 9,396 vs 61,199 bytes). Compression is doing real
++    // work here -- about 85% -- so this trades ~52 KB of disk for ~426 ms
++    // of every single startup. That is a good trade ONLY for this file:
++    // it is rewritten from scratch on each launch and read only if the
++    // player picks Restart.
++    //
++    // DELIBERATELY SCOPED TO SLOT 999 -- do NOT "simplify" this into the
++    // global usetup.CompressSaves default. Compression genuinely works on
++    // AGS saves, and player saves are kept indefinitely, can be numerous,
++    // and in a game with OPT_SAVESCREENSHOT on also carry a bitmap. They
++    // keep compressing. Only this auto-written, once-per-startup,
++    // rarely-read slot does not.
++    //
++    // Semantics are preserved: the file is still written to disk (so
++    // SetSaveGameDirectory()'s copy of it still works, ac/game.cpp), and
++    // the save format records its own compression per component. Verified
++    // by restoring an uncompressed slot 999 through try_restore_save() --
++    // the same function restart_game() calls -- under DOSBox-X.
++    const bool _dp_compress = (slotn == RESTART_POINT_SAVE_GAME_NUMBER)
++                                  ? false : usetup.CompressSaves;
++#else
++    const bool _dp_compress = usetup.CompressSaves;
++#endif
+     HSaveError err = SaveGame(nametouse, descript, image.get(),
+              (SaveCmpSelection)(kSaveCmp_All & ~(game.options[OPT_SAVECOMPONENTSIGNORE] & kSaveCmp_ScriptIgnoreMask)),
+-             usetup.CompressSaves);
++             _dp_compress);
+     if (!err)
+     {
+         // FIXME: left this original Display call for the time being,
+-- 
+2.47.3
+

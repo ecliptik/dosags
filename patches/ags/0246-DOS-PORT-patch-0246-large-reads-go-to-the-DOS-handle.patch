@@ -1,0 +1,133 @@
+From 0da70272ff621d347ad6c2a4cce67bc06ad968de Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 28 Sep 2026 14:16:25 -0700
+Subject: [PATCH] DOS-PORT: patch 0246 -- large reads go to the DOS handle, not
+ through stdio (DOSAGS_READDIRECT=1, default off)
+
+DJGPP's fread has no direct path for a large request: it fills whole
+FILE buffers, sized from the 16 KB transfer buffer, and memcpy()s out
+of them. A first-play clip read therefore moves the clip rounded up to
+16 KB off the disk (music0.mid: 32,768 bytes for 19,181) and copies
+every byte twice (docs/lab/io.md residue anatomy, P2 held on all ten
+first plays). The asset_read step this sits in costs 12-28 ms per first
+play on the target, more than the open.
+
+A read over 8 KB (BufferedStream's direct reads; its 8 KB refills stay
+on fread) goes to read() on the handle when the FILE holds nothing:
+_cnt == 0 and no write, update, ungetc, EOF or error state, on a
+binary-mode handle. In that state DJGPP's ftell, fseek and fread take
+the position from the handle, so read() delivers exactly what fread
+would and leaves the FILE consistent. The test is on the FILE's state
+rather than "right after a Seek" because DJGPP's fseek moves inside its
+buffer without an lseek when the target is already buffered.
+
+A short read (end of file) is finished by fread, so the FILE's EOF flag
+-- which FileStream::EOS() reports -- is set exactly as before. On a DOS
+read error the FILE gets its error flag and the call returns 0, where
+fread could first return the bytes of buffers that did fill: the one
+listed difference, and only on a disk error.
+---
+ Common/util/filestream.cpp | 62 +++++++++++++++++++++++++++++++++++++-
+ Engine/main/quit.cpp       |  6 ++++
+ 2 files changed, 67 insertions(+), 1 deletion(-)
+
+diff --git a/Common/util/filestream.cpp b/Common/util/filestream.cpp
+index 25f602c1f..3990202c3 100644
+--- a/Common/util/filestream.cpp
++++ b/Common/util/filestream.cpp
+@@ -21,6 +21,42 @@
+ // Common library cannot see the engine; the engine reads them at snapshot time.
+ long long dos_port_file_rd_bytes = 0;
+ long long dos_port_file_rd_calls = 0;
++// DOS-PORT patch 0246: a large read goes to the DOS handle, not through stdio.
++// DJGPP's fread has no direct path: it fills whole FILE buffers (sized
++// from the 16 KB transfer buffer) and memcpy()s out of them, so a 19,181-
++// byte clip moves 32,768 bytes off the disk and copies every byte twice
++// (docs/lab/io.md residue anatomy, P2). When the FILE holds nothing --
++// _cnt == 0 and no write, update, ungetc, EOF or error state -- DJGPP's
++// ftell, fseek and fread all take the position from the handle, so a
++// read() on the handle is exactly what fread would deliver and leaves the
++// FILE consistent. The test is on the FILE's state, not "right after a
++// Seek": DJGPP's fseek moves inside its buffer without an lseek when the
++// target is already buffered. The fields are the pinned toolchain's
++// (<stdio.h> FILE, <libc/file.h> flags). A short read is finished by
++// fread, so the EOF flag (EOS) is set exactly as fread sets it. On a DOS
++// read error the FILE gets its error flag and the call returns 0 --
++// fread could first return the bytes of buffers that did fill; that is
++// the one difference, and only on a disk error. Only reads over 8 KB
++// (BufferedStream's direct reads; its 8 KB refills stay on fread) and
++// only binary-mode handles. Default OFF: DOSAGS_READDIRECT=1 turns it on.
++#include <stdlib.h>
++#include <unistd.h>
++#include <fcntl.h>
++#include <libc/file.h>
++#include <libc/dosio.h>
++int dos_port_readdirect_mode = -1;
++long dos_port_readdirect_n = 0, dos_port_readdirect_short = 0, dos_port_readdirect_err = 0;
++long long dos_port_readdirect_bytes = 0;
++static bool dos_readdirect_ok(FILE *f)
++{
++    if (dos_port_readdirect_mode < 0)
++    {
++        const char *e = getenv("DOSAGS_READDIRECT");
++        dos_port_readdirect_mode = (e != nullptr && e[0] == '1') ? 1 : 0;
++    }
++    return dos_port_readdirect_mode == 1 && f->_cnt == 0 && (f->_flag & _IOREAD) &&
++        !(f->_flag & (_IOWRT | _IORW | _IOUNGETC | _IOEOF | _IOERR)) && (__file_handle_modes[fileno(f)] & O_BINARY);
++}
+ #endif
+ 
+ namespace AGS
+@@ -111,7 +147,31 @@ soff_t FileStream::GetPosition() const
+ size_t FileStream::Read(void *buffer, size_t size)
+ {
+ #ifdef __DJGPP__
+-    const size_t n = fread(buffer, sizeof(uint8_t), size, _file);
++    size_t n;
++    if (size > 8192 && dos_readdirect_ok(_file))   // patch 0246
++    {
++        uint8_t *b = static_cast<uint8_t *>(buffer);
++        const ssize_t r = read(fileno(_file), b, size);
++        if (r < 0)
++        {
++            _file->_flag |= _IOERR;
++            n = 0;
++            dos_port_readdirect_err++;
++        }
++        else
++        {
++            n = static_cast<size_t>(r);
++            dos_port_readdirect_n++;
++            dos_port_readdirect_bytes += (long long)n;
++            if (n < size)
++            {   // end of file: let fread finish, so the FILE's EOF flag is set exactly as fread would set it
++                dos_port_readdirect_short++;
++                n += fread(b + n, sizeof(uint8_t), size - n, _file);
++            }
++        }
++    }
++    else
++        n = fread(buffer, sizeof(uint8_t), size, _file);
+     dos_port_file_rd_bytes += (long long)n;
+     dos_port_file_rd_calls++;
+     return n;
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 920568fa8..6c522aaed 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -731,6 +731,12 @@ void quit(const char *quitmsg)
+                     Debug::Printf("DOS-PORT pakhandle opened=%ld reused=%ld fallback=%ld closed=%ld",
+                         AGS::Common::dos_port_pak_opened, AGS::Common::dos_port_pak_reused,
+                         AGS::Common::dos_port_pak_fallback, AGS::Common::dos_port_pak_closed);
++                    {   // patch 0246: large reads served from the DOS handle, short ones finished by fread, read errors
++                        extern int dos_port_readdirect_mode; extern long dos_port_readdirect_n, dos_port_readdirect_short, dos_port_readdirect_err;
++                        extern long long dos_port_readdirect_bytes;
++                        Debug::Printf("DOS-PORT readdirect mode=%d reads=%ld bytes=%lld short=%ld errors=%ld", dos_port_readdirect_mode,
++                            dos_port_readdirect_n, dos_port_readdirect_bytes, dos_port_readdirect_short, dos_port_readdirect_err);
++                    }
+                     for (int _g = 0; _g < 64; ++_g)
+                         if (dos_port_gui_flush_tally[_g])
+                             Debug::Printf("DOS-PORT guiflush idx=%d n=%ld", _g, dos_port_gui_flush_tally[_g]);
+-- 
+2.47.3
+

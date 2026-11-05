@@ -1,0 +1,63 @@
+diff --git a/Engine/ac/room.cpp b/Engine/ac/room.cpp
+index 5927bc9d2..acbc42fd5 100644
+--- a/Engine/ac/room.cpp
++++ b/Engine/ac/room.cpp
+@@ -1090,6 +1090,16 @@ void load_new_room(int newnum, CharacterInfo *forchar)
+     set_our_eip(220);
+     update_polled_stuff();
+     debug_script_log("Now in room %d", displayed_room);
++#ifdef __DJGPP__
++    { // DUPCHAR4 THROWAWAY DIAG -- never committed
++        extern long dosags_diag4_room_t0; extern uint32_t get_loop_counter();
++        dosags_diag4_room_t0 = (long)get_loop_counter();
++        const CharacterInfo &pc = game.chars[game.playercharacter];
++        debug_script_log("DOS-PORT-DIAG4 load room=%d tick=%ld char=%d(%s) x=%d y=%d on=%d tr=%d view=%d loop=%d frame=%d flags=0x%x prevroom=%d",
++            displayed_room, dosags_diag4_room_t0, game.playercharacter, pc.scrname, pc.x, pc.y, (int)pc.on, (int)pc.transparency,
++            pc.view, (int)pc.loop, (int)pc.frame, pc.flags, pc.prevroom);
++    }
++#endif
+ #ifdef __DJGPP__
+     debug_script_log("DOSAGS_XT t_ms=%u phase=load_end room=%d", (unsigned)get_runtime_ms(), displayed_room);
+ #endif
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 3d6d01469..0af882f5d 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -2154,8 +2154,27 @@ static bool dos_fixed_timestep_active()
+ // directory the harness watches -- and spin for DOSAGS_FREEZE_MS (default 1200), so the screen is static while it
+ // is photographed. The fixed-timestep loop then catches up at most MAX_CATCHUP ticks and resyncs, identically in
+ // both runs. A DIAGNOSTIC: off unless the variable is set, never for a timed cell.
++long dosags_diag4_room_t0 = 0; // DUPCHAR4 THROWAWAY DIAG -- never committed
++static void dos_port_diag4_state()
++{
++    if (displayed_room != 3) return;
++    static int last[12]; static bool have = false;
++    const CharacterInfo *pc = playerchar;
++    const int o_on = (croom && croom->numobj > 0) ? (int)objs[0].on : -1;
++    const int o_view = (croom && croom->numobj > 0) ? (int)objs[0].view : -1;
++    const int o_x = (croom && croom->numobj > 0) ? (int)objs[0].x : -1;
++    const int o_y = (croom && croom->numobj > 0) ? (int)objs[0].y : -1;
++    const int cur[12] = { pc->x, pc->y, (int)pc->on, (int)pc->transparency, pc->view, (int)pc->loop, pc->flags, pc->room,
++                          o_on, o_view, o_x, o_y };
++    if (have && memcmp(cur, last, sizeof(cur)) == 0) return;
++    memcpy(last, cur, sizeof(cur)); have = true;
++    const long lc = (long)get_loop_counter();
++    Debug::Printf("DOS-PORT-DIAG4 tick=%ld rel=%ld cTrb x=%d y=%d on=%d tr=%d view=%d loop=%d flags=0x%x room=%d | obj0 on=%d view=%d x=%d y=%d",
++        lc, lc - dosags_diag4_room_t0, cur[0], cur[1], cur[2], cur[3], cur[4], cur[5], cur[6], cur[7], cur[8], cur[9], cur[10], cur[11]);
++}
+ static void dos_port_freeze_check()
+ {
++    dos_port_diag4_state();
+     static bool init = false;
+     static long ticks[64];
+     static int n = 0, next = 0;
+@@ -2177,7 +2196,8 @@ static void dos_port_freeze_check()
+         if (m && atol(m) > 0) freeze_ms = atol(m);
+     }
+     if (next >= n) return;
+-    const long lc = (long)get_loop_counter();
++    long lc = (long)get_loop_counter();
++    if (getenv("DOSAGS_DIAG4_REL3")) { if (displayed_room != 3) return; lc -= dosags_diag4_room_t0; }
+     if (lc < ticks[next]) return;
+     char name[16];
+     snprintf(name, sizeof(name), "FRZ%02d.TXT", next);

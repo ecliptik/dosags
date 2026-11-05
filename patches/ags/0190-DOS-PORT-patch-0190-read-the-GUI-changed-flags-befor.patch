@@ -1,0 +1,139 @@
+From a8802c5ab9d0b287e08e00c0b38dc07e9b9e6d53 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 21 Sep 2026 12:17:35 -0700
+Subject: [PATCH] DOS-PORT: patch 0190 -- read the GUI changed flags before
+ they are cleared (instrument only)
+
+Instrument only: behaviour is identical to ags 0189-era builds. It corrects a
+measurement that ags 0167 and 0169 (their messages, and the retracted PLAN-LOG
+section) rest on.
+
+RETRACTION of a claim in ags 0167's message. That message says: "Measured:
+gCredits reports HasChanged() false on 100% of 421 observations". It could not
+have read anything else. draw_gui_and_overlays() has two loops over the GUIs.
+The first ("Prepare and update GUI textures") re-renders every displayed GUI
+whose HasChanged() or HasControlsChanged() is set and then calls
+gui.ClearChanged(). The second, which ags 0167's biggui instrument and ags
+0169's skip both sit in, reads the flags AFTER that clear. At that point they
+are false for every displayed GUI on every frame, including the frame it
+changed. Every recorded tally agrees: unchanged == n (421/421, 1/1, pct=100).
+Whether gCredits ever changes was therefore never measured, and what ags 0169
+stage 1 bought (about 296-300 skipped frames against 382 without it) is a
+measurement of suppressing the mark, not of a GUI being still.
+
+What this patch does: captures HasChanged()/HasControlsChanged() for every GUI
+at the top of the "Add GUIs" branch, before the update loop, and reads those in
+the biggui instrument. The existing changed=/ctrls= fields on the biggui line
+now carry the real flags (they printed the cleared ones, always 0), the
+per-GUI and big-GUI unchanged tallies become real, and guitally and
+biggui_final gain changed=. The skip in ags 0169 is deliberately NOT touched
+here: leaving it reading the cleared flags keeps this binary's behaviour equal
+to the export binary's, so one DOSBox-X run answers "does gCredits actually
+change?" with nothing else moved. The fix is the next patch.
+
+Provenance: written from a read of the two loops in ac/draw.cpp, not from a
+measurement; the DOSBox-X run that reads the new fields is recorded in PLAN.md
+work-order step 1.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/ac/draw.cpp   | 31 +++++++++++++++++++++++++++++--
+ Engine/main/quit.cpp |  8 +++++---
+ 2 files changed, 34 insertions(+), 5 deletions(-)
+
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index 8e22238da..0d1340d45 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -407,6 +407,11 @@ long dos_port_gui_noinval_n = 0;      // patch 0169
+ long dos_port_big_gui_opaque = 0, dos_port_big_gui_masked = 0;  // patch 0176
+ long dos_port_gui_tally[64] = {0};
+ long dos_port_gui_unchanged_tally[64] = {0};
++// patch 0190: HasChanged()/HasControlsChanged() as they stand BEFORE the update
++// loop in draw_gui_and_overlays() clears them. Every "unchanged" figure taken
++// after that loop is a tautology -- see the comment at the snapshot.
++static bool dos_port_gui_was_changed[64];
++static bool dos_port_gui_was_ctrls[64];
+ #endif
+ // GUI render targets, for rendering all controls on same texture buffer
+ std::vector<IDriverDependantBitmap*> gui_render_tex;
+@@ -2694,6 +2699,22 @@ void draw_gui_and_overlays()
+     if (((debug_flags & DBG_NOIFACE)==0) && (displayed_room >= 0)) {
+         GUI::Options.GreyOutInvWindow = play.inventory_greys_out;
+ 
++#ifdef __DJGPP__
++        // DOS-PORT patch 0190: read the changed flags HERE, before the loop
++        // below re-renders each changed GUI and calls gui.ClearChanged().
++        //
++        // Patches 0167/0169 read them in the second loop, after that clear,
++        // where they are false for every displayed GUI on every frame -- so
++        // "unchanged" was true 100% of the time by construction, and the
++        // "421 of 421 observations" that justified stage 1 could not have read
++        // anything else. This is the one place the real answer exists.
++        for (int _i = 0; _i < game.numgui && _i < 64; ++_i)
++        {
++            dos_port_gui_was_changed[_i] = guis[_i].HasChanged();
++            dos_port_gui_was_ctrls[_i]   = guis[_i].HasControlsChanged();
++        }
++#endif
++
+         set_our_eip(37);
+         // Prepare and update GUI textures
+         {
+@@ -2795,7 +2816,10 @@ void draw_gui_and_overlays()
+                 if ((long long)_w * _h >= 50000)   // only the big ones
+                 {
+                     dos_port_big_gui_n++;
+-                    const bool _unch = !gui.HasChanged() && !gui.HasControlsChanged();
++                    // patch 0190: the flags as they were BEFORE the update loop
++                    // cleared them; an index we do not track counts as changed.
++                    const bool _unch = (index >= 0 && index < 64) &&
++                        !dos_port_gui_was_changed[index] && !dos_port_gui_was_ctrls[index];
+                     if (_unch) dos_port_big_gui_unchanged++;
+                     // patch 0176: is the big GUI OPAQUE across its rect?
+                     //
+@@ -2816,7 +2840,8 @@ void draw_gui_and_overlays()
+                     if ((dos_port_big_gui_n % 200) == 1)
+                         Debug::Printf("DOS-PORT biggui idx=%d name=%s %ldx%ld changed=%d ctrls=%d n=%ld unchanged=%ld",
+                             index, gui.GetName().GetCStr(), _w, _h,
+-                            (int)gui.HasChanged(), (int)gui.HasControlsChanged(),
++                            (index >= 0 && index < 64) ? (int)dos_port_gui_was_changed[index] : -1,
++                            (index >= 0 && index < 64) ? (int)dos_port_gui_was_ctrls[index] : -1,
+                             dos_port_big_gui_n, dos_port_big_gui_unchanged);
+                 }
+             }
+@@ -2825,6 +2850,8 @@ void draw_gui_and_overlays()
+             // patch 0169 stage 1: an unchanged GUI does not dirty its region.
+             //
+             // Measured: gCredits reports HasChanged()==false on 100% of 421
++            // [RETRACTED by patch 0190: that reading was taken after
++            // ClearChanged() and is true for every GUI by construction]
+             // observations and is invalidated every frame regardless, which
+             // forces the background restore over 460x260 and inflates the
+             // present's dirty rect to 80% of the screen. The composite is
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 0c399e8d8..5a152f4b7 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -662,13 +662,15 @@ void quit(const char *quitmsg)
+                     extern long dos_port_gui_unchanged_tally[64];
+                     for (int _g = 0; _g < 64; ++_g)
+                         if (dos_port_gui_tally[_g])
+-                            Debug::Printf("DOS-PORT guitally idx=%d n=%ld unchanged=%ld",
+-                                _g, dos_port_gui_tally[_g], dos_port_gui_unchanged_tally[_g]);
++                            Debug::Printf("DOS-PORT guitally idx=%d n=%ld unchanged=%ld changed=%ld",  // patch 0190
++                                _g, dos_port_gui_tally[_g], dos_port_gui_unchanged_tally[_g],
++                                dos_port_gui_tally[_g] - dos_port_gui_unchanged_tally[_g]);
+                     extern long dos_port_big_gui_opaque, dos_port_big_gui_masked;  // 0176
+                     Debug::Printf("DOS-PORT bigguiopaque opaque=%ld masked=%ld",
+                         dos_port_big_gui_opaque, dos_port_big_gui_masked);
+-                    Debug::Printf("DOS-PORT biggui_final n=%ld unchanged=%ld pct=%ld",
++                    Debug::Printf("DOS-PORT biggui_final n=%ld unchanged=%ld changed=%ld pct=%ld",  // patch 0190
+                         dos_port_big_gui_n, dos_port_big_gui_unchanged,
++                        dos_port_big_gui_n - dos_port_big_gui_unchanged,
+                         dos_port_big_gui_n ? (100 * dos_port_big_gui_unchanged / dos_port_big_gui_n) : 0L);
+                     extern long long dos_port_screenshot_us;   // patch 0158
+                     extern long dos_port_screenshot_n;
+-- 
+2.47.3
+

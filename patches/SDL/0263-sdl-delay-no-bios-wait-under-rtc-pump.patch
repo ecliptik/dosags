@@ -1,0 +1,123 @@
+From b0834b0853a4f470951d64c343d88835895a7e83 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 20:06:42 -0700
+Subject: [PATCH] dos: patch 0263 -- SDL_Delay does not use the BIOS INT
+ 15h/86h wait while the RTC pump owns IRQ 8
+
+SDL_SYS_DelayNS naps with DJGPP delay(1) whenever more than a
+millisecond remains. delay() is BIOS INT 15h AH=86h, which an AT BIOS
+counts down on the CMOS RTC periodic interrupt (IRQ 8). It enables PIE
+and the IRQ at the start of a wait and turns PIE off around its end.
+The 0260 pump owns that interrupt, and the SB audio thread's
+SDL_Delay(5) in WaitDevice makes such waits routine. On the round-A
+486 (this BIOS provably runs its waits on the RTC: the pump completed
+212 and 342 of them), the pump's interrupt was turned off under it.
+0262 now repairs that within one SB IRQ. This removes the interplay at
+its source.
+
+While the pump is installed, the 1 ms nap is timed off the clock
+(dos_perf_now) in a spin that does NOT yield. That is what delay(1)
+was to the rest of the process: the whole process held for its
+millisecond. The first form of this patch dropped the nap and let the
+loop yield between every clock check. The cooperative SB audio thread
+then ran between checks, and under DOSBox-X at fixed cycles a 1.5 s
+SDL_Delay took ~3.9 s (dosags LAB-WB WRSg: 1069 s against 514 s with
+the killswitch set). So only the BIOS wait goes; the scheduling stays. The
+pump's BIOS-wait servicing (0260) stays for any other INT 15h/86h
+caller. Default on; the killswitch
+SDL_HINT_DOS_AUDIO_WB_RTC_NO_BIOS_WAIT=0 keeps delay(), so 0262 can be
+measured alone.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ src/audio/dos/SDL_dosaudio_sb.c | 18 ++++++++++++++++++
+ src/timer/dos/SDL_systimer.c    | 15 ++++++++++++++-
+ 2 files changed, 32 insertions(+), 1 deletion(-)
+
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index c8df5dfe0..db1ca51a2 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -1896,6 +1896,7 @@ static volatile Uint8 g_rtc_snap_taken = 0;
+ static volatile Uint8 g_rtc_snap[8];          /* kind, reg A, reg B, IMR slave, IMR master, BDA 0040:00A0, g_rtc_pie, 0 */
+ static volatile Uint32 g_rtc_snap_irq = 0;
+ static volatile Uint32 g_rtc_snap_ticks = 0;
++static Uint8 g_rtc_nobioswait = 0;           /* DOS-PORT patch 0263: SDL_Delay avoids BIOS INT 15h/86h */
+ static bool g_rtc_locked = false;
+ 
+ /* Interrupts must be off around every call (port 70h is shared). */
+@@ -2203,6 +2204,13 @@ static bool MidiRtcInstall(Uint32 gap_us)
+         g_rtc_rs = (h && h[0] == '0' && h[1] == 0) ? 0 : 1;
+     }
+     g_rtc_rate_hz = 32768u >> (MDQ_RTC_RATE_BITS - 1u);
++    {
++        /* DOS-PORT patch 0263: while the pump owns IRQ 8, SDL_Delay does not use DJGPP delay()
++           (BIOS INT 15h/86h), whose wait an AT BIOS runs on this same interrupt and turns off
++           around its end. Default on; killswitch SDL_HINT_DOS_AUDIO_WB_RTC_NO_BIOS_WAIT=0. */
++        const char *h = SDL_GetHint("SDL_HINT_DOS_AUDIO_WB_RTC_NO_BIOS_WAIT");
++        g_rtc_nobioswait = (h && h[0] == '0' && h[1] == 0) ? 0 : 1;
++    }
+     /* The compiler does not keep these functions in source order (the ISR
+        has been laid out after its end marker), so a range lock alone cannot
+        be trusted: the pump runs only under the whole-image lock (0194). */
+@@ -2259,6 +2267,9 @@ static bool MidiRtcInstall(Uint32 gap_us)
+                      (unsigned)MDQ_RTC_RATE_BITS, (unsigned)gap_us,
+                      g_rtc_saved_pie ? "on" : "off", g_rtc_saved_mask ? "masked" : "unmasked",
+                      g_rtc_rs ? "on (patch 0261)" : "off (SDL_HINT_DOS_AUDIO_WB_RUNNING_STATUS=0)");
++    dos_port_dbg_log("audio: patch 0263 SDL_Delay %s while the RTC pump owns IRQ 8",
++                     g_rtc_nobioswait ? "avoids BIOS INT 15h/86h (DJGPP delay())"
++                                      : "keeps BIOS INT 15h/86h (SDL_HINT_DOS_AUDIO_WB_RTC_NO_BIOS_WAIT=0)");
+     return true;
+ }
+ 
+@@ -2617,6 +2628,13 @@ void SDL_DOSMidiDeferRtcStats(Uint32 *rate_hz, Uint32 *gap_us, Uint32 *ticks, Ui
+ 
+ /* DOS-PORT patch 0261: status bytes the pump did not send (running status,
+    run total), and whether running status is on for the current/last install. */
++/* DOS-PORT patch 0263: true while the pump is installed and SDL_Delay must not wait through BIOS
++   INT 15h/86h (SDL_systimer.c). */
++bool SDL_DOSMidiRtcAvoidBiosWait(void)
++{
++    return g_rtc_installed && g_rtc_nobioswait;
++}
++
+ /* DOS-PORT patch 0262: the pump's hardware repairs by kind (run totals). */
+ void SDL_DOSMidiDeferRtcRearms(Uint32 *pie, Uint32 *rate, Uint32 *mask, Uint32 *stuck)
+ {
+diff --git a/src/timer/dos/SDL_systimer.c b/src/timer/dos/SDL_systimer.c
+index b1af263e4..77f01f512 100644
+--- a/src/timer/dos/SDL_systimer.c
++++ b/src/timer/dos/SDL_systimer.c
+@@ -27,6 +27,7 @@
+ 
+ #include "../../core/dos/SDL_dos_scheduler.h"
+ #include <SDL3/SDL_dosopltimer.h>  /* SDL/0122: pump-aware timebase */
++extern bool SDL_DOSMidiRtcAvoidBiosWait(void); /* DOS-PORT patch 0263 (SDL_dosaudio_sb.c) */
+ 
+ /* DJGPP's uclock() reprograms PIT channel 0 for a higher tick rate on first
+    call, giving ~1.19 MHz resolution (UCLOCKS_PER_SEC == 1193180).  This is
+@@ -86,7 +87,19 @@ void SDL_SYS_DelayNS(Uint64 ns)
+            lighter than a tight poll. */
+         Uint64 remaining = target_ticks - (dos_perf_now() - delay_start);
+         if (remaining > (UCLOCKS_PER_SEC / 1000)) {
+-            delay(1);
++            if (SDL_DOSMidiRtcAvoidBiosWait()) {
++                /* DOS-PORT patch 0263: while the RTC MIDI pump (0260) owns IRQ 8, not DJGPP delay()
++                   -- BIOS INT 15h/86h, which an AT BIOS runs on that interrupt and turns off around
++                   its end -- but the same 1 ms nap timed off the clock. It must NOT yield: delay(1)
++                   held the whole process for its millisecond, and dropping the nap (0263's first
++                   form) let the cooperative audio thread run between every clock check, which
++                   stretched a 1.5 s SDL_Delay to ~3.9 s under DOSBox-X (dosags LAB-WB WRSg). */
++                const Uint64 nap0 = dos_perf_now();
++                while ((dos_perf_now() - nap0) < (UCLOCKS_PER_SEC / 1000)) {
++                }
++            } else {
++                delay(1);
++            }
+         }
+     }
+ }
+-- 
+2.47.3
+

@@ -1,0 +1,82 @@
+From 6544ba42c9aafa12336ea1bc11f3d9a31b28f22a Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 17:24:03 -0700
+Subject: [PATCH 35/36] [AGS] sys_events.cpp: define
+ is_sdl_mod_key/make_sdl_mod_flag
+
+Patch 0017 updated these two declarations in sys_events.h to take the
+real SDL_KeyboardEvent (SDL_Keysym is gone in SDL3) and moved them from
+inline-in-header to declared-here-defined-in-sys_events.cpp -- its own
+comment on the declarations already says so -- but the actual
+out-of-line definitions were never written, leaving both undefined at
+link time. Only surfaced now, by the same continued full build this
+session's other new patches came from: Engine/main/game_run.cpp (the
+only caller) is one of the files affected by the "never actually
+compiled by any prior session" gap this session found in Common/, so
+this particular link error was never reached before either, in any
+previous session.
+
+Ported directly from the pre-patch-0017 originals (git show
+94e271df9:Engine/ac/sys_events.h) rather than guessed: SDL_Keysym's own
+scancode field is exactly the same field, now flattened directly onto
+SDL_KeyboardEvent (patch 0017's own finding), and the KMOD_* constants
+were already renamed SDL_KMOD_* by this same function's sibling
+sdl_mod_to_ags_mod() just above and by patch 0020 elsewhere.
+
+Verified: the undefined is_sdl_mod_key(SDL_KeyboardEvent const&)/
+make_sdl_mod_flag(SDL_KeyboardEvent const&) references are gone from a
+full build.
+---
+ Engine/ac/sys_events.cpp | 36 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 36 insertions(+)
+
+diff --git a/Engine/ac/sys_events.cpp b/Engine/ac/sys_events.cpp
+index 160716015..47c8ccdb2 100644
+--- a/Engine/ac/sys_events.cpp
++++ b/Engine/ac/sys_events.cpp
+@@ -48,6 +48,42 @@ int sdl_mod_to_ags_mod(const Uint16 mod)
+     return ags_mod;
+ }
+ 
++// DOS-PORT: patch 0017 updated these two declarations in sys_events.h to
++// take the real SDL_KeyboardEvent (SDL_Keysym is gone in SDL3) and moved
++// them from inline-in-header to declared-here-defined-in-sys_events.cpp
++// -- its own comment on the declarations already says so -- but the
++// actual out-of-line definitions were never written, leaving both
++// undefined at link time (only surfaced now: game_run.cpp is one of the
++// files affected by the "23 never-built files" gap this same continued
++// build found in Common/, so this was never actually reached before
++// either). Ported directly from the pre-patch-0017 originals
++// (git show 94e271df9:Engine/ac/sys_events.h): SDL_Keysym::scancode is
++// exactly the same field, now flattened onto SDL_KeyboardEvent, and the
++// KMOD_* constants were already renamed SDL_KMOD_* by this same patch's
++// own sibling function above and by patch 0020.
++bool is_sdl_mod_key(const SDL_KeyboardEvent &key)
++{
++    return key.scancode == SDL_SCANCODE_LCTRL || key.scancode == SDL_SCANCODE_RCTRL ||
++        key.scancode == SDL_SCANCODE_LALT || key.scancode == SDL_SCANCODE_RALT ||
++        key.scancode == SDL_SCANCODE_LSHIFT || key.scancode == SDL_SCANCODE_RSHIFT ||
++        key.scancode == SDL_SCANCODE_MODE;
++}
++
++int make_sdl_mod_flag(const SDL_KeyboardEvent &key)
++{
++    switch (key.scancode)
++    {
++    case SDL_SCANCODE_LSHIFT: return SDL_KMOD_LSHIFT;
++    case SDL_SCANCODE_RSHIFT: return SDL_KMOD_RSHIFT;
++    case SDL_SCANCODE_LCTRL: return SDL_KMOD_LCTRL;
++    case SDL_SCANCODE_RCTRL: return SDL_KMOD_RCTRL;
++    case SDL_SCANCODE_LALT: return SDL_KMOD_LALT;
++    case SDL_SCANCODE_RALT: return SDL_KMOD_RALT;
++    case SDL_SCANCODE_MODE: return SDL_KMOD_MODE;
++    default: return SDL_KMOD_NONE;
++    }
++}
++
+ eAGSKeyCode sdl_key_to_ags_key(const SDL_Keycode sym, const SDL_Scancode scancode, const Uint16 mod, bool old_keyhandle)
+ {
+     // NOTE: keycodes such as SDLK_EXCLAIM ('!') may be misleading, as they are NOT
+-- 
+2.47.3
+

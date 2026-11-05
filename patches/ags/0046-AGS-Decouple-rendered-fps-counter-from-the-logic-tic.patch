@@ -1,0 +1,209 @@
+From 59ffd32539e3e7c445a0142fd063c99b0bd3f4c2 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 11 Sep 2026 21:57:31 -0700
+Subject: [PATCH] [AGS] Decouple rendered-fps counter from the logic-tick
+ counter
+
+Prep for the fixed-timestep catch-up loop (PLAN.md's "Fixed timestep
+and the fps KPI", decided 2026-09-11): before that loop can exist,
+Game.TickCounter (LoopCounter) and rendered fps must be measured from
+independent counters, because the whole point of the catch-up loop is
+to make them diverge (multiple logic ticks per render on hardware too
+slow to render at frames_per_second).
+
+Today LoopCounter and "a render happened" are the same event by
+construction (UpdateGameOnce does one of each per call), so reusing
+LoopCounter as the FPS calc's frame count was harmless. Read directly:
+game_loop_update_fps() computed frames from LoopCounter deltas, and
+Game_GetTickCounter() (the script-visible Game.TickCounter) reads the
+same LoopCounter via get_loop_counter() -- so once ticks and renders
+decouple, leaving the FPS calc on LoopCounter would silently turn
+fps_p50/fps_p95 into a second copy of the logic-tick rate instead of
+a real rendered-smoothness measurement.
+
+Fix: a new GameTimer.RenderCounter, incremented only where a render
+actually happens, with its own FPS-calc pairing (LastFPSSyncRenderCounter,
+replacing the now-dead LastFPSSyncCounter). Audited every render_graphics()/
+render_to_screen() call site in the engine (game_run.cpp, screen.cpp,
+display.cpp, dialog.cpp, guidialog.cpp, video.cpp, global_screen.cpp):
+only two currently touch the loop counter around a render --
+UpdateGameOnce's own (game_run.cpp) and ShakeScreen's manual
+increment_loop_counter() (global_screen.cpp, the only site with its own
+render loop outside UpdateGameOnce) -- both get a matching RenderCounter
+increment. Every other render site (Display()/dialog-options/screen.cpp's
+fade transitions) never called increment_loop_counter() either, so none
+of them contributed to the FPS calc before this patch and none do after --
+unchanged, not this patch's concern. increment_render_counter() mirrors
+increment_loop_counter()'s exact pre-existing behavior (immediately
+resyncing the FPS baseline, so a render taken this way doesn't itself
+contribute a delta to the next sample) rather than "fixing" that quirk,
+to keep this a behavior-preserving refactor.
+
+No behavior change with no catch-up loop yet to make the two counters
+diverge: confirmed via a full DOSBox-X harness run (tests/harness,
+AGS Quest) -- all 18 phases (16 required + guimenu/anim) still ok, all
+screenshot hashes unchanged, fps_p50=40.00/fps_p95=40.38 (sane and
+consistent with prior --fast-capped baselines).
+---
+ Engine/ac/global_screen.cpp |  2 ++
+ Engine/main/game_run.cpp    | 53 +++++++++++++++++++++++++++++++++----
+ Engine/main/game_run.h      | 16 +++++++++++
+ 3 files changed, 66 insertions(+), 5 deletions(-)
+
+diff --git a/Engine/ac/global_screen.cpp b/Engine/ac/global_screen.cpp
+index a62c8b05f..07e1650e5 100644
+--- a/Engine/ac/global_screen.cpp
++++ b/Engine/ac/global_screen.cpp
+@@ -103,6 +103,7 @@ public:
+         {
+             increment_loop_counter();
+             render_graphics();
++            increment_render_counter(); // DOS-PORT (patch 0046): see game_run.h
+             update_polled_stuff();
+             WaitForNextFrame();
+         }
+@@ -111,6 +112,7 @@ public:
+             increment_loop_counter();
+             update_shakescreen();
+             render_to_screen();
++            increment_render_counter(); // DOS-PORT (patch 0046): see game_run.h
+             update_polled_stuff();
+             WaitForNextFrame();
+         }
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index ae55c8713..461e77744 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -108,10 +108,22 @@ struct GameTimer
+     // FPS syncing: it's done periodically, not every frame
+     const uint32_t FPSSyncPeriodMs = 1000u;
+     Clock::time_point LastFPSSyncTime = {};
+-    uint32_t LastFPSSyncCounter = 0u;
+     // For runtime reference
+     Clock::time_point StartTime = {};
+     bool RuntimeStarted = false;
++    // DOS-PORT (patch 0046): rendered-frame counter, separate from
++    // LoopCounter (logic ticks). Before this patch the two were always
++    // equal by construction (exactly one render per logic tick), so
++    // reusing LoopCounter for the FPS calc below was harmless; the
++    // fixed-timestep catch-up loop (dos_run_tick_fixed()) breaks that
++    // equivalence by running logic-only ticks, so FPS needs its own
++    // counter to keep meaning "rendered smoothness" rather than quietly
++    // becoming a second copy of the logic-tick rate. Incremented
++    // unconditionally in UpdateGameOnce right where render_graphics()
++    // actually runs -- true on every platform, not just DJGPP, since it
++    // is a plain correctness fix, not a DOS-specific behavior.
++    uint32_t RenderCounter = 0u;
++    uint32_t LastFPSSyncRenderCounter = 0u;
+ } static GameTimer;
+ 
+ 
+@@ -1161,13 +1173,18 @@ static void game_loop_update_fps()
+ {
+     const auto now = Clock::now();
+     const auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - GameTimer.LastFPSSyncTime);
+-    const auto frames = GameTimer.LoopCounter - GameTimer.LastFPSSyncCounter;
++    // DOS-PORT (patch 0046): RenderCounter, not LoopCounter -- see
++    // GameTimer's own comment. get_real_fps()/fps_p50/fps_p95 must keep
++    // measuring rendered frames per second even when the fixed-timestep
++    // catch-up loop makes LoopCounter (logic ticks) advance faster than
++    // renders happen.
++    const auto frames = GameTimer.RenderCounter - GameTimer.LastFPSSyncRenderCounter;
+ 
+     if (duration >= std::chrono::milliseconds(GameTimer.FPSSyncPeriodMs) && frames > 0)
+     {
+         GameTimer.FPS = 1000.0f * frames / duration.count();
+         GameTimer.LastFPSSyncTime = now;
+-        GameTimer.LastFPSSyncCounter = GameTimer.LoopCounter;
++        GameTimer.LastFPSSyncRenderCounter = GameTimer.RenderCounter;
+     }
+ 
+ #ifdef __DJGPP__
+@@ -1309,7 +1326,14 @@ float get_real_fps()
+ void set_loop_counter(uint32_t new_counter)
+ {
+     GameTimer.LoopCounter = new_counter;
+-    GameTimer.LastFPSSyncCounter = GameTimer.LoopCounter;
++    // DOS-PORT (patch 0046): resync against RenderCounter (the FPS calc's
++    // own source now) instead of the removed LastFPSSyncCounter -- see
++    // GameTimer's own comment. RenderCounter itself is untouched: renders
++    // already performed this session are real and this call (save
++    // restore, room/game reset) doesn't undo them; only the sync baseline
++    // needs to catch up so the next game_loop_update_fps() call measures
++    // forward from here, not across the reset.
++    GameTimer.LastFPSSyncRenderCounter = GameTimer.RenderCounter;
+     GameTimer.LastFPSSyncTime = Clock::now();
+     GameTimer.FPS = std::numeric_limits<float>::quiet_NaN();
+ }
+@@ -1317,7 +1341,25 @@ void set_loop_counter(uint32_t new_counter)
+ void increment_loop_counter()
+ {
+     GameTimer.LoopCounter++;
+-    GameTimer.LastFPSSyncCounter = GameTimer.LoopCounter;
++}
++
++// DOS-PORT (patch 0046): increment_loop_counter()'s counterpart for
++// RenderCounter -- GameTimer is file-scope static here, so a caller
++// outside this file needs an accessor. global_screen.cpp's ShakeScreen is
++// the only other call site that renders through its own loop rather than
++// through UpdateGameOnce (Display()/dialog-options/screen.cpp's fade
++// transitions render directly too, but none of them call
++// increment_loop_counter() either, so none of them contributed to the FPS
++// calc before this patch -- unchanged, not this patch's concern).
++// Advancing the sync baseline immediately, exactly like
++// increment_loop_counter() used to do for LastFPSSyncCounter, means a
++// render taken this way does not itself contribute a delta to the next
++// game_loop_update_fps() call -- that pre-existing quirk is preserved
++// as-is, not fixed, to keep this patch a behavior-preserving refactor.
++void increment_render_counter()
++{
++    GameTimer.RenderCounter++;
++    GameTimer.LastFPSSyncRenderCounter = GameTimer.RenderCounter;
+ }
+ 
+ uint32_t get_loop_counter()
+@@ -1426,6 +1468,7 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+     {
+         update_gui_disabled_status(); // in case they changed it in the late script update
+         render_graphics(extra_ddb, extra_x, extra_y);
++        GameTimer.RenderCounter++; // DOS-PORT (patch 0046): see GameTimer's own comment
+     }
+ 
+     set_our_eip(1011);
+diff --git a/Engine/main/game_run.h b/Engine/main/game_run.h
+index a24bc017e..8d646d158 100644
+--- a/Engine/main/game_run.h
++++ b/Engine/main/game_run.h
+@@ -64,6 +64,12 @@ void set_loop_counter(uint32_t new_counter);
+ void increment_loop_counter();
+ // Gets game frame index, counted since the game started
+ uint32_t get_loop_counter();
++// DOS-PORT (patch 0046): increment_loop_counter()'s counterpart for the
++// separate rendered-frame counter get_real_fps()/fps_p50/fps_p95 are
++// computed from -- see game_run.cpp's GameTimer comment. Call this
++// wherever a render happens through a call site other than
++// UpdateGameOnce's own (today: global_screen.cpp's ShakeScreen).
++void increment_render_counter();
+ // Reset runtime counter
+ void set_runtime_start();
+ 
+@@ -97,6 +103,16 @@ long dos_memory_min_free_kb();
+ // For TAS-style automated runs that want "just run N ticks then quit
+ // cleanly" without any game-specific script logic.
+ void dos_auto_exit_check();
++
++// DOS-PORT (patch 0046): fixed-timestep KPI support -- see PLAN.md's
++// "Fixed timestep and the fps KPI". dos_get_frames_skipped() returns
++// LoopCounter (logic ticks advanced) minus RenderCounter (frames
++// actually rendered) -- always 0 with DOSAGS_FIXED_TIMESTEP unset (today's
++// 1:1 coupling), positive whenever the catch-up loop ran logic-only
++// ticks. Read at quit()'s clean-shutdown path (quit.cpp) alongside
++// get_loop_counter()/get_runtime_ms() to compute RUNMANIFEST's
++// tick_rate/frames_skipped line.
++long dos_get_frames_skipped();
+ #endif
+ // Tells if the runtime counter was initialized
+ bool is_runtime_set();
+-- 
+2.47.3
+

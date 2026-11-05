@@ -1,0 +1,223 @@
+From c0b135ca40a802f22294569bf597119bbe88f006 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 15 Sep 2026 07:44:12 -0700
+Subject: [PATCH] DOS-PORT: patch 0073 -- fold SDL/0147's upload-PIO + prepsong
+ diagnostics into AUDIOPRB.LOG (S7-GUS)
+
+Same rollup-of-rollups pattern as every prior fold-in this sub-
+investigation. Adds three new fields to the existing DOS-PORT audioprb
+log line: uploadpio(...) and uploadsample(...) (SDL patch SDL/0147,
+each also carrying a bytes= total for computing effective us/byte
+throughput) and prepsong(...) (patch 0072's gus_sink_prepare_song()
+call-site bracket). Discard-snapshots all three before the slot loop,
+same attribution-correctness reasoning as every earlier field.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01VVzc2V3qXnVbYZC693CTWt
+---
+ Engine/media/audio/audio_core.cpp | 126 +++++++++++++++++++++++++++++-
+ 1 file changed, 124 insertions(+), 2 deletions(-)
+
+diff --git a/Engine/media/audio/audio_core.cpp b/Engine/media/audio/audio_core.cpp
+index e0ee01be1..55ec06681 100644
+--- a/Engine/media/audio/audio_core.cpp
++++ b/Engine/media/audio/audio_core.cpp
+@@ -254,6 +254,25 @@ extern "C" void SDL_DOSGusStopVoiceDiagSnapshot(
+ extern "C" void DOSAGS_MidiTickDiagSnapshot(
+     uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us);
+ 
++// DOS-PORT (S7-GUS, continuation): real hardware exonerated every prior
++// candidate above (tags GUST1/GUSD1/GUSV1) -- the outlier lives in
++// AudioPlayer::Init()'s own call chain (dos_midi_backend_prepare_song()
++// -> gus_sink_prepare_song() -> SDL_DOSGusUploadSample()/gus_upload_
++// pio()), not yet measured. Same idiom, for the three new accessors
++// covering that chain: the .pat-upload PIO transfer itself (SDL patch
++// SDL/0147), the whole SDL_DOSGusUploadSample() call it sits inside
++// (also SDL/0147), and the gus_sink_prepare_song() call site (dosags
++// patch 0072, dos_midi_backend.cpp). The first two also report total
++// bytes transferred, for computing us/byte throughput.
++extern "C" void SDL_DOSGusUploadPioDiagSnapshot(
++    uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us,
++    uint32_t *out_bytes);
++extern "C" void SDL_DOSGusUploadSampleDiagSnapshot(
++    uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us,
++    uint32_t *out_bytes);
++extern "C" void DOSAGS_MidiPrepSongDiagSnapshot(
++    uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us);
++
+ // TEMPORARY DIAGNOSTIC (AUDIOPRB.LOG): S7's real-hardware ABBA
+ // (2026-09-13, tests/games/trilbysnotes/results/S7-abba-2026-09-13.md)
+ // found dos_run_tick_fixed()'s catch-up loop (patch 0047, game_run.cpp)
+@@ -355,6 +374,14 @@ struct AudioPollWindow
+     // (audioplayer.cpp).
+     uint32_t miditick_calls;
+     uint64_t miditick_min_us, miditick_mean_us, miditick_max_us;
++    // S7-GUS continuation: the .pat-upload PIO chain (SDL/0147, ags/0072).
++    // uploadpio/uploadsample also carry a byte total, not just timing.
++    uint32_t uploadpio_calls;
++    uint64_t uploadpio_min_us, uploadpio_mean_us, uploadpio_max_us, uploadpio_bytes;
++    uint32_t uploadsample_calls;
++    uint64_t uploadsample_min_us, uploadsample_mean_us, uploadsample_max_us, uploadsample_bytes;
++    uint32_t prepsong_calls;
++    uint64_t prepsong_min_us, prepsong_mean_us, prepsong_max_us;
+ };
+ 
+ struct AudioPollDiag
+@@ -390,6 +417,13 @@ struct AudioPollDiag
+     // S7-GUS continuation: the midi_sched_tick() call-site bracket.
+     uint32_t miditick_calls_sum = 0;
+     uint64_t miditick_us_sum = 0, miditick_min_us = UINT64_MAX, miditick_max_us = 0;
++    // S7-GUS continuation: the .pat-upload PIO chain.
++    uint32_t uploadpio_calls_sum = 0;
++    uint64_t uploadpio_us_sum = 0, uploadpio_min_us = UINT64_MAX, uploadpio_max_us = 0, uploadpio_bytes_sum = 0;
++    uint32_t uploadsample_calls_sum = 0;
++    uint64_t uploadsample_us_sum = 0, uploadsample_min_us = UINT64_MAX, uploadsample_max_us = 0, uploadsample_bytes_sum = 0;
++    uint32_t prepsong_calls_sum = 0;
++    uint64_t prepsong_us_sum = 0, prepsong_min_us = UINT64_MAX, prepsong_max_us = 0;
+ 
+     AudioPollWindow windows[AUDIO_POLL_DIAG_MAX_WINDOWS];
+     uint32_t windows_recorded = 0;
+@@ -453,6 +487,20 @@ void dos_diag_close_window()
+         w.miditick_min_us = (d.miditick_min_us == UINT64_MAX ? 0 : d.miditick_min_us);
+         w.miditick_mean_us = (d.miditick_calls_sum > 0) ? (d.miditick_us_sum / d.miditick_calls_sum) : 0;
+         w.miditick_max_us = d.miditick_max_us;
++        w.uploadpio_calls = d.uploadpio_calls_sum;
++        w.uploadpio_min_us = (d.uploadpio_min_us == UINT64_MAX ? 0 : d.uploadpio_min_us);
++        w.uploadpio_mean_us = (d.uploadpio_calls_sum > 0) ? (d.uploadpio_us_sum / d.uploadpio_calls_sum) : 0;
++        w.uploadpio_max_us = d.uploadpio_max_us;
++        w.uploadpio_bytes = d.uploadpio_bytes_sum;
++        w.uploadsample_calls = d.uploadsample_calls_sum;
++        w.uploadsample_min_us = (d.uploadsample_min_us == UINT64_MAX ? 0 : d.uploadsample_min_us);
++        w.uploadsample_mean_us = (d.uploadsample_calls_sum > 0) ? (d.uploadsample_us_sum / d.uploadsample_calls_sum) : 0;
++        w.uploadsample_max_us = d.uploadsample_max_us;
++        w.uploadsample_bytes = d.uploadsample_bytes_sum;
++        w.prepsong_calls = d.prepsong_calls_sum;
++        w.prepsong_min_us = (d.prepsong_min_us == UINT64_MAX ? 0 : d.prepsong_min_us);
++        w.prepsong_mean_us = (d.prepsong_calls_sum > 0) ? (d.prepsong_us_sum / d.prepsong_calls_sum) : 0;
++        w.prepsong_max_us = d.prepsong_max_us;
+     }
+     else
+     {
+@@ -477,6 +525,12 @@ void dos_diag_close_window()
+     d.voicestop_us_sum = 0; d.voicestop_min_us = UINT64_MAX; d.voicestop_max_us = 0;
+     d.miditick_calls_sum = 0;
+     d.miditick_us_sum = 0; d.miditick_min_us = UINT64_MAX; d.miditick_max_us = 0;
++    d.uploadpio_calls_sum = 0;
++    d.uploadpio_us_sum = 0; d.uploadpio_min_us = UINT64_MAX; d.uploadpio_max_us = 0; d.uploadpio_bytes_sum = 0;
++    d.uploadsample_calls_sum = 0;
++    d.uploadsample_us_sum = 0; d.uploadsample_min_us = UINT64_MAX; d.uploadsample_max_us = 0; d.uploadsample_bytes_sum = 0;
++    d.prepsong_calls_sum = 0;
++    d.prepsong_us_sum = 0; d.prepsong_min_us = UINT64_MAX; d.prepsong_max_us = 0;
+ }
+ 
+ void dos_diag_record_audio_poll(uint64_t slots_us, uint64_t pump_us)
+@@ -594,6 +648,43 @@ void dos_diag_record_miditick(uint32_t calls, uint32_t min_us, uint32_t mean_us,
+     if ((uint64_t)max_us > d.miditick_max_us) d.miditick_max_us = max_us;
+ }
+ 
++// S7-GUS continuation: same rollup-of-rollups shape, plus a running byte
++// total (not a mean -- bytes transferred is additive, not per-call-cost).
++void dos_diag_record_uploadpio(uint32_t calls, uint32_t min_us, uint32_t mean_us, uint32_t max_us, uint32_t bytes)
++{
++    if (calls == 0)
++        return;
++    AudioPollDiag &d = g_audio_poll_diag;
++    d.uploadpio_calls_sum += calls;
++    d.uploadpio_us_sum += (uint64_t)mean_us * calls;
++    d.uploadpio_bytes_sum += bytes;
++    if ((uint64_t)min_us < d.uploadpio_min_us) d.uploadpio_min_us = min_us;
++    if ((uint64_t)max_us > d.uploadpio_max_us) d.uploadpio_max_us = max_us;
++}
++
++void dos_diag_record_uploadsample(uint32_t calls, uint32_t min_us, uint32_t mean_us, uint32_t max_us, uint32_t bytes)
++{
++    if (calls == 0)
++        return;
++    AudioPollDiag &d = g_audio_poll_diag;
++    d.uploadsample_calls_sum += calls;
++    d.uploadsample_us_sum += (uint64_t)mean_us * calls;
++    d.uploadsample_bytes_sum += bytes;
++    if ((uint64_t)min_us < d.uploadsample_min_us) d.uploadsample_min_us = min_us;
++    if ((uint64_t)max_us > d.uploadsample_max_us) d.uploadsample_max_us = max_us;
++}
++
++void dos_diag_record_prepsong(uint32_t calls, uint32_t min_us, uint32_t mean_us, uint32_t max_us)
++{
++    if (calls == 0)
++        return;
++    AudioPollDiag &d = g_audio_poll_diag;
++    d.prepsong_calls_sum += calls;
++    d.prepsong_us_sum += (uint64_t)mean_us * calls;
++    if ((uint64_t)min_us < d.prepsong_min_us) d.prepsong_min_us = min_us;
++    if ((uint64_t)max_us > d.prepsong_max_us) d.prepsong_max_us = max_us;
++}
++
+ } // anonymous namespace
+ 
+ // Declared in audio_core.h (DJGPP-gated); called from quit.cpp right
+@@ -625,7 +716,10 @@ void dos_diag_dump_audio_poll(FILE *fp)
+             "voicepan(calls=%lu min_us=%lu mean_us=%lu max_us=%lu) "
+             "voicestart(calls=%lu min_us=%lu mean_us=%lu max_us=%lu) "
+             "voicestop(calls=%lu min_us=%lu mean_us=%lu max_us=%lu) "
+-            "miditick(calls=%lu min_us=%lu mean_us=%lu max_us=%lu)\n",
++            "miditick(calls=%lu min_us=%lu mean_us=%lu max_us=%lu) "
++            "uploadpio(calls=%lu min_us=%lu mean_us=%lu max_us=%lu bytes=%lu) "
++            "uploadsample(calls=%lu min_us=%lu mean_us=%lu max_us=%lu bytes=%lu) "
++            "prepsong(calls=%lu min_us=%lu mean_us=%lu max_us=%lu)\n",
+             (unsigned long)w.total_calls_at_close, (unsigned long)w.window_calls,
+             (unsigned long)w.slots_min_us, (unsigned long)w.slots_mean_us, (unsigned long)w.slots_max_us,
+             (unsigned long)w.pump_min_us, (unsigned long)w.pump_mean_us, (unsigned long)w.pump_max_us,
+@@ -644,7 +738,15 @@ void dos_diag_dump_audio_poll(FILE *fp)
+             (unsigned long)w.voicestop_calls, (unsigned long)w.voicestop_min_us,
+             (unsigned long)w.voicestop_mean_us, (unsigned long)w.voicestop_max_us,
+             (unsigned long)w.miditick_calls, (unsigned long)w.miditick_min_us,
+-            (unsigned long)w.miditick_mean_us, (unsigned long)w.miditick_max_us);
++            (unsigned long)w.miditick_mean_us, (unsigned long)w.miditick_max_us,
++            (unsigned long)w.uploadpio_calls, (unsigned long)w.uploadpio_min_us,
++            (unsigned long)w.uploadpio_mean_us, (unsigned long)w.uploadpio_max_us,
++            (unsigned long)w.uploadpio_bytes,
++            (unsigned long)w.uploadsample_calls, (unsigned long)w.uploadsample_min_us,
++            (unsigned long)w.uploadsample_mean_us, (unsigned long)w.uploadsample_max_us,
++            (unsigned long)w.uploadsample_bytes,
++            (unsigned long)w.prepsong_calls, (unsigned long)w.prepsong_min_us,
++            (unsigned long)w.prepsong_mean_us, (unsigned long)w.prepsong_max_us);
+     }
+ }
+ #endif // __DJGPP__
+@@ -686,6 +788,14 @@ void audio_core_entry_poll()
+     // MidiPoll()), so this reset is defensive symmetry with the others,
+     // not expected to discard anything real in practice.
+     DOSAGS_MidiTickDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
++    // S7-GUS continuation: same discard-snapshot reasoning, for the
++    // .pat-upload PIO chain -- gus_sink_prepare_song() (and everything
++    // it triggers) runs from inside this same slot loop below, via
++    // AudioPlayer::Poll() -> Init() -> MidiInit(), on a song's first
++    // real tick.
++    SDL_DOSGusUploadPioDiagSnapshot(nullptr, nullptr, nullptr, nullptr, nullptr);
++    SDL_DOSGusUploadSampleDiagSnapshot(nullptr, nullptr, nullptr, nullptr, nullptr);
++    DOSAGS_MidiPrepSongDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
+ #endif
+ 
+     for (auto &entry : g_acore.slots_) {
+@@ -725,6 +835,18 @@ void audio_core_entry_poll()
+         DOSAGS_MidiTickDiagSnapshot(&c, &mn, &me, &mx);
+         dos_diag_record_miditick(c, mn, me, mx);
+     }
++    {
++        uint32_t c, mn, me, mx, by;
++        SDL_DOSGusUploadPioDiagSnapshot(&c, &mn, &me, &mx, &by);
++        dos_diag_record_uploadpio(c, mn, me, mx, by);
++        SDL_DOSGusUploadSampleDiagSnapshot(&c, &mn, &me, &mx, &by);
++        dos_diag_record_uploadsample(c, mn, me, mx, by);
++    }
++    {
++        uint32_t c, mn, me, mx;
++        DOSAGS_MidiPrepSongDiagSnapshot(&c, &mn, &me, &mx);
++        dos_diag_record_prepsong(c, mn, me, mx);
++    }
+ #endif
+ 
+     // DOS-PORT (Sound milestone, S1): mix every active voice into the
+-- 
+2.47.3
+

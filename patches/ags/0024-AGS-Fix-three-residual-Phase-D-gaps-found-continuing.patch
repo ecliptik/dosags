@@ -1,0 +1,106 @@
+From d94c96a151f70c2ef5be7395a23b6847d2f335bc Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 15:40:09 -0700
+Subject: [PATCH 1/4] [AGS] Fix three residual Phase D gaps found continuing
+ the build past 0023
+
+Three real, previously-unreached gaps found by continuing make build-ags
+past patch 0023, each independently diagnosed and narrow -- not one
+concern repeated, three distinct root causes, bundled here because each
+was found and fixed within the same continued-build investigation and
+each is a single line:
+
+- Engine/media/video/videoplayer.h:171: SDL_AudioFormat _audioFormat = 0;
+  SDL_AudioFormat is a plain Uint16 typedef in SDL2 (implicit int init
+  compiles fine) but a real C++ enum in SDL3 (implicit int init is a
+  hard -fpermissive-only error under this build's flags). Fixed to
+  SDL_AUDIO_UNKNOWN. This header is not excluded by AGS_NO_VIDEO_PLAYER
+  the way theora_player.cpp's own decode source is -- Engine/ac/game.cpp
+  pulls it in unconditionally via media/video/video.h -- so it needed
+  fixing regardless of video playback ever being exercised. Breadth-
+  checked: grepped the whole tree for every SDL_[A-Za-z_]+ member
+  initialized to a bare `= 0` and checked each type against SDL3's real
+  enums vs. plain bitmask typedefs (e.g. SDL_WindowFlags, still Uint64,
+  correctly `= 0` in sys_main.cpp) -- this is the only real instance.
+
+- Engine/ac/global_game.cpp: extends patch 0017's own coverage, not a
+  fresh unrelated finding. GetPressedKeys() calls .size()/operator[] on
+  the std::vector<SDL_KeyboardEvent>& ags_getkeysdown() returns (already
+  ported by 0017), but sys_events.h only forward-declares
+  `struct SDL_KeyboardEvent;` (by design, to stay a light header) --
+  instantiating vector<T>::size()/operator[] needs T complete at the
+  point of use, which requires global_game.cpp itself to include the
+  real definition. Added #include <SDL3/SDL.h> (pulls in SDL_events.h,
+  where SDL_KeyboardEvent's full struct actually lives, confirmed by
+  reading SDL_events.h:360 directly) -- 0017's own patch happened not to
+  need this for the sites it touched directly, but this call site does.
+
+- Engine/ac/room.cpp: a new instance of the established DJGPP
+  int32_t/uint32_t-vs-int/unsigned-int divergence category (patches
+  0013/0018/0019's own category, here on the unsigned side): DJGPP's
+  uint32_t is `unsigned long`, not `unsigned int` (confirmed with a
+  static_assert probe), so Math::Clamp<T>'s single-template-parameter
+  deduction fails when a uint32_t variable, a bare `0u` literal
+  (unsigned int), and a uint32_t-typed expression are all passed as the
+  three same-T arguments -- GCC reports "no matching function," listing
+  the mismatched deduced types. Fixed both call sites in
+  convert_move_path_to_data_resolution() with an explicit
+  Math::Clamp<uint32_t>(...) template argument, matching the existing
+  precedent already used for exactly this shape at
+  Engine/ac/listbox.cpp:323 (Math::Clamp<uint32_t>(item, 0u, ...)) --
+  not inventing a new pattern.
+
+Verified: videoplayer.h via Engine/ac/game.cpp.obj (the file that pulls
+it in); global_game.cpp.obj and room.cpp.obj directly. All three compile
+clean, zero errors. Full make build-ags / cmake --build ... -- -k
+(keep-going) re-run: no new errors from these three files anywhere in
+the build.
+---
+ Engine/ac/global_game.cpp        | 1 +
+ Engine/ac/room.cpp               | 4 ++--
+ Engine/media/video/videoplayer.h | 2 +-
+ 3 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/Engine/ac/global_game.cpp b/Engine/ac/global_game.cpp
+index 09a474711..8a035f621 100644
+--- a/Engine/ac/global_game.cpp
++++ b/Engine/ac/global_game.cpp
+@@ -12,6 +12,7 @@
+ //
+ //=============================================================================
+ #include "ac/global_game.h"
++#include <SDL3/SDL.h>
+ #include <algorithm>
+ #include <math.h>
+ #include <stdio.h>
+diff --git a/Engine/ac/room.cpp b/Engine/ac/room.cpp
+index 16e8fd8d3..1a7066793 100644
+--- a/Engine/ac/room.cpp
++++ b/Engine/ac/room.cpp
+@@ -1291,8 +1291,8 @@ int mask_to_room_coord(int coord)
+ 
+ void convert_move_path_to_data_resolution(MoveList &mls, uint32_t from_step, uint32_t to_step)
+ {
+-    to_step = Math::Clamp(to_step, 0u, mls.GetNumStages() - 1);
+-    from_step = Math::Clamp(from_step, 0u, to_step);
++    to_step = Math::Clamp<uint32_t>(to_step, 0u, mls.GetNumStages() - 1);
++    from_step = Math::Clamp<uint32_t>(from_step, 0u, to_step);
+ 
+     // If speed is independent from MaskResolution...
+     if ((game.options[OPT_WALKSPEEDABSOLUTE] != 0) && game.GetDataUpscaleMult() > 1)
+diff --git a/Engine/media/video/videoplayer.h b/Engine/media/video/videoplayer.h
+index 90a3d83d6..00438aa1a 100644
+--- a/Engine/media/video/videoplayer.h
++++ b/Engine/media/video/videoplayer.h
+@@ -168,7 +168,7 @@ protected:
+     // Audio internals
+     int _audioChannels = 0;
+     int _audioFreq = 0;
+-    SDL_AudioFormat _audioFormat = 0;
++    SDL_AudioFormat _audioFormat = SDL_AUDIO_UNKNOWN;
+ 
+     // Video internals
+     // Native video frame's format
+-- 
+2.47.3
+

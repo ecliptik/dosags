@@ -1,0 +1,788 @@
+diff --git a/Engine/ac/event.cpp b/Engine/ac/event.cpp
+index 927a10a4d..ab5fe9c00 100644
+--- a/Engine/ac/event.cpp
++++ b/Engine/ac/event.cpp
+@@ -240,6 +240,235 @@ struct DosPortEventScope
+ };
+ #endif
+ 
++#ifdef __DJGPP__
++// ---------------------------------------------------------------------------
++// DOS-PORT probe 0290 (LAB ONLY): dispatch / event / room-segment side.
++// See main/dos_port_mmdprobe.h and LAB-MMD.md 2.2.
++// ---------------------------------------------------------------------------
++#include <string.h>
++#include "debug/out.h"
++#include "main/dos_port_mmdprobe.h"
++int dp_mmd_in_dispatch = 0;
++DpMmdSeg dp_mmd_seg;
++static bool dp_mmd_seg_valid = false;
++static unsigned dp_mmd_cur_evmask = 0;
++static int dp_mmd_cur_events = 0;
++extern long dp_mmd_uclock_ns;
++void dp_mmd_reset_tables();
++
++static void dp_mmd_seg_start()
++{
++    memset(&dp_mmd_seg, 0, sizeof(dp_mmd_seg));
++    DpMmdSeg &g = dp_mmd_seg;
++    const DosPortTickTiming &t = dos_port_tick_timing;
++    g.room = displayed_room;
++    g.tick0 = get_loop_counter();
++    g.t0 = dp_mmd_clock();
++    g.s_ugo = t.update_game_once_total.total_us; g.s_ugo_n = t.update_game_once_total.calls;
++    g.s_ped = t.process_events_dispatch.total_us;
++    g.s_svm = t.script_vm.total_us;
++    g.s_guip = t.gui_poll.total_us;
++    g.s_guic = t.gui_context_cursor.total_us;
++    g.s_rts = t.render_to_screen.total_us; g.s_rts_n = t.render_to_screen.calls;
++    g.s_rtspt_n = t.render_to_screen_pertick.calls;
++    g.s_rb = t.render_backbuffer.total_us;
++    g.s_rew = t.rep_exec_wrapper.total_us;
++    g.s_scene = t.scene_construct.total_us;
++    g.s_pres = t.present_update_window.total_us;
++    dp_mmd_reset_tables();
++    dp_mmd_seg_valid = true;
++}
++
++static const char *DP_EVN[6] = { "none", "script", "object", "fadein", "gui", "newroom" };
++static const char *DP_OBN[8] = { "none", "room", "hotspot", "region", "sub4", "sub5", "sub6", "sub7" };
++
++void dp_mmd_dump(const char *why)
++{
++    if (!dp_mmd_seg_valid) return;
++    const DpMmdSeg &g = dp_mmd_seg;
++    const DosPortTickTiming &t = dos_port_tick_timing;
++    const int room = g.room;
++    const uint32_t ticks = get_loop_counter() - g.tick0;
++    Debug::Printf("DOS-PORT mmdprobe seg room=%d why=%s ticks=%lu wall_ms=%ld ugo_n=%ld ugo_us=%lld dispatch_us=%lld script_vm_us=%lld gui_poll_us=%lld gui_ctx_us=%lld rts_n=%ld rts_pertick_n=%ld rts_us=%lld rb_us=%lld repexec_wrapper_us=%lld scene_us=%lld present_us=%lld",
++        room, why, (unsigned long)ticks, (long)(dp_mmd_us(g.t0, uclock()) / 1000),
++        t.update_game_once_total.calls - g.s_ugo_n,
++        t.update_game_once_total.total_us - g.s_ugo,
++        t.process_events_dispatch.total_us - g.s_ped,
++        t.script_vm.total_us - g.s_svm,
++        t.gui_poll.total_us - g.s_guip,
++        t.gui_context_cursor.total_us - g.s_guic,
++        t.render_to_screen.calls - g.s_rts_n,
++        t.render_to_screen_pertick.calls - g.s_rtspt_n,
++        t.render_to_screen.total_us - g.s_rts,
++        t.render_backbuffer.total_us - g.s_rb,
++        t.rep_exec_wrapper.total_us - g.s_rew,
++        t.scene_construct.total_us - g.s_scene,
++        t.present_update_window.total_us - g.s_pres);
++    Debug::Printf("DOS-PORT mmdprobe dispatch room=%d n=%ld us=%lld max_us=%lld nested_n=%ld nested_us=%lld maxdepth=%d rts_n=%ld rts_us=%lld insns=%lld api_n=%ld api_us=%lld",
++        room, g.d_n, g.d_us, g.d_max, g.d_nested_n, g.d_nested_us, g.d_maxdepth,
++        g.d_rts_n, g.d_rts_us, g.d_insns, g.d_api_n, g.d_api_us);
++    for (int i = 0; i < 3; ++i)
++    {
++        const DpMmdTop &x = g.top[i];
++        if (x.us <= 0) continue;
++        Debug::Printf("DOS-PORT mmdprobe dtop room=%d rank=%d tick=%lu us=%lld nested_n=%ld nested_us=%lld rts_n=%ld rts_us=%lld insns=%lu evmask=0x%x events=%d",
++            room, i + 1, (unsigned long)x.tick, x.us, x.nested_n, x.nested_us, x.rts_n, x.rts_us,
++            (unsigned long)x.insns, x.evmask, x.events);
++    }
++    for (int i = 0; i < 6; ++i)
++        if (g.e_n[i])
++            Debug::Printf("DOS-PORT mmdprobe evtype room=%d type=%s n=%ld us=%lld insns=%lld api_us=%lld nested_us=%lld",
++                room, DP_EVN[i], g.e_n[i], g.e_us[i], g.e_insns[i], g.e_api_us[i], g.e_nested_us[i]);
++    for (int i = 0; i < 8; ++i)
++        if (g.o_n[i])
++            Debug::Printf("DOS-PORT mmdprobe evobj room=%d sub=%s n=%ld us=%lld insns=%lld api_us=%lld",
++                room, DP_OBN[i], g.o_n[i], g.o_us[i], g.o_insns[i], g.o_api_us[i]);
++    // entries, by inclusive us
++    {
++        bool used[DP_MMD_FN_CAP]; memset(used, 0, sizeof(used));
++        for (;;)
++        {
++            int best = -1;
++            for (int i = 0; i < dp_mmd_nfns; ++i)
++                if (!used[i] && dp_mmd_fns[i].entry_calls > 0 &&
++                    (best < 0 || dp_mmd_fns[i].entry_us > dp_mmd_fns[best].entry_us)) best = i;
++            if (best < 0) break;
++            used[best] = true;
++            const DpMmdFn &f = dp_mmd_fns[best];
++            long long self = f.entry_us - f.entry_api_us - f.entry_nested_us;
++            Debug::Printf("DOS-PORT mmdprobe entry room=%d name=%s calls=%ld us=%lld self_us=%lld insns=%lld api_n=%ld api_us=%lld nested_n=%ld nested_us=%lld max_us=%lld",
++                room, f.name, f.entry_calls, f.entry_us, self, f.entry_insns, f.entry_api_n,
++                f.entry_api_us, f.entry_nested_n, f.entry_nested_us, f.entry_max_us);
++        }
++    }
++    // functions, by exclusive instructions (top 40)
++    {
++        bool used[DP_MMD_FN_CAP]; memset(used, 0, sizeof(used));
++        for (int k = 0; k < 40; ++k)
++        {
++            int best = -1;
++            for (int i = 0; i < dp_mmd_nfns; ++i)
++                if (!used[i] && (dp_mmd_fns[i].insns > 0 || dp_mmd_fns[i].api_n > 0) &&
++                    (best < 0 || dp_mmd_fns[i].insns + dp_mmd_fns[i].api_us > dp_mmd_fns[best].insns + dp_mmd_fns[best].api_us)) best = i;
++            if (best < 0) break;
++            used[best] = true;
++            const DpMmdFn &f = dp_mmd_fns[best];
++            Debug::Printf("DOS-PORT mmdprobe fn room=%d name=%s line=%d calls=%ld insns=%lld api_n=%ld api_us=%lld",
++                room, f.name, f.first_line, f.calls, f.insns, f.api_n, f.api_us);
++        }
++    }
++    // engine APIs, by us (top 40) and the total
++    {
++        long long tot_us = 0; long tot_n = 0;
++        for (int i = 0; i < dp_mmd_napis; ++i) { tot_us += dp_mmd_apis[i].us; tot_n += dp_mmd_apis[i].n; }
++        Debug::Printf("DOS-PORT mmdprobe apitotal room=%d distinct=%d n=%ld us=%lld", room, dp_mmd_napis - 1, tot_n, tot_us);
++        bool used[DP_MMD_API_CAP]; memset(used, 0, sizeof(used));
++        for (int k = 0; k < 40; ++k)
++        {
++            int best = -1;
++            for (int i = 0; i < dp_mmd_napis; ++i)
++                if (!used[i] && dp_mmd_apis[i].n > 0 &&
++                    (best < 0 || dp_mmd_apis[i].us > dp_mmd_apis[best].us ||
++                     (dp_mmd_apis[i].us == dp_mmd_apis[best].us && dp_mmd_apis[i].n > dp_mmd_apis[best].n))) best = i;
++            if (best < 0) break;
++            used[best] = true;
++            const DpMmdApi &a = dp_mmd_apis[best];
++            Debug::Printf("DOS-PORT mmdprobe api room=%d name=%s n=%ld us=%lld max_us=%lld nested_calls=%ld",
++                room, a.name, a.n, a.us, a.max_us, a.nested_n);
++        }
++    }
++    extern long dp_mmd_pair_ns;
++    Debug::Printf("DOS-PORT mmdprobe cost room=%d uclock_reads=%ld uclock_ns=%ld pair_ns=%ld apitime=%d insns_total=%lu",
++        room, dp_mmd_uclock_reads, dp_mmd_uclock_ns, dp_mmd_pair_ns, dp_mmd_api_time, (unsigned long)dp_mmd_insns);
++}
++
++void dp_mmd_seg_check()
++{
++    if (dp_mmd_seg_valid && displayed_room == dp_mmd_seg.room) return;
++    // only reset when no script frame is live (table indices are on the stacks)
++    if (dp_mmd_fn_sp != 0 || dp_mmd_entry_sp != 0) return;
++    if (!dp_mmd_seg_valid) { dp_mmd_seg_start(); return; }
++    dp_mmd_dump("roomchange");
++    dp_mmd_seg_start();
++}
++
++struct DpMmdDispatchScope
++{
++    bool active; uclock_t t0; long long n0; long nn0; long rn0; long long ru0;
++    uint32_t i0; long long a0; long an0;
++    DpMmdDispatchScope() : active(false), t0(0), n0(0), nn0(0), rn0(0), ru0(0), i0(0), a0(0), an0(0)
++    {
++        if (dp_mmd_in_dispatch == 0)
++        {
++            dp_mmd_seg_check();
++            active = true;
++            dp_mmd_cur_evmask = 0; dp_mmd_cur_events = 0;
++            dp_mmd_dispatch_maxdepth = 0;
++            n0 = dos_tick_nested_us; nn0 = dos_tick_nested_n;
++            rn0 = dos_port_tick_timing.render_to_screen.calls;
++            ru0 = dos_port_tick_timing.render_to_screen.total_us;
++            i0 = dp_mmd_insns; a0 = dp_mmd_api_us_total; an0 = dp_mmd_api_n_total;
++            t0 = dp_mmd_clock();
++        }
++        dp_mmd_in_dispatch++;
++    }
++    ~DpMmdDispatchScope()
++    {
++        dp_mmd_in_dispatch--;
++        if (!active) return;
++        const long long us = dp_mmd_us(t0, dp_mmd_clock());
++        DpMmdSeg &g = dp_mmd_seg;
++        g.d_n++; g.d_us += us; if (us > g.d_max) g.d_max = us;
++        const long long nus = dos_tick_nested_us - n0; const long nn = dos_tick_nested_n - nn0;
++        const long rn = dos_port_tick_timing.render_to_screen.calls - rn0;
++        const long long ru = dos_port_tick_timing.render_to_screen.total_us - ru0;
++        const uint32_t ins = dp_mmd_insns - i0;
++        g.d_nested_us += nus; g.d_nested_n += nn;
++        if (dp_mmd_dispatch_maxdepth > g.d_maxdepth) g.d_maxdepth = dp_mmd_dispatch_maxdepth;
++        g.d_rts_n += rn; g.d_rts_us += ru; g.d_insns += ins;
++        g.d_api_us += dp_mmd_api_us_total - a0; g.d_api_n += dp_mmd_api_n_total - an0;
++        // keep the three longest dispatches of the segment
++        for (int i = 0; i < 3; ++i)
++        {
++            if (us > g.top[i].us)
++            {
++                for (int j = 2; j > i; --j) g.top[j] = g.top[j - 1];
++                DpMmdTop &x = g.top[i];
++                x.us = us; x.tick = get_loop_counter(); x.nested_us = nus; x.nested_n = nn;
++                x.rts_n = rn; x.rts_us = ru; x.insns = ins;
++                x.evmask = dp_mmd_cur_evmask; x.events = dp_mmd_cur_events;
++                break;
++            }
++        }
++    }
++};
++
++struct DpMmdEventScope
++{
++    int type, sub; uclock_t t0; uint32_t i0; long long a0, n0;
++    DpMmdEventScope(int ty, int sb) : type(ty), sub(sb)
++    {
++        if (ty >= 0 && ty < 6) dp_mmd_cur_evmask |= (1u << ty);
++        if (sb >= 0 && sb < 8) dp_mmd_cur_evmask |= (1u << (8 + sb));
++        dp_mmd_cur_events++;
++        i0 = dp_mmd_insns; a0 = dp_mmd_api_us_total; n0 = dos_tick_nested_us;
++        t0 = dp_mmd_clock();
++    }
++    ~DpMmdEventScope()
++    {
++        const long long us = dp_mmd_us(t0, dp_mmd_clock());
++        const long long ins = (uint32_t)(dp_mmd_insns - i0);
++        const long long au = dp_mmd_api_us_total - a0;
++        DpMmdSeg &g = dp_mmd_seg;
++        if (type >= 0 && type < 6)
++        { g.e_n[type]++; g.e_us[type] += us; g.e_insns[type] += ins; g.e_api_us[type] += au;
++          g.e_nested_us[type] += dos_tick_nested_us - n0; }
++        if (sub >= 0 && sub < 8)
++        { g.o_n[sub]++; g.o_us[sub] += us; g.o_insns[sub] += ins; g.o_api_us[sub] += au; }
++    }
++};
++#endif
++
+ void process_event(const AGSEvent *evp)
+ {
+     const int room_was = play.room_changes;
+@@ -249,6 +478,8 @@ void process_event(const AGSEvent *evp)
+         (evp->Type == kAGSEvent_Object &&
+          evp->Data.Object.ObjEvType == kObjEventType_Room)
+             ? (int)evp->Data.Object.ObjEvent : -1);
++    DpMmdEventScope _dp_mmd_ev((int)evp->Type,
++        evp->Type == kAGSEvent_Object ? (int)evp->Data.Object.ObjEvType : -1); // probe 0290
+ #endif
+ 
+     RuntimeScriptValue rval_null;
+@@ -528,6 +759,7 @@ void processallevents() {
+     // there) -- reported alongside, not summed with, script_vm.
+ #ifdef __DJGPP__
+     DosPortTickScope _dos_port_process_events_scope(dos_port_tick_timing.process_events_dispatch);
++    DpMmdDispatchScope _dp_mmd_dispatch; // probe 0290 (destroyed before the tick scope)
+ #endif
+     if (inside_processevent)
+     {
+diff --git a/Engine/main/dos_port_mmdprobe.h b/Engine/main/dos_port_mmdprobe.h
+new file mode 100644
+index 000000000..9f5e4572a
+--- /dev/null
++++ b/Engine/main/dos_port_mmdprobe.h
+@@ -0,0 +1,193 @@
++//=============================================================================
++//
++// Adventure Game Studio (AGS)
++//
++// Copyright (C) 1999-2011 Chris Jones and 2011-2026 various contributors
++// The full list of copyright holders can be found in the Copyright.txt
++// file, which is part of this source code distribution.
++//
++// The AGS source code is provided under the Artistic License 2.0.
++// A copy of this license can be found in the file License.txt and at
++// https://opensource.org/license/artistic-2-0/
++//
++//=============================================================================
++//
++// DOS-PORT probe 0290 (LAB ONLY, never a gate binary; see LAB-MMD.md 2.2):
++// what process_events_dispatch actually is.
++//
++// script_vm and process_events_dispatch are inclusive brackets: the time a
++// script spends in the interpreter, in engine API calls it makes, and in
++// game ticks a blocking call pumps all land in one number. This splits it:
++//  - per script entry function: inclusive us, instructions, API us, nested us;
++//  - per script function reached (entry or SCMD_CALL/CALLAS target):
++//    exclusive instructions, API calls/us;
++//  - per engine API (SCMD_CALLEXT target): calls, us exclusive of nested ticks;
++//  - per dispatch: nested ticks, max tick depth, render_to_screen inside it;
++//  - per event type: us, instructions, API us, nested us;
++//  - per room segment: the tick's phase deltas.
++// Tables reset at each room change, so each room reports on its own.
++//
++// Cost model: one global increment per VM instruction; a hash lookup per
++// script call/return; a uclock() pair per API call (switchable off with
++// DOSAGS_MMDPROBE_APITIME=0 to measure that pair's own cost), per event and
++// per dispatch.
++//
++//=============================================================================
++#ifndef __AGS_EE_MAIN__DOS_PORT_MMDPROBE_H
++#define __AGS_EE_MAIN__DOS_PORT_MMDPROBE_H
++
++#ifdef __DJGPP__
++#include <stdint.h>
++#include <time.h>
++
++#define DP_MMD_FN_CAP   256
++#define DP_MMD_API_CAP  256
++#define DP_MMD_STACK    128
++
++struct DpMmdFn
++{
++    const void *script;     // ccScript*
++    int32_t pc;             // function start
++    long calls;
++    long long insns;        // exclusive
++    long api_n;
++    long long api_us;
++    int first_line;
++    int is_entry;
++    // entry-only (inclusive, nested ticks split out):
++    long entry_calls;
++    long long entry_us;
++    long long entry_insns;      // instructions while this entry was running, minus nested
++    long long entry_api_us;
++    long entry_api_n;
++    long long entry_nested_us;
++    long entry_nested_n;
++    long long entry_max_us;
++    char name[64];
++};
++
++struct DpMmdApi
++{
++    const void *key;
++    long n;
++    long long us;
++    long long max_us;
++    long nested_n;          // calls that ran nested ticks
++    char name[48];
++};
++
++struct DpMmdEntryFrame
++{
++    int fn;
++    uclock_t t0;
++    uint32_t insn0;
++    long long api_us;
++    long api_n;
++    long long nested_us;
++    long nested_n;
++    uint32_t nested_insns;
++};
++
++struct DpMmdTop
++{
++    long long us;
++    uint32_t tick;
++    long long nested_us;
++    long nested_n;
++    long rts_n;
++    long long rts_us;
++    uint32_t insns;
++    unsigned evmask;
++    int events;
++};
++
++struct DpMmdSeg
++{
++    int room;
++    uint32_t tick0;
++    uclock_t t0;
++    // phase snapshots (total_us) at segment start
++    long long s_ugo, s_ped, s_svm, s_guip, s_guic, s_rts, s_rb, s_rew, s_scene, s_pres;
++    long s_ugo_n, s_rts_n, s_rtspt_n;
++    // dispatch
++    long d_n;
++    long long d_us, d_max;
++    long long d_nested_us;
++    long d_nested_n;
++    int d_maxdepth;
++    long d_rts_n;
++    long long d_rts_us;
++    long long d_insns;
++    long long d_api_us;
++    long d_api_n;
++    DpMmdTop top[3];
++    // per event type (0..5), object split by sub-type (0..7)
++    long e_n[6]; long long e_us[6], e_insns[6], e_api_us[6], e_nested_us[6];
++    long o_n[8]; long long o_us[8], o_insns[8], o_api_us[8];
++};
++
++extern uint32_t dp_mmd_insns;          // global VM instruction counter
++extern int dp_mmd_cur_fn;              // fn index being billed
++extern uint32_t dp_mmd_last_switch;
++extern int dp_mmd_fn_sp;
++extern int dp_mmd_fn_stack[DP_MMD_STACK];
++extern DpMmdFn dp_mmd_fns[DP_MMD_FN_CAP];
++extern int dp_mmd_nfns;
++extern DpMmdApi dp_mmd_apis[DP_MMD_API_CAP];
++extern int dp_mmd_napis;
++extern DpMmdEntryFrame dp_mmd_entries[DP_MMD_STACK];
++extern int dp_mmd_entry_sp;
++extern int dp_mmd_api_time;            // DOSAGS_MMDPROBE_APITIME (default 1)
++extern long long dp_mmd_api_us_total;
++extern long dp_mmd_api_n_total;
++extern long dp_mmd_uclock_reads;
++extern int dp_mmd_in_dispatch;
++extern DpMmdSeg dp_mmd_seg;
++extern long dos_tick_nested_n;         // game_run.cpp (probe addition)
++extern long long dos_tick_nested_us;   // game_run.cpp (patch 0159)
++extern int dp_mmd_dispatch_maxdepth;   // max tick depth seen inside dispatch
++
++// Look up or insert a function; returns its index (0 = overflow bucket).
++int dp_mmd_fn_lookup(const void *script, int32_t pc, const char *entry_name);
++int dp_mmd_api_lookup(const void *key, const void *rsv /* RuntimeScriptValue* */);
++void dp_mmd_seg_check();               // dump + reset if displayed_room changed
++void dp_mmd_dump(const char *why);     // print the current segment
++
++static inline void dp_mmd_bill()
++{
++    dp_mmd_fns[dp_mmd_cur_fn].insns += (uint32_t)(dp_mmd_insns - dp_mmd_last_switch);
++    dp_mmd_last_switch = dp_mmd_insns;
++}
++
++static inline void dp_mmd_push_fn(int fn)
++{
++    dp_mmd_bill();
++    if (dp_mmd_fn_sp < DP_MMD_STACK)
++        dp_mmd_fn_stack[dp_mmd_fn_sp] = fn;
++    dp_mmd_fn_sp++;
++    dp_mmd_fns[fn].calls++;
++    dp_mmd_cur_fn = fn;
++}
++
++// restore the fn stack to a saved depth (after a Run() returns, normally or not)
++static inline void dp_mmd_restore_fn(int sp)
++{
++    dp_mmd_bill();
++    dp_mmd_fn_sp = sp;
++    dp_mmd_cur_fn = (sp > 0 && sp <= DP_MMD_STACK) ? dp_mmd_fn_stack[sp - 1] : 0;
++}
++
++static inline long long dp_mmd_us(uclock_t a, uclock_t b)
++{
++    long long d = (long long)(b - a) * 1000000LL / UCLOCKS_PER_SEC;
++    return d < 0 ? 0 : d;
++}
++
++static inline uclock_t dp_mmd_clock()
++{
++    dp_mmd_uclock_reads++;
++    return uclock();
++}
++
++#endif // __DJGPP__
++#endif // __AGS_EE_MAIN__DOS_PORT_MMDPROBE_H
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 3d6d01469..e64555dd3 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1554,6 +1554,10 @@ static long long dos_tick_children_us = 0; // exclusive-time accounting (see abo
+ // watching a frozen screen for seven seconds is a bug.
+ long long dos_tick_nested_us = 0;
+ static int dos_tick_depth = 0;
++// probe 0290 (LAB ONLY): how many nested ticks, and how deep inside dispatch
++long dos_tick_nested_n = 0;
++extern int dp_mmd_in_dispatch;
++int dp_mmd_dispatch_maxdepth = 0;
+ // patch 0163: set when a tick is recorded as a blocking stall, so the
+ // fixed-timestep loop can decline to carry debt across it.
+ static bool dos_tick_prev_was_stall = false;
+@@ -1569,6 +1573,8 @@ public:
+         : _t0(uclock()), _saved_children(dos_tick_children_us), _index(GameTimer.LoopCounter + 1)
+     {
+         ++dos_tick_depth;   // patch 0159
++        if (dp_mmd_in_dispatch && dos_tick_depth > dp_mmd_dispatch_maxdepth)  // probe 0290
++            dp_mmd_dispatch_maxdepth = dos_tick_depth;
+         if (!dos_tick_have_first)
+         {
+             dos_tick_have_first = true;
+@@ -1597,7 +1603,7 @@ public:
+         long long total_us = (long long)(t1 - _t0) * 1000000LL / UCLOCKS_PER_SEC;
+         if (total_us < 0) total_us = 0; // uclock() non-monotonicity, see dos_port_tick_record()
+         --dos_tick_depth;                                              // patch 0159
+-        if (dos_tick_depth > 0) dos_tick_nested_us += total_us;
++        if (dos_tick_depth > 0) { dos_tick_nested_us += total_us; dos_tick_nested_n++; } // probe 0290: _n
+         const long long this_tick_children_us = dos_tick_children_us;  // patch 0142
+         long long self_us = total_us - dos_tick_children_us;
+         {   // patch 0144: the sum check, before the clamp below can hide it
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index f0024c6b9..ad6da970f 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -593,6 +593,10 @@ void quit(const char *quitmsg)
+                     t.bg_spans, t.bg_span_lt16, t.bg_span_lt64, t.bg_span_ge64,
+                     t.bg_spans ? (long)(t.bg_px / t.bg_spans) : 0L);
+ #ifdef __DJGPP__
++                {   // probe 0290 (LAB ONLY): the last room segment
++                    extern void dp_mmd_dump(const char *why);
++                    dp_mmd_dump("quit");
++                }
+                 {   // patch 0150: what event dispatch actually spends its time on
+                     extern long long dos_port_evt_us[6];
+                     extern long dos_port_evt_n[6];
+diff --git a/Engine/script/cc_instance.cpp b/Engine/script/cc_instance.cpp
+index 3e88d7e29..7a0ae5733 100644
+--- a/Engine/script/cc_instance.cpp
++++ b/Engine/script/cc_instance.cpp
+@@ -35,6 +35,134 @@ using namespace AGS::Common;
+ using namespace AGS::Common::Memory;
+ using namespace AGS::Engine;
+ 
++#ifdef __DJGPP__
++// DOS-PORT probe 0290 (LAB ONLY): see main/dos_port_mmdprobe.h
++#include <stdlib.h>
++#include "main/dos_port_mmdprobe.h"
++uint32_t dp_mmd_insns = 0;
++int dp_mmd_cur_fn = 0;
++uint32_t dp_mmd_last_switch = 0;
++int dp_mmd_fn_sp = 0;
++int dp_mmd_fn_stack[DP_MMD_STACK];
++DpMmdFn dp_mmd_fns[DP_MMD_FN_CAP];
++int dp_mmd_nfns = 1; // slot 0 = overflow / outside any script
++DpMmdApi dp_mmd_apis[DP_MMD_API_CAP];
++int dp_mmd_napis = 1;
++DpMmdEntryFrame dp_mmd_entries[DP_MMD_STACK];
++int dp_mmd_entry_sp = 0;
++int dp_mmd_api_time = 1;
++long long dp_mmd_api_us_total = 0;
++long dp_mmd_api_n_total = 0;
++long dp_mmd_uclock_reads = 0;
++long dp_mmd_uclock_ns = -1;
++long dp_mmd_pair_ns = -1;
++static int dp_mmd_fn_hash[512];   // 0 = empty, else index into dp_mmd_fns
++static int dp_mmd_api_hash[512];
++
++static void dp_mmd_init()
++{
++    static bool done = false;
++    if (done) return;
++    done = true;
++    const char *e = getenv("DOSAGS_MMDPROBE_APITIME");
++    if (e && e[0] == '0') dp_mmd_api_time = 0;
++    // the cost of one clock read here, so the probe's own time can be subtracted
++    const uclock_t t0 = uclock();
++    for (int i = 0; i < 1000; ++i) (void)uclock();
++    const uclock_t t1 = uclock();
++    dp_mmd_uclock_ns = (long)((long long)(t1 - t0) * 1000000000LL / UCLOCKS_PER_SEC / 1001);
++    // what an API call of zero cost reads as: the interval of an empty back-to-back pair,
++    // the same shape as the SCMD_CALLEXT bracket. Subtracted per call when reading api_us.
++    long long pair = 0;
++    for (int i = 0; i < 1000; ++i) { const uclock_t a = uclock(); const uclock_t b = uclock(); pair += (long long)(b - a); }
++    dp_mmd_pair_ns = (long)(pair * 1000000000LL / UCLOCKS_PER_SEC / 1000);
++    strcpy(dp_mmd_fns[0].name, "(overflow/outside)");
++    strcpy(dp_mmd_apis[0].name, "(overflow)");
++}
++
++void dp_mmd_reset_tables()
++{
++    memset(dp_mmd_fns, 0, sizeof(dp_mmd_fns));
++    memset(dp_mmd_apis, 0, sizeof(dp_mmd_apis));
++    memset(dp_mmd_fn_hash, 0, sizeof(dp_mmd_fn_hash));
++    memset(dp_mmd_api_hash, 0, sizeof(dp_mmd_api_hash));
++    dp_mmd_nfns = 1; dp_mmd_napis = 1;
++    dp_mmd_cur_fn = 0; dp_mmd_last_switch = dp_mmd_insns;
++    strcpy(dp_mmd_fns[0].name, "(overflow/outside)");
++    strcpy(dp_mmd_apis[0].name, "(overflow)");
++}
++
++int dp_mmd_fn_lookup(const void *script, int32_t pc, const char *entry_name)
++{
++    dp_mmd_init();
++    unsigned h = (unsigned)(((uintptr_t)script >> 4) ^ ((uint32_t)pc * 2654435761u));
++    for (int probe = 0; probe < 512; ++probe)
++    {
++        const unsigned slot = (h + probe) & 511;
++        const int idx = dp_mmd_fn_hash[slot];
++        if (idx == 0)
++        {
++            if (dp_mmd_nfns >= DP_MMD_FN_CAP) return 0;
++            const int ni = dp_mmd_nfns++;
++            dp_mmd_fn_hash[slot] = ni;
++            DpMmdFn &f = dp_mmd_fns[ni];
++            f.script = script; f.pc = pc;
++            const ccScript *scr = static_cast<const ccScript*>(script);
++            const std::string &sn = scr->GetScriptName();
++            const char *sname = sn.empty() ? scr->GetSectionName(pc).c_str() : sn.c_str();
++            const char *fname = entry_name;
++            if (!fname)
++            {
++                for (size_t i = 0; i < scr->export_addr.size() && i < scr->exports.size(); ++i)
++                {
++                    const int32_t a = scr->export_addr[i];
++                    if (((a >> 24) & 0xFF) == EXPORT_FUNCTION && (a & 0x00FFFFFF) == pc)
++                    { fname = scr->exports[i].c_str(); break; }
++                }
++            }
++            if (fname)
++                snprintf(f.name, sizeof(f.name), "%s:%s", sname, fname);
++            else
++                snprintf(f.name, sizeof(f.name), "%s:pc%ld", sname, (long)pc);
++            for (char *c = f.name; *c; ++c) if (*c == ' ') *c = '_';
++            if (entry_name) f.is_entry = 1;
++            return ni;
++        }
++        if (dp_mmd_fns[idx].script == script && dp_mmd_fns[idx].pc == pc)
++        {
++            if (entry_name) dp_mmd_fns[idx].is_entry = 1;
++            return idx;
++        }
++    }
++    return 0;
++}
++
++int dp_mmd_api_lookup(const void *key, const void *rsv)
++{
++    unsigned h = (unsigned)((uintptr_t)key >> 2) * 2654435761u;
++    h >>= 20;
++    for (int probe = 0; probe < 512; ++probe)
++    {
++        const unsigned slot = (h + probe) & 511;
++        const int idx = dp_mmd_api_hash[slot];
++        if (idx == 0)
++        {
++            if (dp_mmd_napis >= DP_MMD_API_CAP) return 0;
++            const int ni = dp_mmd_napis++;
++            dp_mmd_api_hash[slot] = ni;
++            DpMmdApi &a = dp_mmd_apis[ni];
++            a.key = key;
++            const String nm = simp.FindName(*static_cast<const RuntimeScriptValue*>(rsv));
++            snprintf(a.name, sizeof(a.name), "%s", nm.IsEmpty() ? "(unnamed)" : nm.GetCStr());
++            return ni;
++        }
++        if (dp_mmd_apis[idx].key == key)
++            return idx;
++    }
++    return 0;
++}
++#endif
++
+ 
+ enum ScriptOpArgIsReg
+ {
+@@ -445,7 +573,39 @@ ccInstError ccInstance::CallScriptFunction(const String &funcname, int32_t numar
+ 
+     InstThreads.push_back(this); // push instance thread
+     _runningInst = this;
++#ifdef __DJGPP__
++    // probe 0290: an entry frame (inclusive time, nested split out) and a fn frame
++    const int _dp_sp = dp_mmd_fn_sp;
++    const int _dp_fn = dp_mmd_fn_lookup(_instanceof.get(), start_at, funcname.GetCStr());
++    const int _dp_esp = dp_mmd_entry_sp;
++    if (_dp_esp < DP_MMD_STACK)
++    {
++        DpMmdEntryFrame &f = dp_mmd_entries[_dp_esp];
++        f.fn = _dp_fn; f.t0 = dp_mmd_clock(); f.insn0 = dp_mmd_insns;
++        f.api_us = 0; f.api_n = 0; f.nested_us = 0; f.nested_n = 0; f.nested_insns = 0;
++    }
++    dp_mmd_entry_sp++;
++    dp_mmd_push_fn(_dp_fn);
++#endif
+     const ccInstError reterr = Run(start_at);
++#ifdef __DJGPP__
++    dp_mmd_restore_fn(_dp_sp);
++    dp_mmd_entry_sp = _dp_esp;
++    if (_dp_esp < DP_MMD_STACK)
++    {
++        const DpMmdEntryFrame &f = dp_mmd_entries[_dp_esp];
++        const long long us = dp_mmd_us(f.t0, dp_mmd_clock());
++        DpMmdFn &fn = dp_mmd_fns[f.fn];
++        fn.entry_calls++;
++        fn.entry_us += us;
++        if (us > fn.entry_max_us) fn.entry_max_us = us;
++        fn.entry_insns += (long long)(uint32_t)(dp_mmd_insns - f.insn0) - (long long)f.nested_insns;
++        fn.entry_api_us += f.api_us;
++        fn.entry_api_n += f.api_n;
++        fn.entry_nested_us += f.nested_us;
++        fn.entry_nested_n += f.nested_n;
++    }
++#endif
+     // Cleanup before returning, even if error
+     ASSERT_STACK_SIZE(numargs);
+     PopValuesFromStack(numargs);
+@@ -617,6 +777,9 @@ ccInstError ccInstance::Run(int32_t curpc)
+     //=====================================================================
+     while ((_flags & INSTF_ABORTED) == 0)
+     {
++#ifdef __DJGPP__
++        ++dp_mmd_insns; // probe 0290
++#endif
+         // WARNING: a time-critical code ahead;
+         // trying to pick some of the code out to separate function(s)
+         // may lead to a performance loss in script-heavy games.
+@@ -670,6 +833,9 @@ ccInstError ccInstance::Run(int32_t curpc)
+         case SCMD_LINENUM:
+             _lineNumber = codeOp.Arg1i();
+             currentline = _lineNumber;
++#ifdef __DJGPP__
++            if (!dp_mmd_fns[dp_mmd_cur_fn].first_line) dp_mmd_fns[dp_mmd_cur_fn].first_line = _lineNumber;
++#endif
+             if (new_line_hook)
+                 new_line_hook(this, currentline);
+             break;
+@@ -787,6 +953,9 @@ ccInstError ccInstance::Run(int32_t curpc)
+                 return kInstErr_None;
+             }
+             POP_CALL_STACK();
++#ifdef __DJGPP__
++            if (dp_mmd_fn_sp > 0) dp_mmd_restore_fn(dp_mmd_fn_sp - 1); // probe 0290
++#endif
+             continue; // continue so that the PC doesn't get overwritten
+         }
+         case SCMD_LITTOREG:
+@@ -980,6 +1149,9 @@ ccInstError ccInstance::Run(int32_t curpc)
+             curnest++;
+             thisbase[curnest] = 0;
+             funcstart[curnest] = _pc;
++#ifdef __DJGPP__
++            dp_mmd_push_fn(dp_mmd_fn_lookup(codeInst->_instanceof.get(), _pc, nullptr)); // probe 0290
++#endif
+             continue; // continue so that the PC doesn't get overwritten
+         }
+         case SCMD_MEMREADB:
+@@ -1291,8 +1463,17 @@ ccInstError ccInstance::Run(int32_t curpc)
+             }
+             callAddr /= sizeof(uintptr_t); // size of ccScript::code elements
+ 
++#ifdef __DJGPP__
++            const int _dp_sp = dp_mmd_fn_sp; // probe 0290
++            dp_mmd_push_fn(dp_mmd_fn_lookup(_runningInst->_instanceof.get(), static_cast<int32_t>(callAddr), nullptr));
++            const ccInstError _dp_r = Run(static_cast<int32_t>(callAddr));
++            dp_mmd_restore_fn(_dp_sp);
++            if (_dp_r)
++                return kInstErr_Generic;
++#else
+             if (Run(static_cast<int32_t>(callAddr)))
+                 return kInstErr_Generic;
++#endif
+ 
+             _runningInst = wasRunning;
+ 
+@@ -1326,6 +1507,16 @@ ccInstError ccInstance::Run(int32_t curpc)
+             }
+ 
+             RuntimeScriptValue return_value;
++#ifdef __DJGPP__
++            // probe 0290: which engine API, how long, exclusive of nested ticks
++            const int _dp_api = dp_mmd_api_lookup(reg1.Ptr, &reg1);
++            const int _dp_fn = dp_mmd_cur_fn;
++            const int _dp_esp = dp_mmd_entry_sp - 1;
++            const uint32_t _dp_i0 = dp_mmd_insns;
++            const long long _dp_n0 = dos_tick_nested_us;
++            const long _dp_nn0 = dos_tick_nested_n;
++            const uclock_t _dp_t0 = dp_mmd_api_time ? dp_mmd_clock() : 0;
++#endif
+ 
+             if (reg1.Type == kScValPluginFunction)
+             {
+@@ -1367,6 +1558,29 @@ ccInstError ccInstance::Run(int32_t curpc)
+                 cc_error("invalid pointer type for function call: %d", reg1.Type);
+             }
+ 
++#ifdef __DJGPP__
++            {
++                long long _us = dp_mmd_api_time ? dp_mmd_us(_dp_t0, dp_mmd_clock()) : 0;
++                const long long _nus = dos_tick_nested_us - _dp_n0;
++                const long _nn = dos_tick_nested_n - _dp_nn0;
++                _us -= _nus;
++                if (_us < 0) _us = 0;
++                DpMmdApi &a = dp_mmd_apis[_dp_api];
++                a.n++; a.us += _us; if (_us > a.max_us) a.max_us = _us;
++                if (_nn) a.nested_n++;
++                dp_mmd_fns[_dp_fn].api_n++;
++                dp_mmd_fns[_dp_fn].api_us += _us;
++                dp_mmd_api_us_total += _us;
++                dp_mmd_api_n_total++;
++                if (_dp_esp >= 0 && _dp_esp < DP_MMD_STACK)
++                {
++                    DpMmdEntryFrame &f = dp_mmd_entries[_dp_esp];
++                    f.api_us += _us; f.api_n++;
++                    f.nested_us += _nus; f.nested_n += _nn;
++                    f.nested_insns += (uint32_t)(dp_mmd_insns - _dp_i0);
++                }
++            }
++#endif
+             if (cc_has_error())
+             {
+                 return kInstErr_Generic;

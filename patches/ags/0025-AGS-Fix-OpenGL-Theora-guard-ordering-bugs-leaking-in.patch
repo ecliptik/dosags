@@ -1,0 +1,138 @@
+From 95dcde68ff08107de85f2263e3aa40ca39992625 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 15:40:33 -0700
+Subject: [PATCH 2/4] [AGS] Fix OpenGL/Theora guard-ordering bugs leaking into
+ the DOS build
+
+One real concern, three files, same bug shape: a disabled subsystem's
+own header/using-directive was placed *before* the #if/#ifndef check
+that is supposed to gate it out, so the disabled subsystem's real
+dependencies still had to resolve even though none of its actual code
+compiled. AGS_HAS_OPENGL is correctly 0 and AGS_NO_VIDEO_PLAYER is
+correctly defined for this port (patches 0008/0004's own CMake-level
+gates already work) -- these are pure source-level ordering bugs in
+files that read those macros too late.
+
+- Engine/gfx/ali3dogl.cpp: unconditionally included "gfx/ogl_headers.h"
+  *before* checking #if AGS_HAS_OPENGL, unlike its sibling
+  gfxfilter_ogl.cpp (which correctly checks AGS_HAS_OPENGL first). Since
+  ogl_headers.h has no AGS_HAS_OPENGL check of its own -- it always picks
+  a platform-specific OpenGL header set and #errors "opengl: unsupported
+  platform" on anything it doesn't recognize, DOS included -- the
+  unconditional include broke regardless of the macro's real value.
+  Fixed by including platform/platform.h first, checking AGS_HAS_OPENGL,
+  then including ogl_headers.h only inside that guard, matching
+  gfxfilter_ogl.cpp's already-correct pattern exactly (not inventing a
+  new one).
+
+- Engine/media/video/theora_player.h: unconditionally #include <apeg.h>
+  (Engine/libsrc/apeg-1.2.1/, only acquired when AGS_NO_VIDEO_PLAYER is
+  off per patch 0004's CMake gate) and declared the whole TheoraPlayer
+  class, APEG_STREAM*-typed throughout, with no guard at all -- even
+  though theora_player.cpp's own .cpp body already correctly checks
+  #ifndef AGS_NO_VIDEO_PLAYER for its real content. Wrapped the entire
+  header (not just the include -- the class body itself needs APEG_STREAM
+  to exist) in #ifndef AGS_NO_VIDEO_PLAYER / #endif. Confirmed safe:
+  theora_player.h is included from exactly two places (theora_player.cpp
+  itself, and video.cpp's own already-correctly-guarded
+  #ifndef AGS_NO_VIDEO_PLAYER block) -- nothing needs TheoraPlayer
+  declared when video is disabled.
+
+- Engine/media/video/video.cpp: `using namespace AGS::Common;` /
+  `using namespace AGS::Engine;` sat inside the file's own
+  #ifndef AGS_NO_VIDEO_PLAYER block, so they were invisible to the
+  #else branch -- upstream AGS's own disabled-video-player stub
+  (`HError play_theora_video(...) { return HError::None(); }` etc.,
+  lines 527-528) uses the bare, unqualified name `HError`
+  (AGS::Common::HError), which doesn't resolve there. This branch has
+  almost certainly never been compiled before on any upstream AGS
+  platform -- every one of AGS's own supported targets ships with video
+  playback enabled. Fixed by hoisting both using-directives above the
+  #ifndef check, where they apply to both branches; the #ifndef branch's
+  own behavior is unchanged.
+
+Verified: ali3dogl.cpp.obj and theora_player.cpp.obj (the two .cpp files
+whose real content is still fully gated behind their respective macros,
+now effectively near-empty translation units under this port's DOS
+config) and video.cpp.obj all compile clean, zero errors. Full
+cmake --build ... -- -k (keep-going) re-run: no new errors from any of
+these three files.
+---
+ Engine/gfx/ali3dogl.cpp            | 8 +++++++-
+ Engine/media/video/theora_player.h | 9 +++++++++
+ Engine/media/video/video.cpp       | 6 +++---
+ 3 files changed, 19 insertions(+), 4 deletions(-)
+
+diff --git a/Engine/gfx/ali3dogl.cpp b/Engine/gfx/ali3dogl.cpp
+index 1d4ee6231..4ef1d5271 100644
+--- a/Engine/gfx/ali3dogl.cpp
++++ b/Engine/gfx/ali3dogl.cpp
+@@ -11,9 +11,15 @@
+ // https://opensource.org/license/artistic-2-0/
+ //
+ //=============================================================================
+-#include "gfx/ogl_headers.h"
++// DOS-PORT: ogl_headers.h itself picks a platform-specific OpenGL header
++// set unconditionally (no AGS_HAS_OPENGL check of its own -- #error on any
++// platform it doesn't recognize, DOS included), unlike this file's sibling
++// gfxfilter_ogl.cpp which checks AGS_HAS_OPENGL *before* including it.
++// Match that pattern: check first, only include when actually enabled.
++#include "platform/platform.h"
+ 
+ #if AGS_HAS_OPENGL
++#include "gfx/ogl_headers.h"
+ #include "gfx/ali3dogl.h"
+ #include <algorithm>
+ #include <stack>
+diff --git a/Engine/media/video/theora_player.h b/Engine/media/video/theora_player.h
+index 0dd986cfe..d4e774b5c 100644
+--- a/Engine/media/video/theora_player.h
++++ b/Engine/media/video/theora_player.h
+@@ -18,6 +18,13 @@
+ #ifndef __AGS_EE_MEDIA__THEORAPLAYER_H
+ #define __AGS_EE_MEDIA__THEORAPLAYER_H
+ 
++// DOS-PORT: apeg.h (Engine/libsrc/apeg-1.2.1/) is only acquired/vendored
++// when AGS_NO_VIDEO_PLAYER is off (see CMakeLists.txt's Ogg/Vorbis/Theora
++// gate, patch 0004) -- guard the whole header, not just the include,
++// since TheoraPlayer's own class body is APEG_STREAM*-typed throughout.
++// video.cpp's #else (AGS_NO_VIDEO_PLAYER) branch never needs this class.
++#ifndef AGS_NO_VIDEO_PLAYER
++
+ #include <apeg.h>
+ #include "media/video/videoplayer.h"
+ 
+@@ -67,4 +74,6 @@ private:
+ } // namespace Engine
+ } // namespace AGS
+ 
++#endif // AGS_NO_VIDEO_PLAYER
++
+ #endif // __AGS_EE_MEDIA__THEORAPLAYER_H
+diff --git a/Engine/media/video/video.cpp b/Engine/media/video/video.cpp
+index eb24d6c12..664e32cd8 100644
+--- a/Engine/media/video/video.cpp
++++ b/Engine/media/video/video.cpp
+@@ -13,6 +13,9 @@
+ //=============================================================================
+ #include "media/video/video.h"
+ 
++using namespace AGS::Common;
++using namespace AGS::Engine;
++
+ #ifndef AGS_NO_VIDEO_PLAYER
+ #include <chrono>
+ #include <mutex>
+@@ -33,9 +36,6 @@
+ #include "media/video/theora_player.h"
+ #include "util/memory_compat.h"
+ 
+-using namespace AGS::Common;
+-using namespace AGS::Engine;
+-
+ 
+ extern GameSetupStruct game;
+ extern IGraphicsDriver *gfxDriver;
+-- 
+2.47.3
+

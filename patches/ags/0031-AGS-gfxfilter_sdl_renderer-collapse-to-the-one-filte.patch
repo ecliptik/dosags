@@ -1,0 +1,302 @@
+From f1c7ccd3478a984da78e43018f0a625b7e45723d Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 17:06:03 -0700
+Subject: [PATCH] [AGS] gfxfilter_sdl_renderer: collapse to the one filter this
+ driver uses
+
+Follows 0029: gfxfilter_sdl_renderer.h/.cpp's bare #include <SDL_render.h>
+was the second (and, after this patch, last) file in the tree keeping a
+bare SDL2-style include -- confirmed the real remaining blocker by a
+full cmake --build build/ags -j$(nproc) -- -k pass after 0030, which
+showed exactly this family (gfxfilter_sdl_renderer.h/.cpp,
+gfxfilter_aa_sdl_renderer.h/.cpp, and gfxdriverfactory.cpp as a pure
+downstream consumer) as the only remaining Engine-side blocker.
+
+SDLRendererGfxFilter::GetScaleMode()/InitSDLHint() picked an
+SDL_Renderer texture scale mode and an SDL_HINT_RENDER_SCALE_QUALITY
+hint -- both meaningless once patch 0029's present step stopped using
+SDL_Renderer at all and started calling SDL_BlitSurfaceScaled() with a
+hardcoded SDL_SCALEMODE_NEAREST directly; nothing in the driver has
+called either method since 0029 landed. SDLRendererAAGfxFilter (the
+second, "Linear", filter) inherited the same dead GetScaleMode()
+override and was equally inert. Rather than just fix the includes and
+rename SDL_ScaleModeNearest/Linear to their SDL3 spellings (confirmed
+via a scratch stub that this alone doesn't even compile --
+SDL_HINT_RENDER_SCALE_QUALITY does not exist in SDL3 at all, per
+SDL_oldnames.h), collapsed to the one filter the v0.1 profile actually
+offers (PLAN.md's review-decision section: "no scaling, no filtering"),
+matching PATCH-SEQUENCE.md's own 0029 row. gfxfilter_aa_sdl_renderer.h/.cpp
+are deleted outright (confirmed via a tree-wide grep: referenced nowhere
+outside ali3dsw.cpp and their own files) and removed from
+Engine/CMakeLists.txt's file list; GetFilterCount()/GetFilterInfo()/
+CreateFilter() in ali3dsw.cpp updated to match. The one remaining
+filter keeps its existing "StdScale" ID unchanged (not renamed to
+something like "None") since a config file could persist this ID and
+there is no reason to break that compatibility for a rename with no
+behavioral consequence.
+
+Verified beyond the usual scratch-stub isolation this time: a full
+cmake --build build/ags -j$(nproc) -- -k pass compiled ali3dsw.cpp.obj
+and gfxfilter_sdl_renderer.cpp.obj against the real, unstubbed headers
+together with zero errors -- the first time these files have compiled
+for real as a set, not just individually against a throwaway stub.
+That same full-build pass surfaced a separate, unrelated finding in
+Common/ (five files with real compile errors, none previously ever
+attempted -- see the next patches).
+---
+ Engine/CMakeLists.txt                    |  2 --
+ Engine/gfx/ali3dsw.cpp                   | 14 ++++----
+ Engine/gfx/gfxfilter_aa_sdl_renderer.cpp | 43 ----------------------
+ Engine/gfx/gfxfilter_aa_sdl_renderer.h   | 46 ------------------------
+ Engine/gfx/gfxfilter_sdl_renderer.cpp    | 11 ------
+ Engine/gfx/gfxfilter_sdl_renderer.h      | 23 ++++++++----
+ 6 files changed, 24 insertions(+), 115 deletions(-)
+ delete mode 100644 Engine/gfx/gfxfilter_aa_sdl_renderer.cpp
+ delete mode 100644 Engine/gfx/gfxfilter_aa_sdl_renderer.h
+
+diff --git a/Engine/CMakeLists.txt b/Engine/CMakeLists.txt
+index b6a3f897c..47a8a1644 100644
+--- a/Engine/CMakeLists.txt
++++ b/Engine/CMakeLists.txt
+@@ -332,8 +332,6 @@ target_sources(engine
+     gfx/gfxfilter_scaling.h
+     gfx/gfxfilter_sdl_renderer.cpp
+     gfx/gfxfilter_sdl_renderer.h
+-    gfx/gfxfilter_aa_sdl_renderer.cpp
+-    gfx/gfxfilter_aa_sdl_renderer.h
+     gfx/gfxmodelist.h
+     gfx/graphicsdriver.h
+     gfx/ogl_headers.h
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index 8b67e05d3..48ebe3e14 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -18,7 +18,6 @@
+ #include "ac/sys_events.h"
+ #include "gfx/ali3dexception.h"
+ #include "gfx/gfxfilter_sdl_renderer.h"
+-#include "gfx/gfxfilter_aa_sdl_renderer.h"
+ #include "gfx/gfx_util.h"
+ #include "platform/base/agsplatformdriver.h"
+ #include "platform/base/sys_main.h"
+@@ -101,8 +100,11 @@ PGfxFilter SDLRendererGraphicsDriver::GetGraphicsFilter() const
+ 
+ void SDLRendererGraphicsDriver::SetGraphicsFilter(PSDLRenderFilter filter)
+ {
++    // DOS-PORT: InitSDLHint() (an SDL_HINT_RENDER_SCALE_QUALITY hint call)
++    // is gone along with the filter method it lived on -- see
++    // gfxfilter_sdl_renderer.h's file comment. Nothing left to configure:
++    // Present() always blits at a fixed SDL_SCALEMODE_NEAREST.
+     _filter = filter;
+-    _filter->InitSDLHint();
+     OnSetFilter();
+ }
+ 
+@@ -881,7 +883,9 @@ SDLRendererGraphicsFactory::~SDLRendererGraphicsFactory()
+ 
+ size_t SDLRendererGraphicsFactory::GetFilterCount() const
+ {
+-    return 2;
++    // DOS-PORT: was 2 (nearest + linear); collapsed to the one filter the
++    // v0.1 profile offers -- see gfxfilter_sdl_renderer.h's file comment.
++    return 1;
+ }
+ 
+ const GfxFilterInfo *SDLRendererGraphicsFactory::GetFilterInfo(size_t index) const
+@@ -890,8 +894,6 @@ const GfxFilterInfo *SDLRendererGraphicsFactory::GetFilterInfo(size_t index) con
+     {
+     case 0:
+         return &SDLRendererGfxFilter::FilterInfo;
+-    case 1:
+-        return &SDLRendererAAGfxFilter::FilterInfo;
+     default:
+         return nullptr;
+     }
+@@ -920,8 +922,6 @@ SDLRendererGfxFilter *SDLRendererGraphicsFactory::CreateFilter(const String &id)
+ {
+     if (SDLRendererGfxFilter::FilterInfo.Id.CompareNoCase(id) == 0)
+         return new SDLRendererGfxFilter();
+-    if (SDLRendererAAGfxFilter::FilterInfo.Id.CompareNoCase(id) == 0)
+-        return new SDLRendererAAGfxFilter();
+     return nullptr;
+ }
+ 
+diff --git a/Engine/gfx/gfxfilter_aa_sdl_renderer.cpp b/Engine/gfx/gfxfilter_aa_sdl_renderer.cpp
+deleted file mode 100644
+index c92d3187e..000000000
+--- a/Engine/gfx/gfxfilter_aa_sdl_renderer.cpp
++++ /dev/null
+@@ -1,43 +0,0 @@
+-//=============================================================================
+-//
+-// Adventure Game Studio (AGS)
+-//
+-// Copyright (C) 1999-2011 Chris Jones and 2011-2026 various contributors
+-// The full list of copyright holders can be found in the Copyright.txt
+-// file, which is part of this source code distribution.
+-//
+-// The AGS source code is provided under the Artistic License 2.0.
+-// A copy of this license can be found in the file License.txt and at
+-// https://opensource.org/license/artistic-2-0/
+-//
+-//=============================================================================
+-#include "gfx/gfxfilter_aa_sdl_renderer.h"
+-#include <SDL.h>
+-
+-namespace AGS
+-{
+-namespace Engine
+-{
+-namespace ALSW
+-{
+-
+-const GfxFilterInfo SDLRendererAAGfxFilter::FilterInfo = GfxFilterInfo("Linear", "Linear interpolation");
+-
+-const GfxFilterInfo &SDLRendererAAGfxFilter::GetInfo() const
+-{
+-    return FilterInfo;
+-}
+-
+-SDL_ScaleMode SDLRendererAAGfxFilter::GetScaleMode() const
+-{
+-    return SDL_ScaleModeLinear;
+-}
+-
+-void SDLRendererAAGfxFilter::InitSDLHint() const
+-{
+-    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
+-}
+-
+-} // namespace ALSW
+-} // namespace Engine
+-} // namespace AGS
+diff --git a/Engine/gfx/gfxfilter_aa_sdl_renderer.h b/Engine/gfx/gfxfilter_aa_sdl_renderer.h
+deleted file mode 100644
+index 13421c6a8..000000000
+--- a/Engine/gfx/gfxfilter_aa_sdl_renderer.h
++++ /dev/null
+@@ -1,46 +0,0 @@
+-//=============================================================================
+-//
+-// Adventure Game Studio (AGS)
+-//
+-// Copyright (C) 1999-2011 Chris Jones and 2011-2026 various contributors
+-// The full list of copyright holders can be found in the Copyright.txt
+-// file, which is part of this source code distribution.
+-//
+-// The AGS source code is provided under the Artistic License 2.0.
+-// A copy of this license can be found in the file License.txt and at
+-// https://opensource.org/license/artistic-2-0/
+-//
+-//=============================================================================
+-//
+-// SDL software renderer Linear filter. Technically a non-op, as SDL_Renderer
+-// does the job.
+-//
+-//=============================================================================
+-#ifndef __AGS_EE_GFX__SDLRENDERERAAFILTER_H
+-#define __AGS_EE_GFX__SDLRENDERERAAFILTER_H
+-
+-#include "gfx/gfxfilter_sdl_renderer.h"
+-
+-namespace AGS
+-{
+-namespace Engine
+-{
+-namespace ALSW
+-{
+-
+-class SDLRendererAAGfxFilter : public SDLRendererGfxFilter
+-{
+-public:
+-    const GfxFilterInfo &GetInfo() const override;
+-
+-    SDL_ScaleMode GetScaleMode() const override;
+-    void InitSDLHint() const override;
+-
+-    static const GfxFilterInfo FilterInfo;
+-};
+-
+-} // namespace ALSW
+-} // namespace Engine
+-} // namespace AGS
+-
+-#endif // __AGS_EE_GFX__SDLRENDERERAAFILTER_H
+diff --git a/Engine/gfx/gfxfilter_sdl_renderer.cpp b/Engine/gfx/gfxfilter_sdl_renderer.cpp
+index 5eb3251cb..dcc5c8f6f 100644
+--- a/Engine/gfx/gfxfilter_sdl_renderer.cpp
++++ b/Engine/gfx/gfxfilter_sdl_renderer.cpp
+@@ -12,7 +12,6 @@
+ //
+ //=============================================================================
+ #include "gfx/gfxfilter_sdl_renderer.h"
+-#include <SDL.h>
+ 
+ namespace AGS
+ {
+@@ -28,16 +27,6 @@ const GfxFilterInfo &SDLRendererGfxFilter::GetInfo() const
+     return FilterInfo;
+ }
+ 
+-SDL_ScaleMode SDLRendererGfxFilter::GetScaleMode() const
+-{
+-    return SDL_ScaleModeNearest;
+-}
+-
+-void SDLRendererGfxFilter::InitSDLHint() const
+-{
+-    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+-}
+-
+ } // namespace ALSW
+ } // namespace Engine
+ } // namespace AGS
+diff --git a/Engine/gfx/gfxfilter_sdl_renderer.h b/Engine/gfx/gfxfilter_sdl_renderer.h
+index 0cf2f4531..615fb429a 100644
+--- a/Engine/gfx/gfxfilter_sdl_renderer.h
++++ b/Engine/gfx/gfxfilter_sdl_renderer.h
+@@ -12,14 +12,28 @@
+ //
+ //=============================================================================
+ //
+-// SDL software renderer filter. Technically a non-op, as SDL_Renderer
+-// does the job.
++// SDL software renderer filter. A true non-op: the DOS window-surface
++// present step (ali3dsw.cpp, patch 0029) always blits at a fixed
++// SDL_SCALEMODE_NEAREST, so this filter has nothing left to configure.
++//
++// DOS-PORT: this used to be two filters -- this one (nearest) and a
++// second SDLRendererAAGfxFilter (linear) -- each picking an SDL_Renderer
++// texture scale mode via GetScaleMode()/an SDL_HINT_RENDER_SCALE_QUALITY
++// hint via InitSDLHint(). Both became meaningless once the present step
++// stopped using SDL_Renderer at all (patch 0029) and started calling
++// SDL_BlitSurfaceScaled() with a hardcoded scale mode directly -- nothing
++// left in this driver ever calls either method. Collapsed to the one
++// filter the v0.1 profile actually offers (see PLAN.md's review-decision
++// section: "no scaling, no filtering"), matching the doc's own patch
++// 0029 row. GetScaleMode()/InitSDLHint() are dropped, not stubbed: SDL3
++// does not even have an SDL_HINT_RENDER_SCALE_QUALITY hint any more
++// (confirmed by reading vendor/SDL/include/SDL3/ directly), so there is
++// nothing correct left for InitSDLHint() to do.
+ //
+ //=============================================================================
+ #ifndef __AGS_EE_GFX__SDLRENDERERFILTER_H
+ #define __AGS_EE_GFX__SDLRENDERERFILTER_H
+ 
+-#include <SDL_render.h>
+ #include "gfx/gfxfilter_scaling.h"
+ 
+ namespace AGS
+@@ -34,9 +48,6 @@ class SDLRendererGfxFilter : public ScalingGfxFilter
+ public:
+     const GfxFilterInfo &GetInfo() const override;
+ 
+-    virtual SDL_ScaleMode GetScaleMode() const;
+-    virtual void InitSDLHint() const;
+-
+     static const GfxFilterInfo FilterInfo;
+ };
+ 
+-- 
+2.47.3
+

@@ -1,0 +1,30 @@
+From c9fb8ced4e36045efbefa57549dc6c68dc2164bd Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 30 Sep 2026 01:42:15 -0700
+Subject: [PATCH] DOS-PORT: patch 0350 -- irq_fragment 128 -> 160 for 0349's
+ topup_holds field
+
+0349 added topup_holds= to the mixer status's irq fragment without growing it:
+six fields at their widest are 138 B + NUL, and snprintf cut the tail at 128.
+---
+ Engine/platform/dos/dos_audio_mixer.cpp | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index af6bd8a5c..b45cf58ce 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -202,7 +202,9 @@ void format_status_string(char *buf, size_t bufsize)
+     // "midi=<backend>,events=<n>" fragment now -- S1 hardcoded ";midi=none"
+     // here since no MIDI backend existed yet.
+     dos_midi_backend_status_fragment(midi_fragment, sizeof(midi_fragment));
+-    char irq_fragment[128];
++    // DOS-PORT: 48 -> 96 (patch 0347), -> 128 (patch 0348), -> 160 (patch 0350: the six fields' "name=" strings are
++    // 78 B, plus 6 x 10 digits = 138 B + NUL).
++    char irq_fragment[160];
+     if (g_gus_backend)
+         std::snprintf(irq_fragment, sizeof(irq_fragment),
+             "pcm_irqs=NA,silent_irqs=NA,start_latency_irqs=NA,primes=NA,prime_retries=NA,topup_holds=NA");
+-- 
+2.47.3
+

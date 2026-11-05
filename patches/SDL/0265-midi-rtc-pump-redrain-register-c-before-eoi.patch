@@ -1,0 +1,164 @@
+From e2bcfd3603ada67d9697a135c82f4e1b12b18c63 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 25 Sep 2026 01:11:41 -0700
+Subject: [PATCH] dos: patch 0265 -- the RTC pump reads register C again before
+ its EOI
+
+On the real 486 (dosags WBH6W, PGSB) the pump's one remaining silence was
+a held line. The 0264 witness caught register C = IRQF|PF, with no IRQ 8
+request and no in-service bit on either PIC, no BIOS wait, and registers A
+and B as the pump set them. So an edge was consumed while register C stayed
+unread, and the edge-triggered line never rose again until the SB IRQ's
+repair read C, one SB period later, with the bytes due in that time late.
+
+The ISR already reads C first. What it cannot cover is a periodic flag set
+while the handler is still in service. A standard 8259 latches that edge
+and delivers it after the EOI, but a PIC that drops an edge arriving at an
+in-service level leaves exactly the state the witness saw. Reading C once
+more just before the EOI makes sure the line is low when the in-service bit
+clears, so the next flag always gives a fresh edge.
+
+A flag found by that second read is a tick that really elapsed. It is
+kept: it is counted (so the stuck check sees progress), a BIOS wait is
+serviced for it, and its pacing time is added, unless a byte went out in
+this handler. It writes nothing. A byte may have gone out moments earlier,
+and a second one microseconds later would break the 320 us spacing the
+non-buffered header needs. The cost is bounded: at most, the next byte
+waits one tick (488 us). A late write needs a whole SB IRQ (46 ms), so the
+late count cannot rise from this, and the stuck count can only fall.
+
+Default on; killswitch SDL_HINT_DOS_AUDIO_WB_RTC_REDRAIN=0.
+SDL_DOSMidiDeferRtcRedrains() returns how many second reads found the flag
+set. SDL_HINT_DOS_AUDIO_WB_RTC_TEST_REDRAIN=N skips the entry read every N
+ticks, so the second read must find the flag (a lab check that the path
+engages; it adds one extra tick per N to the pacing clock, never used on
+hardware). ISR rules as 0260: port I/O and integers on locked data.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ include/SDL3/SDL_dosmidi_tick.h |  5 +++
+ src/audio/dos/SDL_dosaudio_sb.c | 56 ++++++++++++++++++++++++++++++++-
+ 2 files changed, 60 insertions(+), 1 deletion(-)
+
+diff --git a/include/SDL3/SDL_dosmidi_tick.h b/include/SDL3/SDL_dosmidi_tick.h
+index 7ef25ded5..84b13b9d1 100644
+--- a/include/SDL3/SDL_dosmidi_tick.h
++++ b/include/SDL3/SDL_dosmidi_tick.h
+@@ -341,6 +341,11 @@ extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferRtcRearms(Uint32 *pie, Uint32 *
+    first event's snapshot (C, slave IRR, slave ISR, master IRR, master ISR, reg A, reg B, 0040:00A0).
+    False = no stuck event. SDL_HINT_DOS_AUDIO_WB_RTC_TEST_STUCK=N forces the branch every N SB IRQs. */
+ extern SDL_DECLSPEC bool SDLCALL SDL_DOSMidiDeferRtcStuckWitness(Uint32 *counts5, Uint8 *snap8);
++/* DOS-PORT patch 0265: the RTC ISR reads register C again before its EOI, so a periodic flag set
++   while it ran cannot leave IRQ 8 held. Returns how many of those reads found the flag set (each
++   kept as a tick, never a second byte); *enabled = on (killswitch SDL_HINT_DOS_AUDIO_WB_RTC_REDRAIN=0).
++   SDL_HINT_DOS_AUDIO_WB_RTC_TEST_REDRAIN=N forces one every N ticks (lab only). */
++extern SDL_DECLSPEC Uint32 SDLCALL SDL_DOSMidiDeferRtcRedrains(bool *enabled);
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index cbc3a056f..126abd38d 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -1906,6 +1906,11 @@ static volatile Uint32 g_rtc_stuckw[STUCKW_N];
+ static volatile Uint8 g_rtc_stucksnap[8];     /* C, slave IRR, slave ISR, master IRR, master ISR, A, B, BDA 0040:00A0 */
+ static volatile Uint8 g_rtc_stucksnap_taken = 0;
+ static volatile Uint32 g_rtc_test_stuck = 0;  /* SDL_HINT_DOS_AUDIO_WB_RTC_TEST_STUCK: force the branch every N SB IRQs */
++/* DOS-PORT patch 0265: register C read again before the EOI. */
++static volatile Uint8 g_rtc_redrain_on = 1;      /* killswitch SDL_HINT_DOS_AUDIO_WB_RTC_REDRAIN=0 */
++static volatile Uint32 g_rtc_redrain = 0;        /* second reads that found PF set (run total) */
++static volatile Uint32 g_rtc_test_redrain = 0;   /* SDL_HINT_DOS_AUDIO_WB_RTC_TEST_REDRAIN: every N ticks, skip the entry read */
++static volatile Uint32 g_rtc_test_redrain_n = 0;
+ static bool g_rtc_locked = false;
+ 
+ /* Interrupts must be off around every call (port 70h is shared). */
+@@ -2083,7 +2088,11 @@ static void MidiRtcPut(Uint8 v)
+ /* IRQ 8. Interrupts are off for the whole handler. */
+ static void MidiRtcISR(void)
+ {
+-    (void)MidiRtcRead(0x0C); /* acknowledge; unread, register C holds IRQ 8 asserted */
++    if (g_rtc_test_redrain && ++g_rtc_test_redrain_n >= g_rtc_test_redrain) {
++        g_rtc_test_redrain_n = 0; /* DOS-PORT patch 0265, lab only: leave this flag for the redrain */
++    } else {
++        (void)MidiRtcRead(0x0C); /* acknowledge; unread, register C holds IRQ 8 asserted */
++    }
+     const Uint32 period = MidiRtcPeriodUs(MidiRtcRead(0x0A));
+     bool keep = MidiRtcBiosWait(period);
+     g_rtc_ticks++;
+@@ -2151,6 +2160,29 @@ static void MidiRtcISR(void)
+             }
+         }
+     }
++    /* DOS-PORT patch 0265: read register C again before the EOI. A periodic flag set while this
++       handler ran would otherwise keep the line high as the in-service bit clears; a PIC that
++       drops an edge arriving at an in-service level never sees another one (real hardware,
++       WBH6W: C = IRQF|PF with no request or in-service bit on either PIC). The tick it stands for
++       is kept -- counted, BIOS wait serviced, pacing time added -- but writes nothing: a byte may
++       have gone out just above, and two bytes microseconds apart break the transport's spacing.
++       At worst the next byte waits one tick (488 us), far below a late write (one SB IRQ). */
++    if (g_rtc_redrain_on) {
++        const Uint8 c2 = MidiRtcRead(0x0C);
++        if (c2 & 0x40) {
++            g_rtc_redrain++;
++            if (MidiRtcBiosWait(period)) {
++                keep = true;
++            }
++            g_rtc_ticks++;
++            if (g_mdq_kind == 3 && !g_mdq_hold && g_rtc_seen_irq == dos_port_audio_irq_count) {
++                g_rtc_us_in_irq += period;
++                if (g_rtc_since_us != 0 && g_rtc_since_us < g_rtc_gap_us) {
++                    g_rtc_since_us += period; /* 0 = a byte went out in this handler: add no time */
++                }
++            }
++        }
++    }
+     if (!keep) {
+         MidiRtcWrite(0x0B, (Uint8)(MidiRtcRead(0x0B) & ~0x40));
+         g_rtc_pie = 0;
+@@ -2264,6 +2296,16 @@ static bool MidiRtcInstall(Uint32 gap_us)
+         const int n = (h && h[0]) ? SDL_atoi(h) : 0;
+         g_rtc_test_stuck = (n > 0) ? (Uint32)n : 0;
+     }
++    {
++        /* DOS-PORT patch 0265: the redrain is default on (killswitch SDL_HINT_DOS_AUDIO_WB_RTC_REDRAIN=0);
++           SDL_HINT_DOS_AUDIO_WB_RTC_TEST_REDRAIN=N forces it to find a flag every N ticks (lab only). */
++        const char *h = SDL_GetHint("SDL_HINT_DOS_AUDIO_WB_RTC_REDRAIN");
++        g_rtc_redrain_on = (h && h[0] == '0' && h[1] == 0) ? 0 : 1;
++        h = SDL_GetHint("SDL_HINT_DOS_AUDIO_WB_RTC_TEST_REDRAIN");
++        const int n = (h && h[0]) ? SDL_atoi(h) : 0;
++        g_rtc_test_redrain = (n > 0) ? (Uint32)n : 0;
++        g_rtc_test_redrain_n = 0;
++    }
+     /* The compiler does not keep these functions in source order (the ISR
+        has been laid out after its end marker), so a range lock alone cannot
+        be trusted: the pump runs only under the whole-image lock (0194). */
+@@ -2298,6 +2340,10 @@ static bool MidiRtcInstall(Uint32 gap_us)
+         DOS_LockVariable(g_rtc_stucksnap);
+         DOS_LockVariable(g_rtc_stucksnap_taken);
+         DOS_LockVariable(g_rtc_test_stuck);
++        DOS_LockVariable(g_rtc_redrain_on); /* DOS-PORT patch 0265 */
++        DOS_LockVariable(g_rtc_redrain);
++        DOS_LockVariable(g_rtc_test_redrain);
++        DOS_LockVariable(g_rtc_test_redrain_n);
+         g_rtc_locked = true;
+     }
+     DOS_DisableInterrupts();
+@@ -2706,6 +2752,14 @@ bool SDL_DOSMidiDeferRtcStuckWitness(Uint32 *counts5, Uint8 *snap8)
+     return g_rtc_stucksnap_taken != 0;
+ }
+ 
++/* DOS-PORT patch 0265: redrain reads that found a periodic flag set (run total); *enabled = the
++   setting of the current/last install. */
++Uint32 SDL_DOSMidiDeferRtcRedrains(bool *enabled)
++{
++    if (enabled) *enabled = g_rtc_redrain_on != 0;
++    return g_rtc_redrain;
++}
++
+ /* DOS-PORT patch 0262: the pump's hardware repairs by kind (run totals). */
+ void SDL_DOSMidiDeferRtcRearms(Uint32 *pie, Uint32 *rate, Uint32 *mask, Uint32 *stuck)
+ {
+-- 
+2.47.3
+

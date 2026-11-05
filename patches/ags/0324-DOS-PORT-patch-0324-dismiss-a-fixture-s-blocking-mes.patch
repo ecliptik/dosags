@@ -1,0 +1,83 @@
+From 3d6378f49544dc578b95c5cc7a7d4da0ad7202fa Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 29 Sep 2026 08:25:38 -0700
+Subject: [PATCH] DOS-PORT: patch 0324 -- dismiss a fixture's blocking message
+ box promptly (DOSAGS_MSGSKIP=n, default off)
+
+S8's opening Display() message waits for a click, and the fixture's
+clicks come from the host on wall-clock time. The wait therefore lasts
+until the next host click, 0-3 s at random (30 of 35 486 S8 cells end
+that second 17-22 ms after a harness click). No tick runs and no
+persec sample is taken while it waits, so the whole wait lands in the
+whole-run tick rate and stall_ms: GS8B missed S8 by 0.69 on it while
+the engine work was the same as GS8A's. The operator's decision is to
+click the message promptly and leave the bar and metric unchanged.
+
+Neither fixture tool can reach the message. 0247's tick-keyed click
+runs in UpdateGameOnce, which the message loop never calls, and a click
+at the message's own tick is drained as a walk click before the script
+shows the message. A host click at a fixed time can't be both after the
+message and prompt, because the message's wall time varies by ~8 s
+with boot time.
+
+With DOSAGS_MSGSKIP=n, the first n message boxes that accept a mouse
+click end right after their first drawn frame, with the skip result a
+left click sets. Speech (Say) is untouched: it runs through
+GameLoopUntilNoOverlay. Unset, the environment is read once and nothing
+else changes, and the real mouse device's events are never read or
+altered. Each dismissal is logged: "DOS-PORT msgskip n= lc=".
+---
+ Engine/ac/display.cpp | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/Engine/ac/display.cpp b/Engine/ac/display.cpp
+index 5c048db6e..656f8e2ad 100644
+--- a/Engine/ac/display.cpp
++++ b/Engine/ac/display.cpp
+@@ -59,6 +59,32 @@ extern SpriteCache spriteset;
+ 
+ bool display_check_user_input(int skip);
+ 
++#ifdef __DJGPP__
++// DOS-PORT patch 0324: a test fixture's prompt dismissal of blocking message boxes (DOSAGS_MSGSKIP=n, default
++// off). The first n Display() message boxes that accept a mouse click end right after their first drawn frame,
++// with the same skip result a left click sets. A fixture whose host clicks on wall-clock time otherwise leaves such
++// a message up until the next host click, and that wait (0-3 s at random on S8's opening message) lands in the
++// whole-run tick rate and stall_ms. Unset, the environment is read once and nothing else changes; the real mouse
++// device's events are never read or altered here.
++static bool dos_msgskip_take(int skip_style)
++{
++    static int budget = -1;
++    static int taken = 0;
++    if (budget < 0)
++    {
++        const char *e = getenv("DOSAGS_MSGSKIP");
++        budget = (e && e[0] >= '0' && e[0] <= '9') ? atoi(e) : 0;
++    }
++    if (budget <= 0 || !(skip_style & SKIP_MOUSECLICK))
++        return false;
++    budget--;
++    taken++;
++    play.SetWaitSkipResult(SKIP_MOUSECLICK, kMouseLeft);
++    Debug::Printf(kDbgMsg_Info, "DOS-PORT msgskip n=%d lc=%u", taken, (unsigned)get_loop_counter());
++    return true;
++}
++#endif
++
+ // Game state of a displayed blocking message
+ class DisplayMessageState : public GameState
+ {
+@@ -90,6 +116,10 @@ public:
+         UpdateCursorAndDrawables();
+ 
+         Draw();
++#ifdef __DJGPP__
++        if (dos_msgskip_take(_skipStyle)) // DOS-PORT patch 0324: fixture prompt dismissal, off unless set
++            return false;
++#endif
+ 
+         // Handle player's input, break the loop if requested
+         bool do_break = display_check_user_input(_skipStyle);
+-- 
+2.47.3
+

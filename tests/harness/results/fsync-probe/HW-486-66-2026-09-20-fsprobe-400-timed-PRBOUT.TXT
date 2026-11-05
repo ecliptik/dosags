@@ -1,0 +1,38 @@
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14584 volume_bytes=2014511104 free_bytes=477888512
+fsprobe: 200 iterations per arm, line length 128 bytes
+fsprobe: UCLOCKS_PER_SEC=1193180
+fsprobe: arm order = none
+fsprobe: arms SKIPPED -- the sweep's fsync'd bytes are then
+fsprobe: the only bytes forced to the device in this run.
+
+raw     n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+flush   n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+sync    n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+reopen  n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+
+fsprobe: fsync cost per call = mean_us(sync) - mean_us(flush) = 0.0 us
+fsprobe: 240 such calls in a gate run = 0.0 ms
+
+fsprobe: sweep -- 400-byte records to 393216 bytes, spikes >= 20000 us
+fsprobe: at this record size, byte 6400 is record 16 and byte 58400 is record 146; record 8 is byte 3200 and record 73 is byte 29200
+  FIRST rec=1     end_off=400     us=10059    cum_ms=10.1  (first cluster + directory entry)
+  SPIKE rec=93    end_off=37200   us=221049   cum_ms=706.6
+  SPIKE rec=187   end_off=74800   us=219355   cum_ms=1413.4
+  SPIKE rec=236   end_off=94400   us=221483   cum_ms=1881.9
+  SPIKE rec=283   end_off=113200  us=219919   cum_ms=2343.9
+  SPIKE rec=328   end_off=131200  us=437933   cum_ms=3010.5
+  SPIKE rec=420   end_off=168000  us=218703   cum_ms=3708.5
+  SPIKE rec=523   end_off=209200  us=221418   cum_ms=4460.3
+  SPIKE rec=574   end_off=229600  us=220517   cum_ms=4945.6
+  SPIKE rec=678   end_off=271200  us=217844   cum_ms=5701.1
+  SPIKE rec=779   end_off=311600  us=224166   cum_ms=6451.0
+  SPIKE rec=881   end_off=352400  us=217919   cum_ms=7195.7
+  SPIKE rec=983   end_off=393200  us=217132   cum_ms=7944.5
+fsprobe: sweep done -- 984 records, 393600 device bytes, 12 spikes, worst 437933 us at off=131200
+fsprobe: sweep elapsed 8002.9 ms by uclock, 7955.5 ms summed per-record; quiet records n=972 mean_us=5244.9
+fsprobe: RATE = one event per 32800 device bytes (32 KB)
+fsprobe: volume after sweep:
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14583 volume_bytes=2014511104 free_bytes=477855744
+fsprobe: done

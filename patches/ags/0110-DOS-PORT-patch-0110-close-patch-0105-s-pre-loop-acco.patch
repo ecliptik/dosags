@@ -1,0 +1,102 @@
+From 031cf2abab779a7eb901d745450332a68fc22c62 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 18 Sep 2026 12:45:42 -0700
+Subject: [PATCH] DOS-PORT: patch 0110 -- close patch 0105's pre-loop
+ accounting hole
+
+Patch 0105 claimed its five brackets were "the whole of the pre-loop".
+They are not. skipMissedTicks() runs between the set_runtime_start()
+anchor and the first bracket, so it sits inside tick_rate's denominator
+and was invisible to the report that was supposed to account for it.
+
+This was not spotted by reading the code. Cell TNCQA2 came back with
+152 ms of pre-loop time outside all five brackets, where four other cells
+reconciled to within 1-3 ms; the gap was the evidence, and
+skipMissedTicks() is the only thing in that window.
+
+Adds two brackets, measurement only. preloop_skipmissed_ms covers the
+call itself. preloop_start_game_ms covers the anchor to the end of
+start_game(), which makes the remainder decomposable instead of a guess:
+time unaccounted inside start_game() shows as start_game_ms minus its
+parts, and time after start_game() returns shows as preloop_ms minus
+start_game_ms. Either way the next unexplained gap says where it is.
+---
+ Engine/ac/event.cpp                   |  2 ++
+ Engine/main/dos_port_startup_timing.h |  4 ++++
+ Engine/main/game_start.cpp            | 23 +++++++++++++++++++++++
+ 3 files changed, 29 insertions(+)
+
+diff --git a/Engine/ac/event.cpp b/Engine/ac/event.cpp
+index f94e1db7c..42d4d4c06 100644
+--- a/Engine/ac/event.cpp
++++ b/Engine/ac/event.cpp
+@@ -281,6 +281,8 @@ void process_event(const AGSEvent *evp)
+                         debug_script_log("preloop_placeholder_fade_ms=%ld", st.preloop_placeholder_fade_ms);
+                         debug_script_log("preloop_room_load_ms=%ld", st.preloop_room_load_ms);
+                         debug_script_log("preloop_first_room_init_ms=%ld", st.preloop_first_room_init_ms);
++                        debug_script_log("preloop_skipmissed_ms=%ld", st.preloop_skipmissed_ms);
++                        debug_script_log("preloop_start_game_ms=%ld", st.preloop_start_game_ms);
+                         // patch 0107: what SetRestartPoint()'s time actually is
+                         debug_script_log("restart_diskcheck_ms=%ld", st.restart_diskcheck_ms);
+                         debug_script_log("restart_screenshot_ms=%ld", st.restart_screenshot_ms);
+diff --git a/Engine/main/dos_port_startup_timing.h b/Engine/main/dos_port_startup_timing.h
+index 31917350b..3f630fda1 100644
+--- a/Engine/main/dos_port_startup_timing.h
++++ b/Engine/main/dos_port_startup_timing.h
+@@ -68,6 +68,10 @@ struct DosPortStartupTiming
+     long preloop_placeholder_fade_ms = -1;  // current_fade_out_effect() on the PLACEHOLDER room
+     long preloop_room_load_ms = -1;         // load_new_room() as called from start_game()
+     long preloop_first_room_init_ms = -1;   // first_room_initialization()
++    // patch 0110: the two brackets that make the pre-loop's accounting
++    // closed rather than assumed. See game_start.cpp for why.
++    long preloop_skipmissed_ms = -1;  // skipMissedTicks(), between the anchor and the five phases
++    long preloop_start_game_ms = -1;  // anchor .. end of start_game(); preloop_ms minus this is time AFTER it returns
+     // patch 0107: SetRestartPoint()'s own internals. It is 690 ms of the
+     // pre-loop on HW-486-66 and the operator asked what that time IS --
+     // serialisation, compression or file I/O -- before any design rests
+diff --git a/Engine/main/game_start.cpp b/Engine/main/game_start.cpp
+index 9d6e26042..0daf32606 100644
+--- a/Engine/main/game_start.cpp
++++ b/Engine/main/game_start.cpp
+@@ -79,8 +79,30 @@ void start_game()
+     set_our_eip(-42);
+ 
+     set_runtime_start();
++#ifdef __DJGPP__
++    // DOS-PORT patch 0110: close patch 0105's accounting hole.
++    //
++    // 0105 said its five brackets were "the whole of the pre-loop". They
++    // are not: skipMissedTicks() runs BETWEEN the set_runtime_start()
++    // anchor and the first bracket, so it is inside tick_rate's
++    // denominator and was invisible. Cell TNCQA2 showed 152 ms of
++    // pre-loop time outside all five brackets where four other cells
++    // reconciled to 1-3 ms, and nothing else lies in that window.
++    //
++    // preloop_start_game_ms brackets everything from the anchor to the
++    // end of start_game(), so the remainder splits cleanly and stops
++    // being a guess: anything inside start_game() shows up as
++    // start_game_ms minus the parts, and anything AFTER start_game()
++    // returns shows up as preloop_ms minus start_game_ms.
++    const uclock_t _dp_sg = uclock();
++    const uclock_t _dp_sm = uclock();
++#endif
+     // skip ticks to account for initialisation or a restored game.
+     skipMissedTicks();
++#ifdef __DJGPP__
++    dos_port_startup_timing.preloop_skipmissed_ms =
++        (long)((uclock() - _dp_sm) * 1000 / UCLOCKS_PER_SEC);
++#endif
+ 
+     // DOS-PORT patch 0105: bracket each of the five things that happen
+     // between set_runtime_start() (just above) and the first GameTick().
+@@ -146,6 +168,7 @@ void start_game()
+     first_room_initialization();
+ #ifdef __DJGPP__
+     dos_port_startup_timing.preloop_first_room_init_ms = DOS_PORT_PRELOOP_MS(_dp_t0);
++    dos_port_startup_timing.preloop_start_game_ms = DOS_PORT_PRELOOP_MS(_dp_sg);
+ #undef DOS_PORT_PRELOOP_T0
+ #undef DOS_PORT_PRELOOP_MS
+ #endif
+-- 
+2.47.3
+

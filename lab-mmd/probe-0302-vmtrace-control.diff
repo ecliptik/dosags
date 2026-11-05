@@ -1,0 +1,41 @@
+diff -u b/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+--- b/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1233,6 +1233,12 @@
+     const uint32_t tick = GameTimer.LoopCounter;
+     if (perturb >= 0 && tick == (uint32_t)perturb && game.playercharacter >= 0)
+         game.chars[game.playercharacter].x += 1;
++    { // probe 0302 control (LAB ONLY): arm the one-bit AX flip at the first tick >= N
++        extern int dp_vmctl_armed;
++        static long vc = -2;
++        if (vc == -2) { const char *e = getenv("DOSAGS_VMTRACE_CONTROL"); vc = e ? atol(e) : -1; }
++        if (vc >= 0 && dp_vmctl_armed == 0 && (long)tick >= vc) dp_vmctl_armed = 1;
++    }
+     // probe 0302 (LAB ONLY): DOSAGS_WIT_SAVERESTORE_TICK=N saves to slot 997 and restores it at the first
+     // tick >= N outside any script (as RestoreGameSlot does outside a script) -- G's save/restore gate
+     {
+diff -u b/Engine/script/cc_instance.cpp b/Engine/script/cc_instance.cpp
+--- b/Engine/script/cc_instance.cpp
++++ b/Engine/script/cc_instance.cpp
+@@ -36,6 +36,7 @@
+ using namespace AGS::Engine;
+ #ifdef __DJGPP__
+ uint32_t dp_vmtrace_h = 2166136261u, dp_vmtrace_n = 0; // probe 0302 (LAB ONLY)
++int dp_vmctl_armed = 0; // probe 0302 control
+ #endif
+ 
+ 
+@@ -1412,6 +1413,13 @@
+             }
+ 
+             _registers[SREG_AX] = return_value;
++#ifdef __DJGPP__
++            { // probe 0302 control (LAB ONLY): DOSAGS_VMTRACE_CONTROL=N flips bit 0 of the first engine
++              // call's return value after tick N -- one real VM value difference the trace must catch
++                extern int dp_vmctl_armed;
++                if (dp_vmctl_armed == 1) { _registers[SREG_AX].IValue ^= 1; dp_vmctl_armed = 2; }
++            }
++#endif
+             next_call_needs_object = 0;
+             num_args_to_func = -1;
+             break;

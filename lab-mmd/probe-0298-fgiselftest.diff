@@ -1,0 +1,156 @@
+diff -u b/Engine/ac/global_gui.cpp b/Engine/ac/global_gui.cpp
+--- b/Engine/ac/global_gui.cpp
++++ b/Engine/ac/global_gui.cpp
+@@ -13,6 +13,9 @@
+ //=============================================================================
+ #include <vector>
+ #include <stdint.h> // patch 0297
++#include <ctype.h> // probe 0298
++#include <stdio.h>
++#include "debug/out.h"
+ #include <string.h>
+ #include "ac/common.h"
+ #include "ac/display.h"
+@@ -60,10 +63,14 @@
+     for (auto &e : findguiid_cache) { e.key = nullptr; e.text[0] = 0; e.result = -1; }
+ }
+ static int FindGUIIDScan(const char* GUIName);
++long dp_fgi_hit_count = 0; // probe 0298 (LAB ONLY)
+ int FindGUIID (const char* GUIName) {
+     FindGUIIDCacheEntry &e = findguiid_cache[((unsigned)(uintptr_t)GUIName >> 2) & 15];
+     if (GUIName && e.key == GUIName && strcmp(e.text, GUIName) == 0)
++    {
++        dp_fgi_hit_count++; // probe 0298 (LAB ONLY)
+         return e.result;
++    }
+     const int found = FindGUIIDScan(GUIName);
+     if (found >= 0 && GUIName && strlen(GUIName) < sizeof(e.text))
+     {
+@@ -73,6 +80,69 @@
+     }
+     return found;
+ }
++// DOS-PORT probe 0298 v4 (LAB ONLY, never a gate binary; LAB-MMD.md 12.1 amendment 2): cached FindGUIID
++// against the uncached scan. Per query (each GUI name and, for g-names, its stripped/upper/lower forms, one
++// buffer each): a lookup and, immediately, a second lookup of the same pointer (a guaranteed cache hit),
++// both compared with the scan. dp_fgi_snapshot() records the cache's resident keys that point into these
++// buffers; dp_fgi_check_resident() looks exactly those up first after a restore: each must hit and match.
++static char dp_q[64][40];
++static int dp_nq = -1;
++static const char *dp_res_key[16]; static int dp_nres = 0;
++static void dp_fgi_build()
++{
++    if (dp_nq >= 0) return;
++    dp_nq = 0;
++    for (int i = 0; i < game.numgui && dp_nq < 64; ++i)
++    {
++        const Common::String &nm = guis[i].GetName();
++        if (nm.IsEmpty() || nm.GetLength() >= 31) continue;
++        snprintf(dp_q[dp_nq++], 40, "%s", nm.GetCStr());
++        if (nm[0u] == 'g' && nm.GetLength() > 1)
++            for (int f = 0; f < 3 && dp_nq < 64; ++f)
++            {
++                snprintf(dp_q[dp_nq], 40, "%s", nm.GetCStr() + 1);
++                for (char *c = dp_q[dp_nq]; *c && f > 0; ++c)
++                    *c = (char)(f == 1 ? toupper((unsigned char)*c) : tolower((unsigned char)*c));
++                dp_nq++;
++            }
++    }
++}
++static bool dp_is_test_buf(const char *p) { return p >= &dp_q[0][0] && p < &dp_q[64][0]; }
++void dp_fgi_snapshot()
++{
++    dp_nres = 0;
++    for (const auto &e : findguiid_cache) if (e.key && dp_is_test_buf(e.key)) dp_res_key[dp_nres++] = e.key;
++}
++void dp_fgi_check_resident(const char *phase, unsigned long tick)
++{
++    long hits = 0, mism = 0;
++    for (int i = 0; i < dp_nres; ++i)
++    {
++        const long h0 = dp_fgi_hit_count;
++        const int got = FindGUIID(dp_res_key[i]);
++        if (dp_fgi_hit_count > h0) hits++;
++        if (got != FindGUIIDScan(dp_res_key[i])) mism++;
++    }
++    Debug::Printf("DOS-PORT fgiselftest phase=%s tick=%lu resident=%d resident_hits=%ld resident_mismatches=%ld",
++        phase, tick, dp_nres, hits, mism);
++}
++void dp_fgi_selftest(const char *phase, unsigned long tick)
++{
++    dp_fgi_build();
++    long entries = 0;
++    for (const auto &e : findguiid_cache) if (e.key) entries++;
++    long queries = 0, mismatches = 0;
++    const long h0 = dp_fgi_hit_count;
++    for (int i = 0; i < dp_nq; ++i)
++    {
++        const int want = FindGUIIDScan(dp_q[i]);
++        if (FindGUIID(dp_q[i]) != want) mismatches++;
++        if (FindGUIID(dp_q[i]) != want) mismatches++; // immediately again: a cache hit
++        queries += 2;
++    }
++    Debug::Printf("DOS-PORT fgiselftest phase=%s tick=%lu numgui=%d distinct_queries=%d cache_entries=%ld hits=%ld queries=%ld mismatches=%ld",
++        phase, tick, game.numgui, dp_nq, entries, dp_fgi_hit_count - h0, queries, mismatches);
++}
+ static int FindGUIIDScan(const char* GUIName) {
+ #else
+ int FindGUIID (const char* GUIName) {
+only in patch2:
+unchanged:
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1213,9 +1213,53 @@ static void game_loop_update_background_animation()
+     }
+ }
+ 
++#ifdef __DJGPP__
++// DOS-PORT probe 0298 v3 (LAB ONLY): DOSAGS_FGI_SELFTEST=N -- at the first tick >= N outside any script, a
++// fill sweep, then (unless DOSAGS_FGI_SELFTEST_NOSAVE=1) save to slot 998, a sweep, restore it (as
++// RestoreGameSlot does outside a script), a sweep. DOSAGS_FGI_SELFTEST2=N2 -- one more sweep at the first
++// tick >= N2 outside any script (AGS Quest: after its own AutoPilot restore).
++extern void dp_fgi_selftest(const char *phase, unsigned long tick);
++extern void dp_fgi_snapshot();
++extern void dp_fgi_check_resident(const char *phase, unsigned long tick);
++static void dp_fgi_selftest_hook()
++{
++    static long at = -2, at2 = -1; static bool nosave = false, done = false, done2 = false;
++    if (at == -2)
++    {
++        const char *e = getenv("DOSAGS_FGI_SELFTEST"); at = e ? atol(e) : -1;
++        const char *e2 = getenv("DOSAGS_FGI_SELFTEST2"); at2 = e2 ? atol(e2) : -1;
++        const char *n = getenv("DOSAGS_FGI_SELFTEST_NOSAVE"); nosave = n && n[0] == '1';
++    }
++    if (inside_script) return;
++    const unsigned long t = GameTimer.LoopCounter;
++    if (at >= 0 && !done && (long)t >= at)
++    {
++        done = true;
++        dp_fgi_selftest("fill", t);
++        dp_fgi_snapshot();
++        if (!nosave)
++        {
++            save_game(998, "fgi selftest");
++            const bool ok = try_restore_save(998);
++            Debug::Printf("DOS-PORT fgiselftest restore=%s tick=%lu", ok ? "ok" : "FAILED", t);
++            dp_fgi_check_resident("after-restore-resident", t);
++            dp_fgi_selftest("after-restore", t);
++        }
++    }
++    if (at2 >= 0 && !done2 && (long)t >= at2)
++    {
++        done2 = true;
++        dp_fgi_check_resident("second-resident", t);
++        dp_fgi_selftest("second", t);
++    }
++}
++#endif
+ static void game_loop_update_loop_counter()
+ {
+     GameTimer.LoopCounter++;
++#ifdef __DJGPP__
++    dp_fgi_selftest_hook(); // probe 0298 (LAB ONLY)
++#endif
+ 
+     if (play.wait_counter > 0) play.wait_counter--;
+     if (play.shakesc_length > 0) play.shakesc_length--;

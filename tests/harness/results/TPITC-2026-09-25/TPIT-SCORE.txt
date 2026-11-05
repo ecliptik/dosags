@@ -1,0 +1,10 @@
+# tpit-score.py at 606da1d (committed before any C/F/R result)
+TPITC sha=f90938dd7e0d timer=8253 isr_max_us=29398 isr_ns_per_write=25114 isr_burst=328 late=0 underruns=0 overwrites=0 steady=40.33 skipped=2444 uclockwrap=none
+TPITC2: no result
+TPITF sha=c3c81b632b85 timer=8253 isr_max_us=7200 isr_ns_per_write=22200 isr_burst=328 late=0 underruns=0 overwrites=0 steady=40.35 skipped=2450 uclockwrap=1/468901
+TPITR sha=f90938dd7e0d timer=RDTSC isr_max_us=7386 isr_ns_per_write=22619 isr_burst=328 late=0 underruns=0 overwrites=0 steady=40.34 skipped=2444 uclockwrap=none
+PASS  F: isr_max_us 7200 < 12000 (no outlier)
+PASS  F: isr_ns_per_write 22200 below C's 25114
+PASS  F: isr_ns_per_write 22200 within 10% of R's 22619
+REPORT: late 0/0 underruns 0/0 overwrites 0/0 steady 40.33/40.35 (C/F; same class registered)
+VERDICT TPIT PASS

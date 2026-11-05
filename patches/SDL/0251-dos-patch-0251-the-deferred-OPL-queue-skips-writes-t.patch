@@ -1,0 +1,199 @@
+From f44f7c531aeef92bb31073066f889d99f1f194d4 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 08:27:56 -0700
+Subject: [PATCH 251/255] dos: patch 0251 -- the deferred OPL queue skips
+ writes that do not change their register
+
+WHY: the ISR replay (patch 0193) writes at most 256 queued OPL writes per
+SB IRQ. Trilby's Notes room 35 (Gate S8's fixture) peaks at 416 writes in
+one IRQ, and ~500 writes per run go out one or two IRQs late. A dump of
+the peak IRQs (lab CAP1, 2026-09-24) shows why: each of the 31 note-ons in
+such an IRQ rewrites the voice's whole instrument -- 8 operator registers,
+2 levels, feedback -- 60% of the peak, most of it the values the chip
+already holds. Raising the budget would lengthen the worst ISR on the 486
+(interrupts off) to cover writes that change nothing; not writing them
+shortens every IRQ instead.
+
+WHAT: SDL_DOSMidiDeferCapture keeps a shadow of the value last queued per
+OPL register (both banks). An eligible write equal to it is not queued
+(the capture reports it handled). Eligible: the operator and channel data
+registers (20-35, 40-55, 60-75, 80-95, A0-A8, C0-C8, E0-F5). Never
+skipped, in either bank: every register below 0x20 -- 0x01 (test /
+waveform-select enable), 0x02-0x04 (timers, timer control, IRQ reset),
+0x08 (CSM / note-select), 0x101 (test), 0x104 (4-op connection select),
+0x105 (OPL3 mode) -- key-on 0xB0-0xB8 (patch 0195's pause keys voices off
+from the ISR, outside the queue) and rhythm 0xBD. Writes that remain keep
+their FIFO order. The shadow is reset on enable, disable, flush, hold and
+pause, and forgets a register whenever a write reaches the chip without the
+queue (SDL_DOSOpl3WriteRegister's direct path: hold, replay off, queue
+full). SDL_HINT_DOS_MIDI_DEFER_DEDUPE=0 (read at enable) turns the skip off.
+SDL_DOSMidiDeferStats4() reports the mode and the writes skipped.
+Raising the budget alone (256 -> 512) also removes the lateness, but at the
+unskipped peak of 416 writes per IRQ; with the skip the peak is 328.
+Exactness was shown in the lab (dosags LAB-JOURNEYS CAP2/CAP3, 2026-09-24):
+the order of the state-changing writes at four checkpoints (5000-30000) and
+the final image of all 512 registers are equal with and without the skip,
+and a control that withholds one write changes them. The witness that
+measured this is a lab-only patch, not part of this series.
+Main thread only; the ISR is unchanged.
+
+RENUMBERED 2026-09-25 from 0224 to 0251 (the coordinator's SDL block 0250-0259),
+so the series sorts after main's SDL 0240. It lands on main ahead of the RTC
+pump series (SDL 0230-0237), which re-applies on top. 0224 never landed on
+main; its slot is retired on lab/journeys.
+Re-cut onto main's SDL 0199 (the audio cost diagnostics read the clock only
+when on): in SDL_DOSOpl3WriteRegister this patch's line now sits beside 0199's
+gated uclock() diagnostic; the change itself is unchanged.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ include/SDL3/SDL_dosmidi_tick.h    |  4 ++
+ src/audio/dos/SDL_dosaudio_sb.c    | 62 ++++++++++++++++++++++++++++++
+ src/core/dos/SDL_dos_audio_synth.c |  2 +
+ 3 files changed, 68 insertions(+)
+
+diff --git a/include/SDL3/SDL_dosmidi_tick.h b/include/SDL3/SDL_dosmidi_tick.h
+index cf4c1564d..0114ec433 100644
+--- a/include/SDL3/SDL_dosmidi_tick.h
++++ b/include/SDL3/SDL_dosmidi_tick.h
+@@ -287,6 +287,10 @@ extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferStats2(Uint32 *dropped, Uint32
+    drain, and the sum and count of drains that wrote anything. */
+ extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferStats3(Uint32 *budget, Uint32 *cap_hits, Uint32 *isr_max_us,
+                                                         Uint32 *isr_sum_us, Uint32 *isr_drains);
++/* DOS-PORT patch 0251: whether queued OPL writes that do not change their
++   register are skipped (SDL_HINT_DOS_MIDI_DEFER_DEDUPE=0 turns it off; read at
++   enable, default on), and how many were skipped. */
++extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferStats4(Uint32 *dedupe_on, Uint32 *skipped);
+ /* DOS-PORT patch 0195: pause (true) holds the replay, keeps the queue and
+    silences what it left sounding (OPL key-off / MPU All Notes Off); resume
+    (false) shifts the queued stamps by the pause's IRQs, releases the hold and
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index 64d873010..30e68fd00 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -1864,11 +1864,65 @@ static void MidiDeferDrain_End(void) {}
+ /* Main thread. Captures one write for later; false = not captured (the
+    caller writes it directly). Refused when off, for the other kind, or
+    when the queue is full (counted). */
++/* DOS-PORT patch 0251: skip OPL writes that do not change the register.
++   The shadow holds, per register (both banks), the value last QUEUED -- what
++   the chip will hold once the queue has played up to that point. Main thread
++   only (capture, and the invalidations below); the ISR never reads it.
++   Eligible: operator/channel data registers; never key-on (B0-B8: patch
++   0195's pause keys voices off from the ISR, outside the queue), rhythm (BD)
++   or anything below 0x20 (test, timers, IRQ reset, CSM, OPL3 mode, 4-op). */
++static Uint8 g_mdq_shadow[512];
++static Uint8 g_mdq_shadow_ok[512];
++static int g_mdq_dedupe = -1;          /* -1 = read the hint at the next enable */
++static Uint32 g_mdq_skipped = 0;
++
++static bool MidiDeferEligible(Uint16 reg)
++{
++    const Uint8 r = (Uint8)(reg & 0xFF);
++    return (r >= 0x20 && r <= 0x35) || (r >= 0x40 && r <= 0x55) || (r >= 0x60 && r <= 0x75) ||
++           (r >= 0x80 && r <= 0x95) || (r >= 0xA0 && r <= 0xA8) || (r >= 0xC0 && r <= 0xC8) ||
++           (r >= 0xE0 && r <= 0xF5);
++}
++
++static void MidiDeferShadowReset(void)
++{
++    SDL_memset(g_mdq_shadow_ok, 0, sizeof(g_mdq_shadow_ok));
++}
++
++/* A write that reaches the chip without the queue (hold, replay off, queue
++   full): the shadow no longer knows that register. */
++void SDL_DOS_MidiDeferShadowForget(Uint16 reg, Uint8 val)
++{
++    (void)val;
++    g_mdq_shadow_ok[reg & 0x1FF] = 0;
++}
++
++void SDL_DOSMidiDeferStats4(Uint32 *dedupe_on, Uint32 *skipped)
++{
++    if (dedupe_on) *dedupe_on = (g_mdq_dedupe > 0) ? 1u : 0u;
++    if (skipped) *skipped = g_mdq_skipped;
++}
++
+ bool SDL_DOSMidiDeferCapture(Uint8 kind, Uint16 reg, Uint8 val)
+ {
+     if (g_mdq_kind == 0 || g_mdq_kind != kind) {
+         return false;
+     }
++    if (kind == 1) { /* patch 0251 */
++        const Uint16 r = (Uint16)(reg & 0x1FF);
++        const bool eligible = MidiDeferEligible(r);
++        const bool same = eligible && g_mdq_shadow_ok[r] && g_mdq_shadow[r] == val;
++        if (same && g_mdq_dedupe > 0) {
++            g_mdq_skipped++;
++            return true; /* the chip already holds it: nothing to write */
++        }
++        if (g_mdq_tail - g_mdq_head < MIDI_DEFER_QUEUE) {
++            g_mdq_shadow[r] = val;
++            g_mdq_shadow_ok[r] = eligible ? 1 : 0;
++        } else {
++            g_mdq_shadow_ok[r] = 0; /* refused below: the caller writes it directly */
++        }
++    }
+     if (g_mdq_tail - g_mdq_head >= MIDI_DEFER_QUEUE) {
+         g_mdq_full++;
+         return false;
+@@ -1888,6 +1942,7 @@ bool SDL_DOSMidiDeferHold(bool hold)
+         if (g_mdq_kind == 0) {
+             return false;
+         }
++        MidiDeferShadowReset(); /* patch 0251: the holder writes the chip directly */
+         g_mdq_hold = 1;
+         return true;
+     }
+@@ -1925,6 +1980,7 @@ int SDL_DOSMidiDeferFree(void)
+ 
+ void SDL_DOSMidiDeferFlush(void)
+ {
++    MidiDeferShadowReset(); /* patch 0251: queued writes are dropped unplayed */
+     DOS_DisableInterrupts();
+     g_mdq_head = g_mdq_tail;
+     DOS_EnableInterrupts();
+@@ -1957,6 +2013,11 @@ void SDL_DOSMidiDeferStats(Uint32 *written, Uint32 *late, Uint32 *late_max, Uint
+ 
+ bool SDL_DOSMidiDeferEnable(int kind)
+ {
++    MidiDeferShadowReset(); /* patch 0251: on, off, or a kind change */
++    if (kind != 0) { /* patch 0251: SDL_HINT_DOS_MIDI_DEFER_DEDUPE=0 turns the skip off */
++        const char *e = SDL_getenv("SDL_HINT_DOS_MIDI_DEFER_DEDUPE");
++        g_mdq_dedupe = (e && e[0] == '0' && e[1] == 0) ? 0 : 1;
++    }
+     if (kind == 0) {
+         /* Off: stop the ISR consuming, then write out what is still queued
+            from here -- at most MIDI_DEFER_SYNC_MAX entries, in batches of
+@@ -2070,6 +2131,7 @@ Uint32 SDL_DOSMidiDeferPause(bool pause)
+         if (g_mdq_paused) {
+             return 0;
+         }
++        MidiDeferShadowReset(); /* patch 0251 */
+         g_mdq_hold = 1;
+         g_mdq_paused = 1;
+         g_mdq_pause_irq = dos_port_audio_irq_count;
+diff --git a/src/core/dos/SDL_dos_audio_synth.c b/src/core/dos/SDL_dos_audio_synth.c
+index 5147f693d..376e90ef7 100644
+--- a/src/core/dos/SDL_dos_audio_synth.c
++++ b/src/core/dos/SDL_dos_audio_synth.c
+@@ -1057,6 +1057,7 @@ void SDL_DOSOpl3RegWriteDiagSnapshot(
+     s_opl3_regwrite_max_us = 0;
+ }
+ 
++extern void SDL_DOS_MidiDeferShadowForget(Uint16 reg, Uint8 val); /* DOS-PORT patch 0251, SDL_dosaudio_sb.c */
+ void SDL_DOSOpl3WriteRegister(uint16_t reg, uint8_t value)
+ {
+     /* Bank routing: registers 0x000-0x0FF -> primary bank (0x388/0x389);
+@@ -1066,6 +1067,7 @@ void SDL_DOSOpl3WriteRegister(uint16_t reg, uint8_t value)
+     if (g_mdq_kind == 1 && !g_mdq_hold && SDL_DOSMidiDeferCapture(1, reg, value)) {
+         return;
+     }
++    SDL_DOS_MidiDeferShadowForget(reg, value); /* DOS-PORT patch 0251: this write bypasses the queue */
+     const Uint16 addr_port = (reg < 0x100) ? 0x388 : 0x38A;
+     const Uint16 data_port = (reg < 0x100) ? 0x389 : 0x38B;
+     const bool diag = SDL_DOSAudioDiagTiming(); /* patch 0199: off by default */
+-- 
+2.47.3
+

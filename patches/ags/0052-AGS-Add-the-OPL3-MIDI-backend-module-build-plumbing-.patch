@@ -1,0 +1,272 @@
+From 965637ab463d8be7a5dbe2d2512cdbc32628673c Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sat, 12 Sep 2026 18:53:14 -0700
+Subject: [PATCH 52/54] [AGS] Add the OPL3 MIDI backend module + build plumbing
+ (Sound milestone S4)
+
+New platform/dos/dos_midi_backend.{h,cpp}: resolves the (newly introduced)
+SDL_HINT_DOS_AUDIO_BACKEND hint (auto/opl3/wb/adlib/gus/none, reusing
+doskutsu's own semantics per PLAN.md's Sound milestone Architecture
+section) and owns the shared OPL3 sink's lifecycle plus RUNMANIFEST's
+cumulative "midi=<backend>,events=<n>" status bookkeeping. Only opl3/auto
+can succeed today -- wb/adlib/gus fail CLOSED (no MIDI output) rather than
+silently substituting OPL3, since those sinks are S5 and not yet hoisted.
+Also the one place that wraps midi_sched.h/opl3_sink.h (.sdl-dos-ports/
+shared/audio, S3's hub hoist -- both plain C, no extern "C" guard of their
+own) in extern "C" for this C++ engine, rather than editing the shared
+headers themselves.
+
+Build plumbing: CMakeLists.txt gains dos_midi_backend.{h,cpp} plus real
+target_sources entries for shared/audio's midi_sched.c/opl3_sink.c
+(DOS_PORT_SHARED_AUDIO_DIR, an absolute path this port's own top-level
+Makefile now supplies) -- they are compiled sources, not just headers, so
+they need the same treatment as any Engine .cpp. Also guards the
+IDE-only source_group(TREE ...) call (line ~623) behind `if (NOT DOS)`:
+it requires every ENGINE_SOURCES file to live under vendor/ags, which the
+two new shared/audio sources (a different top-level directory) do not --
+confirmed by a real CMake configure error before this guard was added;
+this grouping is never consulted by this port's own CLI Makefile build.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/CMakeLists.txt                    | 26 ++++++-
+ Engine/platform/dos/dos_midi_backend.cpp | 90 ++++++++++++++++++++++++
+ Engine/platform/dos/dos_midi_backend.h   | 85 ++++++++++++++++++++++
+ 3 files changed, 200 insertions(+), 1 deletion(-)
+ create mode 100644 Engine/platform/dos/dos_midi_backend.cpp
+ create mode 100644 Engine/platform/dos/dos_midi_backend.h
+
+diff --git a/Engine/CMakeLists.txt b/Engine/CMakeLists.txt
+index ce9484c62..4437494cd 100644
+--- a/Engine/CMakeLists.txt
++++ b/Engine/CMakeLists.txt
+@@ -473,6 +473,19 @@ target_sources(engine
+     platform/dos/dos_audio_decode.h
+     platform/dos/dos_audio_mixer.cpp
+     platform/dos/dos_audio_mixer.h
++    platform/dos/dos_midi_backend.cpp
++    platform/dos/dos_midi_backend.h
++
++    # DOS-PORT (Sound milestone, S4): shared/audio's midi_sched.c/opl3_sink.c
++    # (SDL-DOS-ports hub, plain C, hoisted into .sdl-dos-ports/shared/audio
++    # by S3) are the actual SMF scheduler + OPL3 GM sink -- real compiled
++    # sources, not just headers, so they need a target_sources entry same as
++    # any Engine .cpp file. DOS_PORT_SHARED_AUDIO_DIR is set by this port's
++    # own top-level Makefile (-DDOS_PORT_SHARED_AUDIO_DIR=<repo>/.sdl-dos-ports/
++    # shared/audio) rather than hardcoded here, so this CMakeLists.txt does
++    # not need to know the hub subtree's path relative to Engine/.
++    ${DOS_PORT_SHARED_AUDIO_DIR}/midi_sched.c
++    ${DOS_PORT_SHARED_AUDIO_DIR}/opl3_sink.c
+ 
+     platform/windows/win_ex_handling.cpp
+     platform/windows/win_ex_handling.h
+@@ -607,7 +620,18 @@ endif()
+ 
+ get_target_property(ENGINE_SOURCES engine SOURCES)
+ # Set ROOT to parent directory to include Plugins/
+-source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/.. PREFIX "Source Files" FILES ${ENGINE_SOURCES})
++#
++# DOS-PORT (Sound milestone, S4): skip on DOS. This is IDE-only source-tree
++# grouping (Visual Studio/Xcode folders), never consulted by this port's
++# own CLI Makefile build. source_group(TREE ...) requires every file in
++# ENGINE_SOURCES to live under its ROOT -- true for every existing Engine
++# source (all under vendor/ags), but S4 added two real compiled sources
++# from the hub's .sdl-dos-ports/shared/audio/ subtree
++# (DOS_PORT_SHARED_AUDIO_DIR, see platform/dos/ above), a different top-
++# level directory entirely, which this call would otherwise hard error on.
++if (NOT DOS)
++    source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/.. PREFIX "Source Files" FILES ${ENGINE_SOURCES})
++endif ()
+ 
+ # Standalone exe
+ # -----------------------------------------------------------------------------
+diff --git a/Engine/platform/dos/dos_midi_backend.cpp b/Engine/platform/dos/dos_midi_backend.cpp
+new file mode 100644
+index 000000000..31495921d
+--- /dev/null
++++ b/Engine/platform/dos/dos_midi_backend.cpp
+@@ -0,0 +1,90 @@
++//=============================================================================
++//
++// Adventure Game Studio (AGS)
++//
++// Copyright (C) 1999-2011 Chris Jones and 2011-2026 various contributors
++// The full list of copyright holders can be found in the Copyright.txt
++// file, which is part of this source code distribution.
++//
++// The AGS source code is provided under the Artistic License 2.0.
++// A copy of this license can be found in the file License.txt and at
++// https://opensource.org/license/artistic-2-0/
++//
++//=============================================================================
++#include "platform/dos/dos_midi_backend.h"
++#include <cstdio>
++#include <SDL3/SDL.h>
++#include "debug/out.h"
++
++using namespace AGS::Common;
++
++namespace
++{
++
++DosMidiBackendKind g_last_kind = DOS_MIDI_BACKEND_NONE;
++uint64_t g_events_dispatched = 0;
++
++const char *kind_name(DosMidiBackendKind k)
++{
++    switch (k)
++    {
++    case DOS_MIDI_BACKEND_OPL3: return "opl3";
++    default:                    return "none";
++    }
++}
++
++} // namespace
++
++opl3_sink *dos_midi_backend_open(DosMidiBackendKind *out_kind)
++{
++    const char *hint = SDL_GetHint("SDL_HINT_DOS_AUDIO_BACKEND");
++    if (!hint || !hint[0])
++        hint = "auto";
++
++    DosMidiBackendKind kind = DOS_MIDI_BACKEND_NONE;
++    opl3_sink *sink = nullptr;
++
++    if (SDL_strcasecmp(hint, "none") == 0)
++    {
++        // Explicit opt-out -- do not even probe for a chip.
++    }
++    else if (SDL_strcasecmp(hint, "opl3") == 0 || SDL_strcasecmp(hint, "auto") == 0)
++    {
++        sink = opl3_sink_open();
++        if (sink)
++        {
++            kind = DOS_MIDI_BACKEND_OPL3;
++            Debug::Printf(kDbgMsg_Info, "DosMidiBackend: OPL3/OPL2 chip detected and initialized");
++        }
++        else
++        {
++            Debug::Printf(kDbgMsg_Info,
++                "DosMidiBackend: SDL_HINT_DOS_AUDIO_BACKEND=%s, no OPL3/OPL2 chip detected", hint);
++        }
++    }
++    else
++    {
++        // "wb" / "gus" / "adlib": real semantics, but no such sink is
++        // hoisted into shared/ yet (S5). Fail closed rather than silently
++        // falling back to OPL3, which the hint did not ask for.
++        Debug::Printf(kDbgMsg_Info,
++            "DosMidiBackend: SDL_HINT_DOS_AUDIO_BACKEND=%s requested, no such backend hoisted yet (S5) -- MIDI disabled this session",
++            hint);
++    }
++
++    g_last_kind = kind;
++    if (out_kind)
++        *out_kind = kind;
++    return sink;
++}
++
++void dos_midi_backend_add_dispatched(uint64_t delta)
++{
++    g_events_dispatched += delta;
++}
++
++void dos_midi_backend_status_fragment(char *buf, size_t bufsize)
++{
++    std::snprintf(buf, bufsize, "midi=%s,events=%llu",
++        kind_name(g_last_kind), (unsigned long long)g_events_dispatched);
++}
+diff --git a/Engine/platform/dos/dos_midi_backend.h b/Engine/platform/dos/dos_midi_backend.h
+new file mode 100644
+index 000000000..8ec7687fe
+--- /dev/null
++++ b/Engine/platform/dos/dos_midi_backend.h
+@@ -0,0 +1,85 @@
++//=============================================================================
++//
++// Adventure Game Studio (AGS)
++//
++// Copyright (C) 1999-2011 Chris Jones and 2011-2026 various contributors
++// The full list of copyright holders can be found in the Copyright.txt
++// file, which is part of this source code distribution.
++//
++// The AGS source code is provided under the Artistic License 2.0.
++// A copy of this license can be found in the file License.txt and at
++// https://opensource.org/license/artistic-2-0/
++//
++//=============================================================================
++//
++// DOS-PORT (Sound milestone, S4): backend-selection policy + lifecycle for
++// the shared OPL3 GM sink (.sdl-dos-ports/shared/audio/opl3_sink.{c,h},
++// hoisted from doskutsu by S3) and cumulative status bookkeeping for
++// RUNMANIFEST's audio_vital_status "midi=" field.
++//
++// Reads "SDL_HINT_DOS_AUDIO_BACKEND" (auto/opl3/wb/adlib/gus/none), reusing
++// doskutsu's own hint semantics (PLAN.md's Sound milestone Architecture
++// section) as a plain string passed to SDL_GetHint() -- same convention
++// SDL_dosaudio_sb.c's own SDL_HINT_DOS_SILENCE_DETECT already uses (there
++// is no SDL-core #define for either; both are engine/port-side policy
++// knobs SDL itself never branches on). Only "opl3" (and "auto", which
++// currently resolves the same way) can succeed today -- WaveBlaster/AdLib/
++// GUS sinks are S5, not yet hoisted into shared/. Selecting one of those
++// explicitly with no such sink available fails CLOSED (silent, no MIDI
++// output) rather than silently substituting a different backend the game
++// didn't ask for.
++//
++//=============================================================================
++#ifndef __AGS_EE_PLATFORM_DOS__DOS_MIDI_BACKEND_H
++#define __AGS_EE_PLATFORM_DOS__DOS_MIDI_BACKEND_H
++#include <cstddef>
++#include <cstdint>
++
++// midi_sched.h / opl3_sink.h (shared/audio) are plain C with no extern "C"
++// guard of their own (confirmed empty on both this session) -- wrap the
++// includes here on the C++ consumer side rather than editing the shared
++// headers, which is a hub-side change with its own review, not a dosags
++// patch. audioplayer.cpp/.h (the only other DOS-PORT file needing the
++// shared MIDI API) includes this header rather than either shared header
++// directly, so this wrapper only has to exist in one place.
++extern "C" {
++#include "midi_sched.h"
++#include "opl3_sink.h"
++}
++
++enum DosMidiBackendKind
++{
++    DOS_MIDI_BACKEND_NONE = 0,
++    DOS_MIDI_BACKEND_OPL3
++};
++
++// Resolves SDL_HINT_DOS_AUDIO_BACKEND and attempts to open the matching
++// sink. Returns NULL (with *out_kind == DOS_MIDI_BACKEND_NONE) if the hint
++// selects a backend not yet hoisted (wb/adlib/gus), if "none" is set, or if
++// OPL3 detection itself fails (no chip present) -- every one of those is a
++// legitimate "no MIDI this session" outcome, not an error. Records the
++// resolved kind for dos_midi_backend_status_fragment() regardless of
++// success, so a "wanted wb, none available" session is distinguishable from
++// "wanted opl3, chip missing" once S5 gives them different failure kinds --
++// both currently collapse to midi=none, but this keeps the seam ready
++// without revisiting this function's callers.
++opl3_sink *dos_midi_backend_open(DosMidiBackendKind *out_kind);
++
++// Adds `delta` newly-dispatched MIDI events to the session-cumulative count
++// used by dos_midi_backend_status_fragment()'s "events=" field. Callers
++// pass the delta since their own last poll (e.g. midi_sched_dispatched()
++// this tick minus its own last-seen value), never the scheduler's raw
++// running total, so this stays additive across however many MIDI clips
++// play (sequentially -- see audioplayer.cpp) in one session.
++void dos_midi_backend_add_dispatched(uint64_t delta);
++
++// Builds "midi=<backend>,events=<n>" (e.g. "midi=opl3,events=42") into buf.
++// Reports the LAST backend kind dos_midi_backend_open() resolved this
++// session -- persists after that sink is closed (e.g. by Stop() or the
++// owning clip's own destructor), so a RUNMANIFEST read at quit time, after
++// every clip has already been torn down, still names what was actually
++// used. Reads "midi=none,events=0" if dos_midi_backend_open() was never
++// called, or never resolved to a real backend, this session.
++void dos_midi_backend_status_fragment(char *buf, size_t bufsize);
++
++#endif // __AGS_EE_PLATFORM_DOS__DOS_MIDI_BACKEND_H
+-- 
+2.47.3
+

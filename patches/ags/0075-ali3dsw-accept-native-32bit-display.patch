@@ -1,0 +1,147 @@
+From 31cc8fca86356566aa52a7e7fb4b66beeb6eb2a4 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 15 Sep 2026 13:55:22 -0700
+Subject: [PATCH] DOS-PORT: patch 0075 -- ali3dsw: accept native 32-bit display
+ mode
+
+WHY: PLAN.md's "32-bit display path -- design comparison" section
+(2026-09-15) found the ONLY thing actually blocking a 32-bit AGS game on
+this driver is IsModeSupported()'s hardcoded 8/16 check (and
+CreateVirtualScreen()'s matching vscreen_fmt ternary) -- everything
+downstream (sprite/DDB creation, the depth-conversion pipeline, per-pixel
+alpha blending) is already fully 32-bit-capable and unconditional in
+stock upstream AGS, and the shared SDL3-DOS backend's VESA/LFB mode
+enumeration and framebuffer flush path (SDL_dosmodes.c/
+SDL_dosframebuffer.c) already maps VBE bpp==32 to SDL_PIXELFORMAT_XRGB8888
+and derives all its byte math from SDL_BYTESPERPIXEL() generically, with
+no 8/16-specific branch. Operator decision, same section: Option 1, a
+real 32-bit VESA/LFB present path, over Option 2 (converting 32-bit
+assets to 16-bit at load) -- Option 1 preserves per-pixel alpha art
+exactly as authored and costs no new AGS-side conversion machinery,
+trading that for a real-hardware byte-count question (2x bytes/frame at
+320x200) this patch alone does not answer.
+
+WHAT: IsModeSupported() adds 32 as a third accepted ColorDepth.
+CreateVirtualScreen()'s vscreen_fmt selection gains a third branch:
+32-bit wraps the virtual screen as SDL_PIXELFORMAT_XRGB8888, not
+ARGB8888 -- AGS's own 32-bit Bitmap format is BGRA-ordered with the
+alpha byte treated as opaque/masked at the presentation surface
+(Common/gfx/bitmap.cpp's makeacol32/MASK_COLOR_32 convention, matching
+this file's own _trans_alpha_blender32), so per-pixel alpha is already
+fully consumed earlier by the sprite blending pipeline onto the virtual
+screen itself -- nothing is lost by ignoring alpha at this last wrap
+step. Present()'s existing SDL_BlitSurfaceScaled() call needs no change:
+it already converts _vscreenSurface's format to the window surface's
+format generically, for any depth pairing. GetDisplayDepthForNativeDepth()
+and ali3dsw.h's file comment updated to describe the 8/16/32 profile
+instead of 8/16.
+
+NOT done here, and NOT this patch's job: validating the shared SDL3-DOS
+backend's 32bpp VESA path end-to-end (mode-set, bank-switch math, LFB
+nearptr writes) -- that has never actually run at this depth on DOSBox-X
+or real hardware, "reads as generic" is not "confirmed correct at a
+depth nothing has ever asked for" (S5 GUS's own lesson). See
+tests/probes/window-surface-smoke/ for that validation, done separately
+via a standalone SDL3 probe rather than a full AGS game.
+---
+ Engine/gfx/ali3dsw.cpp | 35 ++++++++++++++++++++++++-----------
+ Engine/gfx/ali3dsw.h   | 13 ++++++++-----
+ 2 files changed, 32 insertions(+), 16 deletions(-)
+
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index 48ebe3e14..1310a1f5b 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -57,12 +57,13 @@ bool SDLRendererGraphicsDriver::IsModeSupported(const DisplayMode &mode)
+     return false;
+   }
+   // DOS-PORT: v0.1 profile supports 8-bit (INDEX8 window surface, palette
+-  // synced from Allegro's) and 16-bit (RGB565) games only -- 32-bit is out
+-  // of scope (see PLAN.md's review-decision section). Presenting directly
++  // synced from Allegro's), 16-bit (RGB565), and -- per PLAN.md's "32-bit
++  // display path -- design comparison" section (operator decision,
++  // 2026-09-15: Option 1) -- 32-bit (XRGB8888) games. Presenting directly
+   // at the game's own native depth is the whole point of this driver on
+   // DOS (see ali3dsw.h's file comment), so there is no other depth to fall
+   // back to the way the old 32-bit-only SDL_Renderer path could.
+-  if (mode.ColorDepth != 8 && mode.ColorDepth != 16) {
++  if (mode.ColorDepth != 8 && mode.ColorDepth != 16 && mode.ColorDepth != 32) {
+     SDL_SetError("Display colour depth not supported: %d", mode.ColorDepth);
+     return false;
+   }
+@@ -74,9 +75,9 @@ int SDLRendererGraphicsDriver::GetDisplayDepthForNativeDepth(int native_color_de
+     // DOS-PORT: present at the game's own native depth unchanged, instead
+     // of the old hard-coded 32 (which required converting every frame
+     // through an ARGB8888 texture). IsModeSupported() is what actually
+-    // enforces the v0.1 8/16-bit profile; a native depth outside that
+-    // range (a 32-bit game, out of v0.1 scope) is rejected there, the same
+-    // already-handled error path as any other unsupported mode.
++    // enforces the v0.1 8/16/32-bit profile; a native depth outside that
++    // range is rejected there, the same already-handled error path as any
++    // other unsupported mode.
+     return native_color_depth;
+ }
+ 
+@@ -200,10 +201,11 @@ void SDLRendererGraphicsDriver::CreateVirtualScreen()
+ 
+   // DOS-PORT: wrap the virtual screen's own pixel buffer directly as an
+   // SDL_Surface, since GetDisplayDepthForNativeDepth() now returns the
+-  // game's native depth unchanged (8 or 16, enforced by IsModeSupported())
+-  // -- there is no depth-conversion step between the virtual screen and
+-  // the display any more, so no intermediate streaming-texture buffer is
+-  // needed. _srcColorDepth is guaranteed 8 or 16 here (same enforcement).
++  // game's native depth unchanged (8, 16, or 32, enforced by
++  // IsModeSupported()) -- there is no depth-conversion step between the
++  // virtual screen and the display any more, so no intermediate
++  // streaming-texture buffer is needed. _srcColorDepth is guaranteed 8,
++  // 16, or 32 here (same enforcement).
+   // 16-bit uses RGB565 unconditionally, matching engine_setup_color_conversions()'s
+   // own unconditional _rgb_r/g/b_shift_16 = 11/5/0 (Engine/main/engine_setup.cpp)
+   // -- Allegro's 16-bit bitmaps are always laid out this way in this engine,
+@@ -211,7 +213,18 @@ void SDLRendererGraphicsDriver::CreateVirtualScreen()
+   // window surface's own format differs (e.g. a real card without exact 565,
+   // still open per PATCH-SEQUENCE.md's "16-bit surface format on real cards"),
+   // SDL_BlitSurfaceScaled() in Present() converts formats generically.
+-  const SDL_PixelFormat vscreen_fmt = (_srcColorDepth == 8) ? SDL_PIXELFORMAT_INDEX8 : SDL_PIXELFORMAT_RGB565;
++  // 32-bit uses XRGB8888, not ARGB8888: AGS's own 32-bit Bitmap format is
++  // BGRA-ordered with the alpha byte treated as opaque/masked at the
++  // presentation surface (Common/gfx/bitmap.cpp's makeacol32/MASK_COLOR_32
++  // convention, matching what this file's own _trans_alpha_blender32
++  // already assumes) -- per-pixel alpha is consumed earlier, by the sprite
++  // blending pipeline (Engine/gfx/gfx_util.cpp) onto the virtual screen
++  // itself, not by this present-time wrap. See PLAN.md's "32-bit display
++  // path -- design comparison" section (operator decision, Option 1).
++  const SDL_PixelFormat vscreen_fmt =
++      (_srcColorDepth == 8) ? SDL_PIXELFORMAT_INDEX8 :
++      (_srcColorDepth == 16) ? SDL_PIXELFORMAT_RGB565 :
++      SDL_PIXELFORMAT_XRGB8888;
+   _vscreenSurface = SDL_CreateSurfaceFrom(vscreen_w, vscreen_h, vscreen_fmt,
+       virtualScreen->GetDataForWriting(), virtualScreen->GetPitch());
+   if (!_vscreenSurface)
+diff --git a/Engine/gfx/ali3dsw.h b/Engine/gfx/ali3dsw.h
+index 556b275dc..3fef403d9 100644
+--- a/Engine/gfx/ali3dsw.h
++++ b/Engine/gfx/ali3dsw.h
+@@ -22,11 +22,14 @@
+ // GetDisplayDepthForNativeDepth()), which is both unnecessarily expensive
+ // (three full-frame passes at 4 bytes/pixel for an 8-bit game) and not a
+ // universally available VESA mode on 486-era cards. The DOS window-surface
+-// driver presents at the game's own native depth (8 or 16 bits) instead,
+-// with no separate texture/depth-conversion step: the virtual screen's own
+-// pixel buffer is wrapped directly as an SDL_Surface and blitted onto the
+-// window surface. See PATCH-SEQUENCE.md's patch 0029 row and PLAN.md's
+-// review-decision section for the full rationale.
++// driver presents at the game's own native depth (8, 16, or 32 bits)
++// instead, with no separate texture/depth-conversion step: the virtual
++// screen's own pixel buffer is wrapped directly as an SDL_Surface and
++// blitted onto the window surface. See PATCH-SEQUENCE.md's patch 0029 row
++// and PLAN.md's review-decision section for the 8/16-bit rationale, and
++// PLAN.md's "32-bit display path -- design comparison" section (operator
++// decision, Option 1) for why native 32-bit was added on top rather than
++// converting 32-bit assets down to 16-bit at load.
+ //
+ //=============================================================================
+ #ifndef __AGS_EE_GFX__ALI3DSW_H
+-- 
+2.47.3
+

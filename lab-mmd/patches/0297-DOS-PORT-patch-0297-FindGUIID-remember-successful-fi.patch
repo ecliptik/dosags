@@ -1,0 +1,148 @@
+From e69b99c66170e0395d52e106427429f4f9179f84 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 06:54:03 -0700
+Subject: [PATCH] DOS-PORT: patch 0297 -- FindGUIID: remember successful finds
+ until the GUI list is replaced
+
+WHY: old verb-template scripts look GUIs up by name every tick. Maniac Mansion Deluxe's
+repeatedly_execute calls FindGUIID 23 times a tick, and each call scans every GUI name with a
+case-insensitive compare to return an answer that cannot change while the game runs
+(LAB-MMD.md 12). Measured at fixed 40000 cycles on MMD's character select: the script event went
+from 9.474 to 9.377 ms/tick (-0.097; the pre-registered band was -0.06 to -0.143). AGS Quest makes
+no calls and does not change. The 486 prediction is -0.30 to -0.65 ms/tick. Its falsifying cell is
+HW-MMD-5, and the per-call cost behind it is an upper bound because of an L1-cache confound
+(LAB-MMD.md 13.2).
+
+WHAT: a 16-entry direct-mapped cache in front of the original scan, now FindGUIIDScan. An entry is
+keyed by the query pointer and confirmed against a copy of the query text, so a reused pointer
+with different text misses and scans. Only successful finds are remembered, so a miss still quits
+exactly as before. Queries of 32 bytes or more are not cached. FindGUIIDCacheReset() runs where the
+GUI list is replaced: in unload_game after guis.clear(), and in InitGameState after
+guis = std::move(ents.Guis).
+
+Exact because GUI names are set only while game data loads. GUI::ReadGUI's renames act on the
+loaded list before InitGameState moves it in. No script API renames a GUI.
+GUIMain::ReadFromSavegame reads no name, and a restore asserts that the GUI count is unchanged.
+Gated to __DJGPP__: the scan is only worth avoiding on a CPU where it shows up per tick.
+
+Equivalence: state digests every 25 ticks, script events, AutoPilot log and PH*.BMP equal to the
+baseline on MMD, AGS Quest and 5 Days (seeded), with baseline-twice and perturbation controls. A
+self-test compares every cached answer with the uncached scan, including answers held across a
+save and restore: 0 mismatches, resident entries all hit after the restore. The screen gate is
+pixel-equal at three freeze ticks per fixture, and its control has power (LAB-MMD.md 12.1-12.3).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/ac/game.cpp        |  3 +++
+ Engine/ac/global_gui.cpp  | 34 ++++++++++++++++++++++++++++++++++
+ Engine/ac/global_gui.h    |  3 +++
+ Engine/game/game_init.cpp |  4 ++++
+ 4 files changed, 44 insertions(+)
+
+diff --git a/Engine/ac/game.cpp b/Engine/ac/game.cpp
+index 61febe5f8..824a04ad2 100644
+--- a/Engine/ac/game.cpp
++++ b/Engine/ac/game.cpp
+@@ -602,6 +602,9 @@ void unload_game()
+ 
+     guis.clear();
+     scrGui.clear();
++#ifdef __DJGPP__
++    FindGUIIDCacheReset(); // DOS-PORT patch 0297: the remembered FindGUIID answers named these GUIs
++#endif
+ 
+     get_overlays().Clear();
+ 
+diff --git a/Engine/ac/global_gui.cpp b/Engine/ac/global_gui.cpp
+index 2b4a404f4..4983ac469 100644
+--- a/Engine/ac/global_gui.cpp
++++ b/Engine/ac/global_gui.cpp
+@@ -12,6 +12,8 @@
+ //
+ //=============================================================================
+ #include <vector>
++#include <stdint.h> // patch 0297
++#include <string.h>
+ #include "ac/common.h"
+ #include "ac/display.h"
+ #include "ac/draw.h"
+@@ -42,7 +44,39 @@ int IsGUIOn (int guinum) {
+ 
+ // This is an internal script function, and is undocumented.
+ // It is used by the editor's automatic macro generation.
++#ifdef __DJGPP__
++// DOS-PORT patch 0297: remember what FindGUIID answered. Old verb-template scripts call it by name
++// dozens of times a tick (Maniac Mansion Deluxe: 23/tick, each re-scanning GUI names and falling into
++// a case-insensitive compare). The answer is a pure function of the query and the GUI names, and GUI
++// names are set only when game data loads (GUIMain::ReadFromFile; no script API renames a GUI and a
++// save restore does not touch them), so a remembered answer is exact until the GUI list is replaced --
++// FindGUIIDCacheReset() is called where that happens (game unload, game load). An entry is keyed by the
++// query pointer and checked against a copy of the query TEXT, so a reused pointer with different text
++// misses and scans. Only successful finds are remembered: a miss still quits exactly as before.
++struct FindGUIIDCacheEntry { const char *key; char text[32]; int result; };
++static FindGUIIDCacheEntry findguiid_cache[16];
++void FindGUIIDCacheReset()
++{
++    for (auto &e : findguiid_cache) { e.key = nullptr; e.text[0] = 0; e.result = -1; }
++}
++static int FindGUIIDScan(const char* GUIName);
++int FindGUIID (const char* GUIName) {
++    FindGUIIDCacheEntry &e = findguiid_cache[((unsigned)(uintptr_t)GUIName >> 2) & 15];
++    if (GUIName && e.key == GUIName && strcmp(e.text, GUIName) == 0)
++        return e.result;
++    const int found = FindGUIIDScan(GUIName);
++    if (found >= 0 && GUIName && strlen(GUIName) < sizeof(e.text))
++    {
++        e.key = GUIName;
++        strcpy(e.text, GUIName);
++        e.result = found;
++    }
++    return found;
++}
++static int FindGUIIDScan(const char* GUIName) {
++#else
+ int FindGUIID (const char* GUIName) {
++#endif
+     for (int ii = 0; ii < game.numgui; ii++) {
+         if (guis[ii].GetName().IsEmpty())
+             continue;
+diff --git a/Engine/ac/global_gui.h b/Engine/ac/global_gui.h
+index 27ebbf1a8..5844a8bd0 100644
+--- a/Engine/ac/global_gui.h
++++ b/Engine/ac/global_gui.h
+@@ -24,6 +24,9 @@ int  IsGUIOn (int guinum);
+ // It is used by the editor's automatic macro generation.
+ // TODO: find out how relevant this comment is?
+ int  FindGUIID (const char* GUIName);
++#ifdef __DJGPP__
++void FindGUIIDCacheReset(); // DOS-PORT patch 0297: call wherever the GUI list is replaced
++#endif
+ // Sets GUI visible property on
+ void InterfaceOn(int ifn);
+ // Sets GUI visible property off
+diff --git a/Engine/game/game_init.cpp b/Engine/game/game_init.cpp
+index 25387a908..ce1c8ea34 100644
+--- a/Engine/game/game_init.cpp
++++ b/Engine/game/game_init.cpp
+@@ -22,6 +22,7 @@
+ #include "ac/gamesetupstruct.h"
+ #include "ac/gamestate.h"
+ #include "ac/gui.h"
++#include "ac/global_gui.h" // patch 0297
+ #include "ac/lipsync.h"
+ #include "ac/movelist.h"
+ #include "ac/parser.h"
+@@ -471,6 +472,9 @@ HGameInitError InitGameState(const LoadedGameEntities &ents, GameDataVersion dat
+     charextra.resize(game.numcharacters);
+     mls.resize(game.numcharacters + MAX_ROOM_OBJECTS + 1);
+     guis = std::move(ents.Guis);
++#ifdef __DJGPP__
++    FindGUIIDCacheReset(); // DOS-PORT patch 0297: a new GUI list; nothing remembered about the old one holds
++#endif
+     guibuts = std::move(ents.GuiControls.Buttons);
+     guiinv = std::move(ents.GuiControls.InvWindows);
+     guilabels = std::move(ents.GuiControls.Labels);
+-- 
+2.47.3
+

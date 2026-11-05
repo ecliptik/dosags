@@ -1,0 +1,147 @@
+# 7 Days a Skeptic -- porting manifest, per PLAN.md's "Game porting
+# framework" section (`record` stage's own intent: id, verified source,
+# license, pinned hash, expected DataVersion/res/depth, audio policy,
+# driving recipe -- game data itself never enters git, only this file
+# plus results/ records). Produced 2026-09-16, Compatibility sweep's
+# replacement for King's Quest III (Infamous Adventures) after that
+# candidate turned out blocked on an itch.io session/JS-gated download
+# with no plain mirror -- see PLAN.md's "Compatibility sweep" section.
+# Sourced/inspected/converted/repacked/laid out through
+# tools/port-game/'s pipeline, same shape as tests/games/5days/ (the
+# same developer, same era, same Chzo Mythos series).
+
+id: 7days
+title: "7 Days a Skeptic"
+source: see PIN (this directory) -- sha256 + download URL, never the game
+        archive itself
+
+# From tools/port-game/port_game.py inspect (see tests/games/7days/
+# inspect-report.json, committed alongside this file):
+data_version: 26
+compiled_with_editor: "2.61"
+loadable: true              # DataVersion 26 >= kGameVersion_250 (18)
+legacy_audio_system: true   # DataVersion 26 < kGameVersion_320 (41) --
+                            # ScanOldStyleAudio's load-time compatibility
+                            # shim supplies audio clips from music*.*/
+                            # sound*.* naming, same shape as Trilby's
+                            # Notes/5 Days a Stranger (all three
+                            # Yahtzee/Chzo-Mythos-era games)
+
+# Resolution/color depth: taken from the AGS games database listing only
+# (play/game/430) -- "320x200, 16-Bit Colour" per PLAN.md's own
+# "Golden-reference games" survey table. Same single-sourced caveat as
+# 5 Days a Stranger's own manifest: no shipped acsetup.cfg in this
+# archive to independently cross-check against (winsetup.exe generates
+# one on first run; not extracted/read here).
+resolution: "320x200"
+color_depth: 16
+resolution_source: "AGS games database listing (play/game/430) states
+  '320x200, 16-Bit Colour', matching PLAN.md's own survey table.
+  Single-sourced -- no shipped acsetup.cfg available in this archive to
+  cross-check against (see PIN)."
+
+audio:
+  clip_count: 19            # 3 music*.mid + 16 sound*.wav (see
+                             # inspect-report.json's own audio_clips list)
+  formats: [midi, wav]
+  needs_host_transcode: false  # convert.py: all 55 assets are
+                                # "passthrough", none "transcoded"/
+                                # "skipped" (see convert-report.json)
+  has_audio_vox: false
+  has_speech_vox: false
+fonts:
+  - {file: agsfnt0.wfn, kind: native bitmap (WFNFont)}
+  - {file: agsfnt1.wfn, kind: native bitmap (WFNFont)}
+  - {file: agsfnt2.wfn, kind: native bitmap (WFNFont)}
+  - {file: agsfnt3.wfn, kind: native bitmap (WFNFont)}
+  # no TTF -- does not exercise the alfont/FreeType text path
+
+clib:
+  original_lib_version: 11   # MFLUtil::kMFLVersion_MultiV11; ReadV10's
+                              # code path handles versions 10-19
+                              # (clib.py comment, multifilelib.cpp:270-301)
+  repacked_lib_version: 30   # tools/port-game/port_game.py repack always
+                              # emits V30 (the only version multifilelib.cpp
+                              # itself can WRITE); the pinned engine's
+                              # ReadHeader() accepts any supported version
+                              # on load, so this is not a compatibility
+                              # concern for this port's own build.
+  asset_count: 55
+  repack_verified: "byte-for-byte identical to the original CLIB, asset
+    by asset (all 55), confirmed by an independent read-back + comparison
+    script (clib.py's own read_header() against both files) before this
+    manifest was written -- not assumed from the tool running without
+    error. No V21 (encrypted) CLIB was encountered -- this game's
+    lib_version 11 is within ReadV10's already-implemented range, so
+    clib.py's known V21 gap (MFLError, 'not implemented') was not
+    exercised by this game. No kMGFErr_FormatVersionTooNew either --
+    DataVersion 26 loaded cleanly."
+
+driving_recipe: "No AutoPilot module (binary-only game, no script source
+  available) -- per PLAN.md's `validate` stage design, driving is limited
+  to DOSAGS_TAS_AUTO_EXIT_TICK (patches/ags/0044), independent of any
+  script. Same recipe shape as Trilby's Notes/5 Days a Stranger:
+  auto-exit tick 200 (5s of 40Hz logic time) gives the engine time to
+  load, transition into the first room, and start music before quitting
+  cleanly."
+
+sound_toggle: "acsetup.cfg's own [sound] enabled=0/1 (Engine/main/
+  config.cpp:416, CfgReadBoolInt) -- same already-shipping, zero-patch
+  engine feature Trilby's Notes'/5 Days a Stranger's manifests document.
+  sound=on additionally needs SDL_HINT_DOS_AUDIO_BACKEND=opl3 (RUN.BAT
+  SET) to select the MIDI backend; sound=off needs no MIDI backend hint
+  at all. tools/port-game/port_game.py layout emitted both
+  ACSETUP-ON.CFG/ACSETUP-OFF.CFG variants."
+
+# Structured driving recipe for tools/port-game/port_game.py validate,
+# same shape as tests/games/5days/manifest.yaml's own.
+validate:
+  pkg: 7days
+  auto_exit_tick: 200   # 5s of 40Hz logic time -- see driving_recipe above
+  timeout_s: 180
+  dosbox_conf: tests/harness/confs/dosbox-x-fast-opl3.conf
+  arms:
+    sound_on:
+      cfg: ACSETUP-ON.CFG
+      env:
+        SDL_HINT_DOS_AUDIO_BACKEND: opl3
+    sound_off:
+      cfg: ACSETUP-OFF.CFG
+      env: {}
+
+# sound_on's expectation is NOT "midi=opl3,events=..." like Trilby's
+# Notes/5 Days a Stranger -- verified by reading this game's own actual
+# STDOUT.TXT (results/7DSK_ON.json): the drive window reaches room 0 and
+# logs no PlayMusic call at all before auto-exit fires, and this game's
+# own asset list has no music0.mid (its music clips start at music1.mid,
+# same gap Maniac Mansion Deluxe's manifest already documents for the
+# same reason). `midi=none,events=0` is the CORRECT, reproducible
+# behavior for this specific game's own content within this drive
+# window, not a defect. The PCM side
+# (`pcm=sb@11025m16,voices=8,underruns=0`) still confirms the audio
+# subsystem is genuinely active with sound=on, which is what
+# distinguishes this arm from sound_off's `audio_vital_status: "NA"`.
+expected_runmanifest_dosbox_x:
+  sound_on:
+    audio_vital_status: "pcm=sb@11025m16,voices=8,underruns=0;midi=none,events=0"
+    exit_code: 0
+  sound_off:
+    audio_vital_status: "NA"
+    exit_code: 0
+
+validated:
+  - environment: dosbox-x
+    date: 2026-09-16
+    sound_on: {tag: 7DSK_ON, exit_code: 0, audio_vital_status: "pcm=sb@11025m16,voices=8,underruns=0;midi=none,events=0", fps_p50: 25.71, fps_p95: 27.88, tick_rate: 29.11, frames_skipped: 71, critical_count: 0, warn_count: 0, binary_sha12: c9ee2b121d04}
+    sound_off: {tag: 7DSKOFF, exit_code: 0, audio_vital_status: "NA", fps_p50: 40.00, fps_p95: 40.38, tick_rate: 34.01, frames_skipped: 6, critical_count: 0, warn_count: 0, binary_sha12: c9ee2b121d04}
+    note: "Compatibility sweep's replacement golden reference for King's Quest III (blocked). First manifest-driven DOSBox-X validation, both arms pass. sound_on's expected audio_vital_status corrected to midi=none (this game has no music0.mid asset for room 0's drive window -- same class of finding as mmd's manifest). No V21 CLIB gap hit (lib_version 11, within ReadV10's range)."
+
+compat_sweep:
+  date: 2026-09-16
+  auto_exit_tick: 200
+  boots: {ok: true, exit_code: 0}
+  title: {ok: true, evidence: "STDOUT.TXT: '(room:0) Now in room 0', no crash, exit_code=0"}
+  first_room: {ok: false, failure_reason: "only room 0 was ever loaded during the drive window -- this game's title/start screen waits for player input to advance and none was injected this pass; not a defect, an honest scope limit"}
+  playable: {ok: false, attempted: false, failure_reason: "no input-injection automation exists for binary-only games this pass (no AutoPilot module, no generic DOSBox-X input harness proven yet)"}
+  complete: {ok: false, attempted: false, failure_reason: "not attempted, same reason as playable"}
+  screenshot: not attempted -- see trilbysnotes' own compat_sweep entry for the screenshot-timing methodology finding

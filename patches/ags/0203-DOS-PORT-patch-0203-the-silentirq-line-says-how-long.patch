@@ -1,0 +1,68 @@
+From 11aeef148ad77beacdce996671f592e27b96681d Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 22 Sep 2026 19:54:18 -0700
+Subject: [PATCH] DOS-PORT: patch 0203 -- the silentirq line says how long the
+ room had been loaded
+
+WHY: 0202's line gives the loop tick and room of each silent-IRQ interval, so slice 2 can hold SB
+dropouts to "silent_irqs = 0 outside room transitions". But the engine's "Now in room N" log line
+carries no tick, and the room-load stall is not always logged as a stallwhat line, so which
+intervals ARE room transitions could only be guessed from STDOUT line order. One field settles it.
+
+WHAT: the mixer notes the loop tick at which a pump first sees a new displayed_room, and the
+silentirq line gains since_room=<ticks since then>. The pump after a room load is the first to see
+the new room, so the interval that spans the load prints since_room=0; a gap in steady play prints
+the ticks it is into the room. The room check runs before the interval is charged, so the load
+interval is attributed to the room it lands in.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/platform/dos/dos_audio_mixer.cpp | 17 +++++++++++++++--
+ 1 file changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index dfffa1e04..d11af2cfb 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -136,6 +136,10 @@ uint32_t g_pcm_irq_base = 0;
+ uint32_t g_overwrite_base = 0;
+ int g_ring_max_ms = 0;
+ 
++// DOS-PORT (patch 0203): room-change tracking for the silentirq line.
++int g_room_seen = -1000;
++uint32_t g_room_since = 0;
++
+ // A snapshot of the status string taken at dos_audio_mixer_shutdown(),
+ // so RUNMANIFEST's audio_vital_status (built by quit.cpp's own manifest
+ // block, well after shutdown_sound() -> sys_audio_shutdown() has already
+@@ -468,6 +472,14 @@ void dos_audio_mixer_pump()
+ 
+     if (g_stream)
+     {
++        // DOS-PORT (patch 0203): the tick at which this pump first saw the
++        // current room. The pump after a room load sees the new room, so the
++        // interval that spans the load prints since_room=0.
++        if (displayed_room != g_room_seen)
++        {
++            g_room_seen = displayed_room;
++            g_room_since = get_loop_counter();
++        }
+         // DOS-PORT (patch 0199/0200): charge the silent IRQs since the last
+         // pump only if audio was still owed to the device when that interval
+         // began (evaluated at the end of the previous pump, below).
+@@ -481,8 +493,9 @@ void dos_audio_mixer_pump()
+             // closed the interval (the first tick after any stall that caused
+             // it), the room at that point, and how many silent IRQs.
+             if (d > 0)
+-                Debug::Printf(kDbgMsg_Info, "DOS-PORT silentirq tick=%u room=%d irqs=%u",
+-                    (unsigned)get_loop_counter(), displayed_room, (unsigned)d);
++                Debug::Printf(kDbgMsg_Info, "DOS-PORT silentirq tick=%u room=%d irqs=%u since_room=%u",
++                    (unsigned)get_loop_counter(), displayed_room, (unsigned)d,
++                    (unsigned)(get_loop_counter() - g_room_since));
+         }
+         g_silent_snap = silent_now;
+ 
+-- 
+2.47.3
+

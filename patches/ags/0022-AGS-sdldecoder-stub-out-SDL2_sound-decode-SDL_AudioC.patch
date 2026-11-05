@@ -1,0 +1,412 @@
+From 927d07d0f28e2624708c571a4ad8da5d9463b049 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 15:14:35 -0700
+Subject: [PATCH] [AGS] sdldecoder: stub out SDL2_sound decode + SDL_AudioCVT
+ resampling for DOS
+
+SDL2_sound is a real, separate upstream dependency (icculus/SDL_sound,
+pulled via CMake FetchContent, not vendored/pinned like everything
+else in this tree) that patch 0006 already gates out of the DOS link
+entirely. Porting its own SDL2 surface to SDL3, or replacing it with
+something else, is deferred to the Sound milestone -- not required for
+COMPILES, which only needs the engine to compile and link with audio
+stubbed.
+
+Kept SDLDecoder's real public interface (constructors, IsValid/GetFormat/
+GetChannels/GetFreq/EOS/GetPositionMs/GetDurationMs/Open/Close/Seek/
+GetData) so audio_core.cpp and audioplayer.h/.cpp -- neither touched by
+this patch -- keep compiling against the same shape they always have.
+Open() always fails (matching how a real decoder already reports an
+unsupported/corrupt file; audio_core.cpp's audio_core_slot_init already
+handles that path) and, before returning, closes/releases whatever
+stream or in-memory buffer it was given -- preserving the original
+code's own "the rwops is closed regardless of Open()'s outcome"
+contract (there it happened inside Sound_NewSample; here Open() itself
+does it) so a caller that never explicitly calls Close() still can't
+leak the underlying SDL_IOStream. Removed SoundSampleDeleterFunctor/
+SoundSampleUniquePtr (SDL_Sound-specific, unused now) and the _sample/
+_durationMs/_EOS/_posBytes/_posMs members they backed -- there is no
+decode state left to track.
+
+SDLResampler has no SDL3 equivalent to fall back to: SDL_AudioCVT/
+SDL_BuildAudioCVT/SDL_ConvertAudio do not exist at all in SDL3 (replaced
+by the different SDL_AudioStream API, not adopted here since there is
+no decoded data to ever resample). Stubbed to the same "no conversion
+necessary" shape the original took when SDL_AudioCVT reported nothing
+to do: HasConversion() always false, Convert() always hands back the
+input pointer unchanged. Dropped the Setup(Sound_AudioInfo, Sound_AudioInfo)
+overload entirely -- Sound_AudioInfo is an SDL2_sound type with no
+replacement, and nothing in this file used that overload (only
+openalsource.cpp did, see below).
+
+Verified standalone: sdldecoder.cpp.obj compiles clean, zero errors,
+zero warnings. Also compiled audioplayer.cpp.obj and audio_core.cpp.obj
+directly (both consume SDLDecoder/SoundBufferPtr but are outside this
+patch's scope) to confirm this change doesn't regress them: both now
+get past every sdldecoder.h site cleanly and reach the same
+pre-existing, unrelated openal.h blocker (patch 0024's scope) -- not a
+new error. Full make build-ags re-run: exactly one error remains
+anywhere in the build now (Engine/media/audio/openal.h:18, AL/al.h
+missing) -- this patch closes out the SDL_sound.h blocker completely.
+
+Known follow-on for patch 0024, not fixed here (out of this patch's
+scope, flagging rather than silently leaving it): openalsource.h
+includes this file for SoundBufferPtr/SDLResampler and, independently,
+declares two Sound_AudioInfo-typed members (_inputFmt/_recvFmt) and
+calls the now-removed Sound_AudioInfo-taking Setup() overload. That
+type/call no longer resolves once this patch's #include <SDL_sound.h>
+is gone -- currently masked by openal.h's own missing-header error
+firing first in the same include chain, so make build-ags does not
+show it yet. 0024 will hit it immediately once openal.h itself is
+fixed, and needs to resolve it as part of its own OpenAL stub (it was
+already going to rework openalsource.h/.cpp's audio-format handling
+regardless).
+---
+ Engine/media/audio/sdldecoder.cpp | 134 ++++++------------------------
+ Engine/media/audio/sdldecoder.h   | 106 ++++++++++-------------
+ 2 files changed, 70 insertions(+), 170 deletions(-)
+
+diff --git a/Engine/media/audio/sdldecoder.cpp b/Engine/media/audio/sdldecoder.cpp
+index 173e2173b..6f4bea55a 100644
+--- a/Engine/media/audio/sdldecoder.cpp
++++ b/Engine/media/audio/sdldecoder.cpp
+@@ -19,44 +19,9 @@ namespace AGS
+ namespace Engine
+ {
+ 
+-//-----------------------------------------------------------------------------
+-// SDLResampler
+-//-----------------------------------------------------------------------------
+-bool SDLResampler::Setup(SDL_AudioFormat src_fmt, int src_chans, int src_rate,
+-    SDL_AudioFormat dst_fmt, int dst_chans, int dst_rate)
+-{
+-    SDL_zero(_cvt);
+-    return SDL_BuildAudioCVT(&_cvt, src_fmt, static_cast<uint8_t>(src_chans), src_rate,
+-        dst_fmt, static_cast<uint8_t>(dst_chans), dst_rate) >= 0;
+-}
+-
+-const void *SDLResampler::Convert(const void *data, size_t sz, size_t &out_sz)
+-{
+-    if (_cvt.needed == 0)
+-    { // no conversion necessary, return the input pointer
+-        out_sz = sz;
+-        return data;
+-    }
+-    // Reallocate if necessary and perform the conversion
+-    if (_buf.size() < sz * _cvt.len_mult)
+-    {
+-        size_t len = sz * _cvt.len_mult;
+-        _buf.resize(len);
+-    }
+-    _cvt.buf = _buf.data();
+-    _cvt.len = _cvt.len_cvt = sz;
+-    SDL_memcpy(_cvt.buf, data, sz);
+-    if (SDL_ConvertAudio(&_cvt) < 0)
+-        return nullptr;
+-    out_sz = _cvt.len_cvt;
+-    return _buf.data();
+-}
+-
+ //-----------------------------------------------------------------------------
+ // SDLDecoder
+ //-----------------------------------------------------------------------------
+-const auto SampleDefaultBufferSize = 64 * 1024;
+-
+ SDLDecoder::SDLDecoder(std::shared_ptr<std::vector<uint8_t>> &data,
+     const AGS::Common::String &ext_hint, bool repeat)
+     : _sampleData(data)
+@@ -75,100 +40,49 @@ SDLDecoder::SDLDecoder(std::unique_ptr<Stream> in,
+ 
+ SDLDecoder::SDLDecoder(SDLDecoder &&dec)
+ {
+-    _sampleData = (std::move(dec._sampleData));
+-    _rwops = std::move(dec._rwops);
++    _sampleData = std::move(dec._sampleData);
++    _rwops = dec._rwops;
+     dec._rwops = nullptr;
+     _sampleExt = std::move(dec._sampleExt);
+     _repeat = dec._repeat;
+ }
+ 
+-bool SDLDecoder::Open(float pos_ms)
++SDLDecoder::~SDLDecoder()
+ {
+-    // Prevent from "reopening" twice
+-    assert(!_sample);
+-    if (_sample && pos_ms > 0.f)
+-    {
+-        Seek(pos_ms);
+-        return true;
+-    }
+-
+-    SoundSampleUniquePtr sample{};
+-    if (_rwops)
+-    {
+-        sample = SoundSampleUniquePtr(Sound_NewSample(_rwops,
+-            _sampleExt.GetCStr(), nullptr, SampleDefaultBufferSize));
+-    }
+-    else
+-    {
+-        sample = SoundSampleUniquePtr(Sound_NewSampleFromMem(
+-            _sampleData->data(), _sampleData->size(), _sampleExt.GetCStr(), nullptr, SampleDefaultBufferSize));
+-    }
+-    if (!sample)
+-    {
+-        _rwops = nullptr; // rwops was closed by the Sound_NewSample
+-        _sampleData = nullptr;
+-        return false;
+-    }
++    Close();
++}
+ 
+-    _sample = std::move(sample);
+-    int dur = Sound_GetDuration(_sample.get()); // may return -1 for unknown
+-    _durationMs = dur > 0 ? static_cast<float>(dur) : 0.f;
+-    _posBytes = 0u;
+-    _posMs = 0.f;
+-    if (pos_ms > 0.f) {
+-        Seek(pos_ms);
+-    }
+-    return true;
++bool SDLDecoder::Open(float /*pos_ms*/)
++{
++    // STUB: no decoder backend is available on DOS (SDL2_sound is gated
++    // out of the link entirely, patch 0006). Always fail -- every real
++    // call site already handles a failed-to-open decoder (see
++    // audio_core.cpp's audio_core_slot_init). Still close/release
++    // whatever was handed to us, matching the original code's own
++    // "rwops closed regardless of Open()'s outcome" contract, so a
++    // caller that never calls Close() explicitly can't leak the stream.
++    Close();
++    return false;
+ }
+ 
+ void SDLDecoder::Close()
+ {
+-    _sample.reset();
+-    _rwops = nullptr; // rwops was closed by the Sound_NewSample
++    if (_rwops)
++    {
++        SDL_CloseIO(_rwops);
++        _rwops = nullptr;
++    }
+     _sampleData = nullptr;
+ }
+ 
+-float SDLDecoder::Seek(float pos_ms)
++float SDLDecoder::Seek(float /*pos_ms*/)
+ {
+-    if (!_sample || pos_ms < 0.f)
+-        return _posMs;
+-    if (Sound_Seek(_sample.get(), static_cast<uint32_t>(pos_ms)) == 0)
+-        return _posMs; // old pos on failure (CHECKME?)
+-    _posMs = pos_ms;
+-    _posBytes = SoundHelper::BytesPerMs(_posMs,
+-        _sample->desired.format, _sample->desired.channels, _sample->desired.rate);
+-    return pos_ms; // new pos on success
++    return 0.f;
+ }
+ 
+ SoundBufferPtr SDLDecoder::GetData()
+ {
+-    if (!_sample || _EOS)
+-        return SoundBufferPtr();
+-    float old_pos = _posMs;
+-    size_t sz = 0;
+-    do
+-    {
+-        sz = Sound_Decode(_sample.get());
+-        _posBytes += sz;
+-        _posMs = SoundHelper::MillisecondsFromBytes(_posBytes,
+-            _sample->desired.format, _sample->desired.channels, _sample->desired.rate);
+-        // If we reached end of stream, or read less than the buffer size
+-        // (in which case it may also be decode error), then finish playing
+-        if ((_sample->flags & SOUND_SAMPLEFLAG_EOF) || (sz < _sample->buffer_size))
+-        {
+-            _EOS = true;
+-            if ((_sample->flags & SOUND_SAMPLEFLAG_ERROR) != 0)
+-                return SoundBufferPtr();
+-            // if repeat, then seek to start.
+-            else if (_repeat) {
+-                _EOS = Sound_Rewind(_sample.get()) == 0;
+-                _posBytes = 0u;
+-                _posMs = 0.f;
+-            }
+-        }
+-    } while (!_EOS && (sz == 0));
+-    return SoundBufferPtr(_sample->buffer, sz, old_pos,
+-        SoundHelper::MillisecondsFromBytes(sz, _sample->desired.format, _sample->desired.channels, _sample->desired.rate));
++    return SoundBufferPtr();
+ }
+ 
+ } // namespace Engine
+diff --git a/Engine/media/audio/sdldecoder.h b/Engine/media/audio/sdldecoder.h
+index 0486be71c..6ad9061be 100644
+--- a/Engine/media/audio/sdldecoder.h
++++ b/Engine/media/audio/sdldecoder.h
+@@ -14,12 +14,23 @@
+ //
+ // Sound decoder accompanied by various SDL-based sound utilities.
+ //
++// DOS STUB (patch 0022): SDL2_sound is gated out of this port's link
++// entirely (patch 0006) -- it is a real, separate upstream dependency
++// AGS pulls via CMake FetchContent, not vendored/pinned like everything
++// else in this tree, and porting its own SDL2 surface to SDL3 is
++// deferred to the Sound milestone, not required for COMPILES. SDLDecoder
++// keeps its real public interface (audio_core.cpp/audioplayer.h call
++// against it unchanged) but never actually decodes anything: Open()
++// always fails, matching how a real, working decoder would report an
++// unsupported/corrupt sound file, and every caller already handles that
++// path (see audio_core.cpp's audio_core_slot_init).
++//
+ //=============================================================================
+ #ifndef __AGS_EE_MEDIA__SDLDECODER_H
+ #define __AGS_EE_MEDIA__SDLDECODER_H
+ #include <memory>
+ #include <vector>
+-#include <SDL_sound.h>
++#include <SDL3/SDL.h>
+ #include "util/stream.h"
+ #include "util/string.h"
+ #ifdef AUDIO_CORE_DEBUG
+@@ -34,20 +45,6 @@ namespace Engine
+ using AGS::Common::Stream;
+ using AGS::Common::String;
+ 
+-// RAII wrapper over SDL_Sound sample
+-struct SoundSampleDeleterFunctor
+-{
+-    void operator()(Sound_Sample* p)
+-    {
+-        Sound_FreeSample(p);
+-#ifdef AUDIO_CORE_DEBUG
+-        AGS::Common::Debug::Printf("SoundSampleDeleterFunctor");
+-#endif
+-    }
+-};
+-
+-using SoundSampleUniquePtr = std::unique_ptr<Sound_Sample, SoundSampleDeleterFunctor>;
+-
+ // AudioFrameRecord describes parameters of a single audio chunk
+ struct AudioFrameRecord
+ {
+@@ -144,39 +141,26 @@ private:
+     std::vector<uint8_t> _buf;
+ };
+ 
+-// RAII wrapper over SDL resampling filter;
+-// initialized by passing input and desired sound format;
+-// tells whether conversion is necessary and performs one on command.
++// DOS STUB (patch 0022): SDL3 has no SDL_AudioCVT/SDL_BuildAudioCVT/
++// SDL_ConvertAudio at all (replaced by SDL_AudioStream, a real streaming
++// API this stub does not adopt since there is no decoded data to ever
++// resample). HasConversion() always false, Convert() always hands back
++// the input pointer unchanged -- the same "no conversion necessary" path
++// the original SDL2 implementation took, just unconditionally.
+ struct SDLResampler
+ {
+ public:
+     SDLResampler() = default;
+-    SDLResampler(SDL_AudioFormat src_fmt, int src_chans, int src_rate,
+-        SDL_AudioFormat dst_fmt, int dst_chans, int dst_rate)
++    SDLResampler(SDL_AudioFormat, int, int, SDL_AudioFormat, int, int) {}
++    bool HasConversion() const { return false; }
++    bool Setup(SDL_AudioFormat, int, int, SDL_AudioFormat, int, int) { return true; }
++    const void *Convert(const void *data, size_t sz, size_t &out_sz)
+     {
+-        Setup(src_fmt, src_chans, src_rate, dst_fmt, dst_chans, dst_rate);
++        out_sz = sz;
++        return data;
+     }
+-    // Tells if conversion is necessary
+-    bool HasConversion() const { return _cvt.needed > 0; }
+-    // Setup a new conversion; returns whether setup has succeeded;
+-    // note that if no conversion necessary it still considered a success.
+-    bool Setup(SDL_AudioFormat src_fmt, int src_chans, int src_rate,
+-        SDL_AudioFormat dst_fmt, int dst_chans, int dst_rate);
+-    bool Setup(const Sound_AudioInfo &src, const Sound_AudioInfo &dst)
+-        { return Setup(src.format, src.channels, src.rate, dst.format, dst.channels, dst.rate); }
+-    // Converts given sound data, on success returns a read-only pointer to the
+-    // memory containing resulting data, and fills out_sz with output length value;
+-    // note that if no conversion is required it does not perform any operation
+-    // whatsoever and returns the input pointer.
+-    const void *Convert(const void *data, size_t sz, size_t &out_sz);
+-
+-private:
+-    SDL_AudioCVT _cvt{};
+-    std::vector<uint8_t> _buf;
+ };
+ 
+-// SDLDecoder uses SDL_Sound library to decode audio and retrieve result
+-// in parts of the requested size.
+ class SDLDecoder
+ {
+ public:
+@@ -185,42 +169,44 @@ public:
+     // Initializes decoder with an input stream
+     SDLDecoder(const std::unique_ptr<Stream> in, const String &ext_hint, bool repeat);
+     SDLDecoder(SDLDecoder&& dec);
+-    ~SDLDecoder() = default;
++    ~SDLDecoder();
+ 
+-    // Tells if the decoder is in a valid state, ready to work
+-    bool IsValid() const { return _sample != nullptr; }
+-    // Gets the audio format
+-    SDL_AudioFormat GetFormat() const { return _sample ? _sample->desired.format : 0; }
++    // Tells if the decoder is in a valid state, ready to work -- always
++    // false, there is no working decoder backing this stub
++    bool IsValid() const { return false; }
++    // Gets the audio format -- meaningless, decode never happens
++    SDL_AudioFormat GetFormat() const { return SDL_AUDIO_UNKNOWN; }
+     // Gets the number of channels
+-    int GetChannels() const { return _sample ? _sample->desired.channels : 0; }
++    int GetChannels() const { return 0; }
+     // Gets the audio rate (frequency)
+-    int GetFreq() const { return _sample ? _sample->desired.rate : 0; }
+-    // Tells if the data reading has reached EOS
+-    bool EOS() const { return _EOS; }
++    int GetFreq() const { return 0; }
++    // Tells if the data reading has reached EOS -- always true, nothing
++    // to read
++    bool EOS() const { return true; }
+     // Gets current reading position, in ms
+-    float GetPositionMs() const { return _posMs; }
++    float GetPositionMs() const { return 0.f; }
+     // Gets total duration, in ms
+-    float GetDurationMs() const { return _durationMs; }
++    float GetDurationMs() const { return 0.f; }
+ 
+-    // Try initializing the sound sample, returns the result
++    // Always fails: SDL2_sound is not part of this build (patch 0006).
++    // Closes and releases the input stream/data before returning, the
++    // same contract the real decoder had ("rwops closed regardless of
++    // Open()'s outcome") so a caller that never calls Close() explicitly
++    // still can't leak the stream via a failed Open().
+     bool Open(float pos_ms = 0.f);
+     // Closes decoder, releases any owned resources
+     void Close();
+-    // Seeks to the given read position; returns the new position
++    // Seeks to the given read position; returns the new position -- a
++    // no-op stub always reports position 0
+     float Seek(float pos_ms);
+-    // Returns the next chunk of data; may return empty buffer in EOS or error
++    // Returns the next chunk of data; always empty, nothing is ever decoded
+     SoundBufferPtr GetData();
+ 
+ private:
+-    SDL_RWops *_rwops = nullptr;
++    SDL_IOStream *_rwops = nullptr;
+     std::shared_ptr<std::vector<uint8_t>> _sampleData{};
+     String _sampleExt = "";
+-    SoundSampleUniquePtr _sample = nullptr;
+-    float _durationMs = 0.f;
+     bool _repeat = false;
+-    bool _EOS = false;
+-    size_t _posBytes = 0u;
+-    float _posMs = 0.f;
+ };
+ 
+ 
+-- 
+2.47.3
+

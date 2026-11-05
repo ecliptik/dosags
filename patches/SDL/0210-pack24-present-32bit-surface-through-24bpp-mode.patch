@@ -1,0 +1,333 @@
+From 7aa613faf82349d5c4b0f3b70c1a70253d02ac0f Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 22:20:31 -0700
+Subject: [PATCH 210/211] dos: patch 0210 -- SDL_DOS_PACK24: present a 32-bit
+ surface through a 24-bpp mode, packing 4->3 bytes
+
+Why not just what: on an ATI Mach64 under UniVBE (dosags HW-486-66, probe
+BW32 2026-09-24), CPU writes to the 640x480x32 LFB run at 7.7 MB/s, but
+to the 640x480x24 LFB at 27.2 MB/s, with the same 8:8:8 colour. A 32-bpp
+pixel costs about 0.52 us to put on screen; a 24-bpp one about 0.11 us.
+AGS Quest forced to 32 bpp spends 11.5 ms per present at 32 bpp, and its
+skipped frames are spikes of ~108k pushed px. A port that renders 32-bit
+can keep its surface and show it through the 24-bpp mode.
+
+What, behind SDL_DOS_PACK24=1 (off by default; with it unset the mode
+list and every present are byte-unchanged):
+- Modes: a 24-bpp direct-colour LFB mode whose masks are R16/G8/B0
+  (memory B,G,R -- XRGB8888 without its X byte) is offered to the
+  application as SDL_PIXELFORMAT_XRGB8888. The native 32-bpp mode of the
+  same size is hidden, so a request for 32 bpp lands on it. Any other
+  layout is left alone. The mode dump now logs each mode's masks.
+- Direct-FB push: each dirty row is packed straight into the LFB, three
+  dword stores per four pixels. That drops the X byte and nothing else,
+  so the displayed RGB equals the 32-bit path's. The banked window packs
+  into a row buffer and uses the existing banked copy.
+- Non-direct path: its LFB surface gets the real BGR24 format, so SDL's
+  own blit converts (slower, still correct).
+- RUNMANI-visible lines: `DOS-PORT pack24 engaged mode= ... path=` at
+  first use, `DOS-PORT pack24 active=1 mode= pushed_px=` at exit.
+
+Lab evidence: dosags LAB-S32.md 9 (G2/G2b). The read-back verifier and
+the rect-list hash used there are lab-only and live in patch 0211, not
+here.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ src/video/dos/SDL_dosframebuffer.c | 134 ++++++++++++++++++++++++++++-
+ src/video/dos/SDL_dosmodes.c       |  59 ++++++++++++-
+ 2 files changed, 188 insertions(+), 5 deletions(-)
+
+diff --git a/src/video/dos/SDL_dosframebuffer.c b/src/video/dos/SDL_dosframebuffer.c
+index 275b0ee36..2bfbda6bd 100644
+--- a/src/video/dos/SDL_dosframebuffer.c
++++ b/src/video/dos/SDL_dosframebuffer.c
+@@ -502,6 +502,7 @@ typedef struct DOSFramebufferState
+     int src_pitch;      // == surface->pitch
+     Uint32 fb_size;     // total framebuffer bytes (pitch * h) for full-surface fast path
+     bool pitches_match; // src_pitch == vram_pitch (enables single-copy fast path)
++    bool pack24;        // patch 0210: XRGB8888 surface pushed into a 24-bpp (B,G,R) mode
+ 
+     // DOSKUTSU patch 0077 (S3-2 Stage 1) -- window handle captured at
+     // CreateWindowFramebuffer so the fast-path SDL_DOSVesaDirectPresentFull
+@@ -515,6 +516,49 @@ typedef struct DOSFramebufferState
+ 
+ static DOSFramebufferState fb_state;
+ 
++// DOS-PORT patch 0210: SDL_DOS_PACK24 (see SDL_dosmodes.c). The mode's internal data says
++// 24 bpp while the format offered to the application is 4 bytes per pixel.
++static bool dos_mode_is_pack24(const SDL_DisplayMode *mode)
++{
++    const SDL_DisplayModeData *m = mode ? mode->internal : NULL;
++    return m && m->bpp == 24 && SDL_BYTESPERPIXEL(mode->format) == 4;
++}
++
++// XRGB8888 in memory is B,G,R,X; the packed mode wants B,G,R. Drops the X byte, nothing
++// else, so the displayed RGB equals the 32-bit path's. Four pixels -> three dword stores.
++static void dos_pack24_row(Uint8 *dst, const Uint32 *src, int n)
++{
++    while (n >= 4) {
++        const Uint32 a = src[0], b = src[1], c = src[2], d = src[3];
++        const Uint32 o0 = (a & 0x00FFFFFFu) | (b << 24);
++        const Uint32 o1 = ((b >> 8) & 0x0000FFFFu) | (c << 16);
++        const Uint32 o2 = ((c >> 16) & 0x000000FFu) | (d << 8);
++        __builtin_memcpy(dst, &o0, 4);
++        __builtin_memcpy(dst + 4, &o1, 4);
++        __builtin_memcpy(dst + 8, &o2, 4);
++        src += 4;
++        dst += 12;
++        n -= 4;
++    }
++    while (n-- > 0) {
++        const Uint32 p = *src++;
++        dst[0] = (Uint8)p;
++        dst[1] = (Uint8)(p >> 8);
++        dst[2] = (Uint8)(p >> 16);
++        dst += 3;
++    }
++}
++
++static unsigned long dos_pack24_pushed_px = 0;
++static int dos_pack24_mode_id = 0;
++
++static void dos_pack24_report(void)
++{
++    fprintf(stdout, "DOS-PORT pack24 active=1 mode=0x%04X pushed_px=%lu\n",
++            dos_pack24_mode_id, dos_pack24_pushed_px);
++    fflush(stdout);
++}
++
+ // DOSKUTSU patch 0027 (Phase 9 wave 16 -- banked-mode 8bpp flush audit).
+ // Cumulative counters bumped from inside SwitchBank() and BankedDosmemput()
+ // so we can prove (or disprove) that BOTH banks are firing per flush at
+@@ -744,7 +788,10 @@ static bool CreateNormalFramebuffer(SDL_VideoDevice *device, SDL_Window *window,
+         // Point the LFB surface at the back page for tear-free double-buffering.
+         int back_page = data->page_flip_available ? (1 - data->current_page) : 0;
+         void *lfb_pixels = (Uint8 *)DOS_PhysicalToLinear(data->mapping.address) + data->page_offset[back_page];
+-        lfb_surface = SDL_CreateSurfaceFrom(mode->w, mode->h, surface_format, lfb_pixels, mdata->pitch);
++        // patch 0210: a packed-24 mode's VRAM is B,G,R; SDL's blit converts into it.
++        lfb_surface = SDL_CreateSurfaceFrom(mode->w, mode->h,
++                                            dos_mode_is_pack24(mode) ? SDL_PIXELFORMAT_BGR24 : surface_format,
++                                            lfb_pixels, mdata->pitch);
+         if (!lfb_surface) {
+             SDL_DestroySurface(surface);
+             return false;
+@@ -887,6 +934,19 @@ static bool populate_fb_state_for_direct_fb(SDL_VideoDevice *device,
+     fb_state.src_pitch = surface->pitch;
+     fb_state.fb_size = (Uint32)vram_pitch * mdata->h;
+     fb_state.pitches_match = (surface->pitch == vram_pitch);
++    fb_state.pack24 = dos_mode_is_pack24(mode); // patch 0210
++    if (fb_state.pack24) {
++        static bool announced = false;
++        dos_pack24_mode_id = mdata->mode_id;
++        if (!announced) {
++            announced = true;
++            fprintf(stdout, "DOS-PORT pack24 engaged mode=0x%04X %dx%d vram_pitch=%d src_pitch=%d path=%s\n",
++                    mdata->mode_id, mdata->w, mdata->h, vram_pitch, surface->pitch,
++                    use_lfb_path ? "lfb" : "banked");
++            fflush(stdout);
++            atexit(dos_pack24_report);
++        }
++    }
+ 
+     if (use_lfb_path) {
+         // LFB nearptr -- DPMI-mapped VRAM linear address.
+@@ -1643,6 +1703,20 @@ static void BankedFramebufferCopyRect(const SDL_DisplayModeData *mdata,
+     const int bytes_per_pixel = SDL_BYTESPERPIXEL(src->format);
+     const int row_bytes = src_rect->w * bytes_per_pixel;
+ 
++    // patch 0210: packed-24 mode, 4-byte source: pack each row, then the banked copy.
++    if (mdata->bpp == 24 && bytes_per_pixel == 4) {
++        static Uint8 row24[4096 * 3];
++        const int w = src_rect->w > 4096 ? 4096 : src_rect->w;
++        for (int y = 0; y < src_rect->h; y++) {
++            const Uint32 *src_row = (const Uint32 *)((const Uint8 *)src->pixels + (src_rect->y + y) * src->pitch) + src_rect->x;
++            Uint32 dst_offset = (Uint32)(dst_y + src_rect->y + y) * dst_pitch + (Uint32)(dst_x + src_rect->x) * 3;
++            dos_pack24_row(row24, src_row, w);
++            BankedDosmemput(row24, (Uint32)(w * 3), dst_offset,
++                            win_gran_bytes, win_size_bytes, win_base, win_func_ptr, current_bank);
++        }
++        return;
++    }
++
+     // Fast path: if the source row width matches src pitch AND the destination
+     // row width matches dst pitch, the data is contiguous in both source and
+     // destination — we can copy it as one flat block, minimizing dosmemput calls.
+@@ -1744,10 +1818,64 @@ static void _dos_port_dbg_dump_first16(const char *tag, const Uint8 *src, int n)
+     dos_port_dbg_log("%s", buf);
+ }
+ 
++// DOS-PORT patch 0210: the direct-FB push for a packed-24 mode. Same rect clipping as the
++// other branches; each row is packed 4->3 bytes straight into the LFB (three dword stores per
++// four pixels, at the card's 24-bpp write rate), or into a row buffer for the banked window.
++static void dos_pack24_push(const SDL_Rect *rects, int numrects)
++{
++    static Uint8 row24[4096 * 3];
++    const int src_pitch = fb_state.src_pitch;
++    const int dst_pitch = fb_state.vram_pitch;
++    int current_bank = -1;
++    for (int i = 0; i < numrects; i++) {
++        int rx = rects[i].x, ry = rects[i].y;
++        int rw = rects[i].w, rh = rects[i].h;
++        if (rx < 0) {
++            rw += rx;
++            rx = 0;
++        }
++        if (ry < 0) {
++            rh += ry;
++            ry = 0;
++        }
++        if (rx + rw > fb_state.vram_w) {
++            rw = fb_state.vram_w - rx;
++        }
++        if (ry + rh > fb_state.vram_h) {
++            rh = fb_state.vram_h - ry;
++        }
++        if (rw <= 0 || rh <= 0) {
++            continue;
++        }
++        if (rw > 4096) {
++            rw = 4096;
++        }
++        for (int row = 0; row < rh; row++) {
++            const Uint32 *sp = (const Uint32 *)(fb_state.pixels + (ry + row) * src_pitch) + rx;
++            const Uint32 dst_off = (Uint32)(ry + row) * (Uint32)dst_pitch + (Uint32)rx * 3;
++            if (!fb_state.use_dosmemput) {
++                Uint8 *dp = fb_state.vram_ptr + dst_off;
++                dos_pack24_row(dp, sp, rw);
++            } else {
++                dos_pack24_row(row24, sp, rw);
++                if (!fb_state.banked_multibank) {
++                    dosmemput(row24, rw * 3, fb_state.vram_phys + dst_off);
++                } else {
++                    BankedDosmemput(row24, (Uint32)(rw * 3), dst_off, fb_state.win_gran_bytes,
++                                    fb_state.win_size_bytes, fb_state.win_base, fb_state.win_func_ptr,
++                                    &current_bank);
++                }
++            }
++        }
++        dos_pack24_pushed_px += (unsigned long)rw * (unsigned long)rh;
++    }
++}
++
+ bool DOSVESA_UpdateWindowFramebuffer(SDL_VideoDevice *device, SDL_Window *window, const SDL_Rect *rects, int numrects)
+ {
+     SDL_VideoData *vdata = device->internal;
+ 
++
+     // DOSKUTSU patch 0035 (Phase 9 wave 20) -- flush instrumentation entry.
+     // Cache the hint state on first call (default OFF; strict "1" match per
+     // CLAUDE.md DOSKUTSU env-var convention). Record entry timestamp; the
+@@ -2011,7 +2139,9 @@ bool DOSVESA_UpdateWindowFramebuffer(SDL_VideoDevice *device, SDL_Window *window
+         // real HW (wave 19 probe).
+         const Uint64 _instr_dos_a =
+             _instr_enabled_cached ? SDL_GetTicksNS() : 0;
+-        if (fb_state.use_dosmemput) {
++        if (fb_state.pack24) {
++            dos_pack24_push(rects, numrects); // patch 0210
++        } else if (fb_state.use_dosmemput) {
+             // dosmemput path (banked window, possibly multi-bank)
+             const int src_pitch = fb_state.src_pitch;
+             const int dst_pitch = fb_state.vram_pitch;
+diff --git a/src/video/dos/SDL_dosmodes.c b/src/video/dos/SDL_dosmodes.c
+index 38070ad90..34c7d1327 100644
+--- a/src/video/dos/SDL_dosmodes.c
++++ b/src/video/dos/SDL_dosmodes.c
+@@ -75,6 +75,17 @@
+ #define VBE_MEMMODEL_PACKED_PIXEL 4 // packed pixel (includes 8-bit indexed)
+ #define VBE_MEMMODEL_DIRECT_COLOR 6 // direct color (RGB with masks)
+ 
++// DOS-PORT patch 0210: a 24-bpp mode whose bytes are B,G,R -- XRGB8888 minus the X byte --
++// with a linear framebuffer. Only this exact layout is packed; anything else is left alone.
++static bool DOS_ModeIsPack24Candidate(const SDL_DisplayModeData *m)
++{
++    return m->bpp == 24 && m->num_planes == 1 && m->has_lfb &&
++           m->memory_model == VBE_MEMMODEL_DIRECT_COLOR &&
++           m->red_mask_pos == 16 && m->red_mask_size == 8 &&
++           m->green_mask_pos == 8 && m->green_mask_size == 8 &&
++           m->blue_mask_pos == 0 && m->blue_mask_size == 8;
++}
++
+ // VBE set-mode flag
+ #define VBE_SETMODE_LFB 0x4000 // request linear framebuffer when setting mode
+ 
+@@ -596,14 +607,16 @@ bool DOSVESA_GetDisplayModes(SDL_VideoDevice *device, SDL_VideoDisplay *sdl_disp
+                 DOS_PORT_MODES_LOG("  mode 0x%04X: %4dx%-4d bpp=%-2d planes=%d "
+                                    "model=%d attrs=0x%04X lfb=%d sup=%d gfx=%d color=%d "
+                                    "pitch=%d pages=%d win_seg=0x%04X win_size=%uKB win_gran=%uKB win_attr=0x%02X "
+-                                   "lfb_addr=0x%08lX",
++                                   "lfb_addr=0x%08lX masks=r%d/%d g%d/%d b%d/%d",
+                                    info.mode_id, info.w, info.h, info.bpp, info.num_planes,
+                                    info.memory_model, info.attributes,
+                                    (int)info.has_lfb, (int)sup, (int)gfx, (int)color,
+                                    info.pitch, info.num_image_pages,
+                                    info.win_a_segment, (unsigned)info.win_size,
+                                    (unsigned)info.win_granularity, info.win_a_attributes,
+-                                   (unsigned long)info.physical_base_addr);
++                                   (unsigned long)info.physical_base_addr,
++                                   info.red_mask_pos, info.red_mask_size, info.green_mask_pos,
++                                   info.green_mask_size, info.blue_mask_pos, info.blue_mask_size);
+             }
+             DOS_PORT_MODES_LOG("DOSVESA-MODELIST: end of BIOS-reported mode dump");
+         }
+@@ -668,6 +681,27 @@ bool DOSVESA_GetDisplayModes(SDL_VideoDevice *device, SDL_VideoDisplay *sdl_disp
+     // the VGA mode 13h fallback below.
+     int num_vesa_modes = (vinfo && vinfo->version >= 0x102) ? vinfo->num_modes : 0;
+ 
++    // DOS-PORT patch 0210 (dosags lab-metric, Gate S32): SDL_DOS_PACK24=1 presents a
++    // 32-bit application surface through a 24-bpp mode. Measured on an ATI Mach64 under
++    // UniVBE (dosags BW32, 2026-09-24): CPU writes to its 640x480x32 LFB run at 7.7 MB/s,
++    // to 640x480x24 at 27.2 MB/s, the same 8:8:8 colour. A 24-bpp direct-colour LFB mode
++    // whose masks are R16/G8/B0 (memory B,G,R -- XRGB8888 without its X byte) is offered
++    // as SDL_PIXELFORMAT_XRGB8888; the framebuffer code packs 4->3 bytes per pushed pixel
++    // (SDL_dosframebuffer.c). The native 32-bpp mode of the same size is hidden so an
++    // application asking for 32 bpp lands on the packed one. Off by default: the mode
++    // list is byte-unchanged unless the hint is set.
++    const bool pack24_hint = SDL_GetHintBoolean("SDL_DOS_PACK24", false);
++    Uint32 pack24_wh[16];
++    int pack24_n = 0;
++    if (pack24_hint) {
++        for (int mi = 0; mi < num_vesa_modes && pack24_n < 16; mi++) {
++            SDL_DisplayModeData pi;
++            if (GetVESAModeInfo(vinfo->mode_list[mi], &pi) && DOS_ModeIsPack24Candidate(&pi)) {
++                pack24_wh[pack24_n++] = ((Uint32)pi.w << 16) | pi.h;
++            }
++        }
++    }
++
+     for (int mi = 0; mi < num_vesa_modes; mi++) {
+         const Uint16 modeid = vinfo->mode_list[mi];
+ 
+@@ -718,8 +752,27 @@ bool DOSVESA_GetDisplayModes(SDL_VideoDevice *device, SDL_VideoDisplay *sdl_disp
+             // Note: 8-bit indexed modes are packed pixel.
+         }
+ 
++        // patch 0210: hide a 32-bpp mode that has a packable 24-bpp twin.
++        if (pack24_hint && info.bpp == 32) {
++            bool twin = false;
++            for (int k = 0; k < pack24_n; k++) {
++                if (pack24_wh[k] == (((Uint32)info.w << 16) | info.h)) {
++                    twin = true;
++                }
++            }
++            if (twin) {
++                DOS_PORT_MODES_LOG("DOSVESA-PACK24: hiding 32-bpp mode 0x%04X %dx%d (24-bpp twin offered)",
++                                   info.mode_id, info.w, info.h);
++                continue;
++            }
++        }
++
+         SDL_PixelFormat format = SDL_PIXELFORMAT_UNKNOWN;
+-        if (info.memory_model == VBE_MEMMODEL_PACKED_PIXEL) {
++        if (pack24_hint && DOS_ModeIsPack24Candidate(&info)) {
++            format = SDL_PIXELFORMAT_XRGB8888; // patch 0210: packed on present
++            DOS_PORT_MODES_LOG("DOSVESA-PACK24: mode 0x%04X %dx%d bpp=24 pitch=%d offered as XRGB8888",
++                               info.mode_id, info.w, info.h, info.pitch);
++        } else if (info.memory_model == VBE_MEMMODEL_PACKED_PIXEL) {
+             switch (info.bpp) {
+             case 8:
+                 format = SDL_PIXELFORMAT_INDEX8;
+-- 
+2.47.3
+

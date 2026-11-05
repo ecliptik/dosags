@@ -1,0 +1,91 @@
+From 9de86dd55e9328352af62058e4ff5418a3df6a1c Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 20:06:36 -0700
+Subject: [PATCH] [AGS] DOS branch for sprite/sound cache-size defaults
+
+Today's defaults (sprite cache 128 MB, sound cache 32 MB) are the
+desktop/mobile-scale numbers -- fine on a system with gigabytes of RAM,
+wildly oversized for this port's 16 MB minimum experimental RAM target.
+PATCH-SEQUENCE.md's own porting-program research already scoped this
+(sprite cache 4-8 MB, sound cache 2-4 MB, then profile); this patch
+lands the low end of each range as a conservative starting default,
+next to the existing AGS_PLATFORM_OS_ANDROID/IOS branch in both
+Engine/ac/gamesetup.h (GameConfig's own DefSpriteCacheSize/DefSoundCache,
+the real configured defaults engine.cpp applies via SetMaxCacheSize())
+and Common/ac/spritecache.h (DEFAULTCACHESIZE_KB, the transient value
+SpriteCache's own constructor uses before that override runs).
+
+Not a crash risk being fixed -- Common/util/resourcecache.h's own
+SetMaxCacheSize() only sets a limit and frees down to it, it never
+reserves memory up front, so the old 128 MB default was a wrong number,
+not a live bug. Landing this now, before the "Game package parses"
+milestone loads a real sprite file for the first time, means that
+milestone measures against the real DOS-tuned default instead of an
+oversized desktop one nobody would ever raise back down on their own.
+
+Confirmed build-clean (incremental build, ags.exe relinked) and
+DOSBox-X-smoke-tested against the same TITLE_SCREEN fixture patch 0038
+used -- identical graphics-mode-setup, graceful sprite-load failure (no
+acsprset.spr staged, expected), and clean shutdown with RUNMANIFEST
+still emitting correctly. No observable behavior change expected or
+seen: this only lowers an upper limit this milestone's own synthetic
+package never approaches.
+---
+ Common/ac/spritecache.h |  8 ++++++++
+ Engine/ac/gamesetup.h   | 15 +++++++++++++++
+ 2 files changed, 23 insertions(+)
+
+diff --git a/Common/ac/spritecache.h b/Common/ac/spritecache.h
+index ba231bcc1..415779d41 100644
+--- a/Common/ac/spritecache.h
++++ b/Common/ac/spritecache.h
+@@ -48,6 +48,14 @@
+ // Max size of the sprite cache, in bytes
+ #if AGS_PLATFORM_OS_ANDROID || AGS_PLATFORM_OS_IOS
+ #define DEFAULTCACHESIZE_KB (32 * 1024)
++#elif AGS_PLATFORM_OS_DOS
++// DOS-PORT: matches Engine/ac/gamesetup.h's own DOS DefSpriteCacheSize --
++// see that file's comment for the sizing rationale. This is the transient
++// value SpriteCache's own constructor uses before engine_init_backend()
++// applies the real configured size via SetMaxCacheSize() (engine.cpp);
++// kept in sync anyway rather than left at the desktop default in the
++// (currently theoretical) window before that override runs.
++#define DEFAULTCACHESIZE_KB (4 * 1024)
+ #else
+ #define DEFAULTCACHESIZE_KB (128 * 1024)
+ #endif
+diff --git a/Engine/ac/gamesetup.h b/Engine/ac/gamesetup.h
+index a7a59243e..e1fd1f401 100644
+--- a/Engine/ac/gamesetup.h
++++ b/Engine/ac/gamesetup.h
+@@ -85,12 +85,27 @@ struct GameConfig
+ {
+ #if AGS_PLATFORM_OS_ANDROID || AGS_PLATFORM_OS_IOS
+     static const size_t DefSpriteCacheSize  = (32 * 1024); // 32 MB
++#elif AGS_PLATFORM_OS_DOS
++    // DOS-PORT: conservative starting default (sprite cache 4-8 MB, then
++    // profile -- see PATCH-SEQUENCE.md's Phase G / patch 0039 for the
++    // full rationale). NOT a preallocation: ResourceCache::
++    // SetMaxCacheSize() only sets a limit and frees down to it, it never
++    // reserves memory up front. Chosen at the low end of that range to
++    // favor this port's 16 MB minimum experimental RAM target; raise it
++    // once a real game's own profiling calls for more.
++    static const size_t DefSpriteCacheSize  = (4 * 1024); // 4 MB
+ #else
+     static const size_t DefSpriteCacheSize  = (128 * 1024); // 128 MB
+ #endif
+     static const size_t DefTexCacheSize     = (128 * 1024); // 128 MB
+     static const size_t DefSoundLoadAtOnce  = 1024; // 1 MB
++#if AGS_PLATFORM_OS_DOS
++    // DOS-PORT: same rationale as DefSpriteCacheSize above -- low end of
++    // the documented 2-4 MB starting range.
++    static const size_t DefSoundCache       = 1024u * 2; // 2 MB
++#else
+     static const size_t DefSoundCache       = 1024u * 32; // 32 MB
++#endif
+ 
+     // Display configuration
+     DisplayModeSetup Display;
+-- 
+2.47.3
+

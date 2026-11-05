@@ -1,0 +1,120 @@
+From c40e9fcfbfd9a8799494ea364d4e5c172bd64190 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 13:41:00 -0700
+Subject: [PATCH 251/252] DOS-PORT: patch 0251 -- lab stress switches: a render
+ throttle and a forced main-loop stall
+
+WHY: two regimes that decide whether music and input survive on the 486
+never happen under DOSBox-X at cycles=max: a ~6 fps render rate (the
+640x480 intro on the target) and a long main-loop stall (a room load, a
+blocking script). Without them the emulator can only report late_writes=0
+and lost_clicks=0 because nothing was ever late or quick -- vacuous, the
+RUNNER-DEFAULTS.md failure class. The MI stall/throttle cells (MISI/MITI,
+2026-09-23) and the lost-click cell (JC6Q) each re-applied a throwaway
+diff to get them; a nightly ratchet check has to run from a reproducible
+build, so the switches become part of the series, off unless set, and
+each check that relies on one shows that it can fail.
+
+WHAT: DOSAGS_MI_RENDER_DELAY_MS=N sleeps N ms (SDL_Delay) at the top of
+render_to_screen() on every rendered frame; 150 gives ~6 fps. With
+DOSAGS_UR3_STALL_EVERY=T, dos_audio_mixer_pump() stalls the main loop
+1.5 s whenever the loop counter reaches a multiple of T (once per tick
+value), and logs "MISTALL tick=... isr_writes_during_stall=..." with the
+number of ISR MIDI writes SDL_DOSMidiDeferStats counted during the stall.
+Both read the environment once. Unset (the default, and every gate and
+hardware cell), each costs one compare of a cached int per call.
+
+Not a temporary diagnostic: it is test tooling. Retire it only together with
+the tests/ratchet.yaml checks that use it (midi-late-stall, midi-stall-fired,
+midi-late-throttle, lost-inputs-throttled-held and the lost-input controls).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/ac/draw.cpp                      | 20 ++++++++++++++++++++
+ Engine/platform/dos/dos_audio_mixer.cpp | 24 ++++++++++++++++++++++++
+ 2 files changed, 44 insertions(+)
+
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index d4618d237..dd09e9fe2 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -12,6 +12,10 @@
+ //
+ //=============================================================================
+ #include <stdio.h>
++#ifdef __DJGPP__
++#include <stdlib.h>   // getenv/atoi, patch 0251 probe
++#include <SDL3/SDL.h> // SDL_Delay, patch 0251 probe
++#endif
+ #include <algorithm>
+ #include <cmath>
+ #ifdef __DJGPP__
+@@ -1417,6 +1421,22 @@ extern volatile bool want_exit, abort_engine;
+ 
+ void render_to_screen()
+ {
++#ifdef __DJGPP__
++    // patch 0251 (LAB stress probe, off unless set): a fixed delay per
++    // rendered frame, DOSAGS_MI_RENDER_DELAY_MS -- 150 gives ~6 fps, the rate
++    // the 640x480 intro runs at on the 486. Lets DOSBox-X reproduce the
++    // low-fps regime (MIDI lateness, lost clicks) without the hardware.
++    {
++        static int dp_render_delay_ms = -1;
++        if (dp_render_delay_ms < 0)
++        {
++            const char *e = getenv("DOSAGS_MI_RENDER_DELAY_MS");
++            dp_render_delay_ms = (e && atoi(e) > 0) ? atoi(e) : 0;
++        }
++        if (dp_render_delay_ms > 0)
++            SDL_Delay((Uint32)dp_render_delay_ms);
++    }
++#endif
+     // DOS-PORT patch 0085: whole-function bracket, first line so it
+     // covers every return path. Calls gfxDriver->Render(...), which
+     // calls RenderToBackBuffer() (already bracketed as render_backbuffer,
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index fceefe328..392143619 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -19,6 +19,8 @@
+ #include <vector>
+ #include <SDL3/SDL_dosaudio_devicerate.h>
+ #include <SDL3/SDL_dosaudio_pump.h>
++#include <SDL3/SDL_dosmidi_tick.h> // SDL_DOSMidiDeferStats, patch 0251 probe
++#include <stdlib.h>
+ #include "debug/out.h"
+ #include "platform/dos/dos_midi_backend.h"
+ 
+@@ -497,6 +499,28 @@ void dos_audio_mixer_pump()
+         return;
+     }
+ 
++    {   // patch 0251 (LAB stress probe, off unless set): a forced 1.5 s
++        // main-loop stall every DOSAGS_UR3_STALL_EVERY ticks, with the ISR
++        // MIDI writes made during it logged -- the MISI/MT1 condition.
++        static int dp_stall_every = -1;
++        static uint32_t dp_stall_last = 0;
++        if (dp_stall_every < 0)
++        {
++            const char *e = getenv("DOSAGS_UR3_STALL_EVERY");
++            dp_stall_every = (e && atoi(e) > 0) ? atoi(e) : 0;
++        }
++        const uint32_t t = dp_stall_every > 0 ? get_loop_counter() : 0;
++        if (dp_stall_every > 0 && t > 0 && t % (uint32_t)dp_stall_every == 0 && t != dp_stall_last)
++        {
++            dp_stall_last = t;
++            Uint32 w0 = 0, w1 = 0;
++            SDL_DOSMidiDeferStats(&w0, nullptr, nullptr, nullptr, nullptr);
++            SDL_Delay(1500);
++            SDL_DOSMidiDeferStats(&w1, nullptr, nullptr, nullptr, nullptr);
++            Debug::Printf(kDbgMsg_Info, "MISTALL tick=%u isr_writes_during_stall=%u", t, (unsigned)(w1 - w0));
++        }
++    }
++
+     if (g_stream)
+     {
+         // DOS-PORT (patch 0203): the tick at which this pump first saw the
+-- 
+2.47.3
+

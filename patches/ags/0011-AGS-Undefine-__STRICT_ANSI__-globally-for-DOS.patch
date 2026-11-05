@@ -1,0 +1,70 @@
+From 867190c90d07eb6dd5b8c66665583e46e1f3b422 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 13:42:30 -0700
+Subject: [PATCH] [AGS] Undefine __STRICT_ANSI__ globally for DOS (DJGPP header
+ guard gap)
+
+Twelve targets across this tree (Engine, Common, and ten vendored
+libsrc/ dirs) set C_EXTENSIONS/CXX_EXTENSIONS NO, compiling with
+-std=c11/-std=c++11 (strict ANSI) instead of the GNU-extensions
+default -- which sets the compiler-internal __STRICT_ANSI__ macro.
+DJGPP's own libc headers guard real declarations behind
+#ifndef __STRICT_ANSI__ (confirmed directly:
+i586-pc-msdosdjgpp/sys-include/sys/stat.h hides struct stat's own
+definition under strict mode), so those declarations silently vanish
+under any of those twelve targets' strict compile.
+
+Found build-testing patches 0001-0010: libsrc/miniz/miniz.c fails
+"storage size of 'file_stat' isn't known" doing nothing more unusual
+than `struct stat file_stat;` after #include <sys/stat.h>. Reproduced
+standalone against the real toolchain outside the full build to
+isolate the cause before writing this fix: -std=c11 alone reproduces
+the failure; adding -U__STRICT_ANSI__ (undefining the macro, not
+avoiding -std=c11 itself) fixes it, confirmed both ways.
+
+Applied once, globally, via add_compile_options() before any
+add_subdirectory() call -- this gap is latent in all twelve
+strict-mode targets, not just the one that happened to hit it first,
+so a global fix is correct here, not a per-target one. Not in
+PATCH-SEQUENCE.md's original sequence (source-compile gap, same
+category as the FreeType finding); corrected in the same commit per
+this repo's own conventions.
+---
+ CMakeLists.txt | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 046f4f2b6..7a7758cb8 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -118,6 +118,27 @@ if(LINUX OR MACOS OR WIN32 OR FREEBSD)
+     set(AGS_DESKTOP TRUE)
+ endif()
+ 
++if (DOS)
++    # DOS-PORT: twelve targets across this tree (Engine, Common, and ten
++    # vendored libsrc/ dirs) set C_EXTENSIONS/CXX_EXTENSIONS NO, which
++    # compiles them with -std=c11/-std=c++11 (strict ANSI) instead of the
++    # GNU-extensions default -- that sets the compiler-internal
++    # __STRICT_ANSI__ macro. DJGPP's own libc headers (confirmed:
++    # i586-pc-msdosdjgpp/sys-include/sys/stat.h) guard real declarations
++    # (struct stat itself, among others) behind #ifndef __STRICT_ANSI__,
++    # so under strict mode they silently disappear -- e.g.
++    # "storage size of 'file_stat' isn't known" compiling
++    # libsrc/miniz/miniz.c, which just does `struct stat file_stat;`
++    # after including <sys/stat.h>. Reproduced standalone against the
++    # real toolchain: -std=c11 alone fails this exact way, adding
++    # -U__STRICT_ANSI__ fixes it (confirmed both ways). Applied globally
++    # here rather than per-target -- this same gap is latent in every
++    # one of those twelve targets, not just the one that happened to hit
++    # it first, and add_compile_options() here (before any
++    # add_subdirectory() call below) reaches all of them.
++    add_compile_options(-U__STRICT_ANSI__)
++endif ()
++
+ message( "CMAKE_SYSTEM_NAME:" ${CMAKE_SYSTEM_NAME} )
+ message( "WIN32:" ${WIN32} )
+ message( "LINUX:" ${LINUX} )
+-- 
+2.47.3
+

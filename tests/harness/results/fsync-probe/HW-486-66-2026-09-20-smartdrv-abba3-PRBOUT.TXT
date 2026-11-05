@@ -1,0 +1,238 @@
+fsprobe: sweep path = C:\FSTEST\FSSWEEP.TMP
+fsprobe: default drive = C:, interrogating the sweep's own drive
+fsprobe: sweep drive = C:
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14582 volume_bytes=2014511104 free_bytes=477822976
+fsprobe: GEOMETRY MATCHES THE CF VOLUME (32768-byte clusters, 61478 total) -- this is C:, NOT a different device.
+fsprobe: 200 iterations per arm, line length 128 bytes
+fsprobe: UCLOCKS_PER_SEC=1193180
+fsprobe: arm order = none
+fsprobe: arms SKIPPED -- the sweep's fsync'd bytes are then
+fsprobe: the only bytes forced to the device in this run.
+
+raw     n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+flush   n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+sync    n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+reopen  n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+
+fsprobe: fsync cost per call = mean_us(sync) - mean_us(flush) = 0.0 us
+fsprobe: 240 such calls in a gate run = 0.0 ms
+fsprobe: FSPROBE_STAGES=4, found 4 of FSPROBE_S1..S8
+
+===== STAGE1: SMARTDRV /S =====
+Microsoft SMARTDrive Disk Cache version 5.0
+Copyright 1991,1993 Microsoft Corp.
+
+Room for    512 elements of   8,192 bytes each
+There have been    356 cache hits
+    and    74 cache misses
+
+Cache size:  4,194,304 bytes
+Cache size while running Windows:  1,048,576 bytes
+
+            Disk Caching Status
+drive   read cache   write cache   buffering
+--------------------------------------------
+  B:       yes           no           no
+  C:       yes           no           no
+Write behind data will be committed before command prompt returns.
+
+
+For help, type "Smartdrv /?".
+===== STAGE1 rc=1 =====
+
+fsprobe: ===== SWEEP 1 (STAGE1) =====
+
+fsprobe: sweep -- 800-byte records to 393216 bytes, spikes >= 20000 us
+fsprobe: at this record size, byte 6400 is record 8 and byte 58400 is record 73; record 8 is byte 6400 and record 73 is byte 58400
+  FIRST rec=1     end_off=800     us=13024    cum_ms=13.0  (first cluster + directory entry)
+  SPIKE rec=67    end_off=53600   us=220623   cum_ms=656.3
+  SPIKE rec=154   end_off=123200  us=218383   cum_ms=1429.5
+  SPIKE rec=225   end_off=180000  us=217522   cum_ms=2107.7
+  SPIKE rec=297   end_off=237600  us=220306   cum_ms=2795.2
+  SPIKE rec=374   end_off=299200  us=219287   cum_ms=3502.9
+  SPIKE rec=445   end_off=356000  us=219790   cum_ms=4175.1
+fsprobe: sweep done -- 492 records, 393600 device bytes, 6 spikes, worst 220623 us at off=53600
+fsprobe: sweep elapsed 4522.0 ms by uclock, 4489.4 ms summed per-record; quiet records n=486 mean_us=6529.8
+fsprobe: events=6 bytes=393600 (NO rate printed: detection is intermittent -- 7, 10 and 14 events across three runs of one configuration)
+fsprobe: volume after sweep:
+fsprobe: default drive = C:, interrogating the sweep's own drive
+fsprobe: sweep drive = C:
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14582 volume_bytes=2014511104 free_bytes=477822976
+fsprobe: GEOMETRY MATCHES THE CF VOLUME (32768-byte clusters, 61478 total) -- this is C:, NOT a different device.
+
+===== STAGE2: SMARTDRV C-  =====
+Microsoft SMARTDrive Disk Cache version 5.0
+Copyright 1991,1993 Microsoft Corp.
+
+Cache size:  4,194,304 bytes
+Cache size while running Windows:  1,048,576 bytes
+
+            Disk Caching Status
+drive   read cache   write cache   buffering
+--------------------------------------------
+  B:       yes           no           no
+Write behind data will be committed before command prompt returns.
+
+
+For help, type "Smartdrv /?".
+===== STAGE2 rc=1 =====
+
+===== STAGE2: SMARTDRV /S =====
+Microsoft SMARTDrive Disk Cache version 5.0
+Copyright 1991,1993 Microsoft Corp.
+
+Room for    512 elements of   8,192 bytes each
+There have been    948 cache hits
+    and   1,318 cache misses
+
+Cache size:  4,194,304 bytes
+Cache size while running Windows:  1,048,576 bytes
+
+            Disk Caching Status
+drive   read cache   write cache   buffering
+--------------------------------------------
+  B:       yes           no           no
+Write behind data will be committed before command prompt returns.
+
+
+For help, type "Smartdrv /?".
+===== STAGE2 rc=1 =====
+
+fsprobe: ===== SWEEP 2 (STAGE2) =====
+
+fsprobe: sweep -- 800-byte records to 393216 bytes, spikes >= 20000 us
+fsprobe: at this record size, byte 6400 is record 8 and byte 58400 is record 73; record 8 is byte 6400 and record 73 is byte 58400
+  FIRST rec=1     end_off=800     us=12832    cum_ms=12.8  (first cluster + directory entry)
+  SPIKE rec=15    end_off=12000   us=221126   cum_ms=314.9
+  SPIKE rec=102   end_off=81600   us=220820   cum_ms=1066.4
+  SPIKE rec=175   end_off=140000  us=222588   cum_ms=1731.2
+  SPIKE rec=246   end_off=196800  us=226303   cum_ms=2383.2
+  SPIKE rec=317   end_off=253600  us=221109   cum_ms=3030.6
+  SPIKE rec=390   end_off=312000  us=217765   cum_ms=3690.8
+  SPIKE rec=461   end_off=368800  us=221762   cum_ms=4341.4
+fsprobe: sweep done -- 492 records, 393600 device bytes, 7 spikes, worst 226303 us at off=196800
+fsprobe: sweep elapsed 4568.9 ms by uclock, 4536.6 ms summed per-record; quiet records n=485 mean_us=6154.9
+fsprobe: events=7 bytes=393600 (NO rate printed: detection is intermittent -- 7, 10 and 14 events across three runs of one configuration)
+fsprobe: volume after sweep:
+fsprobe: default drive = C:, interrogating the sweep's own drive
+fsprobe: sweep drive = C:
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14582 volume_bytes=2014511104 free_bytes=477822976
+fsprobe: GEOMETRY MATCHES THE CF VOLUME (32768-byte clusters, 61478 total) -- this is C:, NOT a different device.
+
+===== STAGE3: SMARTDRV /S =====
+Microsoft SMARTDrive Disk Cache version 5.0
+Copyright 1991,1993 Microsoft Corp.
+
+Room for    512 elements of   8,192 bytes each
+There have been    948 cache hits
+    and   1,318 cache misses
+
+Cache size:  4,194,304 bytes
+Cache size while running Windows:  1,048,576 bytes
+
+            Disk Caching Status
+drive   read cache   write cache   buffering
+--------------------------------------------
+  B:       yes           no           no
+Write behind data will be committed before command prompt returns.
+
+
+For help, type "Smartdrv /?".
+===== STAGE3 rc=1 =====
+
+fsprobe: ===== SWEEP 3 (STAGE3) =====
+
+fsprobe: sweep -- 800-byte records to 393216 bytes, spikes >= 20000 us
+fsprobe: at this record size, byte 6400 is record 8 and byte 58400 is record 73; record 8 is byte 6400 and record 73 is byte 58400
+  FIRST rec=1     end_off=800     us=11486    cum_ms=11.5  (first cluster + directory entry)
+  SPIKE rec=47    end_off=37600   us=219617   cum_ms=507.9
+  SPIKE rec=118   end_off=94400   us=220517   cum_ms=1153.4
+  SPIKE rec=189   end_off=151200  us=219425   cum_ms=1799.6
+  SPIKE rec=262   end_off=209600  us=217427   cum_ms=2455.2
+  SPIKE rec=333   end_off=266400  us=218518   cum_ms=3103.2
+  SPIKE rec=409   end_off=327200  us=224241   cum_ms=3781.9
+  SPIKE rec=441   end_off=352800  us=218757   cum_ms=4190.6
+  SPIKE rec=477   end_off=381600  us=219606   cum_ms=4626.8
+fsprobe: sweep done -- 492 records, 393600 device bytes, 8 spikes, worst 224241 us at off=327200
+fsprobe: sweep elapsed 4756.4 ms by uclock, 4722.4 ms summed per-record; quiet records n=484 mean_us=6124.5
+fsprobe: events=8 bytes=393600 (NO rate printed: detection is intermittent -- 7, 10 and 14 events across three runs of one configuration)
+fsprobe: volume after sweep:
+fsprobe: default drive = C:, interrogating the sweep's own drive
+fsprobe: sweep drive = C:
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14582 volume_bytes=2014511104 free_bytes=477822976
+fsprobe: GEOMETRY MATCHES THE CF VOLUME (32768-byte clusters, 61478 total) -- this is C:, NOT a different device.
+
+===== STAGE4: SMARTDRV C  =====
+Microsoft SMARTDrive Disk Cache version 5.0
+Copyright 1991,1993 Microsoft Corp.
+
+Cache size:  4,194,304 bytes
+Cache size while running Windows:  1,048,576 bytes
+
+            Disk Caching Status
+drive   read cache   write cache   buffering
+--------------------------------------------
+  B:       yes           no           no
+  C:       yes           no           no
+Write behind data will be committed before command prompt returns.
+
+
+For help, type "Smartdrv /?".
+===== STAGE4 rc=1 =====
+
+===== STAGE4: SMARTDRV /S =====
+Microsoft SMARTDrive Disk Cache version 5.0
+Copyright 1991,1993 Microsoft Corp.
+
+Room for    512 elements of   8,192 bytes each
+There have been    989 cache hits
+    and   1,336 cache misses
+
+Cache size:  4,194,304 bytes
+Cache size while running Windows:  1,048,576 bytes
+
+            Disk Caching Status
+drive   read cache   write cache   buffering
+--------------------------------------------
+  B:       yes           no           no
+  C:       yes           no           no
+Write behind data will be committed before command prompt returns.
+
+
+For help, type "Smartdrv /?".
+===== STAGE4 rc=1 =====
+
+fsprobe: ===== SWEEP 4 (STAGE4) =====
+
+fsprobe: sweep -- 800-byte records to 393216 bytes, spikes >= 20000 us
+fsprobe: at this record size, byte 6400 is record 8 and byte 58400 is record 73; record 8 is byte 6400 and record 73 is byte 58400
+  FIRST rec=1     end_off=800     us=14392    cum_ms=14.4  (first cluster + directory entry)
+  SPIKE rec=21    end_off=16800   us=217398   cum_ms=354.9
+  SPIKE rec=57    end_off=45600   us=221756   cum_ms=809.0
+  SPIKE rec=93    end_off=74400   us=218138   cum_ms=1262.5
+  SPIKE rec=128   end_off=102400  us=217377   cum_ms=1704.9
+  SPIKE rec=164   end_off=131200  us=223791   cum_ms=2154.4
+  SPIKE rec=200   end_off=160000  us=218350   cum_ms=2594.9
+  SPIKE rec=235   end_off=188000  us=221469   cum_ms=3045.0
+  SPIKE rec=267   end_off=213600  us=219736   cum_ms=3470.7
+  SPIKE rec=303   end_off=242400  us=220937   cum_ms=3921.6
+  SPIKE rec=338   end_off=270400  us=217869   cum_ms=4365.1
+  SPIKE rec=374   end_off=299200  us=219568   cum_ms=4816.0
+  SPIKE rec=410   end_off=328000  us=224924   cum_ms=5269.7
+  SPIKE rec=445   end_off=356000  us=216828   cum_ms=5702.9
+  SPIKE rec=450   end_off=360000  us=220413   cum_ms=5946.9
+  SPIKE rec=486   end_off=388800  us=219961   cum_ms=6399.4
+fsprobe: sweep done -- 492 records, 393600 device bytes, 15 spikes, worst 224924 us at off=328000
+fsprobe: sweep elapsed 6482.6 ms by uclock, 6444.0 ms summed per-record; quiet records n=477 mean_us=6594.2
+fsprobe: events=15 bytes=393600 (NO rate printed: detection is intermittent -- 7, 10 and 14 events across three runs of one configuration)
+fsprobe: volume after sweep:
+fsprobe: default drive = C:, interrogating the sweep's own drive
+fsprobe: sweep drive = C:
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14582 volume_bytes=2014511104 free_bytes=477822976
+fsprobe: GEOMETRY MATCHES THE CF VOLUME (32768-byte clusters, 61478 total) -- this is C:, NOT a different device.
+fsprobe: done

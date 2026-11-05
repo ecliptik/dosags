@@ -1,0 +1,48 @@
+[A1] == R1I1-2026-11-05
+        stamp 7e5dfe26f272 exit 0 build_dirty 0 room 35 msgskip 1: DOS-PORT msgskip n=1 lc=101
+        whole-run 39.23 / steady 40.24 (as recorded)  fps_p50 40.00  frames_skipped 33  ticks 5002  stall_ms 1601
+        completeness: presents_real/render_passes 4981/4967 = 100.28%; 1 - frames_skipped/ticks = 99.34%
+        audio: pcm_irqs 2151 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+        accounting (reported, not scored): pcm_irqs 2151 + inflight 19 = 2170 vs mixed 2170 (diff 0)
+        cell: MET (subject to camera CLEAN)
+     BLASTER.TXT: 'A220 I7 D3 P330 T3'
+     room-35 load (reported): 419 -> 825 ms
+[B1] == R1R1-2026-11-05
+        stamp a1dba5d61624 exit 0 build_dirty 0 room 35 msgskip 1: DOS-PORT msgskip n=1 lc=101
+        whole-run 39.27 / steady 40.27 (as recorded)  fps_p50 40.00  frames_skipped 26  ticks 5002  stall_ms 1524
+        completeness: presents_real/render_passes 4988/4974 = 100.28%; 1 - frames_skipped/ticks = 99.48%
+        audio: pcm_irqs 2069 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+        accounting (reported, not scored): pcm_irqs 2069 + inflight 19 = 2088 vs mixed 2088 (diff 0)
+        cell: MET (subject to camera CLEAN)
+     BLASTER.TXT: 'A220 I7 D3 P330 T3'
+     room-35 load (reported): 438 -> 862 ms
+[B2] == R1R2-2026-11-05
+        stamp a1dba5d61624 exit 0 build_dirty 0 room 35 msgskip 1: DOS-PORT msgskip n=1 lc=101
+        whole-run 39.23 / steady 40.24 (as recorded)  fps_p50 40.00  frames_skipped 28  ticks 5002  stall_ms 1569
+        completeness: presents_real/render_passes 4986/4972 = 100.28%; 1 - frames_skipped/ticks = 99.44%
+        audio: pcm_irqs 2109 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+        accounting (reported, not scored): pcm_irqs 2109 + inflight 19 = 2128 vs mixed 2128 (diff 0)
+        cell: MET (subject to camera CLEAN)
+     BLASTER.TXT: 'A220 I7 D3 P330 T3'
+     room-35 load (reported): 426 -> 851 ms
+[A2] == R1I2-2026-11-05
+        stamp 7e5dfe26f272 exit 0 build_dirty 0 room 35 msgskip 1: DOS-PORT msgskip n=1 lc=101
+        whole-run 39.25 / steady 40.28 (as recorded)  fps_p50 40.00  frames_skipped 28  ticks 5002  stall_ms 1638
+        completeness: presents_real/render_passes 4986/4972 = 100.28%; 1 - frames_skipped/ticks = 99.44%
+        audio: pcm_irqs 2038 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+        accounting (reported, not scored): pcm_irqs 2038 + inflight 18 = 2056 vs mixed 2056 (diff 0)
+        cell: MET (subject to camera CLEAN)
+     BLASTER.TXT: 'A220 I7 D3 P330 T3'
+     room-35 load (reported): 426 -> 831 ms
+drift whole-run |A1-A2| = 0.02
+drift steady |A1-A2| = 0.04
+whole-run: mean A 39.24, mean B 39.25, B - A +0.010 -> ok
+   (reported) mean B - GL8A = -0.010
+   (reported) mean B - GL8B = -0.100
+steady: mean A 40.26, mean B 40.255, B - A -0.005 -> ok
+   (reported) mean B - GL8A = +0.025
+   (reported) mean B - GL8B = -0.035
+instrumented S8 this round: A1 MET, A2 MET (reported)
+release S8 x2: MET (subject to camera CLEAN in B1 and B2)
+R1 ABBA: EQUIVALENT
+decision: gate cells MOVE to the release flavour (subject to camera CLEAN)

@@ -1,0 +1,201 @@
+From 21d47c99dbe31322002d3f9cf5633801575b1a41 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 22 Sep 2026 22:24:01 -0700
+Subject: [PATCH] DOS-PORT: patch 0206 -- MIDI timing report: lateness, bursts,
+ and song clock against the RTC
+
+WHY: the operator's listen of the 8.3 hardware captures: "the real hardware sounds way better than
+dosbox, although I think the tempo might be slower and it sounds like music speeds up randomly."
+midi_sched is ticked from the main loop (AudioPlayer::MidiPoll -> midi_sched_tick(now), once per
+tick, uclock wall time), and midi_sched_tick dispatches everything due by `now`. So a main-loop
+stall holds every note due during it, and the next tick releases the whole backlog at once -- a
+pause, then a rush. Nothing measured that, and the captures could not (the intro repeats every ~2 s,
+too short for a window aligner to hold a bar). "Slower overall" is a separate question: the song
+clock is uclock, so it can only be slow if uclock runs slow against real time.
+
+WHAT: after each midi_sched_tick(), MidiPoll reports the events dispatched and the scheduler-clock
+gap since the previous poll to dos_midi_backend_note_tick(). The gap bounds how late any of those
+events was. Kept: the largest gap that dispatched anything (late_max_ms), an events-weighted gap
+histogram (<=25/50/100/250/500/>500 ms), the events dispatched in gaps over 50 ms (late50), the
+largest single-poll burst and its loop tick (burst=N@tick), and song-clock ms against the CMOS RTC
+read at the first and last poll (clk=<ms>/<s>s; the RTC is its own crystal, independent of the PIT
+behind uclock; midi_sched_tick's 10 s gap clamp is applied the same way). A poll with a gap over
+100 ms that dispatched events logs "DOS-PORT midilate tick= gap_ms= events=" for lining up with
+stall ticks. All appended to the MIDI fragment of audio_vital_status. Reporting only: no scheduling
+change.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/media/audio/audioplayer.cpp       | 10 ++++
+ Engine/media/audio/audioplayer.h         |  3 +-
+ Engine/platform/dos/dos_midi_backend.cpp | 76 ++++++++++++++++++++++--
+ Engine/platform/dos/dos_midi_backend.h   | 13 ++++
+ 4 files changed, 96 insertions(+), 6 deletions(-)
+
+diff --git a/Engine/media/audio/audioplayer.cpp b/Engine/media/audio/audioplayer.cpp
+index e3a305385..324b524a6 100644
+--- a/Engine/media/audio/audioplayer.cpp
++++ b/Engine/media/audio/audioplayer.cpp
+@@ -26,6 +26,7 @@
+ // every other DOS-PORT uclock() consumer (ac/event.cpp, ac/room.cpp,
+ // ac/sys_events.cpp -- none of them inside a namespace) already resolves.
+ extern uclock_t dos_port_engine_start_uclock;
++extern uint32_t get_loop_counter(); // DOS-PORT (patch 0206)
+ 
+ namespace AGS
+ {
+@@ -258,6 +259,15 @@ void AudioPlayer::MidiPoll()
+     }
+ 
+     const uint64_t total = midi_sched_dispatched(_midiSched);
++    // DOS-PORT (patch 0206): timing report -- events this call, and how far
++    // the scheduler clock moved since the last call (the most any of them can
++    // have been late by, since midi_sched_tick() dispatches everything due).
++    {
++        const uint64_t now = MidiNowMs();
++        const uint32_t gap = (_midiLastPollMs != 0 && now > _midiLastPollMs) ? (uint32_t)(now - _midiLastPollMs) : 0u;
++        _midiLastPollMs = now;
++        dos_midi_backend_note_tick((uint32_t)(total - _midiLastDispatched), gap, get_loop_counter());
++    }
+     if (total > _midiLastDispatched)
+     {
+         dos_midi_backend_add_dispatched(total - _midiLastDispatched);
+diff --git a/Engine/media/audio/audioplayer.h b/Engine/media/audio/audioplayer.h
+index 3291b1a4d..1bede147f 100644
+--- a/Engine/media/audio/audioplayer.h
++++ b/Engine/media/audio/audioplayer.h
+@@ -162,7 +162,8 @@ private:
+     DosMidiBackendKind _midiBackendKind = DOS_MIDI_BACKEND_NONE;
+     uint64_t _midiPauseOffsetMs = 0;   // total ms spent paused so far
+     uint64_t _midiPauseStartedMs = 0;  // MidiNowMsRaw() at the last Pause()
+-    uint64_t _midiLastDispatched = 0;  // midi_sched_dispatched() as of the last MidiPoll()
++    uint64_t _midiLastDispatched = 0;
++    uint64_t _midiLastPollMs = 0;      // DOS-PORT (patch 0206): MidiNowMs() at the last MidiPoll()  // midi_sched_dispatched() as of the last MidiPoll()
+ };
+ 
+ } // namespace Engine
+diff --git a/Engine/platform/dos/dos_midi_backend.cpp b/Engine/platform/dos/dos_midi_backend.cpp
+index cd4bc3aa3..0842a4c81 100644
+--- a/Engine/platform/dos/dos_midi_backend.cpp
++++ b/Engine/platform/dos/dos_midi_backend.cpp
+@@ -36,6 +36,39 @@ uint64_t g_events_dispatched = 0;
+ // 0 = not probed, 2 = OPL2, 3 = OPL3.
+ int g_opl_chip = 0;
+ 
++// DOS-PORT (patch 0206): MIDI timing report, see dos_midi_backend.h.
++uint32_t g_late_max_ms = 0;
++uint64_t g_late_hist[6] = {0, 0, 0, 0, 0, 0}; // events in gaps <=25, <=50, <=100, <=250, <=500, >500 ms
++uint64_t g_late50_events = 0;
++uint32_t g_burst_max = 0;
++uint32_t g_burst_tick = 0;
++uint64_t g_song_ms = 0;
++int g_rtc_first_s = -1;
++int g_rtc_last_s = -1;
++
++// Seconds since midnight from the CMOS RTC (BCD or binary per status B),
++// after the update-in-progress bit clears; -1 if it never clears.
++int rtc_seconds_of_day()
++{
++    for (int i = 0; i < 20000; i++)
++    {
++        outportb(0x70, 0x0A);
++        if (!(inportb(0x71) & 0x80))
++            break;
++        if (i == 19999)
++            return -1;
++    }
++    outportb(0x70, 0x0B);
++    const bool binary = (inportb(0x71) & 0x04) != 0;
++    auto rd = [binary](int reg) {
++        outportb(0x70, reg);
++        const int v = inportb(0x71);
++        return binary ? v : ((v >> 4) * 10 + (v & 0x0F));
++    };
++    const int sec = rd(0x00), min = rd(0x02), hour = rd(0x04) & 0x3F;
++    return hour * 3600 + min * 60 + sec;
++}
++
+ // DOS-PORT (S5): the wb backend is a session-lifetime singleton, unlike
+ // opl3's per-AudioPlayer-instance handles -- see dos_midi_backend_cold_init()
+ // and dos_midi_backend_end_song()'s own doc comments in the header for why.
+@@ -323,14 +356,47 @@ void dos_midi_backend_add_dispatched(uint64_t delta)
+     g_events_dispatched += delta;
+ }
+ 
++void dos_midi_backend_note_tick(uint32_t events, uint32_t gap_ms, uint32_t loop_tick)
++{
++    const int now_s = rtc_seconds_of_day();
++    if (g_rtc_first_s < 0)
++        g_rtc_first_s = now_s;
++    else
++        g_song_ms += (gap_ms > 10000u) ? 10000u : gap_ms; // midi_sched_tick's own 10 s clamp
++    g_rtc_last_s = now_s;
++    if (events == 0)
++        return;
++    if (gap_ms > g_late_max_ms)
++        g_late_max_ms = gap_ms;
++    const int bin = gap_ms <= 25 ? 0 : gap_ms <= 50 ? 1 : gap_ms <= 100 ? 2 : gap_ms <= 250 ? 3 : gap_ms <= 500 ? 4 : 5;
++    g_late_hist[bin] += events;
++    if (gap_ms > 50)
++        g_late50_events += events;
++    if (events > g_burst_max)
++    {
++        g_burst_max = events;
++        g_burst_tick = loop_tick;
++    }
++    if (gap_ms > 100)
++        Debug::Printf(kDbgMsg_Info, "DOS-PORT midilate tick=%u gap_ms=%u events=%u", loop_tick, gap_ms, events);
++}
++
+ void dos_midi_backend_status_fragment(char *buf, size_t bufsize)
+ {
+     // DOS-PORT (patch 0205): for the OPL backend, which chip answered and how
+     // many voices the sink drives (always 18, 9-17 in the OPL3-only bank).
++    char chip[32] = "";
+     if (g_last_kind == DOS_MIDI_BACKEND_OPL3 && g_opl_chip != 0)
+-        std::snprintf(buf, bufsize, "midi=%s,events=%llu,chip=opl%d,voices=18",
+-            kind_name(g_last_kind), (unsigned long long)g_events_dispatched, g_opl_chip);
+-    else
+-        std::snprintf(buf, bufsize, "midi=%s,events=%llu",
+-            kind_name(g_last_kind), (unsigned long long)g_events_dispatched);
++        std::snprintf(chip, sizeof(chip), ",chip=opl%d,voices=18", g_opl_chip);
++    // DOS-PORT (patch 0206): lateness bound (max gap that dispatched events),
++    // events-weighted gap histogram (<=25/50/100/250/500/>500 ms), events in
++    // gaps > 50 ms, the biggest single-tick burst@tick, and song-clock ms over
++    // RTC seconds (RTC wraps at midnight: then the second number is negative).
++    int rtc_s = (g_rtc_first_s >= 0 && g_rtc_last_s >= 0) ? (g_rtc_last_s - g_rtc_first_s) : -1;
++    std::snprintf(buf, bufsize, "midi=%s,events=%llu%s,late_max_ms=%u,late_hist=%llu/%llu/%llu/%llu/%llu/%llu,"
++        "late50=%llu,burst=%u@%u,clk=%llu/%ds",
++        kind_name(g_last_kind), (unsigned long long)g_events_dispatched, chip, g_late_max_ms,
++        (unsigned long long)g_late_hist[0], (unsigned long long)g_late_hist[1], (unsigned long long)g_late_hist[2],
++        (unsigned long long)g_late_hist[3], (unsigned long long)g_late_hist[4], (unsigned long long)g_late_hist[5],
++        (unsigned long long)g_late50_events, g_burst_max, g_burst_tick, (unsigned long long)g_song_ms, rtc_s);
+ }
+diff --git a/Engine/platform/dos/dos_midi_backend.h b/Engine/platform/dos/dos_midi_backend.h
+index a4495596a..d7451d633 100644
+--- a/Engine/platform/dos/dos_midi_backend.h
++++ b/Engine/platform/dos/dos_midi_backend.h
+@@ -144,6 +144,19 @@ void dos_midi_backend_shutdown();
+ // play (sequentially -- see audioplayer.cpp) in one session.
+ void dos_midi_backend_add_dispatched(uint64_t delta);
+ 
++// DOS-PORT (patch 0206): MIDI timing report. The scheduler is ticked from the
++// main loop (AudioPlayer::MidiPoll), so every event due during a main-loop
++// stall is dispatched late, all at once, at the next tick. Called once per
++// MidiPoll() after midi_sched_tick(): `events` dispatched this call,
++// `gap_ms` = scheduler clock advanced since the previous call (the upper bound
++// on how late any of them was), `loop_tick` for attribution. Keeps: the
++// largest gap that dispatched anything, an events-weighted gap histogram, the
++// events dispatched in gaps > 50 ms, the largest single-call burst and its
++// tick, and song-clock ms against the CMOS RTC (an independent crystal) from
++// the first call to the last, for "is the music slower overall". Each call
++// with gap > 100 ms and events > 0 also logs one "DOS-PORT midilate" line.
++void dos_midi_backend_note_tick(uint32_t events, uint32_t gap_ms, uint32_t loop_tick);
++
+ // Builds "midi=<backend>,events=<n>" (e.g. "midi=wb,events=42") into buf.
+ // Reports the LAST backend kind dos_midi_backend_open() resolved this
+ // session -- persists after that handle is torn down (opl3) or silenced
+-- 
+2.47.3
+

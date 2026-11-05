@@ -1,0 +1,176 @@
+From 70626a9f80d4d506fb8ea9775fc36552c3fd64eb Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 11 Sep 2026 00:02:21 -0700
+Subject: [PATCH] [AGS] Sample get_real_fps() into a ring buffer for
+ RUNMANIFEST's fps_p50/fps_p95
+
+RUNMANIFEST (patch 0038) has carried fps_p50/fps_p95 fields since it
+was first wired, but they were always left at runmanifest_init()'s own
+NA (-1.0) default -- no game loop had ever run yet at the TITLE_SCREEN
+milestone that patch targeted. Now that a real game (AGS Quest, via the
+tests/harness test package) runs a real game loop, this closes that
+gap: game_loop_update_fps() already recomputes GameTimer.FPS from
+Clock::now() once per its own sync period; dos_fps_sample_tick() (in
+game_run.cpp, declared in game_run.h so quit.cpp can reach it) samples
+get_real_fps() into a fixed 4096-entry ring buffer once per real
+second (self-gated internally, so calling it every game loop is
+harmless), and dos_fps_percentiles() sorts a copy and reads the p50/p95
+positions once, at quit()'s clean-shutdown path.
+
+A fixed array, not a dynamic container, to avoid any heap allocation
+for a metric this port intends to run for the lifetime of every real
+game session on a 16 MB DOS target. -1.0 (NA) is returned untouched if
+the engine quits before any game loop ever ran (e.g. no game data
+found), matching the schema's own documented sentinel convention.
+
+Confirmed by a real DOSBox-X run against the AGS Quest test package
+(tests/harness): RUNMANI.LOG shows fps_p50=40.00, fps_p95=40.38 (this
+port's game speed cap under DOSBox-X's --fast cycles=max, not yet a
+real-hardware number -- see PLAN.md's Performance KPIs section on why a
+DOSBox-X fps figure is never treated as a benchmark datum).
+---
+ Engine/main/game_run.cpp | 56 ++++++++++++++++++++++++++++++++++++++++
+ Engine/main/game_run.h   | 13 ++++++++++
+ Engine/main/quit.cpp     | 20 +++++++++++---
+ 3 files changed, 85 insertions(+), 4 deletions(-)
+
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index e41fd03fe..65988fba0 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -16,6 +16,8 @@
+ // Game loop
+ //
+ 
++#include <algorithm>
++#include <cmath>
+ #include <limits>
+ #include <chrono>
+ #include <SDL3/SDL.h>
+@@ -1163,7 +1165,61 @@ static void game_loop_update_fps()
+         GameTimer.LastFPSSyncTime = now;
+         GameTimer.LastFPSSyncCounter = GameTimer.LoopCounter;
+     }
++
++#ifdef __DJGPP__
++    dos_fps_sample_tick();
++#endif
++}
++
++#ifdef __DJGPP__
++// DOS-PORT: fixed-capacity ring buffer (no dynamic allocation, matching
++// this port's 16 MB DOS target) sampling get_real_fps() once per real
++// second. See game_run.h's own comment for the calling convention.
++#define DOS_FPS_SAMPLE_CAP 4096
++static float dos_fps_samples[DOS_FPS_SAMPLE_CAP];
++static int dos_fps_sample_count = 0;
++static Clock::time_point dos_fps_last_sample_time;
++static bool dos_fps_have_last_sample_time = false;
++
++void dos_fps_sample_tick()
++{
++    const auto now = Clock::now();
++    if (!dos_fps_have_last_sample_time)
++    {
++        dos_fps_last_sample_time = now;
++        dos_fps_have_last_sample_time = true;
++        return;
++    }
++    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - dos_fps_last_sample_time) < std::chrono::milliseconds(1000))
++        return;
++    dos_fps_last_sample_time = now;
++
++    if (dos_fps_sample_count >= DOS_FPS_SAMPLE_CAP)
++        return; // cap reached -- keep the earliest samples rather than overwrite
++
++    const float fps = get_real_fps();
++    if (fps > 0.0f && !std::isnan(fps))
++        dos_fps_samples[dos_fps_sample_count++] = fps;
++}
++
++void dos_fps_percentiles(double *p50_out, double *p95_out)
++{
++    if (p50_out) *p50_out = -1.0;
++    if (p95_out) *p95_out = -1.0;
++    if (dos_fps_sample_count <= 0)
++        return;
++
++    float sorted[DOS_FPS_SAMPLE_CAP];
++    std::copy(dos_fps_samples, dos_fps_samples + dos_fps_sample_count, sorted);
++    std::sort(sorted, sorted + dos_fps_sample_count);
++
++    int p50_idx = std::min(dos_fps_sample_count - 1, (dos_fps_sample_count * 50) / 100);
++    int p95_idx = std::min(dos_fps_sample_count - 1, (dos_fps_sample_count * 95) / 100);
++
++    if (p50_out) *p50_out = (double)sorted[p50_idx];
++    if (p95_out) *p95_out = (double)sorted[p95_idx];
+ }
++#endif // __DJGPP__
+ 
+ float get_game_fps()
+ {
+diff --git a/Engine/main/game_run.h b/Engine/main/game_run.h
+index 29c0b5030..cbd0f177e 100644
+--- a/Engine/main/game_run.h
++++ b/Engine/main/game_run.h
+@@ -66,6 +66,19 @@ void increment_loop_counter();
+ uint32_t get_loop_counter();
+ // Reset runtime counter
+ void set_runtime_start();
++
++#ifdef __DJGPP__
++// DOS-PORT: fps ring-buffer sampler for RUNMANIFEST's fps_p50/fps_p95
++// (shared/skills/dos-hardware-validation's percentile fields). Call
++// dos_fps_sample_tick() once per game loop -- it self-gates to one
++// sample per real second internally, so calling it more often than
++// that is harmless. dos_fps_percentiles() (called once, from quit()'s
++// clean-shutdown path) sorts a copy of everything sampled so far and
++// reads the p50/p95 positions; -1.0 in either output means no samples
++// were ever taken (e.g. the engine quit before any game loop ran).
++void dos_fps_sample_tick();
++void dos_fps_percentiles(double *p50_out, double *p95_out);
++#endif
+ // Tells if the runtime counter was initialized
+ bool is_runtime_set();
+ // Gets real runtime duration in ms, for diagnostic purposes
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 20a11d411..41f5a7b35 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -51,6 +51,7 @@
+ #include "font/fonts.h"
+ #include "main/config.h"
+ #include "main/engine.h"
++#include "main/game_run.h"
+ #include "main/main.h"
+ #include "main/quit.h"
+ #include "ac/spritecache.h"
+@@ -311,10 +312,21 @@ void quit(const char *quitmsg)
+                 "%Y-%m-%dT%H:%M:%SZ", start_utc);
+         }
+ 
+-        // No fps/audio/banner data exists yet -- no game loop has ever run
+-        // (this milestone only reaches graphics-mode setup). Left at
+-        // runmanifest_init()'s own NA defaults; wave_tag/scene identify
+-        // this as bring-up telemetry, not a real benchmark wave.
++        // DOS-PORT: fps_p50/fps_p95 over every 1-second sample taken
++        // since the engine started (game_run.cpp's dos_fps_sample_tick,
++        // called from game_loop_update_fps() every game loop). Stays at
++        // runmanifest_init()'s own NA (-1.0) default if the engine quit
++        // before any game loop ever ran (e.g. no game data found) --
++        // dos_fps_percentiles() already returns that same sentinel in
++        // that case, so no separate guard is needed here.
++        dos_fps_percentiles(&manifest.fps_p50, &manifest.fps_p95);
++
++        // audio/banner data has no source yet (pre-Sound-milestone,
++        // no banner-witness mechanism exists) -- left at
++        // runmanifest_init()'s own NA/zero defaults. wave_tag/scene
++        // identify this as bring-up telemetry, not a real benchmark
++        // wave, until the run-identity patch wires DOSAGS_LOG_TAG/
++        // DOSAGS_SCENE through from the environment.
+         strncpy(manifest.wave_tag, "DEV0", sizeof(manifest.wave_tag) - 1);
+         strncpy(manifest.scene, "boot", sizeof(manifest.scene) - 1);
+ 
+-- 
+2.47.3
+

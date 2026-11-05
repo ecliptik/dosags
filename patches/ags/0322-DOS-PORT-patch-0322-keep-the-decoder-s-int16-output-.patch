@@ -1,0 +1,182 @@
+From 4de57fd1d4f1158e4e1ed094ad6c035cc8fe79bd Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sat, 26 Sep 2026 23:57:44 -0700
+Subject: [PATCH] DOS-PORT: patch 0322 -- keep the decoder's int16 output as
+ the SB device buffer (opt-in)
+
+WHY: after a clip's decode, convert_to_device_format() allocated a second
+whole-clip byte vector, zero-filled it (resize) and memcpy'd the int16
+PCM into it, then the int16 vector was freed. On SB the device format is
+S16, so the copy is byte-for-byte the decoder's output. On DOSBox-X it is
+3.5 ms of sound10's (215 KB) first play and 4.2 ms of sound18's (288 KB).
+The 486's AUDH16 run shows ~64 ms of work after decode_pcm on sound10
+(68 ms less the probe's own log line), which on DOSBox-X is almost all
+this copy: bulk memory work that fixed-cycle DOSBox-X charges little and
+the 486 pays for (dosags docs/lab/s8.md).
+
+WHAT: DosDecodedPcm::device becomes DosPcmBytes, a byte buffer with the
+same data()/size()/resize()/[]/!= use as before that can also adopt an
+int16 vector as its storage. With DOSAGS_PCM_ADOPT=1, decode_clip() on
+S16 adopts the decoder's vector: no second allocation, zero-fill, copy or
+free; data() returns the same bytes. The U8 (GUS) conversion and 0320's
+progressive fill keep the byte storage.
+- Default off (the killswitch): the 486 IO-arm cells' tail brackets
+  decide the default.
+- DOSAGS_PCM_ADOPT_VERIFY=1 also converts the old way and compares the
+  bytes; the pcmcache line gains adopted/adopt_verified/adopt_mismatches.
+---
+ Engine/media/audio/sdldecoder.cpp | 59 +++++++++++++++++++++++++++----
+ Engine/media/audio/sdldecoder.h   | 35 +++++++++++++++++-
+ 2 files changed, 87 insertions(+), 7 deletions(-)
+
+diff --git a/Engine/media/audio/sdldecoder.cpp b/Engine/media/audio/sdldecoder.cpp
+index 6e9a69e43..b57d507fb 100644
+--- a/Engine/media/audio/sdldecoder.cpp
++++ b/Engine/media/audio/sdldecoder.cpp
+@@ -88,6 +88,8 @@ size_t g_pcm_cache_bytes = 0u, g_pcm_cache_peak = 0u;
+ uint32_t g_pcm_cache_clock = 0u;
+ unsigned long g_pcm_hits = 0u, g_pcm_misses = 0u, g_pcm_evictions = 0u, g_pcm_uncacheable = 0u,
+     g_pcm_lapsed = 0u, g_pcm_verified = 0u, g_pcm_verify_mismatches = 0u;
++// DOS-PORT patch 0322: adopted clips, and with DOSAGS_PCM_ADOPT_VERIFY=1 the byte comparisons against the old copy
++unsigned long g_pcm_adopted = 0u, g_pcm_adopt_verified = 0u, g_pcm_adopt_mismatches = 0u;
+ // DOS-PORT patch 0320: progressive decode counters
+ unsigned long g_pcm_incr = 0u, g_pcm_incr_done = 0u, g_pcm_incr_slices = 0u, g_pcm_incr_verified = 0u,
+     g_pcm_incr_mismatches = 0u;
+@@ -116,6 +118,29 @@ bool pcm_cache_verify()
+     return verify == 1;
+ }
+ 
++// DOS-PORT patch 0322: opt-in adoption of the int16 output as the S16 device buffer, and its byte check
++bool pcm_adopt_on()
++{
++    static int on = -1;
++    if (on < 0)
++    {
++        const char *e = SDL_getenv("DOSAGS_PCM_ADOPT");
++        on = (e && e[0] == '1' && e[1] == 0) ? 1 : 0;
++    }
++    return on == 1;
++}
++
++bool pcm_adopt_verify()
++{
++    static int verify = -1;
++    if (verify < 0)
++    {
++        const char *e = SDL_getenv("DOSAGS_PCM_ADOPT_VERIFY");
++        verify = (e && e[0] == '1' && e[1] == 0) ? 1 : 0;
++    }
++    return verify == 1;
++}
++
+ void pcm_cache_drop(size_t k)
+ {
+     g_pcm_cache_bytes -= g_pcm_cache[k].pcm->device.size();
+@@ -181,11 +206,31 @@ std::shared_ptr<const DosDecodedPcm> decode_clip(const uint8_t *src, size_t src_
+     if (!dos_audio_decode_pcm(src, src_size, pcm16))
+         return nullptr;
+     std::shared_ptr<DosDecodedPcm> dec = std::make_shared<DosDecodedPcm>();
+-    // DOS-PORT (S5 GUS, "Correction #1"): convert to the ACTIVE device
+-    // format ONCE here, not per-chunk in GetData() -- see this file's own
+-    // convert_to_device_format() comment.
+-    convert_to_device_format(pcm16, fmt, dec->device);
+     dec->samples = pcm16.size();
++    // DOS-PORT patch 0322: on S16 the int16 output is the device format; with DOSAGS_PCM_ADOPT=1 keep it instead
++    // of copying it (DOSAGS_PCM_ADOPT_VERIFY=1 also converts the old way and compares the bytes).
++    if (fmt != SDL_AUDIO_U8 && pcm_adopt_on())
++    {
++        std::vector<uint8_t> old_bytes;
++        if (pcm_adopt_verify())
++            convert_to_device_format(pcm16, fmt, old_bytes);
++        dec->device.adopt(std::move(pcm16));
++        g_pcm_adopted++;
++        if (pcm_adopt_verify())
++        {
++            g_pcm_adopt_verified++;
++            if (old_bytes.size() != dec->device.size() ||
++                (!old_bytes.empty() && std::memcmp(old_bytes.data(), dec->device.data(), old_bytes.size()) != 0))
++                g_pcm_adopt_mismatches++;
++        }
++    }
++    else
++    {
++        // DOS-PORT (S5 GUS, "Correction #1"): convert to the ACTIVE device
++        // format ONCE here, not per-chunk in GetData() -- see this file's own
++        // convert_to_device_format() comment.
++        convert_to_device_format(pcm16, fmt, dec->device.bytes());
++    }
+     dec->fmt = fmt;
+     dec->ready = dec->samples; // DOS-PORT patch 0320: decoded whole
+     return dec;
+@@ -258,11 +303,13 @@ void dos_pcm_cache_report(FILE *log)
+ {
+     std::fprintf(log, "DOS-PORT pcmcache hits=%lu misses=%lu evictions=%lu uncacheable=%lu lapsed=%lu"
+         " entries=%lu bytes=%lu peak_bytes=%lu cap_kb=%lu verify=%lu verify_mismatches=%lu"
+-        " incr=%lu incr_done=%lu incr_slices=%lu incr_verified=%lu incr_mismatches=%lu\n", // DOS-PORT patch 0320
++        " incr=%lu incr_done=%lu incr_slices=%lu incr_verified=%lu incr_mismatches=%lu" // DOS-PORT patch 0320
++        " adopted=%lu adopt_verified=%lu adopt_mismatches=%lu\n", // DOS-PORT patch 0322
+         g_pcm_hits, g_pcm_misses, g_pcm_evictions, g_pcm_uncacheable, g_pcm_lapsed,
+         (unsigned long)g_pcm_cache.size(), (unsigned long)g_pcm_cache_bytes, (unsigned long)g_pcm_cache_peak,
+         (unsigned long)(pcm_cache_cap() / 1024u), g_pcm_verified, g_pcm_verify_mismatches,
+-        g_pcm_incr, g_pcm_incr_done, g_pcm_incr_slices, g_pcm_incr_verified, g_pcm_incr_mismatches);
++        g_pcm_incr, g_pcm_incr_done, g_pcm_incr_slices, g_pcm_incr_verified, g_pcm_incr_mismatches,
++        g_pcm_adopted, g_pcm_adopt_verified, g_pcm_adopt_mismatches);
+ }
+ 
+ //-----------------------------------------------------------------------------
+diff --git a/Engine/media/audio/sdldecoder.h b/Engine/media/audio/sdldecoder.h
+index c6c41f4a1..3423f9749 100644
+--- a/Engine/media/audio/sdldecoder.h
++++ b/Engine/media/audio/sdldecoder.h
+@@ -170,6 +170,39 @@ public:
+     }
+ };
+ 
++// DOS-PORT patch 0322: a decoded clip's device-format bytes. On SB (S16) the decoder's int16 output already IS
++// the device format byte for byte, so with DOSAGS_PCM_ADOPT=1 that vector is adopted as the storage instead of
++// being copied into a fresh zero-filled byte vector (a second whole-clip allocation, a zero-fill, a memcpy and a
++// free: ~3.5-4 ms per 200-300 KB clip on DOSBox-X, bulk memory work the 486 pays several times over). data()
++// returns the same bytes either way. The U8 (GUS) conversion keeps the byte storage.
++class DosPcmBytes
++{
++public:
++    uint8_t *data() { return _adopted ? reinterpret_cast<uint8_t *>(_s16.data()) : _b.data(); }
++    const uint8_t *data() const { return _adopted ? reinterpret_cast<const uint8_t *>(_s16.data()) : _b.data(); }
++    size_t size() const { return _adopted ? _s16.size() * sizeof(int16_t) : _b.size(); }
++    // resize and the byte storage are only used on the byte path (conversion, 0320's progressive fill)
++    void resize(size_t n) { _s16.clear(); _adopted = false; _b.resize(n); }
++    std::vector<uint8_t> &bytes() { _s16.clear(); _adopted = false; return _b; }
++    uint8_t &operator[](size_t i) { return data()[i]; }
++    void adopt(std::vector<int16_t> &&pcm) { _b.clear(); _s16 = std::move(pcm); _adopted = true; }
++    bool adopted() const { return _adopted; }
++    bool operator==(const DosPcmBytes &o) const
++    {
++        const size_t n = size();
++        if (n != o.size()) return false;
++        const uint8_t *a = data(), *b = o.data();
++        for (size_t i = 0; i < n; i++)
++            if (a[i] != b[i]) return false;
++        return true;
++    }
++    bool operator!=(const DosPcmBytes &o) const { return !(*this == o); }
++private:
++    std::vector<uint8_t> _b;
++    std::vector<int16_t> _s16;
++    bool _adopted = false;
++};
++
+ // DOS-PORT patch 0216: one decoded clip -- its samples already in the mixer's device format, their
+ // count, and that format. Built once per decode and never changed after, so every play of the clip
+ // can share it (the PCM cache in sdldecoder.cpp) instead of decoding it again.
+@@ -178,7 +211,7 @@ struct DosDecodedPcm
+     // DOS-PORT patch 0320: `device` is sized for all `samples` from the start; a progressively decoded clip
+     // fills it ahead of GetData(), and `ready` says how far (== samples once complete, and always for a clip
+     // decoded whole). Only sdldecoder.cpp writes these, on the main thread.
+-    mutable std::vector<uint8_t> device; // what GetData() hands out
++    mutable DosPcmBytes device; // what GetData() hands out (DOS-PORT patch 0322: may adopt the int16 output)
+     size_t samples = 0u;         // mono samples at the mixer rate; position/duration key off this
+     SDL_AudioFormat fmt = SDL_AUDIO_UNKNOWN;
+     mutable size_t ready = 0u;
+-- 
+2.47.3
+

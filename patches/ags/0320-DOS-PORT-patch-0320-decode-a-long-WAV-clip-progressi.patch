@@ -1,0 +1,369 @@
+From 35ef14d6778a52e449da10c408e2d3e62707beab Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sat, 26 Sep 2026 18:49:45 -0700
+Subject: [PATCH] DOS-PORT: patch 0320 -- decode a long WAV clip progressively,
+ one chunk ahead of the mixer (opt-in)
+
+WHY: a clip's first play decoded the whole clip at Open(), on the main
+thread, inside one tick. In Trilby room 35 the end-of-dialogue ambient
+(sound18.wav, 288 KB) costs 263 ms at DOSBox-X's fixed 40000, 211 ms of
+it decode, which is most of the S8 fixture's 430 ms end-of-dialogue
+stall. In 5 Days room 3, sound10.wav (215 KB) is the candidate for S16's
+~395 ms stall (dosags docs/lab/s8.md). Chunk-ahead decoding shrinks the
+stall; it does not move it.
+
+WHY OPT-IN: it changes where decode time lands during play. On DOSBox-X
+the worst slice is 5-6 ms per 2048 samples and up to 10 ms in one tick
+(two slices) during a clip's first ~19 ticks. On the 486 a slice may
+cost several times that inside a play tick against the 25 ms budget, so
+the default flips only after a 486 same-binary ABBA (as 0239 did).
+
+WHAT: with DOSAGS_PCM_INCR=1, a WAV PCM clip whose decode is one data
+chunk (mono or stereo, 8/16-bit) and longer than two 2048-sample chunks,
+played from bytes that stay alive (the sound cache's buffer), gets its
+full-size device buffer at Open() and only the first chunk decoded. Each
+GetData() decodes the chunk it is about to hand out. Output sample i
+reads only source frames floor(i * rate / RATE) and the next, so a range
+decode (dos_audio_decode_range: decode_wav's chunk walk,
+decode_pcm_block's per-frame downmix and append_resampled_mono's
+arithmetic, with i0/rem started from i * rate exactly) produces the
+whole-clip decode's samples. The PCM cache (0216) keeps the progressive
+object, so a later play continues it.
+- Default (unset, or any value but 1): decodes whole, as before.
+- DOSAGS_PCM_INCR=1 turns it on.
+- DOSAGS_PCM_INCR_VERIFY=1 (with INCR=1) compares each completed buffer
+  with the whole-clip decode.
+- The pcmcache status line gains incr/incr_done/incr_slices/
+  incr_verified/incr_mismatches (incr=0 in a default run).
+---
+ Engine/media/audio/sdldecoder.cpp        |  76 ++++++++++++-
+ Engine/media/audio/sdldecoder.h          |   9 +-
+ Engine/platform/dos/dos_audio_decode.cpp | 132 +++++++++++++++++++++++
+ Engine/platform/dos/dos_audio_decode.h   |  17 +++
+ 4 files changed, 230 insertions(+), 4 deletions(-)
+
+diff --git a/Engine/media/audio/sdldecoder.cpp b/Engine/media/audio/sdldecoder.cpp
+index 058b63669..6e9a69e43 100644
+--- a/Engine/media/audio/sdldecoder.cpp
++++ b/Engine/media/audio/sdldecoder.cpp
+@@ -88,6 +88,9 @@ size_t g_pcm_cache_bytes = 0u, g_pcm_cache_peak = 0u;
+ uint32_t g_pcm_cache_clock = 0u;
+ unsigned long g_pcm_hits = 0u, g_pcm_misses = 0u, g_pcm_evictions = 0u, g_pcm_uncacheable = 0u,
+     g_pcm_lapsed = 0u, g_pcm_verified = 0u, g_pcm_verify_mismatches = 0u;
++// DOS-PORT patch 0320: progressive decode counters
++unsigned long g_pcm_incr = 0u, g_pcm_incr_done = 0u, g_pcm_incr_slices = 0u, g_pcm_incr_verified = 0u,
++    g_pcm_incr_mismatches = 0u;
+ 
+ size_t pcm_cache_cap()
+ {
+@@ -184,17 +187,82 @@ std::shared_ptr<const DosDecodedPcm> decode_clip(const uint8_t *src, size_t src_
+     convert_to_device_format(pcm16, fmt, dec->device);
+     dec->samples = pcm16.size();
+     dec->fmt = fmt;
++    dec->ready = dec->samples; // DOS-PORT patch 0320: decoded whole
+     return dec;
+ }
++
++// DOS-PORT patch 0320: decodes a progressive clip's samples [ready, upto) into its device buffer, in the device
++// format (the same per-sample conversion as convert_to_device_format()). Completing it releases the source bytes
++// it held and, with DOSAGS_PCM_INCR_VERIFY=1, compares the whole buffer with decode_clip()'s.
++void pcm_progress_to(const DosDecodedPcm &p, size_t upto)
++{
++    if (upto > p.samples)
++        upto = p.samples;
++    if (p.ready >= upto)
++        return;
++    const size_t a = p.ready, n = upto - a;
++    std::vector<int16_t> tmp(n);
++    dos_audio_decode_range(p.range, a, n, tmp.data());
++    if (p.fmt == SDL_AUDIO_U8)
++    {
++        for (size_t k = 0; k < n; k++)
++            p.device[a + k] = static_cast<uint8_t>((tmp[k] >> 8) + 128);
++    }
++    else
++        std::memcpy(p.device.data() + a * sizeof(int16_t), tmp.data(), n * sizeof(int16_t));
++    p.ready = upto;
++    g_pcm_incr_slices++;
++    if (p.ready == p.samples)
++    {
++        g_pcm_incr_done++;
++        static int verify = -1;
++        if (verify < 0) { const char *e = SDL_getenv("DOSAGS_PCM_INCR_VERIFY"); verify = (e && e[0] == '1') ? 1 : 0; }
++        if (verify == 1 && p.keep)
++        {
++            const std::shared_ptr<const DosDecodedPcm> whole = decode_clip(p.keep->data(), p.keep->size(), p.fmt);
++            g_pcm_incr_verified++;
++            if (!whole || whole->samples != p.samples || whole->device != p.device)
++                g_pcm_incr_mismatches++;
++        }
++        p.keep.reset();
++    }
++}
++
++// DOS-PORT patch 0320: a WAV PCM clip longer than two chunks, whose bytes stay alive (the sound cache's buffer),
++// is decoded progressively: its first chunk now, the rest as GetData() reaches it (opt-in: DOSAGS_PCM_INCR=1; default whole).
++std::shared_ptr<const DosDecodedPcm> decode_clip_start(const std::shared_ptr<std::vector<uint8_t>> &bytes,
++    const uint8_t *src, size_t src_size, SDL_AudioFormat fmt)
++{
++    static int incr = -1;
++    if (incr < 0) { const char *e = SDL_getenv("DOSAGS_PCM_INCR"); incr = (e && e[0] == '1') ? 1 : 0; }
++    DosPcmRangeSource range;
++    if (incr == 1 && bytes && src == bytes->data() && dos_audio_wav_range_source(src, src_size, range) &&
++        range.out_total > 2u * DECODED_CHUNK_SAMPLES)
++    {
++        std::shared_ptr<DosDecodedPcm> dec = std::make_shared<DosDecodedPcm>();
++        dec->samples = range.out_total;
++        dec->fmt = fmt;
++        dec->device.resize(range.out_total * (fmt == SDL_AUDIO_U8 ? 1u : sizeof(int16_t)));
++        dec->range = range;
++        dec->keep = bytes;
++        dec->ready = 0u;
++        g_pcm_incr++;
++        pcm_progress_to(*dec, DECODED_CHUNK_SAMPLES);
++        return dec;
++    }
++    return decode_clip(src, src_size, fmt);
++}
+ } // namespace
+ 
+ void dos_pcm_cache_report(FILE *log)
+ {
+     std::fprintf(log, "DOS-PORT pcmcache hits=%lu misses=%lu evictions=%lu uncacheable=%lu lapsed=%lu"
+-        " entries=%lu bytes=%lu peak_bytes=%lu cap_kb=%lu verify=%lu verify_mismatches=%lu\n",
++        " entries=%lu bytes=%lu peak_bytes=%lu cap_kb=%lu verify=%lu verify_mismatches=%lu"
++        " incr=%lu incr_done=%lu incr_slices=%lu incr_verified=%lu incr_mismatches=%lu\n", // DOS-PORT patch 0320
+         g_pcm_hits, g_pcm_misses, g_pcm_evictions, g_pcm_uncacheable, g_pcm_lapsed,
+         (unsigned long)g_pcm_cache.size(), (unsigned long)g_pcm_cache_bytes, (unsigned long)g_pcm_cache_peak,
+-        (unsigned long)(pcm_cache_cap() / 1024u), g_pcm_verified, g_pcm_verify_mismatches);
++        (unsigned long)(pcm_cache_cap() / 1024u), g_pcm_verified, g_pcm_verify_mismatches,
++        g_pcm_incr, g_pcm_incr_done, g_pcm_incr_slices, g_pcm_incr_verified, g_pcm_incr_mismatches);
+ }
+ 
+ //-----------------------------------------------------------------------------
+@@ -291,6 +359,7 @@ bool SDLDecoder::Open(float pos_ms)
+             g_pcm_hits++;
+             if (pcm_cache_verify())
+             {
++                pcm_progress_to(*_pcm, _pcm->samples); // DOS-PORT patch 0320: compare the whole of it
+                 const std::shared_ptr<const DosDecodedPcm> fresh = decode_clip(src_bytes->data(), src_bytes->size(), fmt);
+                 g_pcm_verified++;
+                 if (!fresh || fresh->samples != _pcm->samples || fresh->device != _pcm->device)
+@@ -331,7 +400,7 @@ bool SDLDecoder::Open(float pos_ms)
+         src_size = raw.size();
+     }
+ 
+-    _pcm = decode_clip(src, src_size, fmt);
++    _pcm = decode_clip_start(_sampleData, src, src_size, fmt); // DOS-PORT patch 0320: may be progressive
+     Close(); // release whatever we were handed, decoded or not
+     if (!_pcm)
+         return false;
+@@ -386,6 +455,7 @@ SoundBufferPtr SDLDecoder::GetData()
+     }
+ 
+     const size_t take = std::min(DECODED_CHUNK_SAMPLES, total - _readSamples);
++    pcm_progress_to(*_pcm, _readSamples + take); // DOS-PORT patch 0320: decode this chunk if not yet done
+     const float ts = 1000.f * static_cast<float>(_readSamples) / static_cast<float>(DOS_AUDIO_MIXER_RATE);
+     const float dur = 1000.f * static_cast<float>(take) / static_cast<float>(DOS_AUDIO_MIXER_RATE);
+     // DOS-PORT (S5 GUS, "Correction #1"): slice the device-format samples (converted once at Open()),
+diff --git a/Engine/media/audio/sdldecoder.h b/Engine/media/audio/sdldecoder.h
+index eb2a74f6a..c6c41f4a1 100644
+--- a/Engine/media/audio/sdldecoder.h
++++ b/Engine/media/audio/sdldecoder.h
+@@ -44,6 +44,7 @@
+ #ifdef AUDIO_CORE_DEBUG
+ #include "debug/out.h"
+ #endif
++#include "platform/dos/dos_audio_decode.h" // DosPcmRangeSource -- DOS-PORT patch 0320
+ 
+ namespace AGS
+ {
+@@ -174,9 +175,15 @@ public:
+ // can share it (the PCM cache in sdldecoder.cpp) instead of decoding it again.
+ struct DosDecodedPcm
+ {
+-    std::vector<uint8_t> device; // what GetData() hands out
++    // DOS-PORT patch 0320: `device` is sized for all `samples` from the start; a progressively decoded clip
++    // fills it ahead of GetData(), and `ready` says how far (== samples once complete, and always for a clip
++    // decoded whole). Only sdldecoder.cpp writes these, on the main thread.
++    mutable std::vector<uint8_t> device; // what GetData() hands out
+     size_t samples = 0u;         // mono samples at the mixer rate; position/duration key off this
+     SDL_AudioFormat fmt = SDL_AUDIO_UNKNOWN;
++    mutable size_t ready = 0u;
++    mutable std::shared_ptr<std::vector<uint8_t>> keep; // the source bytes, held until the decode completes
++    DosPcmRangeSource range;
+ };
+ 
+ // DOS-PORT patch 0216: writes the PCM cache's counters as one "DOS-PORT pcmcache ..." line (quit.cpp,
+diff --git a/Engine/platform/dos/dos_audio_decode.cpp b/Engine/platform/dos/dos_audio_decode.cpp
+index 147558274..ab238c8ac 100644
+--- a/Engine/platform/dos/dos_audio_decode.cpp
++++ b/Engine/platform/dos/dos_audio_decode.cpp
+@@ -332,6 +332,138 @@ bool decode_voc(const uint8_t *data, size_t size, std::vector<int16_t> &out_pcm)
+ 
+ } // namespace
+ 
++// DOS-PORT patch 0320: see dos_audio_decode.h. The WAV chunk walk below is decode_wav()'s own, stopping at the
++// same first data chunk with the same fmt checks; the per-frame downmix is decode_pcm_block()'s, branch for
++// branch; the resampling is append_resampled_mono()'s, with i0 / rem started from i * rate exactly rather than
++// stepped from 0 (the stepped values are that quotient and remainder).
++bool dos_audio_wav_range_source(const uint8_t *data, size_t size, DosPcmRangeSource &src)
++{
++    if (!data || size < 12 || std::memcmp(data, "RIFF", 4) != 0 || std::memcmp(data + 8, "WAVE", 4) != 0)
++        return false;
++    int fmt_channels = 0, fmt_bits = 0;
++    uint32_t fmt_rate = 0;
++    bool have_fmt = false;
++    size_t pos = 12;
++    while (pos + 8 <= size)
++    {
++        const uint8_t *id = data + pos;
++        uint32_t chunk_size = rd_u32le(data + pos + 4);
++        const size_t body = pos + 8;
++        if (body > size)
++            break;
++        if (chunk_size > size - body)
++            chunk_size = static_cast<uint32_t>(size - body);
++        if (std::memcmp(id, "fmt ", 4) == 0 && chunk_size >= 16)
++        {
++            const uint16_t audio_format = rd_u16le(data + body);
++            fmt_channels = rd_u16le(data + body + 2);
++            fmt_rate = rd_u32le(data + body + 4);
++            fmt_bits = rd_u16le(data + body + 14);
++            have_fmt = (audio_format == 1 /* PCM */) && (fmt_bits == 8 || fmt_bits == 16) && fmt_channels > 0;
++        }
++        else if (std::memcmp(id, "data", 4) == 0)
++        {
++            if (!have_fmt || static_cast<int>(fmt_rate) <= 0)
++                return false;
++            const size_t bpf = static_cast<size_t>(fmt_channels) * static_cast<size_t>(fmt_bits / 8);
++            const size_t frames = bpf ? chunk_size / bpf : 0;
++            size_t out_total = 0;
++            if (static_cast<int>(fmt_rate) == DOS_AUDIO_MIXER_RATE)
++                out_total = frames;
++            else if (frames > 0)
++                out_total = static_cast<size_t>((static_cast<uint64_t>(frames) * DOS_AUDIO_MIXER_RATE) / fmt_rate);
++            if (out_total == 0)
++                return false;
++            src.data = data + body;
++            src.frames = frames;
++            src.rate = static_cast<int>(fmt_rate);
++            src.channels = fmt_channels;
++            src.bits = fmt_bits;
++            src.out_total = out_total;
++            return true;
++        }
++        pos = body + chunk_size + (chunk_size & 1u);
++    }
++    return false;
++}
++
++static inline int16_t range_mono_frame(const DosPcmRangeSource &s, size_t f)
++{
++    const uint8_t *d = s.data;
++    if (s.channels == 1 && s.bits == 16)
++        return static_cast<int16_t>(rd_u16le(d + f * 2));
++    if (s.channels == 1)
++        return static_cast<int16_t>((static_cast<int32_t>(d[f]) - 128) * 256);
++    if (s.channels == 2 && s.bits == 16)
++    {
++        const int32_t sum = static_cast<int16_t>(rd_u16le(d + f * 4)) + static_cast<int16_t>(rd_u16le(d + f * 4 + 2));
++        return static_cast<int16_t>(sum / 2);
++    }
++    if (s.channels == 2)
++    {
++        const int32_t sum = ((static_cast<int32_t>(d[f * 2]) - 128) * 256) + ((static_cast<int32_t>(d[f * 2 + 1]) - 128) * 256);
++        return static_cast<int16_t>(sum / 2);
++    }
++    const size_t bpf = static_cast<size_t>(s.channels) * static_cast<size_t>(s.bits / 8);
++    int32_t sum = 0;
++    const uint8_t *frame = d + f * bpf;
++    for (int c = 0; c < s.channels; c++)
++    {
++        int32_t sample;
++        if (s.bits == 8)
++            sample = (static_cast<int32_t>(frame[c]) - 128) * 256;
++        else
++            sample = static_cast<int16_t>(rd_u16le(frame + c * 2));
++        sum += sample;
++    }
++    return static_cast<int16_t>(sum / s.channels);
++}
++
++// interp_double() over the range source (the same double formula; the frame after the last is clamped to the
++// last, where the whole-clip vector would have read past its end)
++static int16_t range_interp_double(const DosPcmRangeSource &s, size_t i)
++{
++    const double src_pos = (static_cast<double>(i) * s.rate) / DOS_AUDIO_MIXER_RATE;
++    const size_t i0 = static_cast<size_t>(src_pos);
++    const double frac = src_pos - static_cast<double>(i0);
++    const int32_t s0 = range_mono_frame(s, i0 < s.frames ? i0 : s.frames - 1);
++    const int32_t s1 = range_mono_frame(s, i0 + 1 < s.frames ? i0 + 1 : s.frames - 1);
++    return static_cast<int16_t>(s0 + static_cast<double>(s1 - s0) * frac);
++}
++
++void dos_audio_decode_range(const DosPcmRangeSource &s, size_t a, size_t n, int16_t *out)
++{
++    if (s.rate == DOS_AUDIO_MIXER_RATE)
++    {
++        for (size_t k = 0; k < n; k++)
++            out[k] = range_mono_frame(s, a + k);
++        return;
++    }
++    const size_t src_n = s.frames;
++    for (size_t k = 0; k < n; k++)
++    {
++        const size_t i = a + k;
++        const uint64_t p = static_cast<uint64_t>(i) * static_cast<uint32_t>(s.rate);
++        const size_t i0 = static_cast<size_t>(p / DOS_AUDIO_MIXER_RATE);
++        const int32_t rem = static_cast<int32_t>(p % DOS_AUDIO_MIXER_RATE);
++        if (i0 + 1 >= src_n)
++        {
++            out[k] = range_mono_frame(s, src_n - 1);
++            continue;
++        }
++        const int32_t s0 = range_mono_frame(s, i0);
++        const int32_t d = static_cast<int32_t>(range_mono_frame(s, i0 + 1)) - s0;
++        if (rem == 0 || d == 0)
++            out[k] = static_cast<int16_t>(s0);
++        else
++        {
++            const int32_t t = s0 * DOS_AUDIO_MIXER_RATE + d * rem;
++            const int32_t q = t / DOS_AUDIO_MIXER_RATE;
++            out[k] = (q * DOS_AUDIO_MIXER_RATE != t) ? static_cast<int16_t>(q) : range_interp_double(s, i);
++        }
++    }
++}
++
+ bool dos_audio_decode_pcm(const uint8_t *data, size_t size, std::vector<int16_t> &out_pcm)
+ {
+     out_pcm.clear();
+diff --git a/Engine/platform/dos/dos_audio_decode.h b/Engine/platform/dos/dos_audio_decode.h
+index 8673feaf6..2eed3fbff 100644
+--- a/Engine/platform/dos/dos_audio_decode.h
++++ b/Engine/platform/dos/dos_audio_decode.h
+@@ -41,4 +41,21 @@
+ // sub-format, or truncated/corrupt data.
+ bool dos_audio_decode_pcm(const uint8_t *data, size_t size, std::vector<int16_t> &out_pcm);
+ 
++// DOS-PORT patch 0320: range decoding of a WAV PCM clip. A clip whose decode is one WAV data chunk (what
++// dos_audio_decode_pcm() decodes for it) can be decoded a range of output samples at a time: output sample i
++// depends only on the source frames floor(i * rate / RATE) and the one after it, so any range comes out exactly
++// as the same samples of the whole-clip decode.
++struct DosPcmRangeSource
++{
++    const uint8_t *data = nullptr; // the data chunk's first byte (inside the caller's buffer)
++    size_t frames = 0;             // whole source frames in the chunk
++    int rate = 0, channels = 0, bits = 0;
++    size_t out_total = 0;          // output samples the whole-clip decode produces
++};
++// True, with `src` filled, if dos_audio_decode_pcm() would decode `data` as WAV through exactly one data chunk
++// into a non-empty result; false otherwise (the caller decodes the clip whole).
++bool dos_audio_wav_range_source(const uint8_t *data, size_t size, DosPcmRangeSource &src);
++// Writes output samples [a, a + n) of that decode into out[0..n).
++void dos_audio_decode_range(const DosPcmRangeSource &src, size_t a, size_t n, int16_t *out);
++
+ #endif // __AGS_EE_PLATFORM_DOS__DOS_AUDIO_DECODE_H
+-- 
+2.47.3
+

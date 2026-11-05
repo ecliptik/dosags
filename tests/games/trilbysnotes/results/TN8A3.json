@@ -1,0 +1,79 @@
+{
+  "sound_off": {
+    "tag": "TN8A3",
+    "run_dir": "/tmp/tmp.5meakgj7Ci",
+    "runmanifest_log": "/tmp/tmp.5meakgj7Ci/RUNMANI.LOG",
+    "runmanifest": {
+      "schema_version": "1",
+      "environment": "realhw",
+      "binary_sha12": "c9ee2b121d04",
+      "wave_tag": "TN8A3",
+      "scene": "boot",
+      "env_block_sha": "aa0172bb39a4",
+      "started_utc": "2026-09-15T23:19:37Z",
+      "duration_s": "20",
+      "exit_code": "0",
+      "fps_p50": "5.22",
+      "fps_p95": "5.45",
+      "audio_vital_status": "NA",
+      "regime": "NA",
+      "banner_required_hit": "0",
+      "banner_required_total": "0",
+      "banner_forbidden_hit": "0",
+      "banner_optional_hit": "0",
+      "critical_count": "0",
+      "warn_count": "0",
+      "tick_rate": "14.16",
+      "frames_skipped": "165",
+      "memory_min_free_kb": "155008"
+    },
+    "expected": {
+      "audio_vital_status": "NA",
+      "exit_code": 0
+    },
+    "checks": {
+      "runmanifest_present": {
+        "ok": true
+      },
+      "exit_code": {
+        "ok": true,
+        "expected": 0,
+        "actual": "0"
+      },
+      "critical_count": {
+        "ok": true,
+        "expected": "0",
+        "actual": "0"
+      },
+      "warn_count": {
+        "ok": true,
+        "expected": "0",
+        "actual": "0"
+      },
+      "audio_vital_status": {
+        "ok": true,
+        "expected": "NA",
+        "actual": "NA"
+      },
+      "stdout_present": {
+        "ok": true
+      },
+      "fixed_timestep": {
+        "ok": true,
+        "expected_line": "DOS-PORT fixed-timestep: ENABLED"
+      },
+      "game_speed_40hz": {
+        "ok": false,
+        "gating": false,
+        "tick_rate": 14.16,
+        "band": "40.0 +/- 2%"
+      }
+    },
+    "pass": true,
+    "capture_hash": {
+      "PH01.BMP": "9f9d9bd9eee2794336d02b91e661612d2c707401a26b260e0588e2574b3cc185",
+      "PH02.BMP": "6051787344120f894baa6c919564bc90d9d592d843536a3de7b2089e3ceb1a34",
+      "PH03.BMP": "5b98f4da5aba5c3f992315a2192c0dea92dddbbeefe3706690698d08e02330db"
+    }
+  }
+}

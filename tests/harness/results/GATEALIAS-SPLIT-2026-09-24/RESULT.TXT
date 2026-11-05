@@ -1,0 +1,11 @@
+gate-alias.sh per-run lock split -- verification (2026-09-24/25), one row + control: bench8-alias-idle, AGS_EXE = C3 v1
+(a) default conf (cycles=max): A==B ok 5/5, control FAILS as required. Each of A, B, C logged its OWN
+    "waiting ... to take the exclusive lock" -> one EXCLUSIVE acquire per run (freeze capture at cycles=max).
+(b) GATE_CONF=tools/dosbox-x.conf (fixed 40000): A==B ok 5/5, control FAILS. No run waited for an exclusive lock;
+    holders sampled were run-dosbox.sh mode=shared -> SHARED per run (fixed cycles + --no-host-input).
+(c) ratchet-style outer EXCLUSIVE hold (DOSBOX_LOCK_HELD=1, tool=lab-gatesplit-outer): A==B ok 5/5, control FAILS;
+    the outer holder is present for the whole run and the runs log no acquire of their own -> nested runs take nothing,
+    as inside a ratchet.sh unit. (The two shared run-dosbox records sampled during (c) are stale entries of already-
+    exited runs: a shared holder cannot coexist with the exclusive one; the .who file is pruned on scan.)
+No sample in any of the three shows a gate-alias.sh holder record: the whole-series hold is gone.
+Verdicts are identical to G3a's bench8-alias-idle row (5/5, control fails). Watcher files: a.who b.who c.who.

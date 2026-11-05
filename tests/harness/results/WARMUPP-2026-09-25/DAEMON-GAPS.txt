@@ -1,0 +1,17 @@
+# Round P vcctrld availability (UTC). The first block is the vcctrl session's Pi journal, relayed by the coordinator;
+# later lines (if any) are daemongap.sh's own polls (every 10 s from ~02:54Z).
+02:49:17 d5aeb64 deploy starts (vcctrl session; operator-approved in its session)
+02:49:23.72 vcctrld DOWN (restart); web KVM down for the same window
+02:49:25.80 vcctrld back (new process; ~2.1 s down). daemon_start_t 1790390964.157 (02:49:24.157Z) replaces the
+            round-start value 1790349883.53 recorded by the driver at 02:49:01Z -- EXPECTED, this restart, not an anomaly
+02:49:28.5-02:50:59.8 the Pi-hosted vcctrl-mcp down (the control-host MCP unaffected; the round uses the CLI only)
+02:51:14 public mirror restarted; 02:51:15 deploy done; no further restarts (the vcctrl session is not touching the rig)
+Lost at the restart (journal): the input lock, in-flight file jobs, the frame/capture ring (frames before 02:49:25.8Z),
+  any daemon-side power-watchdog state. HID gadget not restarted.
+In flight: nothing of the round's. Relay-on was 02:49:01Z; the driver was in its 75 s boot sleep (no lock, no job, no
+  frame capture of its own) until WARMUPP started at 02:50:17Z, after the daemon was back.
+(a) No daemon-side watchdog or timer was set by the driver or cellL: power-on is a plain `vcctrl power on`, the cap
+  watchdog is a host-side bash subshell (driveP.sh:39-42), and the daemon's resolved power config has no watchdog or
+  auto-off setting (backend wemo, cycle_off_s 15). powerguard.sh backs the power-off in any case.
+(b) Frames lost: only the boot frames before 02:49:25.8Z. WARMUPP's witness (camera + card) starts with its run-hw at
+  02:50:17Z, so its sheet is unaffected (checked after its collect). The warm-up is unscored.

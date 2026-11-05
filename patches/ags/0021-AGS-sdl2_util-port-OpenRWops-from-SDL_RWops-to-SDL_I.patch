@@ -1,0 +1,173 @@
+From c30b76a491bc320b2c026e8916a4da7b0c89296d Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 15:09:13 -0700
+Subject: [PATCH] [AGS] sdl2_util: port OpenRWops from SDL_RWops to
+ SDL_IOStream
+
+SDL3 replaces SDL_RWops's context-struct-with-hidden-union model
+(SDL_AllocRW/SDL_FreeRW, context->hidden.unknown.data1, context->type
+as an ad hoc self-check) with SDL_OpenIO(iface, userdata): a plain
+opaque userdata pointer plus a versioned SDL_IOStreamInterface struct
+initialized via SDL_INIT_INTERFACE. Also real semantic changes, not
+just renames: read/write callbacks take a single byte count (not
+SDL2's size*maxnum object-count pair -- this file's own SDL2
+implementation was already flattening that down to a byte count before
+calling Stream::Read/Write, so the object-count parameter drops
+cleanly), report partial-transfer conditions through an SDL_IOStatus
+out-param instead of a return-code convention, and close returns bool
+instead of int. whence moves from a bare RW_SEEK_* int to a real
+SDL_IOWhence enum.
+
+Kept the same leak-safety as the original: ags_stream stays owned by
+the unique_ptr until SDL_OpenIO actually succeeds (passing .get(), not
+an early .release()), so a hypothetical SDL_OpenIO allocation failure
+still runs the stream's destructor normally instead of leaking it.
+
+Needed regardless of patch 0022's decoder stub, not just alongside it:
+Engine/CMakeLists.txt:440-441 compiles sdl2_util.cpp/.h unconditionally
+as part of the engine target, independent of whether anything still
+calls SDL2Util::OpenRWops afterward. sdldecoder.h's own _rwops member
+is still typed SDL_RWops* -- reconciling that (or removing the field
+entirely, depending on what shape the stub takes) is 0022's own
+concern, not this patch's; sdldecoder.cpp cannot be reached to
+integration-test this change end-to-end until that patch lands, since
+its own #include <SDL_sound.h> is DJGPP's current build blocker,
+unrelated to this file.
+
+Verified standalone: sdl2_util.cpp.obj compiles clean, zero errors,
+zero warnings, against the real build flags -- this file has no
+dependency on sdldecoder.h so needed no scratch-stub workaround. Full
+make build-ags re-run after: no new errors, same two known remaining
+blockers (openal.h, sdldecoder.h).
+---
+ Engine/util/sdl2_util.cpp | 64 +++++++++++++++++++--------------------
+ Engine/util/sdl2_util.h   |  6 ++--
+ 2 files changed, 35 insertions(+), 35 deletions(-)
+
+diff --git a/Engine/util/sdl2_util.cpp b/Engine/util/sdl2_util.cpp
+index 82f5a8fbc..6204bfce5 100644
+--- a/Engine/util/sdl2_util.cpp
++++ b/Engine/util/sdl2_util.cpp
+@@ -23,63 +23,63 @@ namespace Engine
+ namespace SDL2Util
+ {
+ 
+-static const Uint32 RWopsType = 0xF0001000;
+-
+-/* These functions should not be used except from pointers in an SDL_RWops */
+-static Sint64 rwops_size(SDL_RWops *context)
++/* These functions should not be used except from pointers in an SDL_IOStream */
++static Sint64 SDLCALL rwops_size(void *userdata)
+ {
+-    return static_cast<Stream*>(context->hidden.unknown.data1)->GetLength();
++    return static_cast<Stream*>(userdata)->GetLength();
+ }
+ 
+-static StreamSeek RWopsSeekToAGS(int whence)
++static StreamSeek RWopsSeekToAGS(SDL_IOWhence whence)
+ {
+     switch (whence)
+     {
+-    case RW_SEEK_SET: return kSeekBegin;
+-    case RW_SEEK_CUR: return kSeekCurrent;
+-    case RW_SEEK_END: return kSeekEnd;
++    case SDL_IO_SEEK_SET: return kSeekBegin;
++    case SDL_IO_SEEK_CUR: return kSeekCurrent;
++    case SDL_IO_SEEK_END: return kSeekEnd;
+     default: assert(false); return kSeekBegin;
+     }
+ }
+ 
+-static Sint64 rwops_seek(SDL_RWops *context, Sint64 offset, int whence)
++static Sint64 SDLCALL rwops_seek(void *userdata, Sint64 offset, SDL_IOWhence whence)
+ {
+-    auto *s = static_cast<Stream*>(context->hidden.unknown.data1);
++    auto *s = static_cast<Stream*>(userdata);
+     return s->Seek(offset, RWopsSeekToAGS(whence));
+ }
+ 
+-static size_t rwops_read(SDL_RWops *context, void *ptr, size_t size, size_t maxnum)
++static size_t SDLCALL rwops_read(void *userdata, void *ptr, size_t size, SDL_IOStatus *status)
+ {
+-    return (static_cast<Stream*>(context->hidden.unknown.data1)->Read(ptr, size * maxnum) / size);
++    size_t n = static_cast<Stream*>(userdata)->Read(ptr, size);
++    if (n < size)
++        *status = SDL_IO_STATUS_EOF;
++    return n;
+ }
+ 
+-static size_t rwops_write(SDL_RWops *context, const void *ptr, size_t size, size_t num)
++static size_t SDLCALL rwops_write(void *userdata, const void *ptr, size_t size, SDL_IOStatus *status)
+ {
+-    return (static_cast<Stream*>(context->hidden.unknown.data1)->Write(ptr, size * num) / size);
++    size_t n = static_cast<Stream*>(userdata)->Write(ptr, size);
++    if (n < size)
++        *status = SDL_IO_STATUS_ERROR;
++    return n;
+ }
+ 
+-static int rwops_close(SDL_RWops *context)
++static bool SDLCALL rwops_close(void *userdata)
+ {
+-    if (context->type != RWopsType) {
+-        return SDL_SetError("Wrong kind of SDL_RWops for rwops_close(): got %u, expected %u", context->type, RWopsType);
+-    }
+-
+-    delete static_cast<Stream*>(context->hidden.unknown.data1);
+-    SDL_FreeRW(context);
+-    return 0;
++    delete static_cast<Stream*>(userdata);
++    return true;
+ }
+ 
+-SDL_RWops *OpenRWops(std::unique_ptr<Stream> ags_stream)
++SDL_IOStream *OpenRWops(std::unique_ptr<Stream> ags_stream)
+ {
+-    SDL_RWops *c = SDL_AllocRW();
++    SDL_IOStreamInterface iface;
++    SDL_INIT_INTERFACE(&iface);
++    iface.size = rwops_size;
++    iface.seek = rwops_seek;
++    iface.read = rwops_read;
++    iface.write = rwops_write;
++    iface.close = rwops_close;
++    SDL_IOStream *c = SDL_OpenIO(&iface, ags_stream.get());
+     if (!c) return nullptr;
+-    c->size = rwops_size;
+-    c->seek = rwops_seek;
+-    c->read = rwops_read;
+-    c->write = rwops_write;
+-    c->close = rwops_close;
+-    c->type = RWopsType;
+-    c->hidden.unknown.data1 = ags_stream.release();
++    ags_stream.release();
+     return c;
+ }
+ 
+diff --git a/Engine/util/sdl2_util.h b/Engine/util/sdl2_util.h
+index 3fe0bd42b..058e8037c 100644
+--- a/Engine/util/sdl2_util.h
++++ b/Engine/util/sdl2_util.h
+@@ -19,7 +19,7 @@
+ #define __AGS_EE_UTIL__SDL2UTIL_H
+ 
+ #include <memory>
+-#include <SDL.h>
++#include <SDL3/SDL.h>
+ #include "util/stream.h"
+ 
+ namespace AGS
+@@ -28,8 +28,8 @@ namespace Engine
+ {
+ namespace SDL2Util
+ {
+-    // Opens a custom SDL2 RWOps implementation that embeds AGS stream
+-    SDL_RWops *OpenRWops(std::unique_ptr<Common::Stream> ags_stream);
++    // Opens a custom SDL3 IOStream implementation that embeds AGS stream
++    SDL_IOStream *OpenRWops(std::unique_ptr<Common::Stream> ags_stream);
+ } // namespace SDL2Util
+ } // namespace Engine
+ } // namespace AGS
+-- 
+2.47.3
+

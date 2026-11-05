@@ -1,0 +1,17 @@
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index 22c45d3d2..b3d1aa846 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -497,6 +497,12 @@ void dos_audio_mixer_pump()
+         return;
+     }
+ 
++    { // THROWAWAY (MT1 field check): a forced main-loop stall every N ticks; never lands
++        static int mt1 = -1; static uint32_t mt1_last = 0;
++        if (mt1 < 0) { const char *e = SDL_getenv("DOSAGS_UR3_STALL_EVERY"); mt1 = e ? SDL_atoi(e) : 0; }
++        const uint32_t t = get_loop_counter();
++        if (mt1 > 0 && t > 0 && t % (uint32_t)mt1 == 0 && t != mt1_last) { mt1_last = t; SDL_Delay(1500); }
++    }
+     if (g_stream)
+     {
+         // DOS-PORT (patch 0203): the tick at which this pump first saw the

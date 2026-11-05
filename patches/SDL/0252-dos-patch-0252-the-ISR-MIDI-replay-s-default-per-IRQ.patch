@@ -1,0 +1,51 @@
+From 46d120210cd6b50df5e5c07c21b30a13a21d1cff Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 10:40:48 -0700
+Subject: [PATCH 252/255] dos: patch 0252 -- the ISR MIDI replay's default
+ per-IRQ budget 256 -> 384
+
+With 0251 skipping OPL writes that do not change their register, the
+largest burst the replay has to write in one SB IRQ fell from 416 to 328
+on dosags' S8 fixture (room 35 of the 8-bit sound-on gate). At the old
+default of 256 that one IRQ still carried 72 writes over to later IRQs,
+late -- a phrase start whose notes sound out of step. 384 covers the
+measured peak with 17% headroom without going to 512, which only the
+unskipped peak (416) would need.
+
+The bound is still what keeps the time spent inside the ISR finite: 384
+x one OPL write (2 outportb + 12 status inportb on ISA). That cost has to
+be measured on a 486 before this default is trusted there; the hint
+SDL_HINT_DOS_MIDI_DEFER_MAX_PER_IRQ (0250) sets it back to 256 at run
+time if it is not.
+
+RENUMBERED 2026-09-25 from 0225 to 0252 (the coordinator's SDL block 0250-0259),
+so the series sorts after main's SDL 0240. It lands on main ahead of the RTC
+pump series (SDL 0230-0237), which re-applies on top. 0225 never landed on
+main; its slot is retired on lab/journeys.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ src/audio/dos/SDL_dosaudio_sb.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index 30e68fd00..802efc09d 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -1745,7 +1745,11 @@ bool SDL_DOSMidiIsrTickActive(void)
+  * SDL_DOSMidiDeferEnable() sees one cached-bool test per IRQ and nothing else.
+  */
+ #define MIDI_DEFER_QUEUE 8192u             /* entries, power of two */
+-#define MIDI_DEFER_MAX_PER_IRQ 256u        /* bound on ISR time per IRQ */
++/* DOS-PORT patch 0252: 256 -> 384. With patch 0251 skipping no-op OPL writes,
++   the largest burst measured (dosags room 35, the S8 fixture) is 328 writes in one
++   IRQ; at 256 that IRQ left 72 writes late. 384 covers it with 17% headroom. The
++   worst case in the ISR is 384 x one OPL write (2 out + 12 status in on ISA). */
++#define MIDI_DEFER_MAX_PER_IRQ 384u        /* bound on ISR time per IRQ */
+ #define MIDI_DEFER_SYNC_MAX 1024u          /* bound on a disable's main-thread write-out */
+ #define MIDI_DEFER_SYNC_BATCH 32u          /* entries per interrupts-off batch */
+ volatile Uint8 g_mdq_kind = 0;             /* 0 off, 1 OPL3, 2 MPU-401 blind direct */
+-- 
+2.47.3
+

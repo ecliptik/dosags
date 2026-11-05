@@ -1,0 +1,71 @@
+From 358cbcd2085eeea066728cd2f1c92867e2d2978c Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sat, 26 Sep 2026 15:08:01 -0700
+Subject: [PATCH] dos: patch 0257 -- OPL window pacing is on by default again
+ for a detected PicoGUS
+
+WHY: patch 0256 turned the PicoGUS pacing default off pending an
+investigation. The landed-build confirmation cell (dosags LAB-JOURNEYS 8.49)
+had shown one silent SB IRQ above the limit, and whether pacing caused it was
+not established. The pre-registered investigation has now run on the 486
+(8.50 / 8.52, PACEI, round S): a same-binary ABBA with pacing on (K=128 by
+hint) against off (0256's default). Silent IRQs were A [2, 3] against
+B [2, 3], all at the known ambient/music decode stall, with every health row
+clean in all four cells. The verdict is CLEARED: pacing adds no silent IRQs.
+Meanwhile the unpaced peak bound read 168 in both off cells, so at least 152
+OPL writes landed in one 2.57 ms PicoGUS drain window. That is the silent
+buffer-overwrite risk (8.34) which pacing exists for, and paced it reads 144
+(K + 16). The registered consequence of CLEARED (8.50 / 8.51) is to restore the
+default.
+
+WHAT: SDL_DOSMidiDeferEnable's default K is again 128 for a detected
+PicoGUS (0254's pgdetect), and 0 on every other card, as 0255 shipped it.
+SDL_HINT_DOS_OPL_PACE_K and SDL_HINT_DOS_OPL_PACE_WINDOW_US are unchanged.
+Two doc lines match.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ include/SDL3/SDL_dosmidi_tick.h | 2 +-
+ src/audio/dos/SDL_dosaudio_sb.c | 8 ++++----
+ 2 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/include/SDL3/SDL_dosmidi_tick.h b/include/SDL3/SDL_dosmidi_tick.h
+index e61d97930..6fe8cdb1e 100644
+--- a/include/SDL3/SDL_dosmidi_tick.h
++++ b/include/SDL3/SDL_dosmidi_tick.h
+@@ -296,7 +296,7 @@ extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferStats4(Uint32 *dedupe_on, Uint3
+    reads = dummy status reads after each address and data write. */
+ extern SDL_DECLSPEC void SDLCALL SDL_DOSOplPacing(Uint32 *pgdetect, Uint32 *reads);
+ /* DOS-PORT patch 0255: OPL arrival pacing and its witness. k = writes allowed per
+-   window (0 = off; 0 by default on every card since patch 0256, a detected PicoGUS included;
++   window (0 = off; 128 by default on a detected PicoGUS (patch 0257), else 0;
+    SDL_HINT_DOS_OPL_PACE_K), win_us = the window (default 2570, one PicoGUS
+    drain period; SDL_HINT_DOS_OPL_PACE_WINDOW_US), waits and wait_us / wait_max_us
+    = the pacing waits taken and their time (included in 0250's isr_sum),
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index 7899b00ab..a5e9b27e6 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -2249,14 +2249,14 @@ bool SDL_DOSMidiDeferEnable(int kind)
+         const char *e = SDL_getenv("SDL_HINT_DOS_MIDI_DEFER_DRAIN_STI");
+         g_mdq_drain_sti = (e && e[0] == '0' && e[1] == 0) ? 0 : 1;
+     }
+-    { /* DOS-PORT patch 0255: window pacing -- off by default (0256; was on for a detected PicoGUS).
++    { /* DOS-PORT patch 0255: window pacing -- on for a detected PicoGUS, off elsewhere (0257).
+          SDL_HINT_DOS_OPL_PACE_K=0 turns it off, N (16..1024) sets K on any OPL;
+          SDL_HINT_DOS_OPL_PACE_WINDOW_US (500..20000) sets the window. */
+         const char *e = SDL_getenv("SDL_HINT_DOS_OPL_PACE_K");
+         const char *w = SDL_getenv("SDL_HINT_DOS_OPL_PACE_WINDOW_US");
+-        /* DOS-PORT patch 0256: off by default everywhere, a detected PicoGUS included, pending the
+-           investigation of dosags LAB-JOURNEYS 8.49 (the hint still turns it on). */
+-        Uint32 k = 0u;
++        /* DOS-PORT patch 0257: on by default again for a detected PicoGUS (K = 128), off
++           elsewhere -- 0256's pending investigation cleared it (dosags LAB-JOURNEYS 8.52). */
++        Uint32 k = (kind == 1 && g_dos_opl_pgdetect == 1) ? 128u : 0u;
+         Uint32 win = 2570u;
+         if (e && *e) {
+             const long v = SDL_strtol(e, NULL, 10);
+-- 
+2.47.3
+

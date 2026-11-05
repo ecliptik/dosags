@@ -1,0 +1,43 @@
+fsprobe: sweep path = FSSWEEP.TMP
+fsprobe: default drive = C:, interrogating the default drive
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14582 volume_bytes=2014511104 free_bytes=477822976
+fsprobe: GEOMETRY MATCHES THE CF VOLUME (32768-byte clusters, 61478 total) -- this is C:, NOT a different device.
+fsprobe: FSPROBE_E1   len= 11 [abcdefghijk]
+fsprobe: FSPROBE_E2   len= 17 [abcdefghijk#lmnop]
+fsprobe: FSPROBE_E3   len= 17 [abcdefghijk;lmnop]
+fsprobe: FSPROBE_E4   len= 17 [abcdefghijkXlmnop]
+fsprobe: FSPROBE_E5   len= 17 [abcdefghijk lmnop]
+fsprobe: FSPROBE_E6   len= 23 [SMARTDRV /S#SMARTDRV /?]
+fsprobe: FSPROBE_E7   len= 11 [abcdefghijk]
+fsprobe: FSPROBE_E8   len= 16 [abcdefghijklmnop]
+fsprobe: FSPROBE_E9   len= 17 [abcdefghijk^lmnop]
+fsprobe: FSPROBE_E10  len= 17 [abcdefghijk&lmnop]
+fsprobe: FSPROBE_E11  len= 17 [abcdefghijk,lmnop]
+fsprobe: FSPROBE_E12  len=100 [0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789]
+fsprobe: 200 iterations per arm, line length 128 bytes
+fsprobe: UCLOCKS_PER_SEC=1193180
+fsprobe: arm order = none
+fsprobe: arms SKIPPED -- the sweep's fsync'd bytes are then
+fsprobe: the only bytes forced to the device in this run.
+
+raw     n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+flush   n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+sync    n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+reopen  n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+
+fsprobe: fsync cost per call = mean_us(sync) - mean_us(flush) = 0.0 us
+fsprobe: 240 such calls in a gate run = 0.0 ms
+
+fsprobe: sweep -- 800-byte records to 4096 bytes, spikes >= 20000 us
+fsprobe: at this record size, byte 6400 is record 8 and byte 58400 is record 73; record 8 is byte 6400 and record 73 is byte 58400
+  FIRST rec=1     end_off=800     us=13894    cum_ms=13.9  (first cluster + directory entry)
+fsprobe: sweep done -- 6 records, 4800 device bytes, 0 spikes, worst 13894 us at off=800
+fsprobe: sweep elapsed 61.6 ms by uclock, 48.0 ms summed per-record; quiet records n=6 mean_us=7998.5
+fsprobe: events=0 bytes=4800 (NO rate printed: detection is intermittent -- 7, 10 and 14 events across three runs of one configuration)
+fsprobe: volume after sweep:
+fsprobe: default drive = C:, interrogating the default drive
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14582 volume_bytes=2014511104 free_bytes=477822976
+fsprobe: GEOMETRY MATCHES THE CF VOLUME (32768-byte clusters, 61478 total) -- this is C:, NOT a different device.
+fsprobe: done

@@ -1,0 +1,218 @@
+From 4771d5135bf18901ba7fbbf144887cc6fe25a5e3 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 19:59:45 -0700
+Subject: [PATCH] [AGS] Wire RUNMANIFEST emission at quit()'s clean-shutdown
+ path
+
+CLAUDE.md rule 5 calls for this at the STARTS/TITLE_SCREEN milestone,
+not deferred to OPTIMIZING -- TITLE_SCREEN landed last session without
+it. Adds .sdl-dos-ports/shared/include/runmanifest.h's runmanifest_emit()
+call right after quit()'s own "***** ENGINE HAS SHUTDOWN" print and
+before shutdown_debug(), matching every other port's own call site
+(shared/skills/dos-hardware-validation/references/runmanifest-log.md).
+
+Engine start time is captured in main.cpp's main_init() (the first call
+ags_entry_point() makes) into a new dos_port_engine_start_time global,
+since quit.cpp only knows the time at shutdown and started_utc/duration_s
+need a real wall-clock anchor for engine start, not just exit.
+
+The env-var allowlist runmanifest_compute_env_block_sha12() hashes is
+this port's own, not guessed: BLASTER, DOS_PORT_ENVIRONMENT,
+SDL_DOS_AUDIO_SB_SKIP_DETECTION, and SDL_INVALID_PARAM_CHECKS, read
+directly from tools/dosbox-run.sh / dosbox-launch.sh's own SET lines and
+.sdl-dos-ports/shared/tools/dosbox-x*.conf's [autoexec] blocks.
+
+Had to reorder quit.cpp's own includes: runmanifest.h now comes before
+<allegro.h>, not after. Vendored Allegro's alconfig.h unconditionally
+#defines _farsetsel/_farnspokeb/_farnspeekb/etc (libsrc/allegro/include/
+allegro/internal/alconfig.h:389-395) as generic plain-pointer macros for
+its own DOS backend, with no #ifndef guard. runmanifest.h's DJGPP
+environment-detection code (used by its 86Box BIOS-string scan) includes
+DJGPP's own real <sys/farptr.h>, which declares real functions of the
+same names -- with allegro.h's macros already active, those real
+declarations get textually mangled ("void _farsetsel(unsigned short);"
+becomes "void ;"), a real compile break confirmed by a real build
+failure before this reorder and a clean build after, not a style
+preference. This collision was latent until now: no prior file in this
+port included both <allegro.h> and runmanifest.h.
+
+exit_code is hardcoded to EXIT_NORMAL rather than derived from qreason --
+quit() unconditionally calls exit(EXIT_NORMAL) at its own tail regardless
+of why it was invoked, already confirmed by real IF ERRORLEVEL probing
+at the STARTS milestone, so this matches the real observed behavior
+rather than guessing at qreason's own mapping.
+
+binary_sha12 is left at its documented-empty default this session -- no
+build-fingerprint pipeline is wired for this CMake-driven engine stage
+yet (dossage's own equivalent needed a dedicated stamp-file mechanism to
+avoid stale-.o staleness against a plain Makefile pattern rule; this
+port's CMake-driven build has no equivalent flags-changed-forces-relink
+guarantee established yet). A real, honest empty value, not a
+placeholder -- follow-up, not silently missing.
+
+wave_tag=DEV0 / scene=boot identify this as bring-up telemetry (no game
+loop has ever run at this milestone, so fps/audio/banner fields stay at
+runmanifest_init()'s own NA/zero defaults), not a real benchmark wave.
+
+Confirmed by a clean-slate `rm -rf build/ags && make configure-ags` +
+full build (a real ags.exe, not inferred from absent errors) and a real
+DOSBox-X run against tests/fixtures/minimal-game-package's 8-bit
+fixture, producing a genuine RUNMANIFEST-BEGIN/END block in RUNMANI.LOG:
+environment=dosbox-x (via the DOS_PORT_ENVIRONMENT override already set
+by dosbox-x-fast.conf's [autoexec]), a real non-zero env_block_sha
+(46c9aaec20ba, not the all-zero empty-block sentinel), a real
+started_utc/duration_s, and exit_code=0.
+---
+ Engine/main/main.cpp | 17 ++++++++++
+ Engine/main/quit.cpp | 79 ++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 96 insertions(+)
+
+diff --git a/Engine/main/main.cpp b/Engine/main/main.cpp
+index 0f56c2f0c..f7afe2e3e 100644
+--- a/Engine/main/main.cpp
++++ b/Engine/main/main.cpp
+@@ -40,6 +40,10 @@
+ #include "util/string_compat.h"
+ #include "util/string_utils.h"
+ 
++#ifdef __DJGPP__
++#include <time.h> // time_t, time() -- RUNMANIFEST start-time anchor
++#endif
++
+ #if AGS_PLATFORM_OS_WINDOWS
+ #include "platform/windows/win_ex_handling.h"
+ #endif
+@@ -58,6 +62,15 @@ String cmdGameDataPath; // game path received from cmdline
+ extern int editor_debugging_initialized;
+ extern char editor_debugger_instance_token[100];
+ 
++#ifdef __DJGPP__
++// DOS-PORT: RUNMANIFEST's started_utc/duration_s need a real wall-clock
++// anchor for "engine start" -- captured here (main_init() is the first
++// call ags_entry_point() makes) rather than in quit.cpp itself, since
++// quit.cpp only knows the time at shutdown. See quit.cpp's own
++// RUNMANIFEST block for where this is read.
++time_t dos_port_engine_start_time = 0;
++#endif
++
+ 
+ // Startup flags, set from parameters to engine
+ int override_start_room = 0;
+@@ -75,6 +88,10 @@ AGS::Common::Version EngineVersion;
+ 
+ void main_init(int argc, char*argv[])
+ {
++#ifdef __DJGPP__
++    dos_port_engine_start_time = time(nullptr);
++#endif
++
+     set_our_eip(-999);
+ 
+     // Init libraries: set text encoding
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index eebf24228..2c73bf227 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -16,6 +16,22 @@
+ // Quit game procedure
+ //
+ #include <stdio.h>
++
++// DOS-PORT: must come before <allegro.h> below. vendored Allegro's
++// alconfig.h #defines _farsetsel/_farnspokeb/_farnspeekb/etc. as generic
++// plain-pointer macros for its own DOS backend (libsrc/allegro/include/
++// allegro/internal/alconfig.h:389-395), unconditionally, with no #ifndef
++// guard. runmanifest.h's DJGPP environment-detection code (used for its
++// 86Box BIOS-string scan) includes DJGPP's own REAL <sys/farptr.h>, whose
++// real function prototypes those same names -- if alconfig.h's macros are
++// already active when <sys/farptr.h> is parsed, they textually mangle its
++// declarations (e.g. "void _farsetsel(unsigned short);" becomes "void ;"),
++// a real compile break, not a style nit. Including runmanifest.h first
++// lets the real declarations parse before alconfig.h's macros exist.
++#ifdef __DJGPP__
++#include "runmanifest.h"
++#endif
++
+ #include "platform/platform.h"
+ #include <allegro.h> // find files, allegro_exit
+ #include "ac/cdaudio.h"
+@@ -56,6 +72,9 @@ extern SpriteCache spriteset;
+ extern RoomStruct thisroom;
+ extern RoomStatus troom;    // used for non-saveable rooms, eg. intro
+ extern int proper_exit;
++#ifdef __DJGPP__
++extern time_t dos_port_engine_start_time; // set once in main.cpp's main_init()
++#endif
+ extern char check_dynamic_sprites_at_exit;
+ extern int editor_debugging_initialized;
+ extern IAGSEditorDebugger *editor_debugger;
+@@ -238,6 +257,66 @@ void quit(const char *quitmsg)
+ 
+     Debug::Printf(kDbgMsg_Alert, "***** ENGINE HAS SHUTDOWN");
+ 
++#ifdef __DJGPP__
++    // DOS-PORT: RUNMANIFEST, wired at the TITLE_SCREEN milestone per
++    // CLAUDE.md rule 5 -- one self-describing, grep-able telemetry block
++    // per run, emitted here (not earlier) so it reflects a real clean-
++    // shutdown path, matching every other port's own call site
++    // (shared/skills/dos-hardware-validation/references/runmanifest-log.md).
++    //
++    // This port's own measurement-affecting env vars, alphabetically
++    // sorted -- see tools/dosbox-launch.sh / dosbox-run.sh's own SET lines
++    // and .sdl-dos-ports/shared/tools/dosbox-x*.conf's [autoexec] blocks,
++    // not guessed. Extend this list if a future patch adds another
++    // hint/env var that can change measured behavior.
++    {
++        static const char *dos_port_env_allowlist[] = {
++            "BLASTER",
++            "DOS_PORT_ENVIRONMENT",
++            "SDL_DOS_AUDIO_SB_SKIP_DETECTION",
++            "SDL_INVALID_PARAM_CHECKS",
++            NULL
++        };
++
++        runmanifest_t manifest;
++        runmanifest_init(&manifest);
++
++        manifest.environment = runmanifest_detect_environment(NULL);
++        runmanifest_compute_env_block_sha12(dos_port_env_allowlist,
++            manifest.env_block_sha, sizeof(manifest.env_block_sha));
++
++        time_t shutdown_time = time(nullptr);
++        manifest.duration_s = (int)(shutdown_time - dos_port_engine_start_time);
++
++        struct tm *start_utc = gmtime(&dos_port_engine_start_time);
++        if (start_utc)
++        {
++            strftime(manifest.started_utc, sizeof(manifest.started_utc),
++                "%Y-%m-%dT%H:%M:%SZ", start_utc);
++        }
++
++        // No fps/audio/banner data exists yet -- no game loop has ever run
++        // (this milestone only reaches graphics-mode setup). Left at
++        // runmanifest_init()'s own NA defaults; wave_tag/scene identify
++        // this as bring-up telemetry, not a real benchmark wave.
++        strncpy(manifest.wave_tag, "DEV0", sizeof(manifest.wave_tag) - 1);
++        strncpy(manifest.scene, "boot", sizeof(manifest.scene) - 1);
++
++        // quit() unconditionally calls exit(EXIT_NORMAL) below regardless
++        // of qreason (see this function's own tail) -- confirmed by the
++        // STARTS milestone already, so exit_code is always EXIT_NORMAL
++        // here, not derived from qreason.
++        manifest.exit_code = EXIT_NORMAL;
++
++        FILE *run_manifest_log = fopen("RUNMANI.LOG", "a");
++        if (run_manifest_log)
++        {
++            runmanifest_emit(run_manifest_log, &manifest);
++            fclose(run_manifest_log);
++        }
++    }
++#endif // __DJGPP__
++
+     shutdown_debug();
+     AGSPlatformDriver::Shutdown();
+ 
+-- 
+2.47.3
+

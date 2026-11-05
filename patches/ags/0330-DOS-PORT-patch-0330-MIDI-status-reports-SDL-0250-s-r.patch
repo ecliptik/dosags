@@ -1,0 +1,73 @@
+From 96d73da5042422d3f511070f745c53319b2c329d Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 07:54:10 -0700
+Subject: [PATCH 330/333] DOS-PORT: patch 0330 -- MIDI status reports SDL
+ 0250's replay budget, cap hits and ISR drain time
+
+WHY: Gate S8 needs late_writes=0 on a fixture whose music overruns the ISR
+replay's 256-writes-per-IRQ budget (Trilby's Notes room 35). Choosing a
+budget, or any other fix, needs the numbers in every run: which budget was
+in force, how often it bound, and how long the ISR spent writing -- on the
+486 the only way to learn what an OPL write costs inside the ISR.
+
+WHAT: the isr-mode part of audio_vital_status gains budget=, cap_hits=,
+isr_max_us=, isr_mean_us= (over drains that wrote anything) and
+isr_ns_per_write= (all drain time over all writes), from
+SDL_DOSMidiDeferStats3 (SDL 0250), in us from the SB ISR's own timer.
+real_period_us is printed through an unsigned cast (it is a uint32_t
+through %u).
+
+RE-CUT 2026-09-25 onto main's ags 0275 (plan_behind_at=), which landed first
+and edits the same snprintf and buffers. 0275 already made this patch's
+buffer changes (fragment 320 -> 400, status 640 -> 768), so this patch no
+longer changes any size. Its fields follow 0275's, after real_period_us,
+and the unsigned cast on real_period_us is kept (0275 prints it uncast).
+Renumbered from 0254 to 0330: it must apply after 0275, and the series applies in
+number order. 0254 never landed on main; its slot is retired on lab/journeys.
+
+SDL references renumbered 2026-09-25 with the SDL series (0223 -> 0250,
+0224 -> 0251, 0228 -> 0254, 0229 -> 0255). This is the pump-free cut: it
+lands on main before the RTC pump series (ags 0277-0282), which re-applies on
+top and then owns the combined buffer sizing (the max of every need).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/platform/dos/dos_midi_backend.cpp | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/Engine/platform/dos/dos_midi_backend.cpp b/Engine/platform/dos/dos_midi_backend.cpp
+index 636f01d87..c212dbd40 100644
+--- a/Engine/platform/dos/dos_midi_backend.cpp
++++ b/Engine/platform/dos/dos_midi_backend.cpp
+@@ -456,6 +456,13 @@ void dos_midi_backend_status_fragment(char *buf, size_t bufsize)
+         Uint32 wr = 0, late = 0, late_max = 0, burst = 0, full = 0, dropped = 0, sync = 0;
+         SDL_DOSMidiDeferStats(&wr, &late, &late_max, &burst, &full);
+         SDL_DOSMidiDeferStats2(&dropped, &sync);
++        // DOS-PORT patch 0330: SDL 0250's per-IRQ budget, the IRQs it bound,
++        // and the drain's own time (us, the SB ISR's timer); per-write in ns
++        Uint32 budget = 0, cap_hits = 0, imax = 0, isum = 0, in = 0;
++        SDL_DOSMidiDeferStats3(&budget, &cap_hits, &imax, &isum, &in);
++        const unsigned isr_max_us = (unsigned)imax;
++        const unsigned isr_mean_us = in ? (unsigned)(isum / in) : 0;
++        const unsigned isr_ns_per_write = wr ? (unsigned)((uint64_t)isum * 1000u / wr) : 0;
+         // DOS-PORT (patch 0275): plan_behind_at=<song_ms>@<loop>/<gap>irq/<first|later>, empty when no event.
+         char pb_at[48] = "";
+         if (g_pb_seen)
+@@ -463,11 +470,11 @@ void dos_midi_backend_status_fragment(char *buf, size_t bufsize)
+                 (unsigned)g_pb_gap_irqs, g_pb_first ? "first" : "later");
+         std::snprintf(buf, bufsize, "midi=%s,events=%llu%s,midi_tick=isr,period_us=%u,lookahead=%u,isr_writes=%u,"
+             "late_writes=%u,late_max_ms=%u,isr_burst=%u,qfull=%u,qsync=%u,qdropped=%u,plan_behind=%u,plan_behind_at=%s,"
+-            "clk=%llu/%ds,real_period_us=%u",
++            "clk=%llu/%ds,real_period_us=%u,budget=%u,cap_hits=%u,isr_max_us=%u,isr_mean_us=%u,isr_ns_per_write=%u",
+             kind_name(g_last_kind), (unsigned long long)g_events_dispatched, chip, g_tick_period_us, g_tick_lookahead,
+             (unsigned)wr, (unsigned)late, (unsigned)((uint64_t)late_max * g_tick_period_us / 1000u), (unsigned)burst,
+             (unsigned)full, (unsigned)sync, (unsigned)dropped, g_plan_behind, pb_at, (unsigned long long)g_song_ms, rtc_s,
+-            g_real_period_us);
++            (unsigned)g_real_period_us, (unsigned)budget, (unsigned)cap_hits, isr_max_us, isr_mean_us, isr_ns_per_write);
+         return;
+     }
+     std::snprintf(buf, bufsize, "midi=%s,events=%llu%s,midi_tick=poll,late_max_ms=%u,late_hist=%llu/%llu/%llu/%llu/%llu/%llu,"
+-- 
+2.47.3
+

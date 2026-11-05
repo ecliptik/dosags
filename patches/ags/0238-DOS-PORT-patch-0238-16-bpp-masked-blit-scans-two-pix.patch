@@ -1,0 +1,167 @@
+From 53f7661a3d162ba58dfd0b5c234e8e6a96430720 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <services.claude@accounts.ecliptik.com>
+Date: Fri, 25 Sep 2026 18:30:08 -0700
+Subject: [PATCH] DOS-PORT: patch 0238 -- 16-bpp masked blit scans two pixels
+ per 32-bit read
+
+MMD (every sprite masked, 16 bpp) spends 9.26 ms per render in sprite
+blits on the 486 (character select, ~39k sprite px per render). Its run
+profile (LAB-S32 24.2) is 84% transparent pixels in runs of 88.7 px
+mean, 97% of them in sprites wider than 128 px. 0160's run blit copies
+opaque spans in bulk but still tests each transparent pixel on its own:
+a 9-instruction loop, ~12 cycles on a 486 in the shipped object. With
+the opaque side that model accounts for 90% of the measured cycles, and
+the transparent loop is ~70% of them.
+
+Comparing a dword against mask|mask<<16 (two dwords per step) skips two
+pixels per read, ~3.5 cycles per transparent pixel; opaque spans are
+copied a dword at a time while scanning, which drops 0160's per-run
+memcpy call. Expected -4.5 ms/render on MMD's character select (range
+-3.5 to -5).
+
+Why a scan and not a per-sprite precomputed span list: a span list
+must be rebuilt whenever the sprite's content changes, MMD rewrites its
+wide GUI surfaces every tick, and a stale list draws trails. The scan
+keeps no state, so it cannot go stale, and a pixel is written iff it
+differs from the mask colour, with its own value -- the same output as
+0160 by construction (host fuzz: 2M rows, all alignments, identical
+including guard words).
+
+16 bpp only (MMD's depth); a mask colour above 0xFFFF keeps the 0160
+path. DOSAGS_WORDSCAN=0 falls back to 0160 in the same binary, so an
+A/B carries no layout difference; the manifest reports the resolved
+switch as "DOS-PORT wordscan=".
+---
+ Engine/main/quit.cpp         |  6 ++++
+ libsrc/allegro/src/c/cmisc.c |  7 ++++
+ libsrc/allegro/src/c/cspr.h  | 68 ++++++++++++++++++++++++++++++++++++
+ 3 files changed, 81 insertions(+)
+
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 8c31d2f55..9e7e0371b 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -100,6 +100,10 @@ extern int dos_port_pv_bbox[4];
+ } } }
+ #endif
+ 
++#ifdef __DJGPP__
++extern "C" int dosags_wordscan;   // patch 0238, defined in libsrc/allegro/src/c/cmisc.c
++#endif
++
+ #if defined(__DJGPP__) && defined(DOSAGS_SPRITE_RUN_STATS)
+ extern "C" {
+ extern unsigned long dosags_spr_px;
+@@ -700,6 +704,8 @@ void quit(const char *quitmsg)
+                     extern long dos_port_gui_refused_n, dos_port_gui_alpha_binary_n, dos_port_gui_alpha_partial_n;
+                     Debug::Printf("DOS-PORT guiidem refused=%ld alpha_binary=%ld alpha_partial=%ld",
+                         dos_port_gui_refused_n, dos_port_gui_alpha_binary_n, dos_port_gui_alpha_partial_n);
++                    // patch 0238: -1 = no 16-bpp forward blit ran, 0 = DOSAGS_WORDSCAN=0, 1 = on
++                    Debug::Printf("DOS-PORT wordscan=%d", dosags_wordscan);
+                     for (int _g = 0; _g < 64; ++_g)
+                         if (dos_port_gui_flush_tally[_g])
+                             Debug::Printf("DOS-PORT guiflush idx=%d n=%ld", _g, dos_port_gui_flush_tally[_g]);
+diff --git a/libsrc/allegro/src/c/cmisc.c b/libsrc/allegro/src/c/cmisc.c
+index ab9db3229..c912eec0e 100644
+--- a/libsrc/allegro/src/c/cmisc.c
++++ b/libsrc/allegro/src/c/cmisc.c
+@@ -68,3 +68,10 @@ unsigned long dosags_spr_runs = 0;
+  * runs at 19.4 cycles/pixel against a measured copy ceiling of 7.8.
+  */
+ int dosags_runblit = -1;
++
++/* DOS-PORT patch 0238: 16-bpp forward masked blit scans two pixels per
++ * 32-bit read. -1 = not yet read. DOSAGS_WORDSCAN=0 falls back to 0160's
++ * run blit, so both arms live in ONE binary (same discipline as 0160).
++ * Default ON. See cspr.h for the measurement that justifies it.
++ */
++int dosags_wordscan = -1;
+diff --git a/libsrc/allegro/src/c/cspr.h b/libsrc/allegro/src/c/cspr.h
+index 10add589f..5427eb704 100644
+--- a/libsrc/allegro/src/c/cspr.h
++++ b/libsrc/allegro/src/c/cspr.h
+@@ -30,6 +30,7 @@ extern unsigned long dosags_spr_runs;
+ #include <stdlib.h>
+ #include <string.h>
+ extern int dosags_runblit;   /* DOS-PORT patch 0160, defined in cmisc.c */
++extern int dosags_wordscan;  /* DOS-PORT patch 0238, defined in cmisc.c */
+ #endif
+ 
+ /* _linear_draw_sprite:
+@@ -122,6 +123,73 @@ void FUNC_LINEAR_DRAW_SPRITE(BITMAP *dst, BITMAP *src, int dx, int dy)
+ 	    const char *_h = getenv("DOSAGS_RUNBLIT");
+ 	    dosags_runblit = (_h && _h[0] == '0') ? 0 : 1;
+ 	 }
++#if PP_DEPTH == 16
++	 /* DOS-PORT patch 0238: at 16 bpp, scan TWO pixels per 32-bit read.
++	  *
++	  * MMD (all sprites masked, 16 bpp) measured 84% of its blitted
++	  * pixels transparent, in runs of 88.7 px mean, 97% of them in
++	  * sprites wider than 128 px (LAB-S32 24.2). 0160's loop still tests
++	  * every transparent pixel on its own: 9 instructions, ~12 cycles on
++	  * a 486 (disassembly of the shipped object), which with the opaque
++	  * side accounts for 90% of the 9.26 ms/render the 486 spends in
++	  * sprite blits on MMD's character select (LAB-S32 24.3). Comparing
++	  * a dword against mask|mask<<16, two dwords per iteration, costs
++	  * ~3.5 cycles per transparent pixel; opaque spans are copied a dword
++	  * at a time while scanning, which also drops 0160's memcpy call.
++	  *
++	  * Output is identical to 0160's by construction: a pixel is written
++	  * iff it differs from the mask colour, with its own value. Reads may
++	  * be unaligned (legal on x86; transparent spans align first because
++	  * they are the long ones). The dword type is may_alias so the
++	  * 16-bit pixel data may be read through it. A mask colour above
++	  * 0xFFFF (which no 16-bit pixel can equal) keeps the 0160 path.
++	  * DOSAGS_WORDSCAN=0 keeps the 0160 path in the same binary.
++	  */
++	 if (dosags_wordscan < 0) {
++	    const char *_h = getenv("DOSAGS_WORDSCAN");
++	    dosags_wordscan = (_h && _h[0] == '0') ? 0 : 1;
++	 }
++	 if (dosags_wordscan && dosags_runblit &&
++	     (uint32_t)src->vtable->mask_color <= 0xFFFFu) {
++	    typedef uint32_t __attribute__((__may_alias__)) dosags_u32a;
++	    const unsigned int m = (unsigned int)src->vtable->mask_color;
++	    const uint32_t mm = (uint32_t)m | ((uint32_t)m << 16);
++	    const unsigned short *sp = s;
++	    const unsigned short *const se = s + w;
++	    unsigned short *dp;
++	    while (sp < se) {
++	       if (*sp == m) {
++		  /* transparent span: align, then 4 then 2 pixels per step */
++		  sp++;
++		  if (((unsigned long)sp & 2) && sp < se && *sp == m)
++		     sp++;
++		  while (se - sp >= 4 && ((const dosags_u32a *)sp)[0] == mm
++			 && ((const dosags_u32a *)sp)[1] == mm)
++		     sp += 4;
++		  while (se - sp >= 2 && *(const dosags_u32a *)sp == mm)
++		     sp += 2;
++		  while (sp < se && *sp == m)
++		     sp++;
++		  if (sp >= se)
++		     break;
++	       }
++	       /* opaque span: *sp is not the mask here */
++	       dp = d + (sp - s);
++	       *dp++ = *sp++;
++	       while (se - sp >= 2) {
++		  const uint32_t v = *(const dosags_u32a *)sp;
++		  if ((v & 0xFFFFu) == m || (v >> 16) == m)
++		     break;
++		  *(dosags_u32a *)dp = v;
++		  sp += 2;
++		  dp += 2;
++	       }
++	       while (sp < se && *sp != m)
++		  *dp++ = *sp++;
++	    }
++	 }
++	 else
++#endif
+ 	 if (dosags_runblit) {
+ 	    x = 0;
+ 	    while (x < w) {
+-- 
+2.47.3
+

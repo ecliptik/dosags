@@ -1,0 +1,70 @@
+diff -u b/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+--- b/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1233,6 +1233,19 @@
+     const uint32_t tick = GameTimer.LoopCounter;
+     if (perturb >= 0 && tick == (uint32_t)perturb && game.playercharacter >= 0)
+         game.chars[game.playercharacter].x += 1;
++    // probe 0302 (LAB ONLY): DOSAGS_WIT_SAVERESTORE_TICK=N saves to slot 997 and restores it at the first
++    // tick >= N outside any script (as RestoreGameSlot does outside a script) -- G's save/restore gate
++    {
++        static long sr_at = -2; static bool sr_done = false;
++        if (sr_at == -2) { const char *e = getenv("DOSAGS_WIT_SAVERESTORE_TICK"); sr_at = e ? atol(e) : -1; }
++        if (sr_at >= 0 && !sr_done && (long)tick >= sr_at && !inside_script)
++        {
++            sr_done = true;
++            save_game(997, "wit save/restore");
++            const bool ok = try_restore_save(997);
++            Debug::Printf("DOS-PORT witsaverestore tick=%lu restore=%s", (unsigned long)tick, ok ? "ok" : "FAILED");
++        }
++    }
+     if (tick % 25 != 0) return;
+     uint32_t hc = 2166136261u, ho = 2166136261u, hg = 2166136261u, hd = 2166136261u, hr = 2166136261u;
+     for (int i = 0; i < game.numcharacters; ++i)
+@@ -1254,9 +1267,11 @@
+     if (gameinst) { const auto &g = gameinst->GetGlobalData(); if (!g.empty()) hd = dp_fnv(hd, g.data(), g.size()); }
+     if (roominst) { const auto &r = roominst->GetGlobalData(); if (!r.empty()) hr = dp_fnv(hr, r.data(), r.size()); }
+     const int pc = game.playercharacter;
+-    Debug::Printf("DOS-PORT statewit tick=%lu room=%d chars=%08lx objs=%08lx gints=%08lx gdata=%08lx rdata=%08lx player=%d,%d",
++    extern uint32_t dp_vmtrace_h, dp_vmtrace_n; // probe 0302: the VM trace digest rides on this line
++    Debug::Printf("DOS-PORT statewit tick=%lu room=%d chars=%08lx objs=%08lx gints=%08lx gdata=%08lx rdata=%08lx player=%d,%d vmtrace=%08lx vmops=%lu",
+         (unsigned long)tick, displayed_room, (unsigned long)hc, (unsigned long)ho, (unsigned long)hg,
+-        (unsigned long)hd, (unsigned long)hr, pc >= 0 ? game.chars[pc].x : -1, pc >= 0 ? game.chars[pc].y : -1);
++        (unsigned long)hd, (unsigned long)hr, pc >= 0 ? game.chars[pc].x : -1, pc >= 0 ? game.chars[pc].y : -1,
++        (unsigned long)dp_vmtrace_h, (unsigned long)dp_vmtrace_n);
+ }
+ #endif
+ 
+diff -u b/Engine/script/cc_instance.cpp b/Engine/script/cc_instance.cpp
+--- b/Engine/script/cc_instance.cpp
++++ b/Engine/script/cc_instance.cpp
+@@ -34,6 +34,9 @@
+ using namespace AGS::Common;
+ using namespace AGS::Common::Memory;
+ using namespace AGS::Engine;
++#ifdef __DJGPP__
++uint32_t dp_vmtrace_h = 2166136261u, dp_vmtrace_n = 0; // probe 0302 (LAB ONLY)
++#endif
+ 
+ 
+ enum ScriptOpArgIsReg
+@@ -687,6 +690,19 @@
+                 break;
+             }
+         }
++#ifdef __DJGPP__
++        { // DOS-PORT probe 0302 (LAB ONLY): the VM trace digest -- G's instruction-for-instruction gate
++            extern uint32_t dp_vmtrace_h, dp_vmtrace_n;
++            uint32_t h = dp_vmtrace_h;
++            #define DP_VT(v) h = (h ^ static_cast<uint32_t>(v)) * 16777619u
++            DP_VT(codeInst->_loadedInstanceId); DP_VT(_pc); DP_VT(op_code);
++            static const int dp_regs[6] = { SREG_AX, SREG_BX, SREG_CX, SREG_DX, SREG_MAR, SREG_OP };
++            for (int r = 0; r < 6; ++r) { DP_VT(_registers[dp_regs[r]].IValue); DP_VT(_registers[dp_regs[r]].Type); }
++            DP_VT(_registers[SREG_SP].RValue - _stackBegin);
++            #undef DP_VT
++            dp_vmtrace_h = h; dp_vmtrace_n++;
++        }
++#endif
+         //---------------------------------------------------------------------
+         /* End read operation */
+         //=====================================================================

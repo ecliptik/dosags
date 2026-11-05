@@ -1,0 +1,85 @@
+From d91b638bd797bec2208efeacb7d9ea401caa2c2b Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 14 Sep 2026 19:21:12 -0700
+Subject: [PATCH] DOS-PORT: patch 0068 -- DOSAGS_MIDI_NO_BACKEND diagnostic
+ (S7)
+
+WHY: real hardware proved neither active OPL3 synthesis (SILNT1,
+tick_rate=2.48 with zero notes ever played) nor OPL3-specific register
+writes (TNWB1, WaveBlaster reproduces the same collapse with zero OPL3
+involvement) are necessary for the tax. The only code common to every
+sound-on cell across every backend combination tested so far is
+everything ABOVE dos_midi_backend_open()'s own dispatch: midi_sched_
+open() and audio_core_slot_init_midi()'s DOSMIDI.TMP scratch write.
+
+WHAT: a new strict-"1" env killswitch, DOSAGS_MIDI_NO_BACKEND, checked
+in AudioPlayer's MIDI-mode constructor. When set, dos_midi_backend_
+open() is never called at all -- no backend, OPL3 or otherwise, is ever
+touched -- leaving _midiSink null. MidiInit()'s own existing success
+check ((_midiSched != nullptr) && (_midiSink != nullptr)) already
+handles a null _midiSink gracefully (the same path "wb requested but
+cold-init failed" already exercises, PlayStateError), so this reaches
+an existing, already-safe failure mode rather than a new one. dos_
+midi_backend_end_song()'s own null-handle guard makes the destructor
+safe too. If the tax survives even here, the mechanism is entirely
+inside AGS's own generic MIDI-clip machinery, nothing to do with any
+DOS hardware backend at all -- the most surprising possible outcome of
+this whole investigation.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/media/audio/audioplayer.cpp | 38 +++++++++++++++++++++++++++---
+ 1 file changed, 35 insertions(+), 3 deletions(-)
+
+diff --git a/Engine/media/audio/audioplayer.cpp b/Engine/media/audio/audioplayer.cpp
+index fd26ed3ae..383876e54 100644
+--- a/Engine/media/audio/audioplayer.cpp
++++ b/Engine/media/audio/audioplayer.cpp
+@@ -48,9 +48,41 @@ AudioPlayer::AudioPlayer(int handle, const AGS::Common::String &midi_path, bool
+ {
+     _midiSched = midi_sched_open(_midiPath.GetCStr());
+     midi_sched_sink sink;
+-    _midiSink = dos_midi_backend_open(&_midiBackendKind, &sink);
+-    if (_midiSched && _midiSink)
+-        midi_sched_set_sink(_midiSched, &sink);
++
++    // DOS-PORT (S7 diagnostic, TEMPORARY): DOSAGS_MIDI_NO_BACKEND=1 -- the
++    // decisive follow-up to DOSAGS_MIDI_SILENT_CHIP=1 (patch 0067). Real
++    // hardware (tag SILNT1, PLAN.md "S7 -- silence-vs-sounding OPL3,
++    // real-hardware result") found the tax survives even with the OPL3
++    // chip programmed but never told to play a note, AND this
++    // investigation's very first session (S7-abba-2026-09-13.md, tag
++    // TNWB1) already found WaveBlaster -- completely different hardware,
++    // zero OPL3 involvement -- reproduces the same collapse. The only
++    // code common to every sound-on cell across every backend is
++    // everything ABOVE dos_midi_backend_open()'s own dispatch:
++    // midi_sched_open() (just above, unconditional either way) and
++    // audio_core_slot_init_midi()'s own DOSMIDI.TMP write (audio_
++    // core.cpp, runs before this constructor). This flag skips dos_
++    // midi_backend_open() entirely -- no backend, OPL3 or otherwise, is
++    // ever touched -- leaving _midiSink null. MidiInit()'s own existing
++    // success check ((_midiSched != nullptr) && (_midiSink != nullptr))
++    // already handles a null _midiSink gracefully (the same path "wb
++    // requested but cold-init failed" already exercises), so this is not
++    // a new failure mode, just a new way to reach an existing one. If the
++    // tax survives even here, the mechanism is entirely inside AGS's own
++    // generic MIDI-clip machinery, nothing to do with any DOS hardware
++    // backend at all.
++    const char *no_backend = std::getenv("DOSAGS_MIDI_NO_BACKEND");
++    if (no_backend && no_backend[0] == '1' && no_backend[1] == '\0')
++    {
++        _midiSink = nullptr;
++        _midiBackendKind = DOS_MIDI_BACKEND_NONE;
++    }
++    else
++    {
++        _midiSink = dos_midi_backend_open(&_midiBackendKind, &sink);
++        if (_midiSched && _midiSink)
++            midi_sched_set_sink(_midiSched, &sink);
++    }
+ }
+ 
+ AudioPlayer::~AudioPlayer()
+-- 
+2.47.3
+

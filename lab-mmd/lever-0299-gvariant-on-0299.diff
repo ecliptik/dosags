@@ -1,0 +1,672 @@
+--- a/Engine/script/cc_instance.cpp
++++ b/Engine/script/cc_instance.cpp
+@@ -624,6 +624,11 @@
+     const auto timeout = std::chrono::milliseconds(_timeoutCheckMs);
+     _lastAliveTs = FastClock::now();
+ 
++    // DOS-PORT patch 0299 (G variant): a handler's own arguments -- read from the code where used when the
++    // instance is packed, from the decoded locals otherwise. Every handler that moves _pc reads its argument
++    // first (CALL, JZ, JNZ, JMP, CALLAS, RET), so reading at the point of use is the same value.
++#define OPA1 (kPacked ? static_cast<int32_t>(codeInst->_code[_pc + 1]) : op_arg1)
++#define OPA2 (kPacked ? static_cast<int32_t>(codeInst->_code[_pc + 2]) : op_arg2)
+     /* Main bytecode execution loop */
+     //=====================================================================
+     while ((_flags & INSTF_ABORTED) == 0)
+@@ -650,9 +655,8 @@
+             // and the three argument words are always readable (3 words of padding past the code)
+             op_code = op_word & 0x7F;
+             op_argc = (op_word >> 7) & 3;
+-            op_arg1 = static_cast<int32_t>(codeInst->_code[_pc + 1]);
+-            op_arg2 = static_cast<int32_t>(codeInst->_code[_pc + 2]);
+-            // the third argument is read by its one user (NEWARRAY), not here
++            // G variant: no argument loads here -- a handler reads its own arguments where it uses
++            // them (OPA1/OPA2 below), so the head stays small without taking registers from _pc/this
+         }
+         else
+         {
+@@ -698,8 +702,8 @@
+             codeOp.Instruction.Code = op_code;
+             codeOp.Instruction.InstanceId = (op_word >> INSTANCE_ID_SHIFT) & INSTANCE_ID_MASK;
+             codeOp.ArgCount = op_argc;
+-            codeOp.Args[0].SetInt32(op_argc > 0 ? op_arg1 : 0);
+-            codeOp.Args[1].SetInt32(op_argc > 1 ? op_arg2 : 0);
++            codeOp.Args[0].SetInt32(op_argc > 0 ? OPA1 : 0);
++            codeOp.Args[1].SetInt32(op_argc > 1 ? OPA2 : 0);
+             codeOp.Args[2].SetInt32(op_argc > 2 ? static_cast<int32_t>(codeInst->_code[_pc + 3]) : 0);
+             DumpInstruction(codeOp);
+         }
+@@ -710,15 +714,15 @@
+         switch (op_code)
+         {
+         case SCMD_LINENUM:
+-            _lineNumber = op_arg1;
++            _lineNumber = OPA1;
+             currentline = _lineNumber;
+             if (new_line_hook)
+                 new_line_hook(this, currentline);
+             break;
+         case SCMD_ADD:
+         {
+-            const auto arg_reg = op_arg1;
+-            const auto arg_lit = op_arg2;
++            const auto arg_reg = OPA1;
++            const auto arg_lit = OPA2;
+             auto &reg1 = _registers[arg_reg];
+             // If the the register is SREG_SP, we are allocating new variable on the stack
+             if (arg_reg == SREG_SP)
+@@ -749,8 +753,8 @@
+         }
+         case SCMD_SUB:
+         {
+-            const auto arg_reg = op_arg1;
+-            const auto arg_lit = op_arg2;
++            const auto arg_reg = OPA1;
++            const auto arg_lit = OPA2;
+             auto &reg1 = _registers[arg_reg];
+             if (reg1.Type == kScValStackPtr)
+             {
+@@ -779,8 +783,8 @@
+         }
+         case SCMD_REGTOREG:
+         {
+-            const auto &reg1 = _registers[op_arg1];
+-            auto       &reg2 = _registers[op_arg2];
++            const auto &reg1 = _registers[OPA1];
++            auto       &reg2 = _registers[OPA2];
+             reg2 = reg1;
+             break;
+         }
+@@ -792,8 +796,8 @@
+             // long, or rather int32 due x32 build), written value may normally
+             // be only up to 4 bytes large;
+             // I guess that's an obsolete way to do WRITE, WRITEW and WRITEB
+-            const auto arg_size = op_arg1;
+-            codeOp.Args[1].SetInt32(op_arg2); // patch 0293/0295: the whole value, before its fixup
++            const auto arg_size = OPA1;
++            codeOp.Args[1].SetInt32(OPA2); // patch 0293/0295: the whole value, before its fixup
+             FixupArgument(codeOp.Args[1], codeInst->_code_fixups[_pc + 2], codeInst->_code[_pc + 2], _stackBegin, codeInst->_strings);
+             ASSERT_CC_ERROR();
+             const auto &arg_value = codeOp.Arg2();
+@@ -834,8 +838,8 @@
+         }
+         case SCMD_LITTOREG:
+         {
+-            auto &reg1 = _registers[op_arg1];
+-            codeOp.Args[1].SetInt32(op_arg2); // patch 0293/0295: the whole value, before its fixup
++            auto &reg1 = _registers[OPA1];
++            codeOp.Args[1].SetInt32(OPA2); // patch 0293/0295: the whole value, before its fixup
+             FixupArgument(codeOp.Args[1], codeInst->_code_fixups[_pc + 2], codeInst->_code[_pc + 2], _stackBegin, codeInst->_strings);
+             ASSERT_CC_ERROR();
+             const auto &arg_value = codeOp.Arg2();
+@@ -845,35 +849,35 @@
+         case SCMD_MEMREAD:
+         {
+             // Take the data address from reg[MAR] and copy int32_t to reg[arg1]
+-            auto &reg1 = _registers[op_arg1];
++            auto &reg1 = _registers[OPA1];
+             reg1 = _registers[SREG_MAR].ReadValue();
+             break;
+         }
+         case SCMD_MEMWRITE:
+         {
+             // Take the data address from reg[MAR] and copy there int32_t from reg[arg1]
+-            const auto &reg1 = _registers[op_arg1];
++            const auto &reg1 = _registers[OPA1];
+             _registers[SREG_MAR].WriteValue(reg1);
+             break;
+         }
+         case SCMD_LOADSPOFFS:
+         {
+-            const auto arg_off = op_arg1;
++            const auto arg_off = OPA1;
+             _registers[SREG_MAR] = GetStackPtrOffsetRw(arg_off);
+             ASSERT_CC_ERROR();
+             break;
+         }
+         case SCMD_MULREG:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetInt32(reg1.IValue * reg2.IValue);
+             break;
+         }
+         case SCMD_DIVREG:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             if (reg2.IValue == 0)
+             {
+                 cc_error("!Integer divide by zero");
+@@ -884,101 +888,101 @@
+         }
+         case SCMD_ADDREG:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             // This may be pointer arithmetics, in which case IValue stores offset from base pointer
+             reg1.IValue += reg2.IValue;
+             break;
+         }
+         case SCMD_SUBREG:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             // This may be pointer arithmetics, in which case IValue stores offset from base pointer
+             reg1.IValue -= reg2.IValue;
+             break;
+         }
+         case SCMD_BITAND:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetInt32(reg1.IValue & reg2.IValue);
+             break;
+         }
+         case SCMD_BITOR:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetInt32(reg1.IValue | reg2.IValue);
+             break;
+         }
+         case SCMD_ISEQUAL:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetInt32AsBool(reg1 == reg2);
+             break;
+         }
+         case SCMD_NOTEQUAL:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetInt32AsBool(reg1 != reg2);
+             break;
+         }
+         case SCMD_GREATER:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetInt32AsBool(reg1.IValue > reg2.IValue);
+             break;
+         }
+         case SCMD_LESSTHAN:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetInt32AsBool(reg1.IValue < reg2.IValue);
+             break;
+         }
+         case SCMD_GTE:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetInt32AsBool(reg1.IValue >= reg2.IValue);
+             break;
+         }
+         case SCMD_LTE:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetInt32AsBool(reg1.IValue <= reg2.IValue);
+             break;
+         }
+         case SCMD_AND:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetInt32AsBool(reg1.IValue && reg2.IValue);
+             break;
+         }
+         case SCMD_OR:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetInt32AsBool(reg1.IValue || reg2.IValue);
+             break;
+         }
+         case SCMD_XORREG:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetInt32(reg1.IValue ^ reg2.IValue);
+             break;
+         }
+         case SCMD_MODREG:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             if (reg2.IValue == 0)
+             {
+                 cc_error("!Integer divide by zero");
+@@ -989,7 +993,7 @@
+         }
+         case SCMD_NOTREG:
+         {
+-            auto       &reg1 = _registers[op_arg1];
++            auto       &reg1 = _registers[OPA1];
+             reg1 = !(reg1);
+             break;
+         }
+@@ -1008,7 +1012,7 @@
+             ASSERT_STACK_SPACE_VALS(1);
+             PushValueToStack(RuntimeScriptValue().SetInt32(_pc + op_argc + 1));
+ 
+-            const auto &reg1 = _registers[op_arg1];
++            const auto &reg1 = _registers[OPA1];
+             if (thisbase[curnest] == 0)
+                 _pc = reg1.IValue;
+             else {
+@@ -1029,41 +1033,41 @@
+         case SCMD_MEMREADB:
+         {
+             // Take the data address from reg[MAR] and copy byte to reg[arg1]
+-            auto &reg1 = _registers[op_arg1];
++            auto &reg1 = _registers[OPA1];
+             reg1.SetUInt8(_registers[SREG_MAR].ReadByte());
+             break;
+         }
+         case SCMD_MEMREADW:
+         {
+             // Take the data address from reg[MAR] and copy int16_t to reg[arg1]
+-            auto &reg1 = _registers[op_arg1];
++            auto &reg1 = _registers[OPA1];
+             reg1.SetInt16(_registers[SREG_MAR].ReadInt16());
+             break;
+         }
+         case SCMD_MEMWRITEB:
+         {
+             // Take the data address from reg[MAR] and copy there byte from reg[arg1]
+-            const auto &reg1 = _registers[op_arg1];
++            const auto &reg1 = _registers[OPA1];
+             _registers[SREG_MAR].WriteByte(reg1.IValue);
+             break;
+         }
+         case SCMD_MEMWRITEW:
+         {
+             // Take the data address from reg[MAR] and copy there int16_t from reg[arg1]
+-            const auto &reg1 = _registers[op_arg1];
++            const auto &reg1 = _registers[OPA1];
+             _registers[SREG_MAR].WriteInt16(reg1.IValue);
+             break;
+         }
+         case SCMD_JZ:
+         {
+-            const auto arg_lit = op_arg1;
++            const auto arg_lit = OPA1;
+             if (_registers[SREG_AX].IsNull())
+                 _pc += arg_lit;
+             break;
+         }
+         case SCMD_JNZ:
+         {
+-            const auto arg_lit = op_arg1;
++            const auto arg_lit = OPA1;
+             if (!_registers[SREG_AX].IsNull())
+                 _pc += arg_lit;
+             break;
+@@ -1071,21 +1075,21 @@
+         case SCMD_PUSHREG:
+         {
+             // Push reg[arg1] value to the stack
+-            const auto &reg1 = _registers[op_arg1];
++            const auto &reg1 = _registers[OPA1];
+             ASSERT_STACK_SPACE_VALS(1);
+             PushValueToStack(reg1);
+             break;
+         }
+         case SCMD_POPREG:
+         {
+-            auto &reg1 = _registers[op_arg1];
++            auto &reg1 = _registers[OPA1];
+             ASSERT_STACK_SIZE(1);
+             reg1 = PopValueFromStack();
+             break;
+         }
+         case SCMD_JMP:
+         {
+-            const auto arg_lit = op_arg1;
++            const auto arg_lit = OPA1;
+             _pc += arg_lit;
+ 
+             // Make sure it's not stuck in a While loop
+@@ -1118,15 +1122,15 @@
+         }
+         case SCMD_MUL:
+         {
+-            auto &reg1 = _registers[op_arg1];
+-            const auto arg_lit = op_arg2;
++            auto &reg1 = _registers[OPA1];
++            const auto arg_lit = OPA2;
+             reg1.IValue *= arg_lit;
+             break;
+         }
+         case SCMD_CHECKBOUNDS:
+         {
+-            const auto &reg1 = _registers[op_arg1];
+-            const auto arg_lit = op_arg2;
++            const auto &reg1 = _registers[OPA1];
++            const auto arg_lit = OPA2;
+             if ((reg1.IValue < 0) ||
+                 (reg1.IValue >= arg_lit))
+             {
+@@ -1137,7 +1141,7 @@
+         }
+         case SCMD_DYNAMICBOUNDS:
+         {
+-            const auto &reg1 = _registers[op_arg1];
++            const auto &reg1 = _registers[OPA1];
+             void *arr_ptr = _registers[SREG_MAR].GetPtrWithOffset();
+             const auto &hdr = CCDynamicArray::GetHeader(arr_ptr);
+             if ((reg1.IValue < 0) ||
+@@ -1159,7 +1163,7 @@
+         }
+         case SCMD_MEMREADPTR:
+         {
+-            auto &reg1 = _registers[op_arg1];
++            auto &reg1 = _registers[OPA1];
+             int32_t handle = _registers[SREG_MAR].ReadInt32();
+             // FIXME: make pool return a ready RuntimeScriptValue with these set?
+             // or another struct, which may be assigned to RSV
+@@ -1172,7 +1176,7 @@
+         }
+         case SCMD_MEMWRITEPTR:
+         {
+-            const auto &reg1 = _registers[op_arg1];
++            const auto &reg1 = _registers[OPA1];
+             int32_t handle = _registers[SREG_MAR].ReadInt32();
+             void *address;
+ 
+@@ -1215,7 +1219,7 @@
+         case SCMD_MEMINITPTR:
+         {
+             void *address;
+-            const auto &reg1 = _registers[op_arg1];
++            const auto &reg1 = _registers[OPA1];
+ 
+             switch (reg1.Type)
+             {
+@@ -1280,7 +1284,7 @@
+             break;
+         case SCMD_CHECKNULLREG:
+         {
+-            const auto &reg1 = _registers[op_arg1];
++            const auto &reg1 = _registers[OPA1];
+             if (reg1.IsNull())
+             {
+                 cc_error("!Null string referenced");
+@@ -1290,7 +1294,7 @@
+         }
+         case SCMD_NUMFUNCARGS:
+         {
+-            const auto arg_lit = op_arg1;
++            const auto arg_lit = OPA1;
+             num_args_to_func = arg_lit;
+             break;
+         }
+@@ -1299,7 +1303,7 @@
+             PUSH_CALL_STACK();
+ 
+             // Call to a function in another script
+-            const auto &reg1 = _registers[op_arg1];
++            const auto &reg1 = _registers[OPA1];
+ 
+             // If there are nested CALLAS calls, the stack might
+             // contain 2 calls worth of parameters, so only
+@@ -1355,7 +1359,7 @@
+         case SCMD_CALLEXT:
+         {
+             // Call to a real 'C' code function
+-            const auto &reg1 = _registers[op_arg1];
++            const auto &reg1 = _registers[OPA1];
+ 
+             was_just_callas = -1;
+             if (num_args_to_func < 0)
+@@ -1424,7 +1428,7 @@
+         }
+         case SCMD_PUSHREAL:
+         {
+-            const auto &reg1 = _registers[op_arg1];
++            const auto &reg1 = _registers[OPA1];
+             func_callstack.Push(reg1);
+             break;
+         }
+@@ -1433,7 +1437,7 @@
+             // Drop arg_lit entries from the func_callstack
+             // TODO: cannot we just clear the func_callstack right after using it in call op?
+             // it does not seem like these values are needed for anything else.
+-            const auto arg_lit = op_arg1;
++            const auto arg_lit = OPA1;
+             if (func_callstack.GetSize() < static_cast<uint32_t>(arg_lit))
+             {
+                 cc_error("function callstack underflow");
+@@ -1452,7 +1456,7 @@
+         case SCMD_CALLOBJ:
+         {
+             // set the OP register
+-            const auto &reg1 = _registers[op_arg1];
++            const auto &reg1 = _registers[OPA1];
+             if (reg1.IsNull())
+             {
+                 cc_error("!Null pointer referenced");
+@@ -1488,29 +1492,29 @@
+         }
+         case SCMD_SHIFTLEFT:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetInt32(reg1.IValue << reg2.IValue);
+             break;
+         }
+         case SCMD_SHIFTRIGHT:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetInt32(reg1.IValue >> reg2.IValue);
+             break;
+         }
+         case SCMD_THISBASE:
+         {
+-            const auto arg_lit = op_arg1;
++            const auto arg_lit = OPA1;
+             thisbase[curnest] = arg_lit;
+             break;
+         }
+         case SCMD_NEWARRAY:
+         {
+-            auto &reg1 = _registers[op_arg1];
++            auto &reg1 = _registers[OPA1];
+             const int arg_elnum = reg1.IValue;
+-            const uint32_t arg_elsize = static_cast<uint32_t>(op_arg2);
++            const uint32_t arg_elsize = static_cast<uint32_t>(OPA2);
+             // patch 0293: == Arg3().GetAsBool() on an int-set value; patch 0299: read here, where it is used
+             const bool arg_managed = static_cast<int32_t>(codeInst->_code[_pc + 3]) != 0;
+             if (arg_elnum < 0)
+@@ -1524,8 +1528,8 @@
+         }
+         case SCMD_NEWUSEROBJECT:
+         {
+-            auto &reg1 = _registers[op_arg1];
+-            const uint32_t arg_size = static_cast<uint32_t>(op_arg2);
++            auto &reg1 = _registers[OPA1];
++            const uint32_t arg_size = static_cast<uint32_t>(OPA2);
+             if (arg_size > INT32_MAX)
+             {
+                 cc_error("Invalid size for user object; requested: %u, range: 0..%d", arg_size, INT32_MAX);
+@@ -1537,29 +1541,29 @@
+         }
+         case SCMD_FADD:
+         {
+-            auto &reg1 = _registers[op_arg1];
+-            const auto arg_lit = op_arg2;
++            auto &reg1 = _registers[OPA1];
++            const auto arg_lit = OPA2;
+             reg1.SetFloat(reg1.FValue + arg_lit); // arg2 was used as int here originally
+             break;
+         }
+         case SCMD_FSUB:
+         {
+-            auto &reg1 = _registers[op_arg1];
+-            const auto arg_lit = op_arg2;
++            auto &reg1 = _registers[OPA1];
++            const auto arg_lit = OPA2;
+             reg1.SetFloat(reg1.FValue - arg_lit); // arg2 was used as int here originally
+             break;
+         }
+         case SCMD_FMULREG:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetFloat(reg1.FValue * reg2.FValue);
+             break;
+         }
+         case SCMD_FDIVREG:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             if (reg2.FValue == 0.0)
+             {
+                 cc_error("!Floating point divide by zero");
+@@ -1570,49 +1574,49 @@
+         }
+         case SCMD_FADDREG:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetFloat(reg1.FValue + reg2.FValue);
+             break;
+         }
+         case SCMD_FSUBREG:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetFloat(reg1.FValue - reg2.FValue);
+             break;
+         }
+         case SCMD_FGREATER:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetFloatAsBool(reg1.FValue > reg2.FValue);
+             break;
+         }
+         case SCMD_FLESSTHAN:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetFloatAsBool(reg1.FValue < reg2.FValue);
+             break;
+         }
+         case SCMD_FGTE:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetFloatAsBool(reg1.FValue >= reg2.FValue);
+             break;
+         }
+         case SCMD_FLTE:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             reg1.SetFloatAsBool(reg1.FValue <= reg2.FValue);
+             break;
+         }
+         case SCMD_ZEROMEMORY:
+         {
+-            const auto arg_size = op_arg1;
++            const auto arg_size = OPA1;
+             // Check if we are zeroing at stack tail
+             if (_registers[SREG_MAR] == _registers[SREG_SP])
+             {
+@@ -1633,7 +1637,7 @@
+         }
+         case SCMD_CREATESTRING:
+         {
+-            auto &reg1 = _registers[op_arg1];
++            auto &reg1 = _registers[OPA1];
+             const char *ptr = reinterpret_cast<const char*>(reg1.GetDirectPtr());
+             DynObjectRef ref = ScriptString::Create(ptr);
+             reg1.SetScriptObject(ref.Obj(), &myScriptStringImpl);
+@@ -1641,8 +1645,8 @@
+         }
+         case SCMD_STRINGSEQUAL:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             if ((reg1.IsNull()) || (reg2.IsNull()))
+             {
+                 cc_error("!Null pointer referenced");
+@@ -1658,8 +1662,8 @@
+         }
+         case SCMD_STRINGSNOTEQ:
+         {
+-            auto       &reg1 = _registers[op_arg1];
+-            const auto &reg2 = _registers[op_arg2];
++            auto       &reg1 = _registers[OPA1];
++            const auto &reg2 = _registers[OPA2];
+             if ((reg1.IsNull()) || (reg2.IsNull()))
+             {
+                 cc_error("!Null pointer referenced");
+@@ -1687,6 +1691,8 @@
+         _pc += op_argc + 1;
+     }
+     return kInstErr_None;
++#undef OPA1
++#undef OPA2
+ }
+ 
+ String ccInstance::GetCallStack(const int maxLines) const

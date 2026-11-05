@@ -1,0 +1,165 @@
+From 2de0e95bbed7a65fb83a615a75b2df4e0762f2d3 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 14:58:34 -0700
+Subject: [PATCH] dos: patch 0261 -- MIDI running status on the RTC pump's
+ output
+
+The WaveBlaster sink sends a full status byte with every message, 3
+bytes per note, with no running status. Measured over the in-profile
+games' own MIDI (dosags LAB-WB), the densest 46 ms slots carry 224
+bytes (5 Days music1) and 213 (Trilby music4). The wire carries 145 at
+31250 baud, and the 2048 Hz pump 95. Running status, which every MIDI
+receiver must accept, omits a channel status byte equal to the
+previous one. It takes those peaks to 178 and 180, and halves the
+bytes that cannot go out in their slot: wire rate 163 -> 68 over all
+35 songs, pump rate 887 -> 403. 5 Days music0, the song the validation
+flows play, is unchanged at its 60-byte peak and 0 late.
+
+It is done in the pump, on the bytes actually written, not at plan
+time in the sink. The plan runs up to 2 s ahead, and pause's All Notes
+Off, a flush, and the device close all change what is on the wire
+after the plan was made. A tracker kept at plan time would omit a
+status the device no longer holds. The pump already knows the last
+status it put out (0260), so the decision cannot drift. A skipped
+status byte costs no tick: its message's first data byte goes out on
+the same tick.
+
+Default on, killswitch SDL_HINT_DOS_AUDIO_WB_RUNNING_STATUS=0 (strict
+"0"). The skipped bytes are counted in the uninstall line and in
+SDL_DOSMidiDeferRtcRunningStatus. Nothing changes for any other queue
+kind or transport.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ include/SDL3/SDL_dosmidi_tick.h |  5 ++++
+ src/audio/dos/SDL_dosaudio_sb.c | 51 ++++++++++++++++++++++++++++++---
+ 2 files changed, 52 insertions(+), 4 deletions(-)
+
+diff --git a/include/SDL3/SDL_dosmidi_tick.h b/include/SDL3/SDL_dosmidi_tick.h
+index 2eddef0b8..74fd1f3f9 100644
+--- a/include/SDL3/SDL_dosmidi_tick.h
++++ b/include/SDL3/SDL_dosmidi_tick.h
+@@ -326,6 +326,11 @@ extern SDL_DECLSPEC Uint32 SDLCALL SDL_DOSMidiDeferKeysOn(void);
+    SDL_DOSMidiDeferStats as for the other kinds (burst = bytes per SB IRQ slot). */
+ extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferRtcStats(Uint32 *rate_hz, Uint32 *gap_us, Uint32 *ticks,
+                                                           Uint32 *bios_waits, Uint32 *lat_max_us);
++/* DOS-PORT patch 0261: the kind-3 pump sends MIDI running status (a channel
++   status byte equal to the last one it put on the wire is omitted), default on,
++   killswitch SDL_HINT_DOS_AUDIO_WB_RUNNING_STATUS=0. Returns the status bytes
++   not sent (run total); *enabled = the setting of the current/last install. */
++extern SDL_DECLSPEC Uint32 SDLCALL SDL_DOSMidiDeferRtcRunningStatus(bool *enabled);
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index ccb9f8ad9..d1327b987 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -1877,6 +1877,9 @@ static volatile Uint32 g_rtc_slot_bytes = 0;/* bytes written since the SB IRQ in
+ static volatile Uint8 g_rtc_last_status = 0; /* last channel status byte on the wire, 0 = unknown */
+ static volatile Uint8 g_rtc_pending_status = 0; /* status to re-send before the queue head (resume) */
+ static Uint8 g_rtc_resume_status = 0;       /* the message the pump was in when a pause cut it */
++/* DOS-PORT patch 0261: MIDI running status on the pump's output. */
++static volatile Uint8 g_rtc_rs = 0;         /* 1 = omit a status byte equal to the one on the wire */
++static volatile Uint32 g_rtc_rs_skipped = 0;/* status bytes not sent (run total) */
+ static volatile Uint16 g_rtc_dos_sel = 0;   /* _dos_ds, copied so the ISR reads locked data only */
+ static Uint8 g_rtc_saved_a = 0;
+ static Uint8 g_rtc_saved_pie = 0;
+@@ -1997,6 +2000,28 @@ static void MidiRtcISR(void)
+                     MidiRtcPut(g_rtc_pending_status);
+                     g_rtc_pending_status = 0;
+                 } else {
++                    /* DOS-PORT patch 0261: running status. A channel status equal
++                       to the last one on the wire is not sent; its message's first
++                       data byte (next entry, same stamp) goes out on this tick
++                       instead. Decided here, on the bytes actually written, so
++                       nothing that bypasses the queue can put the device and the
++                       tracker out of step (pause re-sends the cut status; every
++                       other direct write happens with the pump uninstalled). */
++                    if (g_rtc_rs && g_mdq_val[idx] >= 0x80 && g_mdq_val[idx] < 0xF0 &&
++                        g_mdq_val[idx] == g_rtc_last_status) {
++                        g_mdq_head = g_mdq_head + 1u;
++                        g_mdq_written++;
++                        g_rtc_rs_skipped++;
++                        if (g_mdq_head != g_mdq_tail) {
++                            __asm__ __volatile__("" ::: "memory");
++                            idx = g_mdq_head & (MIDI_DEFER_QUEUE - 1u);
++                            late = (Sint32)(irq_now - g_mdq_stamp[idx]);
++                        } else {
++                            late = -1;
++                        }
++                    }
++                }
++                if (late >= 0 && !g_rtc_pending_status && g_rtc_since_us >= g_rtc_gap_us) {
+                     MidiRtcPut(g_mdq_val[idx]);
+                     g_mdq_head = g_mdq_head + 1u;
+                     g_mdq_written++;
+@@ -2042,10 +2067,10 @@ static void MidiRtcUninstall(void)
+     }
+     g_rtc_installed = 0;
+     dos_port_dbg_log("audio: patch 0260 RTC pump uninstalled -- register A rate bits restored "
+-                     "to %u, PIE %s, IRQ 8 %s; ticks=%u bios_waits=%u lat_max_us=%u",
++                     "to %u, PIE %s, IRQ 8 %s; ticks=%u bios_waits=%u lat_max_us=%u rs_skipped=%u",
+                      (unsigned)(g_rtc_saved_a & 0x0F), g_rtc_saved_pie ? "on" : "off",
+                      g_rtc_saved_mask ? "re-masked" : "left unmasked", (unsigned)g_rtc_ticks,
+-                     (unsigned)g_rtc_waits, (unsigned)g_rtc_lat_max_us);
++                     (unsigned)g_rtc_waits, (unsigned)g_rtc_lat_max_us, (unsigned)g_rtc_rs_skipped);
+ }
+ 
+ static void MidiRtcAtExit(void)
+@@ -2073,6 +2098,13 @@ static bool MidiRtcInstall(Uint32 gap_us)
+     g_rtc_last_status = 0;
+     g_rtc_pending_status = 0;
+     g_rtc_pie = 0;
++    {
++        /* DOS-PORT patch 0261: running status, default on; killswitch
++           SDL_HINT_DOS_AUDIO_WB_RUNNING_STATUS=0 (strict "0") sends every
++           status byte as before. */
++        const char *h = SDL_GetHint("SDL_HINT_DOS_AUDIO_WB_RUNNING_STATUS");
++        g_rtc_rs = (h && h[0] == '0' && h[1] == 0) ? 0 : 1;
++    }
+     g_rtc_rate_hz = 32768u >> (MDQ_RTC_RATE_BITS - 1u);
+     /* The compiler does not keep these functions in source order (the ISR
+        has been laid out after its end marker), so a range lock alone cannot
+@@ -2096,6 +2128,8 @@ static bool MidiRtcInstall(Uint32 gap_us)
+         DOS_LockVariable(g_rtc_dos_sel);
+         DOS_LockVariable(g_rtc_last_status);
+         DOS_LockVariable(g_rtc_pending_status);
++        DOS_LockVariable(g_rtc_rs); /* DOS-PORT patch 0261 */
++        DOS_LockVariable(g_rtc_rs_skipped);
+         g_rtc_locked = true;
+     }
+     DOS_DisableInterrupts();
+@@ -2117,10 +2151,11 @@ static bool MidiRtcInstall(Uint32 gap_us)
+     }
+     dos_port_dbg_log("audio: patch 0260 RTC pump installed -- IRQ 8 at %u Hz (register A "
+                      "0x%02x -> rate bits %u), byte gap %u us, PIE was %s, IRQ 8 was %s; "
+-                     "MPU bytes released by the SB IRQ, written one per RTC tick",
++                     "MPU bytes released by the SB IRQ, written one per RTC tick; running status %s",
+                      (unsigned)(32768u >> (MDQ_RTC_RATE_BITS - 1u)), (unsigned)g_rtc_saved_a,
+                      (unsigned)MDQ_RTC_RATE_BITS, (unsigned)gap_us,
+-                     g_rtc_saved_pie ? "on" : "off", g_rtc_saved_mask ? "masked" : "unmasked");
++                     g_rtc_saved_pie ? "on" : "off", g_rtc_saved_mask ? "masked" : "unmasked",
++                     g_rtc_rs ? "on (patch 0261)" : "off (SDL_HINT_DOS_AUDIO_WB_RUNNING_STATUS=0)");
+     return true;
+ }
+ 
+@@ -2477,6 +2512,14 @@ void SDL_DOSMidiDeferRtcStats(Uint32 *rate_hz, Uint32 *gap_us, Uint32 *ticks, Ui
+     if (lat_max_us) *lat_max_us = g_rtc_lat_max_us;
+ }
+ 
++/* DOS-PORT patch 0261: status bytes the pump did not send (running status,
++   run total), and whether running status is on for the current/last install. */
++Uint32 SDL_DOSMidiDeferRtcRunningStatus(bool *enabled)
++{
++    if (enabled) *enabled = g_rtc_rs != 0;
++    return g_rtc_rs_skipped;
++}
++
+ void SDL_DOSMidiDeferStats(Uint32 *written, Uint32 *late, Uint32 *late_max, Uint32 *burst_max, Uint32 *full)
+ {
+     if (written) *written = g_mdq_written;
+-- 
+2.47.3
+

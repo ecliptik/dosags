@@ -1,0 +1,79 @@
+From e905d3cf99f9c7cf4c079c4a4dc77e86415313a0 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 14:42:08 -0700
+Subject: [PATCH] [AGS] cc_serializer: fix Unserialize override's DJGPP int32_t
+ divergence
+
+Found while confirming patch 0017's build result. AGSDeSerializer's
+Unserialize declared its first param "int index", but the base
+interface it implements, ICCObjectCollectionReader::Unserialize
+(Engine/ac/dynobj/cc_scriptobject.h), declares "int32_t handle". On a
+typical 64-bit Linux dev host these are the same type, so the mismatch
+is invisible; under DJGPP (ILP32, int32_t typedef'd to long int) they
+are genuinely distinct C++ types, so the explicit "override" keyword
+correctly failed to compile ("marked 'override', but does not
+override"), and AGSDeSerializer stayed abstract as a result
+("cannot declare variable 'ccUnserializer' to be of abstract type").
+
+Same DJGPP-divergence category patch 0013 already fixed at 4 call
+sites (Stream::ReadArrayOfInt32/WriteArrayOfInt32), but a different
+call-site shape -- a virtual-override signature, not a function-call
+argument -- that 0013's own narrower grep (those two method names only)
+didn't and couldn't have covered. Fix: change the override's parameter
+type to int32_t, matching the interface exactly. The parameter name is
+kept as "index" (not renamed to "handle") -- C++ override resolution
+only requires the type to match, and every one of this function's ~20
+internal .Unserialize(index, ...) call sites already compiles fine
+either way (int/int32_t are freely, implicitly convertible as function
+arguments; only the override's own signature needed the exact type).
+
+Verified: cc_serializer.cpp.obj compiles clean (no warnings). Full
+`make build-ags` gets past this file and reaches a new blocker,
+Engine/media/audio/openal.h:18, fatal error: AL/al.h: No such file or
+directory -- not a new surprise, this is exactly what patch 0023 (the
+OpenAL/mojoAL stub, pairs with patch 0005's CMake-level gate) already
+existed in PATCH-SEQUENCE.md to fix, confirming Phase D's plan is
+tracking real build state again after two real corrections in a row.
+---
+ Engine/ac/dynobj/cc_serializer.cpp |  2 +-
+ Engine/ac/dynobj/cc_serializer.h   | 11 ++++++++++-
+ 2 files changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/Engine/ac/dynobj/cc_serializer.cpp b/Engine/ac/dynobj/cc_serializer.cpp
+index 1eb74b91e..199af7d53 100644
+--- a/Engine/ac/dynobj/cc_serializer.cpp
++++ b/Engine/ac/dynobj/cc_serializer.cpp
+@@ -44,7 +44,7 @@ extern std::vector<PluginObjectReader> pluginReaders;
+ 
+ // *** De-serialization of script objects
+ 
+-void AGSDeSerializer::Unserialize(int index, const char *objectType, const char *serializedData, int dataSize) {
++void AGSDeSerializer::Unserialize(int32_t index, const char *objectType, const char *serializedData, int dataSize) {
+ 
+     if (dataSize < 0)
+     {
+diff --git a/Engine/ac/dynobj/cc_serializer.h b/Engine/ac/dynobj/cc_serializer.h
+index 4ad075dd0..c870fd236 100644
+--- a/Engine/ac/dynobj/cc_serializer.h
++++ b/Engine/ac/dynobj/cc_serializer.h
+@@ -19,7 +19,16 @@
+ 
+ struct AGSDeSerializer : ICCObjectCollectionReader {
+ 
+-    void Unserialize(int index, const char *objectType, const char *serializedData, int dataSize) override;
++    // DOS-PORT: DJGPP is ILP32 with int32_t typedef'd to long int, a
++    // distinct type from int in C++ even though both are 4 bytes here --
++    // ICCObjectCollectionReader::Unserialize's real first param is
++    // int32_t handle (cc_scriptobject.h), so an "int index" override
++    // here does not actually override it (silently -- the compiler only
++    // catches it because of the explicit "override" keyword). Same
++    // DJGPP-divergence category as patch 0013, a virtual-override
++    // call-site shape that patch's own grep (ReadArrayOfInt32/
++    // WriteArrayOfInt32 call sites only) didn't cover.
++    void Unserialize(int32_t index, const char *objectType, const char *serializedData, int dataSize) override;
+ };
+ 
+ extern AGSDeSerializer ccUnserializer;
+-- 
+2.47.3
+

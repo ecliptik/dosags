@@ -1,0 +1,356 @@
+From 899813490c05812d8a6c05bbe5f28c2546e09ac8 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 18:07:12 -0700
+Subject: [PATCH] dos: patch 0240 -- a mouse IRQ doorbell: poll the driver only
+ when its state can have changed
+
+WHY: every SDL pump polled the mouse driver with three real-mode INT 33h calls: function 3, and
+function 5 for each button (0221/0227). AGS pumps three times a tick, so that is 9 real-mode round
+trips a tick even with no input at all.
+- On a 486DX2-66 under CWSDPMI, each call costs ~150-170 us inside the game (dosags LAB-MMD.md 33.5).
+  That is twice the 83 us a warm back-to-back microbench reports, because a pump's other work evicts
+  the DPMI host's and the driver's paths from the 8 KB L1 between calls.
+- Measured on that 486 (LAB-MMD.md 28.13, ABBA, MMD): the input phases cost 2.249 ms/tick with
+  polling.
+- DOSBox-X answers INT 33h inside the emulator, so a fixed-cycles lab sees only a fraction of this
+  (0.22 ms/tick).
+
+WHAT: the driver's state -- position, buttons, function 5's press counters -- changes only in its own
+IRQ handler or in our INT 33h calls.
+- A protected-mode handler is chained on the mouse IRQ's vector (DPMI 0.9 function 0205h via
+  __dpmi_set_protected_mode_interrupt_vector). It marks every mouse IRQ: it only sets a flag and
+  jumps on to the previous handler -- no sti, no stack switch, no wrapper. This is the pattern of
+  DJGPP's own INT 9 keyboard chain.
+- A pump runs the polling path -- 0227's, unchanged -- only if the flag was set since the last poll.
+  It takes and clears the flag with interrupts off.
+- The flag write and the driver's update happen inside the same interrupt, which the main thread
+  cannot split. So a pump that skips would have read exactly what the previous poll read. The engine
+  receives the same events as with polling, pump for pump, and the press counts still come from
+  function 05h itself.
+- Our own state-changing calls (warp) set the flag.
+- A safety poll runs at least once a second regardless (3 INT 33h a second). It bounds any missed
+  doorbell to short staleness that can be detected.
+
+The IRQ comes from INT 33h function 24h (CH = type, CL = IRQ):
+- PS/2 only as CH 4 with CL 0: IRQ 12, vector 74h. That is what every CuteMouse release reports
+  (LAB-JOURNEYS.md 11.2).
+- Bus/serial/InPort/HP only with CL 2-7: vector 08h+CL.
+- Anything else, an unimplemented function 24h, or SDL_HINT_DOS_MOUSE_POLL=1: polling every pump, as
+  before.
+
+Why not the driver's user routine (function 0Ch)?
+- CuteMouse skips user-routine calls while one is running (LAB-JOURNEYS.md 11.1), so counts taken
+  there can miss a press.
+- A routine pointer left in the driver outlives the process. The PM vector, by contrast, is
+  per-client state that the DPMI host drops with the client.
+
+Safety:
+- The vector is restored in DOSVESA_QuitMouse, and by an atexit handler as well.
+- Everything the handler touches is locked: its code, the flag, the saved vector and libc's DS alias
+  (_go32_dpmi_lock_code / _go32_dpmi_lock_data, DPMI 0600h). If any lock fails, there is no
+  doorbell: polling as before.
+- SDL_DOSMouseBellStats() reports the lock results and the poll, safety-poll and skip counts. These
+  are permanent observability, like 0220's SDL_DOSMouseClickStats, not a temporary diagnostic.
+
+Evidence (dosags LAB-MMD.md 28.8-28.13, 34.2-34.4):
+- Lab gates, all PASS:
+  - determinism guard on MMD, AGS Quest and 5 Days, doorbell vs polling;
+  - forced exit, clean in both modes, vector restored;
+  - locks = 15 in every doorbell cell;
+  - the 486 click recipes, 21/21 presses from host to engine, lost 0, with the doorbell reading the
+    driver in ~1.2-1.6% of pumps.
+- 486 ABBA: input phases 2.249 -> 0.698 ms/tick (N 0.001, D -1.550, GAIN);
+  update_game_once -1.571 ms/tick; the script event is unchanged (control).
+
+Landing review (dosags-worker, 2026-09-25): comments and one include only -- the
+per-call cost in the code comment corrected to the measured ~150-170 us in-game (cold)
+and ~83 us warm; a note on dos_mouse_bell_old living in .text (written through DS,
+fine on DJGPP); #include <dos.h> for disable()/enable(), which were implicitly
+declared (a warning here, an error on newer GCC). The object code is identical to the
+reviewed patch: SDL_dosevents.c's disassembly and data sections compare equal.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ include/SDL3/SDL_dosinput_stats.h |  13 +++
+ src/video/dos/SDL_dosevents.c     | 174 +++++++++++++++++++++++++++++-
+ src/video/dos/SDL_dosevents_c.h   |   5 +
+ src/video/dos/SDL_dosmouse.c      |   6 ++
+ 4 files changed, 197 insertions(+), 1 deletion(-)
+
+diff --git a/include/SDL3/SDL_dosinput_stats.h b/include/SDL3/SDL_dosinput_stats.h
+index 4c1bd1f4d..aacc5816d 100644
+--- a/include/SDL3/SDL_dosinput_stats.h
++++ b/include/SDL3/SDL_dosinput_stats.h
+@@ -85,6 +85,19 @@ extern SDL_DECLSPEC void SDLCALL SDL_DOSMouseClickStats(Uint32 *hw_presses, Uint
+  */
+ extern SDL_DECLSPEC Uint32 SDLCALL SDL_DOSMouseSynthesizedPresses(void);
+ 
++/**
++ * dosags patch 0240: the mouse IRQ doorbell's counts -- pumps that polled the driver because the
++ * doorbell rang, pumps that polled it as the once-a-second safety poll, and pumps that skipped it
++ * because no mouse IRQ came since the last poll; and the lock results of the doorbell's code and
++ * data (bitmask 1 code, 2 flag, 4 saved vector, 8 DS alias; 15 = all locked, required to install).
++ * Returns the chained interrupt vector
++ * (0x74 for a PS/2 mouse), or 0 if the doorbell is not installed (polling every pump). Any pointer
++ * may be NULL. Main thread only.
++ *
++ * \since SDL 3 -- dosags workspace-local patch 0240, 2026-09-24.
++ */
++extern SDL_DECLSPEC int SDLCALL SDL_DOSMouseBellStats(Uint32 *polls, Uint32 *safety_polls, Uint32 *skips, int *locks);
++
+ /**
+  * Upper bound, in ns, on how long an input may have waited for the poll
+  * that turned it into the event stamped event_ts (SDL's own timestamp,
+diff --git a/src/video/dos/SDL_dosevents.c b/src/video/dos/SDL_dosevents.c
+index fda66c092..08a68613b 100644
+--- a/src/video/dos/SDL_dosevents.c
++++ b/src/video/dos/SDL_dosevents.c
+@@ -31,6 +31,8 @@
+ 
+ #include "../../core/dos/SDL_dos_scheduler.h"
+ #include "SDL_dosevents_c.h"
++#include <sys/exceptn.h> /* dosags patch 0240: __djgpp_ds_alias */
++#include <dos.h>         /* dosags patch 0240: disable()/enable() */
+ #include <SDL3/SDL_dosinput_stats.h> /* dosags patch 0220 */
+ 
+ // PS/2 keyboard controller port
+@@ -337,6 +339,175 @@ static Uint16 dos_mouse_new_presses[2];
+    the same driver call. */
+ static Uint16 dos_mouse_fn5_status[2];
+ 
++/* dosags patch 0240 (LAB-MMD.md 28.7): the mouse IRQ doorbell. Every SDL pump polled the mouse driver
++   with three real-mode INT 33h calls (function 3, and 0221's function 5 per button) -- 9 a tick in AGS,
++   ~150-170 us each inside the game on a 486DX2-66 under CWSDPMI (cold: dosags LAB-MMD.md 33.5; a warm
++   back-to-back microbench reads ~83 us), even with no input at all. The driver's state (position,
++   buttons, function 5's press counters) changes only in its own IRQ handler or in our INT 33h calls.
++   So a protected-mode handler chained on the mouse IRQ's vector sets a flag and jumps on to the
++   previous handler (DPMI routes the IRQ to it whether it occurs in PM or RM; the previous handler
++   reflects it to the real-mode driver as before), and a pump runs the polling path below -- 0227's,
++   unchanged -- only when that flag was set since the last poll. The flag write and the driver's update
++   happen in the same interrupt, which the main thread cannot split, so a pump that skips would have
++   read exactly what the previous poll read: the engine receives the same events, pump for pump. Our
++   own state-changing INT 33h calls (warp, reset) set the flag too. No 0Ch user routine: CuteMouse
++   drops user-routine calls while one is running (LAB-JOURNEYS.md 11.1), and a routine pointer left in
++   the driver outlives the process; a PM vector does not -- the host drops it with the client. Which
++   IRQ: INT 33h function 24h (CH = type, CL = IRQ; CL 0 = PS/2, IRQ 12). Unknown: polling, as before.
++   SDL_HINT_DOS_MOUSE_POLL=1 forces polling. */
++volatile int dos_mouse_dirty = 1;
++extern void dos_mouse_bell_isr(void);
++extern void dos_mouse_bell_isr_end(void);
++/* dos_mouse_bell_old lives in .text so the handler's ljmp can read it through %cs before it has a data
++   selector. C code writes it through DS (DOS_MouseBellInstall's get-vector call): that is fine on DJGPP,
++   where CS and DS map the same linear range and .text is not write-protected, but it would break under a
++   loader that write-protects code pages. */
++extern __dpmi_paddr dos_mouse_bell_old; /* in .text: read through %cs by the handler's ljmp */
++__asm__(
++    ".text\n"
++    ".globl _dos_mouse_bell_old\n"
++    "_dos_mouse_bell_old:\n"
++    "  .long 0\n"
++    "  .word 0\n"
++    "  .word 0\n"
++    ".globl _dos_mouse_bell_isr\n"
++    "_dos_mouse_bell_isr:\n"
++    "  pushl %ds\n"
++    "  pushl %eax\n"
++    "  movw %cs:___djgpp_ds_alias, %ax\n"
++    "  movw %ax, %ds\n"
++    "  movl $1, _dos_mouse_dirty\n"
++    "  popl %eax\n"
++    "  popl %ds\n"
++    "  ljmp *%cs:_dos_mouse_bell_old\n"
++    ".globl _dos_mouse_bell_isr_end\n"
++    "_dos_mouse_bell_isr_end:\n"
++    "  ret\n");
++static int dos_mouse_bell_vec = -1;       /* the vector we chained, or -1 (polling) */
++static bool dos_mouse_bell_atexit = false;
++static Uint32 dos_mouse_bell_polls = 0, dos_mouse_bell_skips = 0, dos_mouse_bell_safety = 0;
++static Uint64 dos_mouse_bell_last_poll_ns = 0;
++static int dos_mouse_bell_locks = 0; /* lock results, bitmask (see DOS_MouseBellInstall) */
++#define DOS_MOUSE_SAFETY_POLL_NS SDL_NS_PER_SECOND /* poll at least once a second, flag or no flag */
++
++void DOS_MouseBellUninstall(void)
++{
++    if (dos_mouse_bell_vec < 0) {
++        return;
++    }
++    disable();
++    __dpmi_set_protected_mode_interrupt_vector(dos_mouse_bell_vec, &dos_mouse_bell_old);
++    dos_mouse_bell_vec = -1;
++    dos_mouse_dirty = 1; /* back to polling every pump */
++    enable();
++}
++
++static void DOS_MouseBellAtExit(void)
++{
++    DOS_MouseBellUninstall();
++}
++
++bool DOS_MouseBellInstall(void)
++{
++    __dpmi_regs regs;
++    __dpmi_paddr nw;
++    int vec;
++    const char *force_poll = SDL_getenv("SDL_HINT_DOS_MOUSE_POLL");
++    if (force_poll && force_poll[0] == '1' && force_poll[1] == 0) {
++        return false;
++    }
++    SDL_zero(regs);
++    regs.x.ax = 0x24; /* MS mouse v6.26+: software version, mouse type (CH), IRQ (CL) */
++    __dpmi_int(0x33, &regs);
++    if (regs.x.bx == 0 || regs.x.bx == 0xFFFF) {
++        return false; /* function 24h not implemented (BX untouched; regs were zeroed): stay on polling */
++    }
++    /* only the combinations the MS interface defines; anything else stays on polling (0227) */
++    if (regs.h.ch == 4 && regs.h.cl == 0) {
++        vec = 0x74;                         /* PS/2: IRQ 12, slave PIC (CuteMouse: CH 4, CL 0) */
++    } else if ((regs.h.ch == 1 || regs.h.ch == 2 || regs.h.ch == 3 || regs.h.ch == 5) &&
++               regs.h.cl >= 2 && regs.h.cl <= 7) {
++        vec = 0x08 + regs.h.cl;             /* bus/serial/InPort/HP on a master-PIC IRQ */
++    } else {
++        return false;
++    }
++    /* everything the handler touches must be locked: under CWSDPMI with paging, a not-present page
++       inside an IRQ handler is fatal. Bit 1 its code, 2 the flag, 4 the saved vector it jumps
++       through, 8 libc's DS alias it loads. All four, or no doorbell. */
++    dos_mouse_bell_locks = 0;
++    if (_go32_dpmi_lock_code((void *)dos_mouse_bell_isr,
++                             (unsigned long)((char *)dos_mouse_bell_isr_end - (char *)dos_mouse_bell_isr) + 16) == 0) {
++        dos_mouse_bell_locks |= 1;
++    }
++    if (_go32_dpmi_lock_data((void *)&dos_mouse_dirty, sizeof(dos_mouse_dirty)) == 0) {
++        dos_mouse_bell_locks |= 2;
++    }
++    if (_go32_dpmi_lock_data((void *)&dos_mouse_bell_old, sizeof(dos_mouse_bell_old)) == 0) {
++        dos_mouse_bell_locks |= 4;
++    }
++    if (_go32_dpmi_lock_data((void *)&__djgpp_ds_alias, sizeof(__djgpp_ds_alias)) == 0) {
++        dos_mouse_bell_locks |= 8;
++    }
++    if (dos_mouse_bell_locks != 15) {
++        return false; /* could not lock: stay on polling */
++    }
++    if (!dos_mouse_bell_atexit) {
++        atexit(DOS_MouseBellAtExit);
++        dos_mouse_bell_atexit = true;
++    }
++    disable();
++    __dpmi_get_protected_mode_interrupt_vector(vec, &dos_mouse_bell_old);
++    nw.offset32 = (unsigned long)dos_mouse_bell_isr;
++    nw.selector = (unsigned short)_my_cs();
++    __dpmi_set_protected_mode_interrupt_vector(vec, &nw);
++    dos_mouse_bell_vec = vec;
++    dos_mouse_dirty = 1; /* the first pump polls */
++    enable();
++    return true;
++}
++
++void DOS_MouseNoteDriverChanged(void)
++{
++    dos_mouse_dirty = 1;
++}
++
++/* true if this pump must poll the driver: always on the polling path; with the doorbell, only if a
++   mouse IRQ (or one of our own driver calls) came since the last poll -- taken and cleared at once */
++static bool DOS_MouseShouldPoll(Uint64 now_ns)
++{
++    int d;
++    if (dos_mouse_bell_vec < 0) {
++        return true;
++    }
++    disable();
++    d = dos_mouse_dirty;
++    dos_mouse_dirty = 0;
++    enable();
++    if (d) {
++        dos_mouse_bell_polls++;
++    } else if (now_ns - dos_mouse_bell_last_poll_ns >= DOS_MOUSE_SAFETY_POLL_NS) {
++        /* the safety poll: bounds any missed doorbell to <= 1 s of staleness, detectably (it would
++           deliver something); costs 3 INT 33h a second. A poll reads exactly what a pump would. */
++        dos_mouse_bell_safety++;
++        d = 1;
++    } else {
++        dos_mouse_bell_skips++;
++    }
++    if (d) {
++        dos_mouse_bell_last_poll_ns = now_ns;
++    }
++    return d != 0;
++}
++
++int SDL_DOSMouseBellStats(Uint32 *polls, Uint32 *safety_polls, Uint32 *skips, int *locks)
++{
++    if (locks) *locks = dos_mouse_bell_locks;
++    if (polls) *polls = dos_mouse_bell_polls;
++    if (safety_polls) *safety_polls = dos_mouse_bell_safety;
++    if (skips) *skips = dos_mouse_bell_skips;
++    return dos_mouse_bell_vec >= 0 ? dos_mouse_bell_vec : 0;
++}
++
+ static void DOS_ReadMousePressCounters(void)
+ {
+     __dpmi_regs regs;
+@@ -497,7 +668,8 @@ void DOSVESA_PumpEvents(SDL_VideoDevice *device)
+     }
+ 
+     SDL_Mouse *mouse = SDL_GetMouse();
+-    if (mouse->internal) { // if non-NULL, there's a mouse detected on the system.
++    /* dosags patch 0240: with the doorbell, the driver is polled only if its state can have changed */
++    if (mouse->internal && DOS_MouseShouldPoll(dos_pump_ring_ns[(dos_pump_ring_n - 1) % DOS_PUMP_RING])) { // if non-NULL, there's a mouse detected on the system.
+         __dpmi_regs regs;
+ 
+         regs.x.ax = 0x3; // read mouse buttons and position.
+diff --git a/src/video/dos/SDL_dosevents_c.h b/src/video/dos/SDL_dosevents_c.h
+index bbff76f73..c616b83c1 100644
+--- a/src/video/dos/SDL_dosevents_c.h
++++ b/src/video/dos/SDL_dosevents_c.h
+@@ -28,4 +28,9 @@ void DOSVESA_PumpEvents(SDL_VideoDevice *device);
+ void DOSVESA_InitKeyboard(SDL_VideoDevice *device);
+ void DOSVESA_QuitKeyboard(SDL_VideoDevice *device);
+ 
++/* dosags patch 0240: the mouse IRQ doorbell (SDL_dosevents.c) */
++extern bool DOS_MouseBellInstall(void);
++extern void DOS_MouseBellUninstall(void);
++extern void DOS_MouseNoteDriverChanged(void);
++
+ #endif // SDL_dosevents_c_h_
+diff --git a/src/video/dos/SDL_dosmouse.c b/src/video/dos/SDL_dosmouse.c
+index a77ea1ef4..41804dad3 100644
+--- a/src/video/dos/SDL_dosmouse.c
++++ b/src/video/dos/SDL_dosmouse.c
+@@ -26,6 +26,7 @@
+ 
+ #include "SDL_dosmouse.h"
+ #include "SDL_dosvideo.h"
++#include "SDL_dosevents_c.h" /* dosags patch 0240 */
+ 
+ #include "../../events/SDL_mouse_c.h"
+ #include "../../events/default_cursor.h"
+@@ -112,6 +113,8 @@ static bool DOSVESA_WarpMouseGlobal(float x, float y)
+     regs.x.dx = (Uint16)y;
+     __dpmi_int(0x33, &regs);
+ 
++    DOS_MouseNoteDriverChanged(); /* dosags patch 0240: the next pump polls the driver's new state */
++
+     // Update internal mouse position.
+     SDL_SendMouseMotion(0, mouse->focus, SDL_GLOBAL_MOUSE_ID, false, x, y);
+ 
+@@ -158,11 +161,14 @@ void DOSVESA_InitMouse(SDL_VideoDevice *_this)
+     mouse->WarpMouseGlobal = DOSVESA_WarpMouseGlobal;
+ 
+     SDL_SetDefaultCursor(DOSVESA_CreateDefaultCursor());
++
++    (void)DOS_MouseBellInstall(); /* dosags patch 0240: the mouse IRQ doorbell; polling if unavailable */
+ }
+ 
+ void DOSVESA_QuitMouse(SDL_VideoDevice *_this)
+ {
+     SDL_Mouse *mouse = SDL_GetMouse();
++    DOS_MouseBellUninstall(); /* dosags patch 0240 */
+     SDL_free(mouse->internal);
+     mouse->internal = NULL;
+ }
+-- 
+2.47.3
+

@@ -1,0 +1,643 @@
+From 29144aaf894a27017e52a22ffb42f3a646087e8a Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 4 Nov 2026 13:13:35 -0800
+Subject: [PATCH] dos: patch 0269 -- retire the AUDIOPRB audio-cost timings
+ (SDL side)
+
+Removes the S7 / S7-GUS "TEMPORARY DIAGNOSTIC" timers and their snapshot accessors:
+SDL_DOSOpl3WriteRegister's per-call timing (0141), SDL_DOSGusGetState's (0145), the five
+GUS voice calls' (0146), the GUS PIO upload and UploadSample brackets (0147), and 0199's
+SDL_DOSAudioDiagTiming() switch (SDL_HINT_DOS_AUDIO_DIAG_TIMING) with its SDL_dos.h /
+SDL_dos_audio_synth.h declarations. SDL_DOSOpl3WriteRegister -- on the OPL hot path, also
+replayed from the SB ISR -- loses its per-write hint test.
+
+Off by default since 0199; the only consumer was dosags ags's AUDIOPRB dump, retired by
+ags 0352 in the same step; the investigation (the GUS 6.89 s slot-poll outlier) concluded.
+The separate GUS_DIAG ring (g_gus_diag, gus_diag_put/flush, SDL/0112) is a different
+diagnostic and stays. Local to this port's patches/SDL; no hub change.
+---
+ src/audio/dos/SDL_dosaudio_gus.c   | 336 -----------------------------
+ src/core/dos/SDL_dos.h             |   7 -
+ src/core/dos/SDL_dos_audio_synth.c |  74 -------
+ src/core/dos/SDL_dos_audio_synth.h |  14 --
+ 4 files changed, 431 deletions(-)
+
+diff --git a/src/audio/dos/SDL_dosaudio_gus.c b/src/audio/dos/SDL_dosaudio_gus.c
+index ff7d2f5da..9b849df37 100644
+--- a/src/audio/dos/SDL_dosaudio_gus.c
++++ b/src/audio/dos/SDL_dosaudio_gus.c
+@@ -54,7 +54,6 @@
+ #include "../../core/dos/SDL_dos.h"
+ #include "../../video/dos/SDL_dosdbg.h" /* dos_port_dbg_log routing (patch 0041) */
+ #include <SDL3/SDL_dosgus.h>            /* the engine-facing export prototypes */
+-#include <time.h> /* TEMPORARY DIAGNOSTIC (S7-GUS): uclock() -- see SDL_DOSGusGetState below */
+ 
+ /* ------------------------------------------------------------------------- */
+ /* GF1 I/O port map (relative to the ULTRASND base port, e.g. 0x240).        */
+@@ -655,53 +654,6 @@ static Uint32 gus_dram_alloc(Uint32 len, int is16bit)
+     return addr;
+ }
+ 
+-/* TEMPORARY DIAGNOSTIC (S7-GUS, continuation): real hardware (tags
+-   GUST1/GUSD1/GUSV1, tests/games/trilbysnotes/results/
+-   S7-gus-voicecalls-miditick-realhw-2026-09-15.md) has now exonerated
+-   SDL_DOSGusGetState(), all five SDL_DOSGus* voice-setup/-teardown
+-   calls, and midi_sched_tick() itself as a WHOLE FUNCTION (max=3602us,
+-   three orders of magnitude short of the ~6.89s slots_us outlier) --
+-   and found the outlier must therefore live somewhere in
+-   AudioPlayer::Init()'s own call chain, which runs BEFORE midi_sched_
+-   tick() ever starts on a song's first real tick. That chain reaches
+-   here: gus_sink_prepare_song() (shared/audio/gus_sink.c) uploads every
+-   resident instrument's .pat sample data via SDL_DOSGusUploadSample(),
+-   whose DEFAULT path is exactly this function -- a byte-wise ISA PIO
+-   transfer loop, re-selecting the FULL DRAM address before EVERY byte
+-   when g_gus_pio_autoinc is off (its own default -- see that flag's doc
+-   comment: "~6 outportb/byte" vs ~1 with autoinc on). This is the
+-   strongest candidate this sub-investigation has found: a real,
+-   deterministic, per-song, one-shot ISA-bus cost that scales with total
+-   resident sample bytes, not previously measured. Brackets both this
+-   function AND SDL_DOSGusUploadSample() as a whole (below) -- tracking
+-   total bytes transferred too, so a real-hardware run can compute
+-   effective us/byte throughput and confirm or refute the byte-wise-
+-   overhead hypothesis quantitatively, not just confirm SOME cost exists
+-   here. In-memory accumulate only. Temporary -- revert once this
+-   sub-investigation concludes. */
+-static Uint32 s_gus_uploadpio_calls = 0;
+-static Uint64 s_gus_uploadpio_sum_us = 0;
+-static Uint64 s_gus_uploadpio_min_us = ~(Uint64)0;
+-static Uint64 s_gus_uploadpio_max_us = 0;
+-static Uint64 s_gus_uploadpio_bytes = 0;
+-
+-void SDL_DOSGusUploadPioDiagSnapshot(
+-    Uint32 *out_calls, Uint32 *out_min_us, Uint32 *out_mean_us, Uint32 *out_max_us,
+-    Uint32 *out_bytes)
+-{
+-    if (out_calls)  *out_calls  = s_gus_uploadpio_calls;
+-    if (out_min_us) *out_min_us = (Uint32)((s_gus_uploadpio_calls > 0) ? s_gus_uploadpio_min_us : 0);
+-    if (out_mean_us) *out_mean_us = (Uint32)((s_gus_uploadpio_calls > 0) ? (s_gus_uploadpio_sum_us / s_gus_uploadpio_calls) : 0);
+-    if (out_max_us) *out_max_us = (Uint32)s_gus_uploadpio_max_us;
+-    if (out_bytes)  *out_bytes  = (Uint32)s_gus_uploadpio_bytes;
+-
+-    s_gus_uploadpio_calls = 0;
+-    s_gus_uploadpio_sum_us = 0;
+-    s_gus_uploadpio_min_us = ~(Uint64)0;
+-    s_gus_uploadpio_max_us = 0;
+-    s_gus_uploadpio_bytes = 0;
+-}
+-
+ /* Programmed-I/O upload: poke each byte to DRAM via port 3X7. This is the
+    DEFAULT upload path (#36) -- the same mechanism as GF1 detection's DRAM
+    poke/peek (proven on real HW) and immune to the ISA 8237 64KB-page crash
+@@ -715,8 +667,6 @@ void SDL_DOSGusUploadPioDiagSnapshot(
+    increment assumption (matches the proven detection mechanism). */
+ static void gus_upload_pio(Uint32 dram_addr, const Uint8 *src, Uint32 len)
+ {
+-    const bool diag = SDL_DOSAudioDiagTiming(); /* patch 0199: off by default */
+-    const uclock_t t0 = diag ? uclock() : 0; /* TEMPORARY DIAGNOSTIC (S7-GUS), see SDL_DOSGusUploadSample below */
+     Uint32 i = 0;
+     const bool autoinc = g_gus_pio_autoinc;
+     /* gus-5 #41 (H2 fix, gated): with autoinc the GF1 DRAM address is programmed
+@@ -753,15 +703,6 @@ static void gus_upload_pio(Uint32 dram_addr, const Uint8 *src, Uint32 len)
+         }
+     }
+ 
+-    /* TEMPORARY DIAGNOSTIC (S7-GUS), see SDL_DOSGusUploadSample below. */
+-    if (diag) {
+-        const Uint64 call_us = (Uint64)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
+-        s_gus_uploadpio_calls++;
+-        s_gus_uploadpio_sum_us += call_us;
+-        s_gus_uploadpio_bytes += len;
+-        if (call_us < s_gus_uploadpio_min_us) s_gus_uploadpio_min_us = call_us;
+-        if (call_us > s_gus_uploadpio_max_us) s_gus_uploadpio_max_us = call_us;
+-    }
+ }
+ 
+ /* OPT-IN DMA upload (SDL_HINT_DOS_GUS_DMA_UPLOAD=1), 8-bit samples only.
+@@ -1184,50 +1125,10 @@ static bool gus_voice_check_running(int v)
+     return hw_running != 0;
+ }
+ 
+-/* TEMPORARY DIAGNOSTIC (S7-GUS): this function's own per-call cost.
+-   Real hardware (HW-486-66, tag GUST1, tests/games/trilbysnotes/results/
+-   S7-gus-midi-realhw-2026-09-14.md) measured the MIDI slot Poll() loop
+-   this function sits inside (via gus_sink.c's reap_finished_voices(),
+-   called on every note-on) at a mean of 102,962us and a max of
+-   6,890,560us (6.9 SECONDS) -- source reading shows the register-read
+-   loop itself is bounded (O(busy voices), a handful of inportb() calls
+-   per voice, cli/sti-wrapped) and should cost microseconds, not
+-   hundreds of milliseconds, so either (a) call VOLUME is high during a
+-   backlog-catch-up burst (many cheap calls summing up, the same
+-   "register-write volume is a downstream symptom of tick-starvation"
+-   pattern already found for OPL3, S7-regwrite-diag-realhw-2026-09-14.md),
+-   or (b) some individual call is a genuine hardware stall. Bracketing
+-   the whole function (not just the register-read section) so the
+-   accessor's own `calls` count can distinguish the two: high calls +
+-   small mean == volume; low calls + huge max == a real stall. In-memory
+-   accumulate only (no I/O here), same idiom as the OPL3 regwrite
+-   diagnostic (SDL_dos_audio_synth.c, patch SDL/0141) this mirrors.
+-   Temporary -- revert once this sub-investigation concludes. */
+-static Uint32 s_gus_getstate_calls = 0;
+-static Uint64 s_gus_getstate_sum_us = 0;
+-static Uint64 s_gus_getstate_min_us = ~(Uint64)0;
+-static Uint64 s_gus_getstate_max_us = 0;
+-
+-void SDL_DOSGusGetStateDiagSnapshot(
+-    Uint32 *out_calls, Uint32 *out_min_us, Uint32 *out_mean_us, Uint32 *out_max_us)
+-{
+-    if (out_calls)  *out_calls  = s_gus_getstate_calls;
+-    if (out_min_us) *out_min_us = (Uint32)((s_gus_getstate_calls > 0) ? s_gus_getstate_min_us : 0);
+-    if (out_mean_us) *out_mean_us = (Uint32)((s_gus_getstate_calls > 0) ? (s_gus_getstate_sum_us / s_gus_getstate_calls) : 0);
+-    if (out_max_us) *out_max_us = (Uint32)s_gus_getstate_max_us;
+-
+-    s_gus_getstate_calls = 0;
+-    s_gus_getstate_sum_us = 0;
+-    s_gus_getstate_min_us = ~(Uint64)0;
+-    s_gus_getstate_max_us = 0;
+-}
+-
+ bool SDL_DOSGusGetState(SDL_DOSGusState *out)
+ {
+     int v;
+     Uint32 mask = 0;
+-    const bool diag = SDL_DOSAudioDiagTiming(); /* patch 0199: off by default */
+-    const uclock_t t0 = diag ? uclock() : 0; /* TEMPORARY DIAGNOSTIC, see above */
+     /* gus-7: capture interrupt-enabled state at ENTRY (before any cli) -- tells
+        us this call is in MAIN-LOOP context (IF set), the only place the diag
+        ring may be flushed to the log safely. Captured here because the cli/sti
+@@ -1290,17 +1191,6 @@ bool SDL_DOSGusGetState(SDL_DOSGusState *out)
+         gus_diag_flush();
+     }
+ 
+-    /* TEMPORARY DIAGNOSTIC (S7-GUS), see the accessor's own comment above.
+-       Only the real (non-early-return) path is measured -- the !out/
+-       !g_gus_active guards above never do real work and would only dilute
+-       the mean with near-zero calls that cannot be where the cost is. */
+-    if (diag) {
+-        const Uint64 call_us = (Uint64)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
+-        s_gus_getstate_calls++;
+-        s_gus_getstate_sum_us += call_us;
+-        if (call_us < s_gus_getstate_min_us) s_gus_getstate_min_us = call_us;
+-        if (call_us > s_gus_getstate_max_us) s_gus_getstate_max_us = call_us;
+-    }
+     return true;
+ }
+ 
+@@ -1379,42 +1269,9 @@ static void gus_upload_to(Uint32 dram_addr, const void *data, Uint32 len, int is
+     }
+ }
+ 
+-/* TEMPORARY DIAGNOSTIC (S7-GUS): same idiom as gus_upload_pio() above --
+-   brackets the whole call (dram_alloc + the actual transfer + diag
+-   flush) so a real-hardware run can compare this total against gus_
+-   upload_pio()'s own sum: if they're nearly equal, the PIO transfer
+-   dominates as hypothesized; if this total is notably larger, gus_dram_
+-   alloc() or the diag flush is a real separate cost worth its own look.
+-   Only the real (both-guards-passed) path is measured -- same
+-   reasoning as every other DiagSnapshot in this file. */
+-static Uint32 s_gus_uploadsample_calls = 0;
+-static Uint64 s_gus_uploadsample_sum_us = 0;
+-static Uint64 s_gus_uploadsample_min_us = ~(Uint64)0;
+-static Uint64 s_gus_uploadsample_max_us = 0;
+-static Uint64 s_gus_uploadsample_bytes = 0;
+-
+-void SDL_DOSGusUploadSampleDiagSnapshot(
+-    Uint32 *out_calls, Uint32 *out_min_us, Uint32 *out_mean_us, Uint32 *out_max_us,
+-    Uint32 *out_bytes)
+-{
+-    if (out_calls)  *out_calls  = s_gus_uploadsample_calls;
+-    if (out_min_us) *out_min_us = (Uint32)((s_gus_uploadsample_calls > 0) ? s_gus_uploadsample_min_us : 0);
+-    if (out_mean_us) *out_mean_us = (Uint32)((s_gus_uploadsample_calls > 0) ? (s_gus_uploadsample_sum_us / s_gus_uploadsample_calls) : 0);
+-    if (out_max_us) *out_max_us = (Uint32)s_gus_uploadsample_max_us;
+-    if (out_bytes)  *out_bytes  = (Uint32)s_gus_uploadsample_bytes;
+-
+-    s_gus_uploadsample_calls = 0;
+-    s_gus_uploadsample_sum_us = 0;
+-    s_gus_uploadsample_min_us = ~(Uint64)0;
+-    s_gus_uploadsample_max_us = 0;
+-    s_gus_uploadsample_bytes = 0;
+-}
+-
+ Uint32 SDL_DOSGusUploadSample(const void *data, Uint32 len, int is16bit)
+ {
+     Uint32 dram_addr;
+-    const bool diag = SDL_DOSAudioDiagTiming(); /* patch 0199: off by default */
+-    const uclock_t t0 = diag ? uclock() : 0; /* TEMPORARY DIAGNOSTIC, see above */
+     if (!g_gus_active || !data || len == 0) {
+         return SDL_DOSGUS_BAD_ADDR;
+     }
+@@ -1436,15 +1293,6 @@ Uint32 SDL_DOSGusUploadSample(const void *data, Uint32 len, int is16bit)
+        read addr -> upload + #42 encode correct; silence is NOT the upload). The
+        diag is now 100% memory-only. */
+ 
+-    /* TEMPORARY DIAGNOSTIC (S7-GUS), see above. */
+-    if (diag) {
+-        const Uint64 call_us = (Uint64)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
+-        s_gus_uploadsample_calls++;
+-        s_gus_uploadsample_sum_us += call_us;
+-        s_gus_uploadsample_bytes += len;
+-        if (call_us < s_gus_uploadsample_min_us) s_gus_uploadsample_min_us = call_us;
+-        if (call_us > s_gus_uploadsample_max_us) s_gus_uploadsample_max_us = call_us;
+-    }
+     return dram_addr;
+ }
+ 
+@@ -1559,57 +1407,12 @@ int SDL_DOSGusAllocVoiceSfx(void)
+     return found; /* -1 if SFX partition exhausted -- caller does its own steal/drop policy */
+ }
+ 
+-/* TEMPORARY DIAGNOSTIC (S7-GUS, continuation): SDL_DOSGusGetState() (patch
+-   SDL/0145) came back exonerated on real hardware -- 28 calls, 27-170us
+-   each, ~3ms total, nowhere near slots_us's own 101ms mean / 6.9s max
+-   (tests/games/trilbysnotes/results/S7-gus-getstate-cost-realhw-
+-   2026-09-15.md). That result also found the ~6.89s outlier is ONE single
+-   call inside the MIDI slot Poll() loop, nearly identical across two
+-   independent runs (175us apart out of 6.89s) -- a deterministic
+-   mechanism, not I/O jitter. gus_sink.c's sink_note_on() calls exactly
+-   these five SDL_DOSGus* functions once each per real note-on, in this
+-   order: SetVoiceFreq, SetVoiceVol, SetVoicePan, StartVoice (StopVoice
+-   separately, from reap_finished_voices()/sink_note_off()/the LRU-steal
+-   path). Source reading (this entry) shows every one of them is a bounded
+-   handful of outportb()/inportb() calls, cli/sti-wrapped, no retry/poll
+-   loop anywhere in the call graph (gus_select_voice, gus_w8, gus_w16,
+-   gus_hz_to_fc, gus_linear_to_logvol, gus_encode_addr all checked) -- but
+-   that was true of SDL_DOSGusGetState() too before it was measured, and a
+-   real ISA bus wait-state on a single outportb/inportb CAN cost far more
+-   than source reading predicts regardless of loop structure (this exact
+-   file's own SDL_DOSMpu401WaitDRR/SDL/0093 precedent). Bracketing all
+-   five with the same per-function accumulate-and-snapshot idiom as
+-   SDL_DOSGusGetState() (patch SDL/0145) rather than guessing which one to
+-   trust. dosags patches/ags/0070 is the consumer. In-memory accumulate
+-   only (no I/O here). Temporary -- revert once this sub-investigation
+-   concludes. */
+-static Uint32 s_gus_startvoice_calls = 0;
+-static Uint64 s_gus_startvoice_sum_us = 0;
+-static Uint64 s_gus_startvoice_min_us = ~(Uint64)0;
+-static Uint64 s_gus_startvoice_max_us = 0;
+-
+-void SDL_DOSGusStartVoiceDiagSnapshot(
+-    Uint32 *out_calls, Uint32 *out_min_us, Uint32 *out_mean_us, Uint32 *out_max_us)
+-{
+-    if (out_calls)  *out_calls  = s_gus_startvoice_calls;
+-    if (out_min_us) *out_min_us = (Uint32)((s_gus_startvoice_calls > 0) ? s_gus_startvoice_min_us : 0);
+-    if (out_mean_us) *out_mean_us = (Uint32)((s_gus_startvoice_calls > 0) ? (s_gus_startvoice_sum_us / s_gus_startvoice_calls) : 0);
+-    if (out_max_us) *out_max_us = (Uint32)s_gus_startvoice_max_us;
+-
+-    s_gus_startvoice_calls = 0;
+-    s_gus_startvoice_sum_us = 0;
+-    s_gus_startvoice_min_us = ~(Uint64)0;
+-    s_gus_startvoice_max_us = 0;
+-}
+-
+ void SDL_DOSGusStartVoice(int voice, Uint32 start, Uint32 end, Uint32 loopstart, Uint32 flags)
+ {
+     Uint16 smsw, slsw, emsw, elsw, cmsw, clsw;
+     int is16 = (flags & SDL_DOSGUS_16BIT) ? 1 : 0;
+     Uint8 ctrl = 0x00;
+     Uint32 curaddr = (flags & SDL_DOSGUS_LOOP) ? loopstart : start;
+-    const bool diag = SDL_DOSAudioDiagTiming(); /* patch 0199: off by default */
+-    const uclock_t t0 = diag ? uclock() : 0; /* TEMPORARY DIAGNOSTIC, see above */
+ 
+     if (!g_gus_active || voice < 0 || voice >= g_gus_voices) {
+         return;
+@@ -1701,47 +1504,10 @@ void SDL_DOSGusStartVoice(int voice, Uint32 start, Uint32 end, Uint32 loopstart,
+ 
+     g_gus_n_start++;
+ 
+-    /* TEMPORARY DIAGNOSTIC (S7-GUS), see the accessor's own comment above.
+-       Only the real (non-early-return) path is measured -- the g_gus_active/
+-       voice-range guard above never does real work. */
+-    if (diag) {
+-        const Uint64 call_us = (Uint64)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
+-        s_gus_startvoice_calls++;
+-        s_gus_startvoice_sum_us += call_us;
+-        if (call_us < s_gus_startvoice_min_us) s_gus_startvoice_min_us = call_us;
+-        if (call_us > s_gus_startvoice_max_us) s_gus_startvoice_max_us = call_us;
+-    }
+-}
+-
+-/* TEMPORARY DIAGNOSTIC (S7-GUS): same idiom as SDL_DOSGusStartVoice above --
+-   StopVoice is called from gus_sink.c's reap_finished_voices() (once per
+-   voice actually reaped, not once per note-on like the others), sink_note_
+-   off(), and allocate_voice()'s LRU-steal path -- a real, unmeasured part
+-   of the same note-on/note-off call graph, not one of the handoff's
+-   original four candidates but in scope for the same reason. */
+-static Uint32 s_gus_stopvoice_calls = 0;
+-static Uint64 s_gus_stopvoice_sum_us = 0;
+-static Uint64 s_gus_stopvoice_min_us = ~(Uint64)0;
+-static Uint64 s_gus_stopvoice_max_us = 0;
+-
+-void SDL_DOSGusStopVoiceDiagSnapshot(
+-    Uint32 *out_calls, Uint32 *out_min_us, Uint32 *out_mean_us, Uint32 *out_max_us)
+-{
+-    if (out_calls)  *out_calls  = s_gus_stopvoice_calls;
+-    if (out_min_us) *out_min_us = (Uint32)((s_gus_stopvoice_calls > 0) ? s_gus_stopvoice_min_us : 0);
+-    if (out_mean_us) *out_mean_us = (Uint32)((s_gus_stopvoice_calls > 0) ? (s_gus_stopvoice_sum_us / s_gus_stopvoice_calls) : 0);
+-    if (out_max_us) *out_max_us = (Uint32)s_gus_stopvoice_max_us;
+-
+-    s_gus_stopvoice_calls = 0;
+-    s_gus_stopvoice_sum_us = 0;
+-    s_gus_stopvoice_min_us = ~(Uint64)0;
+-    s_gus_stopvoice_max_us = 0;
+ }
+ 
+ void SDL_DOSGusStopVoice(int voice)
+ {
+-    const bool diag = SDL_DOSAudioDiagTiming(); /* patch 0199: off by default */
+-    const uclock_t t0 = diag ? uclock() : 0; /* TEMPORARY DIAGNOSTIC, see above */
+     if (!g_gus_active || voice < 0 || voice >= g_gus_voices) {
+         return;
+     }
+@@ -1758,14 +1524,6 @@ void SDL_DOSGusStopVoice(int voice)
+     }
+     DOS_EnableInterrupts();
+ 
+-    /* TEMPORARY DIAGNOSTIC (S7-GUS), see above. */
+-    if (diag) {
+-        const Uint64 call_us = (Uint64)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
+-        s_gus_stopvoice_calls++;
+-        s_gus_stopvoice_sum_us += call_us;
+-        if (call_us < s_gus_stopvoice_min_us) s_gus_stopvoice_min_us = call_us;
+-        if (call_us > s_gus_stopvoice_max_us) s_gus_stopvoice_max_us = call_us;
+-    }
+ }
+ 
+ void SDL_DOSGusStopAllVoices(void)
+@@ -1792,31 +1550,9 @@ void SDL_DOSGusStopAllVoices(void)
+     }
+ }
+ 
+-/* TEMPORARY DIAGNOSTIC (S7-GUS): same idiom as SDL_DOSGusStartVoice above. */
+-static Uint32 s_gus_setfreq_calls = 0;
+-static Uint64 s_gus_setfreq_sum_us = 0;
+-static Uint64 s_gus_setfreq_min_us = ~(Uint64)0;
+-static Uint64 s_gus_setfreq_max_us = 0;
+-
+-void SDL_DOSGusSetVoiceFreqDiagSnapshot(
+-    Uint32 *out_calls, Uint32 *out_min_us, Uint32 *out_mean_us, Uint32 *out_max_us)
+-{
+-    if (out_calls)  *out_calls  = s_gus_setfreq_calls;
+-    if (out_min_us) *out_min_us = (Uint32)((s_gus_setfreq_calls > 0) ? s_gus_setfreq_min_us : 0);
+-    if (out_mean_us) *out_mean_us = (Uint32)((s_gus_setfreq_calls > 0) ? (s_gus_setfreq_sum_us / s_gus_setfreq_calls) : 0);
+-    if (out_max_us) *out_max_us = (Uint32)s_gus_setfreq_max_us;
+-
+-    s_gus_setfreq_calls = 0;
+-    s_gus_setfreq_sum_us = 0;
+-    s_gus_setfreq_min_us = ~(Uint64)0;
+-    s_gus_setfreq_max_us = 0;
+-}
+-
+ void SDL_DOSGusSetVoiceFreq(int voice, Uint32 playback_hz)
+ {
+     Uint16 fc;
+-    const bool diag = SDL_DOSAudioDiagTiming(); /* patch 0199: off by default */
+-    const uclock_t t0 = diag ? uclock() : 0; /* TEMPORARY DIAGNOSTIC, see above */
+     if (!g_gus_active || voice < 0 || voice >= g_gus_voices) {
+         return;
+     }
+@@ -1832,41 +1568,11 @@ void SDL_DOSGusSetVoiceFreq(int voice, Uint32 playback_hz)
+     }
+     DOS_EnableInterrupts();
+ 
+-    /* TEMPORARY DIAGNOSTIC (S7-GUS), see above. */
+-    if (diag) {
+-        const Uint64 call_us = (Uint64)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
+-        s_gus_setfreq_calls++;
+-        s_gus_setfreq_sum_us += call_us;
+-        if (call_us < s_gus_setfreq_min_us) s_gus_setfreq_min_us = call_us;
+-        if (call_us > s_gus_setfreq_max_us) s_gus_setfreq_max_us = call_us;
+-    }
+-}
+-
+-/* TEMPORARY DIAGNOSTIC (S7-GUS): same idiom as SDL_DOSGusStartVoice above. */
+-static Uint32 s_gus_setvol_calls = 0;
+-static Uint64 s_gus_setvol_sum_us = 0;
+-static Uint64 s_gus_setvol_min_us = ~(Uint64)0;
+-static Uint64 s_gus_setvol_max_us = 0;
+-
+-void SDL_DOSGusSetVoiceVolDiagSnapshot(
+-    Uint32 *out_calls, Uint32 *out_min_us, Uint32 *out_mean_us, Uint32 *out_max_us)
+-{
+-    if (out_calls)  *out_calls  = s_gus_setvol_calls;
+-    if (out_min_us) *out_min_us = (Uint32)((s_gus_setvol_calls > 0) ? s_gus_setvol_min_us : 0);
+-    if (out_mean_us) *out_mean_us = (Uint32)((s_gus_setvol_calls > 0) ? (s_gus_setvol_sum_us / s_gus_setvol_calls) : 0);
+-    if (out_max_us) *out_max_us = (Uint32)s_gus_setvol_max_us;
+-
+-    s_gus_setvol_calls = 0;
+-    s_gus_setvol_sum_us = 0;
+-    s_gus_setvol_min_us = ~(Uint64)0;
+-    s_gus_setvol_max_us = 0;
+ }
+ 
+ void SDL_DOSGusSetVoiceVol(int voice, int linear_vol)
+ {
+     Uint16 reg;
+-    const bool diag = SDL_DOSAudioDiagTiming(); /* patch 0199: off by default */
+-    const uclock_t t0 = diag ? uclock() : 0; /* TEMPORARY DIAGNOSTIC, see above */
+     if (!g_gus_active || voice < 0 || voice >= g_gus_voices) {
+         return;
+     }
+@@ -1906,44 +1612,10 @@ void SDL_DOSGusSetVoiceVol(int voice, int linear_vol)
+     }
+     DOS_EnableInterrupts();
+ 
+-    /* TEMPORARY DIAGNOSTIC (S7-GUS), see above. Note this function is also
+-       called from gus_sink.c's sink_on_tick() (patch 0254 release ramp,
+-       once per releasing voice per scheduler tick) -- not just note-on --
+-       so its own call count will run higher than SetVoiceFreq/Pan/
+-       StartVoice's own ~28. */
+-    if (diag) {
+-        const Uint64 call_us = (Uint64)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
+-        s_gus_setvol_calls++;
+-        s_gus_setvol_sum_us += call_us;
+-        if (call_us < s_gus_setvol_min_us) s_gus_setvol_min_us = call_us;
+-        if (call_us > s_gus_setvol_max_us) s_gus_setvol_max_us = call_us;
+-    }
+-}
+-
+-/* TEMPORARY DIAGNOSTIC (S7-GUS): same idiom as SDL_DOSGusStartVoice above. */
+-static Uint32 s_gus_setpan_calls = 0;
+-static Uint64 s_gus_setpan_sum_us = 0;
+-static Uint64 s_gus_setpan_min_us = ~(Uint64)0;
+-static Uint64 s_gus_setpan_max_us = 0;
+-
+-void SDL_DOSGusSetVoicePanDiagSnapshot(
+-    Uint32 *out_calls, Uint32 *out_min_us, Uint32 *out_mean_us, Uint32 *out_max_us)
+-{
+-    if (out_calls)  *out_calls  = s_gus_setpan_calls;
+-    if (out_min_us) *out_min_us = (Uint32)((s_gus_setpan_calls > 0) ? s_gus_setpan_min_us : 0);
+-    if (out_mean_us) *out_mean_us = (Uint32)((s_gus_setpan_calls > 0) ? (s_gus_setpan_sum_us / s_gus_setpan_calls) : 0);
+-    if (out_max_us) *out_max_us = (Uint32)s_gus_setpan_max_us;
+-
+-    s_gus_setpan_calls = 0;
+-    s_gus_setpan_sum_us = 0;
+-    s_gus_setpan_min_us = ~(Uint64)0;
+-    s_gus_setpan_max_us = 0;
+ }
+ 
+ void SDL_DOSGusSetVoicePan(int voice, int pan)
+ {
+-    const bool diag = SDL_DOSAudioDiagTiming(); /* patch 0199: off by default */
+-    const uclock_t t0 = diag ? uclock() : 0; /* TEMPORARY DIAGNOSTIC, see above */
+     if (!g_gus_active || voice < 0 || voice >= g_gus_voices) {
+         return;
+     }
+@@ -1958,14 +1630,6 @@ void SDL_DOSGusSetVoicePan(int voice, int pan)
+     gus_w8(GUS_VREG_PAN, (Uint8)(pan >> 4)); /* 0..255 -> 4-bit 0..15 */
+     DOS_EnableInterrupts();
+ 
+-    /* TEMPORARY DIAGNOSTIC (S7-GUS), see above. */
+-    if (diag) {
+-        const Uint64 call_us = (Uint64)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
+-        s_gus_setpan_calls++;
+-        s_gus_setpan_sum_us += call_us;
+-        if (call_us < s_gus_setpan_min_us) s_gus_setpan_min_us = call_us;
+-        if (call_us > s_gus_setpan_max_us) s_gus_setpan_max_us = call_us;
+-    }
+ }
+ 
+ #endif /* defined(SDL_PLATFORM_DOS) */
+diff --git a/src/core/dos/SDL_dos.h b/src/core/dos/SDL_dos.h
+index ca601574b..39b8962e4 100644
+--- a/src/core/dos/SDL_dos.h
++++ b/src/core/dos/SDL_dos.h
+@@ -184,13 +184,6 @@ void DOS_HookInterruptReplace(int irq, DOS_InterruptHookFn fn, DOS_InterruptHook
+ 
+ void DOS_UnhookInterrupt(DOS_InterruptHook *hook, bool disable_interrupt);
+ 
+-/* DOS-PORT patch 0199: true when SDL_HINT_DOS_AUDIO_DIAG_TIMING is set, i.e. when the temporary audio cost
+-   diagnostics (OPL3 register writes, SDL/0141; GUS state/voice/upload, SDL/0146-0147) should time their calls.
+-   Default false: each of those timings is two PIT reads per call, taken whether or not anything consumes them.
+-   Latched on the first call, which must be on the main thread (never from an ISR: it reads a hint); an
+-   application that can reach these paths from an ISR calls it once at startup. */
+-bool SDL_DOSAudioDiagTiming(void);
+-
+ // Ends C function definitions when using C++
+ #ifdef __cplusplus
+ }
+diff --git a/src/core/dos/SDL_dos_audio_synth.c b/src/core/dos/SDL_dos_audio_synth.c
+index ad4772597..93aa7f95e 100644
+--- a/src/core/dos/SDL_dos_audio_synth.c
++++ b/src/core/dos/SDL_dos_audio_synth.c
+@@ -1096,70 +1096,6 @@ static bool Opl3Detect_Impl(void)
+     return (s1 == 0x00 && s2 == 0xC0);
+ }
+ 
+-/* TEMPORARY DIAGNOSTIC (dosags S7): this function's own per-call cost.
+-   dosags patches/ags/0059's AUDIOPRB.LOG (real-hardware, HW-486-66 --
+-   this rig's sound device is a PicoGUS in OPL3 mode, an RP2040-firmware
+-   ISA-bus emulation, not discrete YMF262 silicon; see
+-   tests/games/trilbysnotes/results/S7-audioprb-fix-realhw-2026-09-14.md)
+-   measured the slot Poll() loop this function sits inside (MIDI
+-   scheduling via midi_sched_tick(), which calls this function once per
+-   register touched) at ~10x DOSBox-X's own measurement of the same
+-   loop, with a real-hardware max in the same range as the SB ring-
+-   service pump's own cost -- something DOSBox-X's OPL3/timing emulation
+-   does not reproduce at all.
+-
+-   The "6 dummy status reads x2, ~1us each" comment below has never been
+-   independently measured on this rig's actual card -- it is a datasheet-
+-   derived estimate ("well past the requirement, bullet-proof"), carried
+-   over unchanged from a real YMF262 chip's documented timing, not this
+-   card's. This exact file already has one confirmed precedent of a
+-   similarly naive per-inportb timing assumption being wrong enough to
+-   matter on real hardware: the MPU-401 DRR-poll hazard above
+-   (SDL_DOSMpu401WaitDRR's own comment, SDL/0093) found a real ISA
+-   IOCHRDY bus wait-state can make a status-port inportb() cost far more
+-   than assumed -- there, enough to hard-stall the CPU outright. This
+-   diagnostic checks whether a milder version of the same mistake
+-   (underestimating cost, not stalling) explains slots_us: per this
+-   hub's own "instrument the thing that produces the unexplained
+-   quantity, not its neighbors" rule, applied one layer further down
+-   than 0059's own measurement went.
+-
+-   In-memory accumulate only (no I/O in this function -- same idiom as
+-   0059 and the retired SDL/0136); the caller (dosags patches/ags/0062)
+-   snapshots + resets this once per its own diagnostic window and folds
+-   the numbers into its own already-open log handle. Temporary -- revert
+-   once the investigation concludes. */
+-/* DOS-PORT patch 0199: every timing in this diagnostic family is off unless SDL_HINT_DOS_AUDIO_DIAG_TIMING
+-   is set. -1 = not read yet. See SDL_dos.h for the main-thread latch rule. */
+-static int s_audio_diag_timing = -1;
+-
+-bool SDL_DOSAudioDiagTiming(void)
+-{
+-    if (s_audio_diag_timing < 0) {
+-        s_audio_diag_timing = SDL_GetHintBoolean("SDL_HINT_DOS_AUDIO_DIAG_TIMING", false) ? 1 : 0;
+-    }
+-    return s_audio_diag_timing != 0;
+-}
+-
+-static Uint32 s_opl3_regwrite_calls = 0;
+-static Uint64 s_opl3_regwrite_sum_us = 0;
+-static Uint64 s_opl3_regwrite_min_us = ~(Uint64)0;
+-static Uint64 s_opl3_regwrite_max_us = 0;
+-
+-void SDL_DOSOpl3RegWriteDiagSnapshot(
+-    Uint32 *out_calls, Uint32 *out_min_us, Uint32 *out_mean_us, Uint32 *out_max_us)
+-{
+-    if (out_calls)  *out_calls  = s_opl3_regwrite_calls;
+-    if (out_min_us) *out_min_us = (Uint32)((s_opl3_regwrite_calls > 0) ? s_opl3_regwrite_min_us : 0);
+-    if (out_mean_us) *out_mean_us = (Uint32)((s_opl3_regwrite_calls > 0) ? (s_opl3_regwrite_sum_us / s_opl3_regwrite_calls) : 0);
+-    if (out_max_us) *out_max_us = (Uint32)s_opl3_regwrite_max_us;
+-
+-    s_opl3_regwrite_calls = 0;
+-    s_opl3_regwrite_sum_us = 0;
+-    s_opl3_regwrite_min_us = ~(Uint64)0;
+-    s_opl3_regwrite_max_us = 0;
+-}
+-
+ extern void SDL_DOS_MidiDeferShadowForget(Uint16 reg, Uint8 val); /* DOS-PORT patch 0251, SDL_dosaudio_sb.c */
+ void SDL_DOSOpl3WriteRegister(uint16_t reg, uint8_t value)
+ {
+@@ -1173,8 +1109,6 @@ void SDL_DOSOpl3WriteRegister(uint16_t reg, uint8_t value)
+     SDL_DOS_MidiDeferShadowForget(reg, value); /* DOS-PORT patch 0251: this write bypasses the queue */
+     const Uint16 addr_port = (reg < 0x100) ? 0x388 : 0x38A;
+     const Uint16 data_port = (reg < 0x100) ? 0x389 : 0x38B;
+-    const bool diag = SDL_DOSAudioDiagTiming(); /* patch 0199: off by default */
+-    const uclock_t t0 = diag ? uclock() : 0; /* TEMPORARY DIAGNOSTIC, see above */
+ 
+     const int opl_reads = g_dos_opl_delay_reads; /* DOS-PORT patch 0254 (was 6) */
+     outportb(addr_port, (Uint8)(reg & 0xFF));
+@@ -1190,14 +1124,6 @@ void SDL_DOSOpl3WriteRegister(uint16_t reg, uint8_t value)
+     for (int i = 0; i < opl_reads; i++) {
+         (void)inportb(0x388);
+     }
+-
+-    if (diag) { /* TEMPORARY DIAGNOSTIC, see above */
+-        const Uint64 call_us = (Uint64)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
+-        s_opl3_regwrite_calls++;
+-        s_opl3_regwrite_sum_us += call_us;
+-        if (call_us < s_opl3_regwrite_min_us) s_opl3_regwrite_min_us = call_us;
+-        if (call_us > s_opl3_regwrite_max_us) s_opl3_regwrite_max_us = call_us;
+-    }
+ }
+ 
+ void SDL_DOSOpl3WriteRegisterBlock(
+diff --git a/src/core/dos/SDL_dos_audio_synth.h b/src/core/dos/SDL_dos_audio_synth.h
+index 70339f914..2a334651a 100644
+--- a/src/core/dos/SDL_dos_audio_synth.h
++++ b/src/core/dos/SDL_dos_audio_synth.h
+@@ -213,20 +213,6 @@ extern void SDL_DOSOpl3VoiceNoteOn(int voice_id, uint16_t freq, uint8_t block);
+ // Convenience hot-path: silences a voice (clears key-on bit at 0xB0+ch).
+ extern void SDL_DOSOpl3VoiceNoteOff(int voice_id);
+ 
+-// TEMPORARY DIAGNOSTIC (dosags S7): SDL_DOSOpl3WriteRegister()'s own
+-// per-call cost (including its inter-write dummy-read delay), split out
+-// from whatever the caller measures around the whole slot-scheduling
+-// loop it sits inside -- see SDL_DOSOpl3WriteRegister()'s own comment
+-// for why. Returns the current in-memory window's call count and
+-// min/mean/max microseconds, THEN RESETS the window -- call once per
+-// caller-defined window (a caller polling more often than it flushes
+-// just gets more, smaller windows; nothing breaks). All-zero output
+-// when no calls happened since the last snapshot. Temporary -- revert
+-// once the investigation concludes, same convention as the retired
+-// SDL/0136.
+-extern void SDL_DOSOpl3RegWriteDiagSnapshot(
+-    uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us);
+-
+ /* ------------------------------------------------------------------------
+  * DOSKUTSU patch (SDL/0110, Campaign 2 AdLib): OPL2 (AdLib) chip helpers.
+  *
+-- 
+2.47.3
+

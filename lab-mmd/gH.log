@@ -1,0 +1,38 @@
+run-cells: shared lock per cell (run-dosbox.sh takes it)
+GHT-MMD pkg=mmd exe=AGSH308.EXE sha12=50f8d621e5c3 ticks=1000 cfg=/home/claude/git/dosags-lab-mmd/lab-mmd/cfg/ACSETUP.CFG ags=[ - ] env=[] opts=[] conf=dosbox-x.conf rc=0 stage=/tmp/dos-port-dosbox.jru8EM wall_s=443
+MMD4HW pkg=mmd exe=AGSMW4H.EXE sha12=25e18edb987f ticks=1000 cfg=/home/claude/git/dosags-lab-mmd/lab-mmd/cfg/ACSETUP.CFG ags=[ - ] env=[] opts=[] conf=dosbox-x.conf rc=0 stage=/tmp/dos-port-dosbox.LdDigy wall_s=395
+AQ4HW pkg=agsquest exe=AGSMW4H.EXE sha12=25e18edb987f ticks=6000 cfg=- ags=[ - ] env=[] opts=[] conf=dosbox-x.conf rc=0 stage=/tmp/dos-port-dosbox.3OU6Qp wall_s=630
+5D4HW pkg=5days exe=AGSMW4H.EXE sha12=25e18edb987f ticks=2000 cfg=/home/claude/git/dosags-lab-mmd/lab-mmd/cfg/ACSETUP.CFG ags=[ --startr 3 ] env=[ DOSAGS_WIT_SEED=12345] opts=[] conf=dosbox-x.conf rc=0 stage=/tmp/dos-port-dosbox.Mm8oOg wall_s=476
+dosbox lock: waiting (up to 21600s) to take the exclusive lock; recorded:
+  waiting: pid=38677 tool=lab-metric-h1geom mode=exclusive since=2026-09-24T13:39:31Z (STALE: pid 38677 is not running)
+  waiting: pid=2245434 tool=click-cell.sh series=1 mode=exclusive since=2026-09-24T19:00:35Z (STALE: pid 2245434 is not running)
+  waiting: pid=2382765 tool=lab-metric-d2-S2Q-L mode=exclusive since=2026-09-24T19:16:41Z (STALE: pid 2382765 is not running)
+  waiting: pid=2497769 tool=lab-c3-fixeq mode=exclusive since=2026-09-24T19:32:06Z (STALE: pid 2497769 is not running)
+  waiting: pid=2798705 tool=lab-c3-fixeq mode=exclusive since=2026-09-24T20:19:50Z (STALE: pid 2798705 is not running)
+  waiting: pid=2889016 tool=click-cell.sh series=1 mode=exclusive since=2026-09-24T20:22:25Z (STALE: pid 2889016 is not running)
+  waiting: pid=2920889 tool=lab-c3-fixeq mode=exclusive since=2026-09-24T20:26:45Z (STALE: pid 2920889 is not running)
+  waiting: pid=3290730 tool=click-cell.sh series=1 mode=exclusive since=2026-09-24T21:40:16Z (STALE: pid 3290730 is not running)
+  waiting: pid=3304807 tool=lab-c3-fixeq mode=exclusive since=2026-09-24T22:33:32Z (STALE: pid 3304807 is not running)
+  waiting: pid=3931714 tool=dosbox-run.sh exe=PSIL0145.EXE mode=exclusive since=2026-09-24T22:47:13Z (STALE: pid 3931714 is not running)
+  waiting: pid=4042843 tool=dosbox-run.sh exe=PSIL0146.EXE mode=exclusive since=2026-09-24T22:57:13Z (STALE: pid 4042843 is not running)
+  waiting: pid=4059325 tool=dosbox-run.sh exe=PSIL0145.EXE mode=exclusive since=2026-09-24T22:57:57Z (alive)
+  pid=4058216 tool=run-dosbox.sh series=1 mode=shared since=2026-09-24T23:00:14Z (alive)
+  waiting: pid=4096882 tool=click-cell.sh series=1 mode=exclusive since=2026-09-24T23:00:20Z (alive)
+  waiting: pid=4114077 tool=lab-mmd/run-cells.sh:gHscreen.spec series=1 mode=exclusive since=2026-09-24T23:01:09Z (alive)
+  kernel: held shared (placed through pid 4065077, now gone -- normal for the flock utility)
+  kernel: pid 4095589 (flock) is WAITING for it exclusive
+  open by pid 3844853 (bash)
+  open by pid 4058216 (bash)
+  open by pid 4059325 (bash)
+  open by pid 4095588 (timeout) -- SUSPECT: not DOSBox-X or its shell; a helper that inherited the lock fd?
+  open by pid 4095589 (flock)
+  open by pid 4095590 (bash)
+  open by pid 4096882 (bash)
+  open by pid 4101481 (flock)
+  open by pid 4112475 (flock)
+  open by pid 4114077 (bash)
+run-cells: holding the DOSBox-X lock exclusive for the series
+MMDSG7HW pkg=mmd exe=AGSMW4H.EXE sha12=25e18edb987f ticks=1000 cfg=/home/claude/git/dosags-lab-mmd/lab-mmd/cfg/ACSETUP.CFG ags=[ - ] env=[  ] opts=[ freeze=200,500,900] conf=dosbox-x-fast.conf rc=0 stage=/tmp/dos-port-dosbox.hbXJDJ wall_s=36
+AQSG7HW pkg=agsquest exe=AGSMW4H.EXE sha12=25e18edb987f ticks=3500 cfg=- ags=[ - ] env=[  ] opts=[ freeze=400,1500,3000] conf=dosbox-x-fast.conf rc=0 stage=/tmp/dos-port-dosbox.XACUZw wall_s=110
+5DSG7HW pkg=5days exe=AGSMW4H.EXE sha12=25e18edb987f ticks=1000 cfg=/home/claude/git/dosags-lab-mmd/lab-mmd/cfg/ACSETUP.CFG ags=[ --startr 3 ] env=[ DOSAGS_WIT_SEED=12345 ] opts=[ freeze=200,500,900] conf=dosbox-x-fast.conf rc=0 stage=/tmp/dos-port-dosbox.FEhdj0 wall_s=37
+done

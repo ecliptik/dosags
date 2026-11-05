@@ -1,0 +1,56 @@
+# 7 Days a Skeptic -- source pin, confirmed 2026-09-16 via direct download
+# + hash, not re-cited from memory. Re-verify independently before bumping.
+#
+# Sixth Compatibility sweep game, replacing King's Quest III (Infamous
+# Adventures) after that candidate turned out blocked (its developer's
+# current site is an itch.io storefront with only a session/JS-gated
+# download path, no plain mirror -- see PLAN.md's "Compatibility sweep"
+# section for the full writeup). Same developer/hosting pattern as
+# trilbysnotes and 5days (both already sourced this way) -- the third
+# Chzo Mythos title by the same author, surveyed in PLAN.md's
+# "Golden-reference games" table (AGS database page 430) as free,
+# 320x200x16.
+
+GAME_TITLE="7 Days a Skeptic"
+GAME_YEAR=2004
+GAME_DEVELOPER="Ben 'Yahtzee' Croshaw (fullyramblomatic.com)"
+
+# Official listing (freeware classification, file size cross-check):
+# https://www.adventuregamestudio.co.uk/play/game/430/ -- Release Type:
+# Freeware. The site's own DOWNLOAD button is the same JS-gated
+# same-origin AJAX endpoint as Trilby's Notes'/5 Days a Stranger's own
+# listings -- not scripted around; the developer's own game page
+# (http://www.fullyramblomatic.com/7days/, still resolving directly even
+# though fullyramblomatic.com's own ROOT now meta-refreshes to a
+# separate blogspot page) lists three links instead, same shape as the
+# other two Yahtzee games' PINs:
+#   1. http://www.the-underdogs.org/game.php?name=7+Days+a+Skeptic -- DEAD
+#      (HTTP 404, confirmed 2026-09-16)
+#   2. http://www.acid-play.com/download/7-days-a-skeptic/ -- DEAD
+#      (HTTP 404, confirmed 2026-09-16)
+#   3. http://www.clawofcat.com/yahtzee/7days.zip -- LIVE, used here
+#      (HTTP 200, Content-Type: application/zip, confirmed 2026-09-16)
+SOURCE_URL="http://www.clawofcat.com/yahtzee/7days.zip"
+SOURCE_URL_ALTERNATE_MIRRORS="http://www.the-underdogs.org/game.php?name=7+Days+a+Skeptic (404, 2026-09-16); http://www.acid-play.com/download/7-days-a-skeptic/ (404, 2026-09-16)"
+DOWNLOADED_UTC="2026-09-16"
+
+# 7days.zip itself
+ZIP_SIZE_BYTES=1354575
+ZIP_SHA256=cdaf1a7988c9801e47f05a9e63c0da74b25d03e4694347c972b06773362e403d
+ZIP_LAST_MODIFIED="2006-02-19T20:46:43Z"  # HTTP Last-Modified header
+
+# 7days.exe (the game's own AGS executable), extracted from 7days.zip.
+# Internal file timestamp reads 2004-07-25 (matches the AGS database's
+# own 2004 release year; the zip's own Last-Modified is a later
+# repackaging/re-host date, same kind of gap Trilby's Notes' PIN noted).
+EXE_SIZE_BYTES=4693374
+EXE_SHA256=c20d59bec61449024a84498da77e5e63a5b12e0d9781b02531c04806b066e1e1
+
+# Licensing: "Freeware" per the AGS database's own release-type field
+# (confirmed live 2026-09-16, not recalled). 7days_readme.txt (inside
+# 7days.zip, not committed) states no further redistribution terms of
+# its own beyond crediting the author -- same pattern as Trilby's
+# Notes'/5 Days a Stranger's own readmes. No separate LICENSE/COPYING
+# file ships with the game. Consistent with PLAN.md's own
+# "Golden-reference games"/Compatibility-sweep decisions (freeware,
+# local-testing-only, never committed, never redistributed).

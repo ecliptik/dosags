@@ -1,0 +1,24 @@
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14584 volume_bytes=2014511104 free_bytes=477888512
+fsprobe: 200 iterations per arm, line length 128 bytes
+fsprobe: UCLOCKS_PER_SEC=1193180
+
+raw     n=200 min_us=9 mean_us=70.6 max_us=11698 total_ms=14.1
+flush   n=200 min_us=295 mean_us=718.2 max_us=3636 total_ms=143.6
+sync    n=200 min_us=3480 mean_us=6040.6 max_us=219072 total_ms=1208.1
+reopen  n=200 min_us=6346 mean_us=9956.0 max_us=224557 total_ms=1991.2
+
+fsprobe: fsync cost per call = mean_us(sync) - mean_us(flush) = 5322.4 us
+fsprobe: 240 such calls in a gate run = 1449.7 ms
+
+fsprobe: sweep -- 400-byte records to 98304 bytes, spikes >= 20000 us
+fsprobe: at this record size, byte 6400 is record 16 and byte 58400 is record 146; record 8 is byte 3200 and record 73 is byte 29200
+  FIRST rec=1     end_off=400     us=13134  (first cluster + directory entry)
+  SPIKE rec=93    end_off=37200   us=218770
+  SPIKE rec=195   end_off=78000   us=219644
+  SPIKE rec=246   end_off=98400   us=229526
+fsprobe: sweep done -- 246 records, 3 spikes, worst 229526 us at off=98400
+fsprobe: volume after sweep:
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14583 volume_bytes=2014511104 free_bytes=477855744
+fsprobe: done

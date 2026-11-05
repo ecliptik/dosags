@@ -1,0 +1,171 @@
+From fff77e468d596ba7e23f51ec4e636c38e4013af1 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sat, 26 Sep 2026 07:31:07 -0700
+Subject: [PATCH] DOS-PORT: patch 0317 -- legacy pathfinder: verify the mask
+ cache once per request; skip settled Dijkstra slots
+
+WHY: on the S16 fixture a walk click costs 100-230 ms on the 486, and the
+S16 gate misses its whole-run floor by 0.02-0.07 ticks/s. In the lab
+(dosags docs/lab/s8.md) the click ticks are the legacy pathfinder: the
+0211 cache's 64 KB hit test, run again for the nearest-walkable retry of
+the same request, and find_route_dijkstra's per-pass rescan of every
+visited cell.
+
+WHAT, both exact by construction:
+- The mask a request has already matched against (or built) the 0211
+  cache from is remembered for the rest of that request. The mask is not
+  written during a request, so the retry skips the compare.
+  FindRouteImpl clears it at every request.
+- find_route_dijkstra keeps a state per visited slot. A cell with no
+  unvisited walkable neighbour can never again add a candidate. If all
+  its neighbours are visited, its checks can only leave adjcount = 1; if
+  its only unvisited neighbours are unwalkable, they can only leave
+  adjcount = 0. Cells never lose visited status and unwalkable cells are
+  never visited, so both states are permanent for the cell. A reused slot
+  starts again at "live". Skipping the neighbour checks of a settled slot
+  leaves every candidate, every adjcount outcome, and the original
+  slot-kill / slot-reuse bookkeeping (visited[numreplace] = -1) exactly as
+  before, in the same order.
+
+Gate: identical route hashes (ok / stages / FNV of the waypoints) on
+every request of RT3's bench plus random requests on 5 Days', Trilby's
+and MMD's own masks, with a control that must differ (docs/lab/s8.md,
+slice 2).
+---
+ Engine/ac/route_finder_impl_legacy.cpp | 37 +++++++++++++++++++++++++-
+ 1 file changed, 36 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/ac/route_finder_impl_legacy.cpp b/Engine/ac/route_finder_impl_legacy.cpp
+index d9ff0089c..222043e51 100644
+--- a/Engine/ac/route_finder_impl_legacy.cpp
++++ b/Engine/ac/route_finder_impl_legacy.cpp
+@@ -175,6 +175,10 @@ static int walk_area_granularity[MAX_WALK_AREAS];
+ // normalised copy the flood fill starts from -- are the same values the passes would produce.
+ static int rp_cache_gran[MAX_WALK_AREAS];
+ static int rp_cache_maxgran = -1;
++// DOS-PORT patch 0317: the mask this FindRoute request has already matched against the cache (or built it from).
++// The mask is not written during a request, so the second and later is_route_possible calls of the same request
++// (the nearest-walkable retry) skip the 64 KB compare; FindRouteImpl clears it at the start of every request.
++static const Bitmap *rp_req_mask = nullptr;
+ static int is_route_possible_flood(Bitmap *tempw, int fromx, int fromy, int tox, int toy, const LegacyRouteFinder::PathfinderConfig &pfc);
+ 
+ static bool rp_cache_matches(const Bitmap *wallscreen, int maxgran)
+@@ -216,8 +220,10 @@ static int is_route_possible(const Bitmap *wallscreen, int fromx, int fromy, int
+   if (wallscreen->GetPixel(fromx, fromy) < 1)
+     return 0;
+ 
+-  if (rp_cache_matches(wallscreen, pfc.MaxGranularity))
++  if ((rp_req_mask == wallscreen && rp_cache_src != nullptr && rp_cache_maxgran == pfc.MaxGranularity) ||
++      rp_cache_matches(wallscreen, pfc.MaxGranularity))
+   {
++    rp_req_mask = wallscreen; // DOS-PORT patch 0317
+     Bitmap *tempw = BitmapHelper::CreateBitmapCopy(rp_cache_norm, 8);
+     if (tempw == nullptr)
+       quit("no memory for route calculation");
+@@ -307,6 +313,7 @@ static int is_route_possible(const Bitmap *wallscreen, int fromx, int fromy, int
+   }
+   memcpy(rp_cache_gran, walk_area_granularity, sizeof(rp_cache_gran));
+   rp_cache_maxgran = pfc.MaxGranularity;
++  rp_req_mask = rp_cache_src ? wallscreen : nullptr; // DOS-PORT patch 0317: the cache now holds this mask
+ 
+   return is_route_possible_flood(tempw, fromx, fromy, tox, toy, pfc);
+ }
+@@ -447,6 +454,7 @@ try_again:
+ #define CHECK_MIN(cellx, celly) { \
+   if (beenhere[celly][cellx] == -1) {\
+     adjcount = 0; \
++    if (wallscreen->GetScanLine(celly)[cellx] != 0) live = 1; /* DOS-PORT patch 0317 */ \
+     if ((wallscreen->GetScanLine(celly)[cellx] != 0) && (beenhere[j][i]+modifier <= min)) {\
+       if (beenhere[j][i]+modifier < min) { \
+         min = beenhere[j][i]+modifier; \
+@@ -524,6 +532,14 @@ static int find_route_dijkstra(const Bitmap *wallscreen, int fromx, int fromy, i
+   // times the ~20000-51000 cell visits of a long request). Same cells, same order, same values.
+   int *visx = (int *)malloc(MAX_TRAIL_LENGTH * sizeof(int));
+   int *visy = (int *)malloc(MAX_TRAIL_LENGTH * sizeof(int));
++  // DOS-PORT patch 0317: per slot, 0 = still has an unvisited walkable neighbour; 1 = every neighbour visited
++  // (its checks can only leave adjcount = 1); 2 = its only unvisited neighbours are unwalkable (its checks can only
++  // leave adjcount = 0, with no candidate). Cells never lose visited status and unwalkable cells are never visited,
++  // so both states are permanent for the cell; a reused slot starts at 0. Skipping the neighbour checks of a
++  // state-1/2 slot leaves every candidate, adjcount outcome, slot kill and slot reuse exactly as before.
++  unsigned char *vstate = (unsigned char *)malloc(MAX_TRAIL_LENGTH);
++  int live = 0;
++  vstate[0] = 0;
+   int iteration = 1;
+   visited[0] = fromy * wallscreen->GetWidth() + fromx;
+   visx[0] = fromx;
+@@ -549,11 +565,22 @@ static int find_route_dijkstra(const Bitmap *wallscreen, int fromx, int fromy, i
+     for (int n = 0; n < iteration; n++) {
+       if (visited[n] == -1)
+         continue;
++      if (vstate[n] == 2) // DOS-PORT patch 0317: permanently adjcount 0, no candidate
++        continue;
++      if (vstate[n] == 1) { // DOS-PORT patch 0317: permanently adjcount 1
++        if (numreplace < 40) {
++          visited[numreplace] = -1;
++          replace[numreplace] = n;
++          numreplace++;
++        }
++        continue;
++      }
+ 
+       i = visx[n];
+       j = visy[n];
+       granularity = walk_area_granularity[wallscreen->GetScanLine(j)[i]];
+       adjcount = 1;
++      live = 0; // DOS-PORT patch 0317
+ 
+       if (i >= granularity) {
+         modifier = (destx < i) ? DIRECTION_BONUS : 0;
+@@ -575,6 +602,9 @@ static int find_route_dijkstra(const Bitmap *wallscreen, int fromx, int fromy, i
+         CHECK_MIN(i, j + granularity)
+       }
+ 
++      if (!live) // DOS-PORT patch 0317: no unvisited walkable neighbour is left, ever
++        vstate[n] = adjcount ? 1 : 2;
++
+       // If all the adjacent cells have been done, stop checking this one
+       if (adjcount) {
+         if (numreplace < 40) {
+@@ -589,6 +619,7 @@ static int find_route_dijkstra(const Bitmap *wallscreen, int fromx, int fromy, i
+       free(visited);
+       free(visx);
+       free(visy);
++      free(vstate); // DOS-PORT patch 0317
+       free(parent);
+       return 0;
+     }
+@@ -638,6 +669,7 @@ static int find_route_dijkstra(const Bitmap *wallscreen, int fromx, int fromy, i
+       visited[changeiter] = newcell[p];
+       visx[changeiter] = cellx;
+       visy[changeiter] = celly;
++      vstate[changeiter] = 0; // DOS-PORT patch 0317: a new cell in this slot
+       if (changeiter == iteration)
+         iteration++;
+ 
+@@ -646,6 +678,7 @@ static int find_route_dijkstra(const Bitmap *wallscreen, int fromx, int fromy, i
+         free(visited);
+         free(visx);
+         free(visy);
++        free(vstate); // DOS-PORT patch 0317
+         free(parent);
+         return 0;
+       }
+@@ -657,6 +690,7 @@ static int find_route_dijkstra(const Bitmap *wallscreen, int fromx, int fromy, i
+   free(visited);
+   free(visx);
+   free(visy);
++  free(vstate); // DOS-PORT patch 0317
+ 
+   int on;
+   pathbackstage = 0;
+@@ -754,6 +788,7 @@ bool LegacyRouteFinder::FindRouteImpl(std::vector<Point> &path, int srcx, int sr
+ 
+   leftorright = 0;
+   int aaa;
++  rp_req_mask = nullptr; // DOS-PORT patch 0317: a new request verifies the cache again
+ 
+   const auto *wallscreen = _walkablearea;
+ 
+-- 
+2.47.3
+

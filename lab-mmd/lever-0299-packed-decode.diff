@@ -1,0 +1,232 @@
+--- a/Engine/script/cc_instance.cpp
++++ b/Engine/script/cc_instance.cpp
+@@ -582,8 +582,15 @@
+ 
+ 
+ #define MAXNEST 50  // number of recursive function calls allowed
++// DOS-PORT patch 0299: pick the loop instantiation for the instance whose code runs
+ ccInstError ccInstance::Run(int32_t curpc)
+ {
++    return (_runningInst->_scriptData->packed) ? RunT<true>(curpc) : RunT<false>(curpc);
++}
++
++template <bool kPacked>
++ccInstError ccInstance::RunT(int32_t curpc)
++{
+     _pc = curpc;
+     _returnValue = -1;
+ 
+@@ -605,7 +612,7 @@
+     // patch 0295: the decoded arguments, set per instruction only as far as its argument count; a
+     // handler reads only the arguments its own opcode has (the contract the old Args[] relied on:
+     // stale beyond ArgCount). Declared out here, zeroed once, so no per-instruction stores.
+-    int32_t op_arg1 = 0, op_arg2 = 0, op_arg3 = 0;
++    int32_t op_arg1 = 0, op_arg2 = 0; // patch 0299: the third is read by its one user (NEWARRAY)
+     FunctionCallStack func_callstack(16);
+ #if DEBUG_CC_EXEC
+     const bool dump_opcodes = ccGetOption(SCOPT_DEBUGRUN) != 0;
+@@ -635,36 +642,50 @@
+         // handler read it. Locals can stay in registers; the instance id, needed only by CALLAS,
+         // is computed there. Same values, same order of checks.
+         const int32_t op_word = static_cast<int32_t>(codeInst->_code[_pc]);
+-        const int32_t op_code = op_word & INSTANCE_ID_REMOVEMASK; // now this is pure instruction code
+-
+-        CC_ERROR_IF_RETCODE((op_code < 0 || op_code >= CC_NUM_SCCMDS),
+-            "invalid instruction %d found in code stream", op_code);
+-
+-        const int op_argc = sccmd_info[op_code].ArgCount;
++        int32_t op_code;
++        int op_argc;
++        if (kPacked)
++        {
++            // DOS-PORT patch 0299: validated at load (PackCode); the argument count is in bits 7-8,
++            // and the three argument words are always readable (3 words of padding past the code)
++            op_code = op_word & 0x7F;
++            op_argc = (op_word >> 7) & 3;
++            op_arg1 = static_cast<int32_t>(codeInst->_code[_pc + 1]);
++            op_arg2 = static_cast<int32_t>(codeInst->_code[_pc + 2]);
++            // the third argument is read by its one user (NEWARRAY), not here
++        }
++        else
++        {
++            op_code = op_word & INSTANCE_ID_REMOVEMASK; // now this is pure instruction code
+ 
+-        CC_ERROR_IF_RETCODE(static_cast<uint32_t>(_pc + op_argc) >= codeInst->_codesize,
+-            "unexpected end of code data (%u; %u)", static_cast<uint32_t>(_pc + op_argc), codeInst->_codesize);
++            CC_ERROR_IF_RETCODE((op_code < 0 || op_code >= CC_NUM_SCCMDS),
++                "invalid instruction %d found in code stream", op_code);
+ 
++            op_argc = sccmd_info[op_code].ArgCount;
+ 
+-        // Read arguments; use switch as it proved to be faster than the loop
+-        // DOS-PORT patch 0293: only the integer. Every handler but three reads an argument as
+-        // Arg1i()/Arg2i()/Arg3i() -- the IValue alone -- so building a whole RuntimeScriptValue
+-        // (type, value, pointer, manager, size: five stores) for every argument of every
+-        // instruction was work almost nobody read. The three that read the whole value (LITTOREG
+-        // and WRITELIT via FixupArgument, NEWARRAY's managed flag) complete it themselves.
+-        switch (op_argc)
+-        {
+-        case 3:
+-            op_arg3 = static_cast<int32_t>(codeInst->_code[_pc + 3]);
+-            /* fall-through */
+-        case 2:
+-            op_arg2 = static_cast<int32_t>(codeInst->_code[_pc + 2]);
+-            /* fall-through */
+-        case 1:
+-            op_arg1 = static_cast<int32_t>(codeInst->_code[_pc + 1]);
+-            break;
+-        default:
+-            break;
++            CC_ERROR_IF_RETCODE(static_cast<uint32_t>(_pc + op_argc) >= codeInst->_codesize,
++                "unexpected end of code data (%u; %u)", static_cast<uint32_t>(_pc + op_argc), codeInst->_codesize);
++
++
++            // Read arguments; use switch as it proved to be faster than the loop
++            // DOS-PORT patch 0293: only the integer. Every handler but three reads an argument as
++            // Arg1i()/Arg2i()/Arg3i() -- the IValue alone -- so building a whole RuntimeScriptValue
++            // (type, value, pointer, manager, size: five stores) for every argument of every
++            // instruction was work almost nobody read. The three that read the whole value (LITTOREG
++            // and WRITELIT via FixupArgument, NEWARRAY's managed flag) complete it themselves.
++            switch (op_argc)
++            {
++            case 3: // patch 0299: the third argument is read by NEWARRAY itself
++                /* fall-through */
++            case 2:
++                op_arg2 = static_cast<int32_t>(codeInst->_code[_pc + 2]);
++                /* fall-through */
++            case 1:
++                op_arg1 = static_cast<int32_t>(codeInst->_code[_pc + 1]);
++                break;
++            default:
++                break;
++            }
+         }
+         //---------------------------------------------------------------------
+         /* End read operation */
+@@ -679,7 +700,7 @@
+             codeOp.ArgCount = op_argc;
+             codeOp.Args[0].SetInt32(op_argc > 0 ? op_arg1 : 0);
+             codeOp.Args[1].SetInt32(op_argc > 1 ? op_arg2 : 0);
+-            codeOp.Args[2].SetInt32(op_argc > 2 ? op_arg3 : 0);
++            codeOp.Args[2].SetInt32(op_argc > 2 ? static_cast<int32_t>(codeInst->_code[_pc + 3]) : 0);
+             DumpInstruction(codeOp);
+         }
+ #endif
+@@ -1303,7 +1324,8 @@
+             ccInstance *wasRunning = _runningInst;
+ 
+             // extract the instance ID
+-            int32_t instId = (op_word >> INSTANCE_ID_SHIFT) & INSTANCE_ID_MASK; // patch 0295
++            // patch 0295/0299: from the code word, re-read here rather than kept live across every handler
++            int32_t instId = (static_cast<int32_t>(codeInst->_code[_pc]) >> INSTANCE_ID_SHIFT) & INSTANCE_ID_MASK;
+             // determine the offset into the code of the instance we want
+             _runningInst = LoadedInstances[instId];
+             uintptr_t callAddr = reg1.PtrU8 - reinterpret_cast<uint8_t*>(_runningInst->_code);
+@@ -1489,7 +1511,8 @@
+             auto &reg1 = _registers[op_arg1];
+             const int arg_elnum = reg1.IValue;
+             const uint32_t arg_elsize = static_cast<uint32_t>(op_arg2);
+-            const bool arg_managed = op_arg3 != 0; // patch 0293: == Arg3().GetAsBool() on an int-set value
++            // patch 0293: == Arg3().GetAsBool() on an int-set value; patch 0299: read here, where it is used
++            const bool arg_managed = static_cast<int32_t>(codeInst->_code[_pc + 3]) != 0;
+             if (arg_elnum < 0)
+             {
+                 cc_error("Invalid size for dynamic array; requested: %d, range: 0..%d", arg_elnum, INT32_MAX);
+@@ -1729,7 +1752,10 @@
+ 
+         if (scri->code.size() > 0)
+         {
+-            _scriptData->code.resize(scri->code.size());
++            // DOS-PORT patch 0299: 3 zero words of padding past the code, so a packed instruction's
++            // three argument words can be read unconditionally (see PackCode and RunT)
++            _scriptData->code.resize(scri->code.size() + 3);
++            _scriptData->codesize = scri->code.size();
+             _scriptData->code_fixups.resize(scri->code.size());
+             // 64 bit: Read code into 8 byte array, necessary for being able to perform
+             // relocations on the references.
+@@ -1758,7 +1784,7 @@
+ 
+     // Setup fast access pointers
+     _code = _scriptData->code.data();
+-    _codesize = static_cast<int32_t>(_scriptData->code.size());
++    _codesize = static_cast<int32_t>(_scriptData->codesize); // patch 0299: without the padding
+     _code_fixups = _scriptData->code_fixups.data();
+ 
+     // If this is a primary script's instance:
+@@ -2163,12 +2189,48 @@
+         _code[fixup] = import_index;
+         // If the call is to another script function next CALLEXT
+         // must be replaced with CALLAS
+-        if (import->InstancePtr != nullptr && (_code[fixup + 1] & INSTANCE_ID_REMOVEMASK) == SCMD_CALLEXT)
+-            _code[fixup + 1] = SCMD_CALLAS | (import->InstancePtr->_loadedInstanceId << INSTANCE_ID_SHIFT);
++        // DOS-PORT patch 0299: compare the opcode bits only and keep the packed bits, so a second
++        // call on an already packed instance still sees CALLEXT and does not lose the packing
++        if (import->InstancePtr != nullptr && (_code[fixup + 1] & 0x7F) == SCMD_CALLEXT)
++            _code[fixup + 1] = SCMD_CALLAS | (import->InstancePtr->_loadedInstanceId << INSTANCE_ID_SHIFT)
++                | (_code[fixup + 1] & 0x3FFF80);
+     }
++    PackCode(); // patch 0299: the last step of every instance's creation (script.cpp, room.cpp)
+     return true;
+ }
+ 
++// DOS-PORT patch 0299: validate every instruction once, then pack its argument count into bits 7-8 of
++// its code word (bits 7-21 are otherwise always zero: the opcode takes 7 bits, the instance id sits at
++// 22-31). A walk that meets an opcode the VM would reject, a set bit in 7-21, or arguments running past
++// the code's end leaves the code unpacked: that instance then runs the unchanged decode path, so a
++// malformed script behaves exactly as it does today. Idempotent.
++void ccInstance::PackCode()
++{
++    ResolvedScriptData &sd = *_scriptData;
++    if (sd.packed || sd.codesize == 0)
++        return;
++    const size_t n = sd.codesize;
++    intptr_t *code = sd.code.data();
++    for (size_t pc = 0; pc < n; )
++    {
++        const int32_t op = static_cast<int32_t>(code[pc]) & INSTANCE_ID_REMOVEMASK;
++        if (op < 0 || op >= CC_NUM_SCCMDS)
++            return;
++        const size_t argc = static_cast<size_t>(sccmd_info[op].ArgCount);
++        if (pc + argc >= n)
++            return;
++        pc += 1 + argc;
++    }
++    for (size_t pc = 0; pc < n; )
++    {
++        const int32_t op = static_cast<int32_t>(code[pc]) & INSTANCE_ID_REMOVEMASK;
++        const int argc = sccmd_info[op].ArgCount;
++        code[pc] |= static_cast<intptr_t>(argc) << 7;
++        pc += 1 + argc;
++    }
++    sd.packed = true;
++}
++
+ void ccInstance::CopyGlobalData(const std::vector<uint8_t> &data)
+ {
+     const size_t copy_sz = std::min(data.size(), _scriptData->globaldata.size());
+--- a/Engine/script/cc_instance.h
++++ b/Engine/script/cc_instance.h
+@@ -211,6 +211,12 @@
+ 
+     // Begin executing script starting from the given bytecode index
+     ccInstError Run(int32_t curpc);
++    // DOS-PORT patch 0299: the interpreter loop, specialised on whether this instance's code was
++    // pre-validated and packed at load (PackCode); Run() picks the instantiation per instance.
++    template <bool kPacked> ccInstError RunT(int32_t curpc);
++    // DOS-PORT patch 0299: validate every instruction once and pack its argument count into the
++    // code word's free bits 7-8; leaves the code untouched if any instruction would be rejected.
++    void    PackCode();
+ 
+     // For calling exported plugin functions old-style
+     RuntimeScriptValue CallPluginFunction(void *fn_addr, const RuntimeScriptValue *object, const RuntimeScriptValue *params, int param_count);
+@@ -266,6 +272,10 @@
+         ScriptSymbolsMap        export_lookup;
+         // Array of real import indexes used in script
+         std::vector<uint32_t>   resolved_imports;
++        // DOS-PORT patch 0299: the code's own length (code[] carries 3 zero words of padding past
++        // it), and whether PackCode() validated and packed it
++        size_t                  codesize = 0;
++        bool                    packed = false;
+     };
+     std::shared_ptr<ResolvedScriptData> _scriptData;
+ 

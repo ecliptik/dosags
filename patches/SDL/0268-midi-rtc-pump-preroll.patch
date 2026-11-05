@@ -1,0 +1,369 @@
+From 99b190a465e9304726f6037423fcf5f4d01195c5 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sat, 26 Sep 2026 22:32:40 -0700
+Subject: [PATCH] dos: patch 0268 -- pre-roll on the RTC pump
+ (SDL_HINT_DOS_AUDIO_WB_PREROLL_MS, opt-in)
+
+The pump writes one MPU byte per RTC tick (2048 Hz, 488 us), which is
+slower than the 320 us MIDI wire byte. A song that opens a slot with a
+channel set-up burst therefore delivers that slot's notes late. Trilby's
+Notes music 4 opens every loop with 76 messages at song time 0: program
+change, volume and pan on 15 channels, interleaved with a 31-note
+downbeat (213 bytes). That runs 104 ms against the pump's 46 ms late
+threshold. dosags' S8 fixture read 340 late writes, 3 loops x ~114, on a
+song where 5 Days music0 reads 0.
+
+Most of that burst is set-up (120 of 213 bytes), and set-up can go out
+before its stamp. So a slot is now staged between the planner's two
+SetStamp calls and committed reordered:
+- A non-note channel message (CC, program change, channel pressure,
+  pitch bend) moves ahead of other channels' notes, and may leave up to
+  SDL_HINT_DOS_AUDIO_WB_PREROLL_MS before its stamp.
+- It moves only while its channel has no sounding note and no
+  sustain/sostenuto pedal down, and only if every earlier message of its
+  channel in the slot moved too. It never passes a message of its own
+  channel, so it cannot change a sounding note.
+- Notes never move and never leave early. System messages are barriers.
+- Only planned slots (stamp >= now + 2) are staged; a write stamped now
+  commits the stage and goes straight to the queue.
+- The pump gates on the stamp less a one-byte early count per queue
+  entry (the pre-roll is capped at 255 IRQs, about 11.8 s), and still
+  counts lateness against the stamp.
+- The early counts and the staging buffers (11 KB) are allocated, zeroed
+  and locked the first time a song enables pre-roll, then kept for the
+  run. DJGPP's image carries static arrays in full, and a default-off
+  build should not pay for an opt-in. Until then the pointer is NULL and
+  every entry reads 0. If the allocation or the lock fails, pre-roll
+  stays off (logged).
+
+In the lab (dosags lab/wb, DOSBox-X, ring with stamps), 200 ms of
+pre-roll took S8 from 340 late writes to 0, confirmed on a second run.
+Every note byte was written on or after its stamp. The notes-only stream
+and each channel's own stream were identical to the song's. No moved
+message went out while its channel sounded, and no two bytes were closer
+than 320 us. On 5 Days music0 (0 late either way), 924 messages moved, at
+most 5 IRQs early. Cost at fixed 15000 cycles is inside run-to-run noise.
+
+Opt-in, default 0: with the hint unset, every entry's early IRQ is its
+stamp and the pump behaves exactly as before. The hint is read only when
+kind 3 (the RTC pump) is enabled; with the pump off -- poll, blind MPU
+replay, OPL3 -- it does nothing. SDL_DOSMidiDeferPrerollStats reports the
+pre-roll in IRQs, the messages moved, the bytes written early and the
+most IRQs early.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ include/SDL3/SDL_dosmidi_tick.h |   6 +
+ src/audio/dos/SDL_dosaudio_sb.c | 195 +++++++++++++++++++++++++++++++-
+ 2 files changed, 198 insertions(+), 3 deletions(-)
+
+diff --git a/include/SDL3/SDL_dosmidi_tick.h b/include/SDL3/SDL_dosmidi_tick.h
+index c8c197afd..de8d3312d 100644
+--- a/include/SDL3/SDL_dosmidi_tick.h
++++ b/include/SDL3/SDL_dosmidi_tick.h
+@@ -352,6 +352,12 @@ extern SDL_DECLSPEC Uint32 SDLCALL SDL_DOSMidiDeferRtcRedrains(bool *enabled);
+    repair (~95 is normal). Reporting only; the caller maps IRQ indices to song time. */
+ extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferFirstEvents(Uint32 *stuck_irq, Uint32 *stuck_prev_ticks, Uint32 *late_irq);
+ 
++/* DOS-PORT patch 0268: pre-roll on the RTC pump (SDL_HINT_DOS_AUDIO_WB_PREROLL_MS, default off; read when kind 3
++   is enabled, inert otherwise): the pre-roll in SB IRQs (0 = off), the messages it moved ahead of other
++   channels' notes, the bytes the pump wrote before their stamp's IRQ, and the most IRQs early any went.
++   Notes are never moved or written early. Run totals; reporting only. */
++extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferPrerollStats(Uint32 *irqs, Uint32 *moved, Uint32 *early_bytes, Uint32 *max_early_irqs);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index dcb303531..b5b16d7c7 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -1759,6 +1759,15 @@ static volatile Uint32 g_mdq_tail = 0;     /* producer (main thread) index, mono
+ static volatile Uint32 g_mdq_stamp_now = 0;/* stamp given to entries captured now */
+ static Uint16 g_mdq_mpu_base = 0;
+ static Uint32 g_mdq_stamp[MIDI_DEFER_QUEUE];
++/* DOS-PORT patch 0268: how many SB IRQs before its stamp an entry may be written: 0, except a pre-rolled
++   message (MidiPrerollCommit). One byte per entry, in a block allocated only when a song first enables
++   pre-roll (SDL_HINT_DOS_AUDIO_WB_PREROLL_MS), locked before it is published, and kept for the run: DJGPP's
++   image carries static arrays in full, and a default-off build should not pay 11 KB for an opt-in. NULL =
++   never enabled: every entry reads 0. The pump (kind 3) gates on stamp - this; lateness is still counted
++   against the stamp. Kinds 1 and 2 never read it. */
++static Uint8 *volatile g_mdq_early = NULL;
++static volatile Uint32 g_pr_early_bytes = 0; /* patch 0268: bytes the pump wrote before their stamp's IRQ */
++static volatile Uint32 g_pr_max_early = 0;   /* patch 0268: the most IRQs early any of them went */
+ static Uint16 g_mdq_reg[MIDI_DEFER_QUEUE];
+ static Uint8 g_mdq_val[MIDI_DEFER_QUEUE];
+ static volatile Uint32 g_mdq_written = 0;  /* entries written out by the ISR */
+@@ -2002,7 +2011,8 @@ static void MidiRtcKick(Uint32 irq_now)
+         return;
+     }
+     __asm__ __volatile__("" ::: "memory"); /* read the entry after seeing the tail */
+-    if ((Sint32)(irq_now - g_mdq_stamp[g_mdq_head & (MIDI_DEFER_QUEUE - 1u)]) < 0) {
++    if ((Sint32)(irq_now - g_mdq_stamp[g_mdq_head & (MIDI_DEFER_QUEUE - 1u)]) +
++            (Sint32)(g_mdq_early ? g_mdq_early[g_mdq_head & (MIDI_DEFER_QUEUE - 1u)] : 0u) < 0) { /* patch 0268 */
+         g_rtc_prev_interval = g_rtc_ticks - g_rtc_kick_ticks; /* DOS-PORT patch 0266 */
+         g_rtc_kick_ticks = g_rtc_ticks;
+         return;
+@@ -2123,12 +2133,14 @@ static void MidiRtcISR(void)
+         }
+         Uint32 idx = 0;
+         Sint32 late = -1;
++        Sint32 gate = -1; /* DOS-PORT patch 0268: irq_now - the entry's earliest IRQ */
+         if (g_mdq_head != g_mdq_tail) {
+             __asm__ __volatile__("" ::: "memory"); /* read the entry after seeing the tail */
+             idx = g_mdq_head & (MIDI_DEFER_QUEUE - 1u);
+             late = (Sint32)(irq_now - g_mdq_stamp[idx]);
++            gate = late + (Sint32)(g_mdq_early ? g_mdq_early[idx] : 0u);
+         }
+-        if (late >= 0) {
++        if (gate >= 0) {
+             keep = true;
+             if (g_rtc_since_us >= g_rtc_gap_us) {
+                 if (g_rtc_pending_status) {
+@@ -2152,13 +2164,21 @@ static void MidiRtcISR(void)
+                             __asm__ __volatile__("" ::: "memory");
+                             idx = g_mdq_head & (MIDI_DEFER_QUEUE - 1u);
+                             late = (Sint32)(irq_now - g_mdq_stamp[idx]);
++                            gate = late + (Sint32)(g_mdq_early ? g_mdq_early[idx] : 0u);
+                         } else {
+                             late = -1;
++                            gate = -1;
+                         }
+                     }
+                 }
+-                if (late >= 0 && !g_rtc_pending_status && g_rtc_since_us >= g_rtc_gap_us) {
++                if (gate >= 0 && !g_rtc_pending_status && g_rtc_since_us >= g_rtc_gap_us) {
+                     MidiRtcPut(g_mdq_val[idx]);
++                    if (late < 0) { /* DOS-PORT patch 0268: a pre-rolled byte, ahead of its stamp */
++                        g_pr_early_bytes++;
++                        if ((Uint32)(-late) > g_pr_max_early) {
++                            g_pr_max_early = (Uint32)(-late);
++                        }
++                    }
+                     g_mdq_head = g_mdq_head + 1u;
+                     g_mdq_written++;
+                     if (late >= 1) {
+@@ -2334,6 +2354,9 @@ static bool MidiRtcInstall(Uint32 gap_us)
+         DOS_LockCode(MidiRtcISR, MidiRtcISR_End); /* logged, not locked, if laid out after its end */
+         DOS_LockVariable(g_rtc_pie);
+         DOS_LockVariable(g_rtc_gap_us);
++        DOS_LockVariable(g_mdq_early); /* DOS-PORT patch 0268: the pointer; its block is locked at allocation */
++        DOS_LockVariable(g_pr_early_bytes);
++        DOS_LockVariable(g_pr_max_early);
+         DOS_LockVariable(g_rtc_since_us);
+         DOS_LockVariable(g_rtc_ticks);
+         DOS_LockVariable(g_rtc_waits);
+@@ -2628,8 +2651,130 @@ void SDL_DOSMidiDeferStats4(Uint32 *dedupe_on, Uint32 *skipped)
+     if (skipped) *skipped = g_mdq_skipped;
+ }
+ 
++/* DOS-PORT patch 0268: PRE-ROLL for the RTC pump (kind 3), opt-in: SDL_HINT_DOS_AUDIO_WB_PREROLL_MS=N (default 0
++   = off). A slot's non-note channel messages (control change, program change, channel pressure, pitch bend)
++   go ahead of other channels' notes and may leave up to N ms before their stamp, so a slot that opens with
++   a channel set-up burst spends the pump's time on its notes. Notes never move and never leave early. A
++   message pre-rolls only if, at its place in the song's own order, its channel has no sounding note
++   (note-ons minus note-offs) and no sustain or sostenuto pedal down, and every earlier message of its
++   channel in the same slot pre-rolls too: it never passes a message of its own channel and cannot change a
++   sounding note. System messages are barriers. The planner writes a slot between two SetStamp calls; its
++   bytes are staged here and committed, reordered, at the next SetStamp. Only planned slots (stamp >= now +
++   2) are staged; a write stamped now commits the stage first and goes straight to the queue. */
++static Uint32 g_pr_irqs = 0;                 /* pre-roll, in SB IRQs (0 = off) */
++#define MDQ_PR_STAGE 1024u                   /* staged bytes per slot */
++#define MDQ_PR_MSGS 512u                     /* staged messages per slot */
++#define MDQ_PR_BLOCK (MIDI_DEFER_QUEUE + MDQ_PR_STAGE + MDQ_PR_MSGS * 4u) /* early counts + stage + message table */
++static Uint8 *s_pr_stage = NULL;             /* main thread only, in the same block */
++static Uint16 *s_pr_mst = NULL;
++static Uint8 *s_pr_mlen = NULL, *s_pr_mfront = NULL;
++static Uint32 s_pr_n = 0, s_pr_stamp = 0;
++static Uint8 s_pr_active[16], s_pr_sus[16], s_pr_sos[16];
++static Uint32 g_pr_msgs = 0, g_pr_front = 0; /* messages committed through the stage, of which pre-rolled */
++
++static bool MidiDeferPush(Uint8 val, Uint32 stamp, Uint8 early)
++{
++    if (g_mdq_tail - g_mdq_head >= MIDI_DEFER_QUEUE) {
++        g_mdq_full++;
++        return false;
++    }
++    const Uint32 idx = g_mdq_tail & (MIDI_DEFER_QUEUE - 1u);
++    g_mdq_stamp[idx] = stamp;
++    if (g_mdq_early) {
++        g_mdq_early[idx] = early;
++    }
++    g_mdq_reg[idx] = 0;
++    g_mdq_val[idx] = val;
++    __asm__ __volatile__("" ::: "memory"); /* the entry is stored before the tail moves */
++    g_mdq_tail = g_mdq_tail + 1u;
++    return true;
++}
++
++static void MidiPrerollCommit(void)
++{
++    Uint16 *const mst = s_pr_mst;
++    Uint8 *const mlen = s_pr_mlen, *const mfront = s_pr_mfront;
++    Uint32 nm = 0, i = 0;
++    Uint8 ok[16];
++    SDL_memset(ok, 1, sizeof(ok));
++    if (s_pr_n == 0) {
++        return;
++    }
++    while (i < s_pr_n && nm < MDQ_PR_MSGS) {
++        const Uint8 b = s_pr_stage[i];
++        Uint32 len = 1;
++        Uint8 front = 0;
++        if (b >= 0x80 && b < 0xF0) {
++            const Uint8 hi = (Uint8)(b & 0xF0), c = (Uint8)(b & 0x0F);
++            len = (hi == 0xC0 || hi == 0xD0) ? 2u : 3u;
++            if (i + len > s_pr_n) {
++                len = s_pr_n - i;
++            }
++            const Uint8 d1 = (len > 1) ? s_pr_stage[i + 1] : 0, d2 = (len > 2) ? s_pr_stage[i + 2] : 0;
++            if (hi >= 0xB0 && ok[c] && !s_pr_active[c] && !s_pr_sus[c] && !s_pr_sos[c]) {
++                front = 1;
++            } else {
++                ok[c] = 0;
++            }
++            /* the channel's state after this message, in the song's order */
++            if (hi == 0x90 && d2 > 0) {
++                if (s_pr_active[c] < 255) s_pr_active[c]++;
++            } else if (hi == 0x80 || hi == 0x90) {
++                if (s_pr_active[c] > 0) s_pr_active[c]--;
++            } else if (hi == 0xB0) {
++                if (d1 == 64) s_pr_sus[c] = (d2 >= 64);
++                else if (d1 == 66) s_pr_sos[c] = (d2 >= 64);
++                else if (d1 == 120 || d1 == 123) s_pr_active[c] = 0;
++            }
++        } else {
++            /* a system message or a stray data byte: a barrier, nothing after it moves */
++            if (b == 0xF0) {
++                while (i + len < s_pr_n && s_pr_stage[i + len - 1] != 0xF7) len++;
++            }
++            SDL_memset(ok, 0, sizeof(ok));
++        }
++        mst[nm] = (Uint16)i; mlen[nm] = (Uint8)(len > 255 ? 255 : len); mfront[nm] = front;
++        nm++;
++        i += len;
++    }
++    const Uint8 early = (Uint8)((g_pr_irqs < s_pr_stamp) ? g_pr_irqs : s_pr_stamp);
++    for (int pass = 1; pass >= 0; pass--) { /* pre-rolled messages first, both groups in song order */
++        for (Uint32 m = 0; m < nm; m++) {
++            if (mfront[m] != pass) continue;
++            for (Uint32 k = 0; k < mlen[m]; k++) {
++                (void)MidiDeferPush(s_pr_stage[mst[m] + k], s_pr_stamp, pass ? early : 0);
++            }
++            g_pr_msgs++;
++            g_pr_front += pass;
++        }
++    }
++    /* bytes past a 512-message slot (never seen) go in order, unmoved */
++    for (; i < s_pr_n; i++) {
++        (void)MidiDeferPush(s_pr_stage[i], s_pr_stamp, 0);
++    }
++    s_pr_n = 0;
++}
++
++void SDL_DOSMidiDeferPrerollStats(Uint32 *irqs, Uint32 *moved, Uint32 *early_bytes, Uint32 *max_early_irqs)
++{
++    if (irqs) *irqs = g_pr_irqs;
++    if (moved) *moved = g_pr_front;
++    if (early_bytes) *early_bytes = g_pr_early_bytes;
++    if (max_early_irqs) *max_early_irqs = g_pr_max_early;
++}
++
+ bool SDL_DOSMidiDeferCapture(Uint8 kind, Uint16 reg, Uint8 val)
+ {
++    if (kind == 3 && g_mdq_kind == 3 && g_pr_irqs) { /* DOS-PORT patch 0268: pre-roll staging */
++        if (s_pr_n && (s_pr_stamp != g_mdq_stamp_now || s_pr_n >= MDQ_PR_STAGE)) {
++            MidiPrerollCommit();
++        }
++        if ((Sint32)(g_mdq_stamp_now - dos_port_audio_irq_count) >= 2) {
++            s_pr_stamp = g_mdq_stamp_now;
++            s_pr_stage[s_pr_n++] = val;
++            return true;
++        }
++    }
+     if (g_mdq_kind == 0 || g_mdq_kind != kind) {
+         return false;
+     }
+@@ -2654,6 +2799,9 @@ bool SDL_DOSMidiDeferCapture(Uint8 kind, Uint16 reg, Uint8 val)
+     }
+     const Uint32 idx = g_mdq_tail & (MIDI_DEFER_QUEUE - 1u);
+     g_mdq_stamp[idx] = g_mdq_stamp_now;
++    if (g_mdq_early) {
++        g_mdq_early[idx] = 0; /* DOS-PORT patch 0268: not pre-rolled */
++    }
+     g_mdq_reg[idx] = reg;
+     g_mdq_val[idx] = val;
+     __asm__ __volatile__("" ::: "memory"); /* the entry is stored before the tail moves */
+@@ -2695,6 +2843,9 @@ int SDL_DOSMidiDeferIrqPeriodUs(void)
+ 
+ void SDL_DOSMidiDeferSetStamp(Uint32 irq_index)
+ {
++    if (s_pr_n && irq_index != s_pr_stamp) {
++        MidiPrerollCommit(); /* DOS-PORT patch 0268: the staged slot is complete */
++    }
+     g_mdq_stamp_now = irq_index;
+ }
+ 
+@@ -2705,6 +2856,7 @@ int SDL_DOSMidiDeferFree(void)
+ 
+ void SDL_DOSMidiDeferFlush(void)
+ {
++    s_pr_n = 0; /* DOS-PORT patch 0268: a staged slot is planned ahead too: dropped with the queue */
+     MidiDeferShadowReset(); /* patch 0251: queued writes are dropped unplayed */
+     DOS_DisableInterrupts();
+     g_mdq_head = g_mdq_tail;
+@@ -2834,6 +2986,9 @@ bool SDL_DOSMidiDeferEnable(int kind)
+             return true;
+         }
+         const Uint8 k = g_mdq_kind;
++        if (k == 3) {
++            MidiPrerollCommit(); /* DOS-PORT patch 0268: a staged slot goes out with the rest */
++        }
+         DOS_DisableInterrupts();
+         g_mdq_kind = 0; /* the ISR stops draining; capture refuses */
+         DOS_EnableInterrupts();
+@@ -2909,6 +3064,40 @@ bool SDL_DOSMidiDeferEnable(int kind)
+         if (!MidiRtcInstall(gap_us)) {
+             return false;
+         }
++        { /* DOS-PORT patch 0268: pre-roll, read with the pump; a new song starts with every channel silent */
++            const char *pr = SDL_GetHint("SDL_HINT_DOS_AUDIO_WB_PREROLL_MS");
++            const int ms = (pr && pr[0]) ? SDL_atoi(pr) : 0;
++            const int per = SDL_DOSMidiDeferIrqPeriodUs();
++            g_pr_irqs = (ms > 0 && per > 0) ? (Uint32)(((Sint64)ms * 1000 + per - 1) / per) : 0u;
++            if (g_pr_irqs > 255u) {
++                g_pr_irqs = 255u; /* one byte per queue entry: ~11.8 s at 46 ms per IRQ */
++            }
++            if (g_pr_irqs && !g_mdq_early) {
++                /* the first song that enables pre-roll: allocate, zero and lock the block, then publish it */
++                Uint8 *blk = (Uint8 *)SDL_malloc(MDQ_PR_BLOCK);
++                if (blk && _go32_dpmi_lock_data(blk, MDQ_PR_BLOCK) == 0) {
++                    SDL_memset(blk, 0, MDQ_PR_BLOCK);
++                    s_pr_stage = blk + MIDI_DEFER_QUEUE;
++                    s_pr_mst = (Uint16 *)(void *)(s_pr_stage + MDQ_PR_STAGE);
++                    s_pr_mlen = s_pr_stage + MDQ_PR_STAGE + MDQ_PR_MSGS * 2u;
++                    s_pr_mfront = s_pr_mlen + MDQ_PR_MSGS;
++                    __asm__ __volatile__("" ::: "memory"); /* zeroed before the pump can see it */
++                    g_mdq_early = blk;
++                } else {
++                    if (blk) SDL_free(blk);
++                    dos_port_dbg_log("audio: patch 0268 pre-roll off -- its %u-byte block could not be allocated and locked",
++                                     (unsigned)MDQ_PR_BLOCK);
++                    g_pr_irqs = 0;
++                }
++            }
++            s_pr_n = 0;
++            SDL_memset(s_pr_active, 0, sizeof(s_pr_active));
++            SDL_memset(s_pr_sus, 0, sizeof(s_pr_sus));
++            SDL_memset(s_pr_sos, 0, sizeof(s_pr_sos));
++            if (g_pr_irqs) {
++                dos_port_dbg_log("audio: patch 0268 pre-roll %d ms = %u SB IRQs", ms, (unsigned)g_pr_irqs);
++            }
++        }
+     }
+     { /* DOS-PORT patch 0250: the per-IRQ budget, SDL_HINT_DOS_MIDI_DEFER_MAX_PER_IRQ */
+         const char *e = SDL_getenv("SDL_HINT_DOS_MIDI_DEFER_MAX_PER_IRQ");
+-- 
+2.47.3
+

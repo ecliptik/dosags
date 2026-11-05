@@ -1,0 +1,226 @@
+From c65c81954c0cf59a2fe7594b709d3bd8a1c04058 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 14:42:01 -0700
+Subject: [PATCH] DOS-PORT: patch 0341 -- WaveBlaster MIDI through the
+ RTC-paced replay
+
+0207 plans MIDI ahead and replays it from the SB IRQ, but WaveBlaster
+never got it. The default MPU transport paces every byte with a 320 us
+busy-wait, the DreamBlaster input-overrun fix. SDL 0193 only replays
+the blind transport. So WB fell back to the main-loop poll and played
+in clumps at the render rate: SB5W had 69% of events more than 50 ms
+late at the 6 fps intro.
+
+SDL 0260 adds queue kind 3. The SB IRQ releases a slot's bytes and the
+CMOS RTC periodic interrupt writes them, one per tick, at the
+transport's spacing. When kind 2 is refused for a WaveBlaster, the
+player now asks for kind 3. The plan, stamps, pause, stop and
+song-change handling stay the same. Anything that refuses both kinds,
+including the SDL_HINT_DOS_AUDIO_WB_RTC_PUMP=0 killswitch, keeps the
+poll.
+
+The status line reports midi_tick=rtc, with the pump's rate, byte gap,
+RTC ticks, the BIOS waits it serviced, and the longest
+release-to-write. It also adds clk_uc=, song ms over uclock ms since
+the first plan. That is a second view of the song clock beside the
+CMOS-based clk=. It shares 0208's uclock calibration, so it mostly
+checks that arithmetic; clk= is the independent witness. The status
+buffers grow to fit (MIDI fragment 320 -> 512, status 512 -> 768), so
+the line is not cut off the way 0207's once was.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/media/audio/audioplayer.cpp       | 19 ++++++++-
+ Engine/platform/dos/dos_audio_mixer.cpp  |  6 +--
+ Engine/platform/dos/dos_midi_backend.cpp | 50 +++++++++++++++++++-----
+ Engine/platform/dos/dos_midi_backend.h   |  7 +++-
+ 4 files changed, 67 insertions(+), 15 deletions(-)
+
+diff --git a/Engine/media/audio/audioplayer.cpp b/Engine/media/audio/audioplayer.cpp
+index ab1ae387b..43ff65f89 100644
+--- a/Engine/media/audio/audioplayer.cpp
++++ b/Engine/media/audio/audioplayer.cpp
+@@ -102,8 +102,20 @@ void AudioPlayer::MidiIsrBegin()
+     const char *force = std::getenv("DOSAGS_MIDI_TICK");
+     const bool force_poll = force && std::strcmp(force, "poll") == 0;
+     int period = 0;
++    int enabled = 0; // DOS-PORT (patch 0341): the queue kind actually running
+     if (!force_poll && kind != 0 && s_midiIsrOwner == nullptr && SDL_DOSMidiDeferIrqNow() > 0
+-        && (period = SDL_DOSMidiDeferIrqPeriodUs()) > 0 && SDL_DOSMidiDeferEnable(kind))
++        && (period = SDL_DOSMidiDeferIrqPeriodUs()) > 0)
++    {
++        // DOS-PORT (patch 0341): the WaveBlaster's default transport paces each
++        // MPU byte (320 us, the DreamBlaster overrun fix) and kind 2 takes only
++        // the blind one; kind 3 replays the same plan through the RTC pump at
++        // that spacing (SDL 0260).
++        if (SDL_DOSMidiDeferEnable(kind))
++            enabled = kind;
++        else if (kind == 2 && SDL_DOSMidiDeferEnable(3))
++            enabled = 3;
++    }
++    if (enabled != 0)
+     {
+         const char *la = std::getenv("DOSAGS_MIDI_LOOKAHEAD_MS");
+         const long la_ms = (la && la[0]) ? std::strtol(la, nullptr, 10) : 2000;
+@@ -126,7 +138,7 @@ void AudioPlayer::MidiIsrBegin()
+         _midiCalUs0 = (uint64_t)uclock() * 1000000ULL / UCLOCKS_PER_SEC;
+         _midiRealPeriodUs = _midiPeriodUs;
+     }
+-    dos_midi_backend_set_tick_mode(_midiIsr, _midiIsr ? _midiPeriodUs : 0, lookahead);
++    dos_midi_backend_set_tick_mode(_midiIsr, _midiIsr ? _midiPeriodUs : 0, lookahead, enabled);
+ }
+ 
+ void AudioPlayer::MidiIsrEnd(bool flush)
+@@ -194,6 +206,9 @@ void AudioPlayer::MidiIsrPlan()
+         _midiLastSongMs = song_ms;
+     }
+     dos_midi_backend_note_isr_period(_midiRealPeriodUs);
++    // DOS-PORT (patch 0341): song clock against uclock (clk_uc=).
++    dos_midi_backend_note_song_uclock(_midiSongUs / 1000u,
++        (uint64_t)uclock() * 1000ULL / UCLOCKS_PER_SEC);
+     _midiLastIrq = now;
+ }
+ 
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index 97ee6ef2f..fe0da985e 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -170,7 +170,7 @@ uint32_t g_room_since = 0;
+ // shutdown_sound()) still reports the real final state instead of the
+ // "never opened" NA sentinel. Left at "NA" if the device was never
+ // opened at all, so that genuine case is still distinguishable.
+-char g_last_status[1280] = "NA"; // patch 0252: 512 -> 640, room for mixed=,...,inflight= beside 0213's fields; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280
++char g_last_status[1472] = "NA"; // patch 0252: 512 -> 640, room for mixed=,...,inflight= beside 0213's fields; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280; patch 0341: -> 1472 (1443 B with the RTC pump's fields)
+ 
+ void format_status_string(char *buf, size_t bufsize)
+ {
+@@ -178,7 +178,7 @@ void format_status_string(char *buf, size_t bufsize)
+     const int bits = static_cast<int>(SDL_AUDIO_BITSIZE(fmt));
+     const char chan_letter = (DOS_AUDIO_MIXER_CHANNELS == 1) ? 'm' : 's';
+     const char *device = g_gus_backend ? "gus" : "sb";
+-    char midi_fragment[768]; // DOS-PORT (patch 0275): 320 -> 400, room for plan_behind_at=; patch 0331: -> 640; patch 0333: -> 768
++    char midi_fragment[1088]; // DOS-PORT (patch 0275): 320 -> 400, room for plan_behind_at=; patch 0331: -> 640; patch 0333: -> 768; patch 0341: -> 1088 (worst case 1060 B with the RTC pump's and 0330-0333's fields, LAB-JOURNEYS 8.37)
+     // DOS-PORT (Sound milestone, S4): dos_midi_backend owns the real
+     // "midi=<backend>,events=<n>" fragment now -- S1 hardcoded ";midi=none"
+     // here since no MIDI backend existed yet.
+@@ -642,7 +642,7 @@ const char *dos_audio_mixer_status_string()
+ {
+     if (!g_stream && !g_gus_open)
+         return g_last_status; // "NA" if never opened, else the shutdown-time snapshot
+-    static char buf[1280];   // patch 0252: 512 -> 640; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280
++    static char buf[1472];   // patch 0252: 512 -> 640; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280; patch 0341: -> 1472 (see g_last_status)
+     format_status_string(buf, sizeof(buf));
+     return buf;
+ }
+diff --git a/Engine/platform/dos/dos_midi_backend.cpp b/Engine/platform/dos/dos_midi_backend.cpp
+index 18a0b28ca..e5ac63a33 100644
+--- a/Engine/platform/dos/dos_midi_backend.cpp
++++ b/Engine/platform/dos/dos_midi_backend.cpp
+@@ -58,6 +58,9 @@ static bool g_pb_seen = false;
+ static uint32_t g_pb_song_ms = 0, g_pb_loop = 0, g_pb_gap_irqs = 0;
+ static bool g_pb_first = false;
+ uint32_t g_real_period_us = 0; // DOS-PORT (patch 0208)
++// DOS-PORT (patch 0341): the queue kind in use, and the clk_uc= witness.
++int g_defer_kind = 0;
++int64_t g_uc_first_song_ms = -1, g_uc_first_ms = -1, g_uc_last_song_ms = 0, g_uc_last_ms = 0;
+ int g_rtc_last_s = -1;
+ 
+ // DOS-PORT patch 0340: one CMOS register, index write and data read with
+@@ -395,13 +398,27 @@ int dos_midi_backend_defer_kind(DosMidiBackendKind kind)
+     return 0;
+ }
+ 
+-void dos_midi_backend_set_tick_mode(bool isr, uint32_t period_us, uint32_t lookahead_irqs)
++void dos_midi_backend_set_tick_mode(bool isr, uint32_t period_us, uint32_t lookahead_irqs, int defer_kind)
+ {
+     g_tick_isr = isr;
+     g_tick_period_us = period_us;
+     g_tick_lookahead = lookahead_irqs;
+-    Debug::Printf(kDbgMsg_Info, "DosMidiBackend: MIDI tick %s%s", isr ? "isr" : "poll",
+-        isr ? " (writes planned ahead, replayed by the SB IRQ)" : " (main loop)");
++    g_defer_kind = isr ? defer_kind : 0;
++    const bool rtc = g_defer_kind == 3;
++    Debug::Printf(kDbgMsg_Info, "DosMidiBackend: MIDI tick %s%s", rtc ? "rtc" : isr ? "isr" : "poll",
++        rtc ? " (writes planned ahead, released by the SB IRQ, one MPU byte per RTC tick)"
++            : isr ? " (writes planned ahead, replayed by the SB IRQ)" : " (main loop)");
++}
++
++void dos_midi_backend_note_song_uclock(uint64_t song_ms, uint64_t uclock_ms)
++{
++    if (g_uc_first_ms < 0)
++    {
++        g_uc_first_song_ms = (int64_t)song_ms;
++        g_uc_first_ms = (int64_t)uclock_ms;
++    }
++    g_uc_last_song_ms = (int64_t)song_ms;
++    g_uc_last_ms = (int64_t)uclock_ms;
+ }
+ 
+ void dos_midi_backend_note_isr_period(uint32_t period_us)
+@@ -468,6 +485,17 @@ void dos_midi_backend_status_fragment(char *buf, size_t bufsize)
+         Uint32 wr = 0, late = 0, late_max = 0, burst = 0, full = 0, dropped = 0, sync = 0;
+         SDL_DOSMidiDeferStats(&wr, &late, &late_max, &burst, &full);
+         SDL_DOSMidiDeferStats2(&dropped, &sync);
++        // DOS-PORT (patch 0341): the RTC pump's own fields (rate, byte gap,
++        // ticks, BIOS INT 15h/86h waits it serviced, longest release-to-write
++        // in us) and clk_uc= (song ms / uclock ms since the first plan).
++        char rtc[112] = "";
++        if (g_defer_kind == 3)
++        {
++            Uint32 hz = 0, gap = 0, ticks = 0, waits = 0, lat = 0;
++            SDL_DOSMidiDeferRtcStats(&hz, &gap, &ticks, &waits, &lat);
++            std::snprintf(rtc, sizeof(rtc), ",rtc_hz=%u,gap_us=%u,rtc_ticks=%u,bios_waits=%u,lat_max_us=%u",
++                (unsigned)hz, (unsigned)gap, (unsigned)ticks, (unsigned)waits, (unsigned)lat);
++        }
+         // DOS-PORT patch 0330: SDL 0250's per-IRQ budget, the IRQs it bound,
+         // and the drain's own time (us, the SB ISR's timer); per-write in ns
+         Uint32 budget = 0, cap_hits = 0, imax = 0, isum = 0, in = 0;
+@@ -488,16 +516,20 @@ void dos_midi_backend_status_fragment(char *buf, size_t bufsize)
+         if (g_pb_seen)
+             std::snprintf(pb_at, sizeof(pb_at), "%u@%u/%uirq/%s", (unsigned)g_pb_song_ms, (unsigned)g_pb_loop,
+                 (unsigned)g_pb_gap_irqs, g_pb_first ? "first" : "later");
+-        std::snprintf(buf, bufsize, "midi=%s,events=%llu%s,midi_tick=isr,period_us=%u,lookahead=%u,isr_writes=%u,"
++        std::snprintf(buf, bufsize, "midi=%s,events=%llu%s,midi_tick=%s,period_us=%u,lookahead=%u,isr_writes=%u,"
+             "late_writes=%u,late_max_ms=%u,isr_burst=%u,qfull=%u,qsync=%u,qdropped=%u,plan_behind=%u,plan_behind_at=%s,"
+-            "clk=%llu/%ds,real_period_us=%u,budget=%u,cap_hits=%u,isr_max_us=%u,isr_mean_us=%u,isr_ns_per_write=%u,"
+-            "dedupe=%u,skipped=%u,pgdetect=%u,opl_reads=%u,pace=%u/%u,pwait=%u/%u/%u,peak=%u/%u",
+-            kind_name(g_last_kind), (unsigned long long)g_events_dispatched, chip, g_tick_period_us, g_tick_lookahead,
++            "clk=%llu/%ds,real_period_us=%u,clk_uc=%lld/%lld,"
++            "budget=%u,cap_hits=%u,isr_max_us=%u,isr_mean_us=%u,isr_ns_per_write=%u,"
++            "dedupe=%u,skipped=%u,pgdetect=%u,opl_reads=%u,pace=%u/%u,pwait=%u/%u/%u,peak=%u/%u%s",
++            kind_name(g_last_kind), (unsigned long long)g_events_dispatched, chip, g_defer_kind == 3 ? "rtc" : "isr",
++            g_tick_period_us, g_tick_lookahead,
+             (unsigned)wr, (unsigned)late, (unsigned)((uint64_t)late_max * g_tick_period_us / 1000u), (unsigned)burst,
+             (unsigned)full, (unsigned)sync, (unsigned)dropped, g_plan_behind, pb_at, (unsigned long long)g_song_ms, rtc_s,
+-            (unsigned)g_real_period_us, (unsigned)budget, (unsigned)cap_hits, isr_max_us, isr_mean_us, isr_ns_per_write,
++            (unsigned)g_real_period_us, (long long)(g_uc_last_song_ms - g_uc_first_song_ms),
++            (long long)(g_uc_last_ms - g_uc_first_ms),
++            (unsigned)budget, (unsigned)cap_hits, isr_max_us, isr_mean_us, isr_ns_per_write,
+             (unsigned)dd_on, (unsigned)dd_skip, (unsigned)pg_detect, (unsigned)opl_reads,
+-            (unsigned)pk, (unsigned)pwin, (unsigned)pw_n, (unsigned)pw_us, (unsigned)pw_max, (unsigned)peak, (unsigned)povr);
++            (unsigned)pk, (unsigned)pwin, (unsigned)pw_n, (unsigned)pw_us, (unsigned)pw_max, (unsigned)peak, (unsigned)povr, rtc);
+         return;
+     }
+     std::snprintf(buf, bufsize, "midi=%s,events=%llu%s,midi_tick=poll,late_max_ms=%u,late_hist=%llu/%llu/%llu/%llu/%llu/%llu,"
+diff --git a/Engine/platform/dos/dos_midi_backend.h b/Engine/platform/dos/dos_midi_backend.h
+index b1abd38db..19cdf23ed 100644
+--- a/Engine/platform/dos/dos_midi_backend.h
++++ b/Engine/platform/dos/dos_midi_backend.h
+@@ -165,7 +165,12 @@ void dos_midi_backend_note_tick(uint32_t events, uint32_t gap_ms, uint32_t loop_
+ // the status line, and count how often the ahead-of-time plan fell behind
+ // the device (a main-loop stall longer than the lookahead).
+ int dos_midi_backend_defer_kind(DosMidiBackendKind kind);
+-void dos_midi_backend_set_tick_mode(bool isr, uint32_t period_us, uint32_t lookahead_irqs);
++// DOS-PORT (patch 0341): defer_kind = the SDL queue kind in use (1 OPL3,
++// 2 MPU blind, 3 MPU paced by the RTC pump; 0 poll); 3 reports midi_tick=rtc.
++void dos_midi_backend_set_tick_mode(bool isr, uint32_t period_us, uint32_t lookahead_irqs, int defer_kind);
++// DOS-PORT (patch 0341): song ms and uclock ms at each plan, for clk_uc= (song
++// time over uclock time since the first plan of the run).
++void dos_midi_backend_note_song_uclock(uint64_t song_ms, uint64_t uclock_ms);
+ // DOS-PORT (patch 0275): the first event's song ms, main-loop tick, planner-call
+ // gap in SB IRQs and first-plan-after-start flag go to plan_behind_at=.
+ void dos_midi_backend_note_plan_behind(uint32_t song_ms, uint32_t loop_tick, uint32_t gap_irqs, bool first_plan);
+-- 
+2.47.3
+

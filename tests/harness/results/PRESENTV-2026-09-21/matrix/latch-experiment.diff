@@ -1,0 +1,24 @@
+diff --git a/Engine/ac/draw_software.cpp b/Engine/ac/draw_software.cpp
+index bca86cbff..ec44cf04d 100644
+--- a/Engine/ac/draw_software.cpp
++++ b/Engine/ac/draw_software.cpp
+@@ -246,6 +246,9 @@ void set_invalidrects_cameraoffs(int view_index, int x, int y)
+ 
+ void invalidate_all_rects()
+ {
++#ifdef __DJGPP__
++    dos_port_dirty_set_full("invalidate_all_rects");   // EXPERIMENT (patch 0193 candidate)
++#endif
+     for (auto &rects : RoomCamRects)
+     {
+         if (!IsRectInsideRect(rects.Viewport, BlackRects.Viewport))
+@@ -256,6 +259,9 @@ void invalidate_all_rects()
+ 
+ void invalidate_all_camera_rects(int view_index)
+ {
++#ifdef __DJGPP__
++    dos_port_dirty_set_full("invalidate_all_camera_rects");   // EXPERIMENT (patch 0193 candidate)
++#endif
+     if (view_index < 0)
+         return;
+     RoomCamRects[view_index].NumDirtyRegions = WHOLESCREENDIRTY;

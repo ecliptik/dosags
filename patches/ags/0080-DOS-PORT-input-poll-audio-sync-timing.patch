@@ -1,0 +1,166 @@
+From 4f9143d96e73a2eba2984a8de31d563e5592c6c1 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 16 Sep 2026 18:08:29 -0700
+Subject: [PATCH] DOS-PORT: patch 0080 -- input-poll/audio-sync timing, round 2
+ of the depth-scaling hunt
+
+Round 2 of the 40fps-push step-3 investigation (real-hardware S16TV1/
+S32TV1 data, patch 0079): neither script VM execution nor
+RenderToBackBuffer's own compositing explained the ~3x tick_rate
+scaling between 16-bit-forced and 32-bit-native depth on the same
+content. Operator's next lead, verified fresh rather than taken on
+faith: main/game_run.cpp's dos_run_tick_fixed() (patches 0047/0048),
+whose catch-up loop re-invokes UpdateGameOnce() up to MAX_CATCHUP=5
+times per rendered frame when the game runs far below the 40Hz target.
+
+Read the loop directly before instrumenting anything: 'owed' is
+derived from wall-clock-elapsed-time-implied-ticks minus the real
+get_loop_counter() count, so at BOTH 0.32 (32-bit) and 0.94 (16-bit)
+tick_rate -- both far below the 40Hz target -- 'owed' is essentially
+always >= MAX_CATCHUP by the time this runs again. Confirmed directly
+from data already on hand rather than re-running anything: both
+S16TV1 and S32TV1 show frames_skipped=833 of 1000 total ticks, i.e.
+833/167 = 4.99 =~ MAX_CATCHUP in BOTH arms. The catch-up ITERATION
+COUNT does not differ between depths -- this specific compounding
+mechanism (more iterations at one depth than the other) is ruled out
+by data already recorded, no new rig time needed for that half of the
+question.
+
+What's left open: whether the PER-ITERATION cost of whatever ELSE runs
+inside each UpdateGameOnce() call (beyond script_vm/render_backbuffer,
+already covered by patch 0079) differs by depth. Narrowed to two
+concrete, non-recursive candidates by reading UpdateGameOnce() itself:
+
+- input_poll: ac/sys_events.cpp's sys_evt_process_pending() -- the
+  very first call in UpdateGameOnce(), a plain SDL_PollEvent() loop,
+  confirmed non-recursive (no path back into script execution or
+  rendering).
+- audio_sync: media/audio/audio.cpp's update_audio_system_on_game_loop()
+  -- confirmed non-recursive (audio_core/mixer bookkeeping only).
+  Whether this is even live for a given run is confirmed from the
+  engine's own 'Audio is disabled' log line at record time, not
+  assumed from the ACSETUP.CFG file alone, per the operator's explicit
+  ask to verify rather than continue assuming.
+
+Extends patch 0079's own struct/macros (DosPortTickPhaseStats,
+dos_port_tick_record, DosPortTickScope) rather than inventing a
+parallel mechanism -- two new fields on DosPortTickTiming, two new
+RAII-bracketed call sites, two new DOS-PORT tickstats_* lines in
+quit.cpp's report, same full-run running-aggregate shape (no per-call
+logging).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hnodGZ6cg8CWuFXEDTsUq
+---
+ Engine/main/dos_port_tick_timing.h |  9 +++++++++
+ Engine/main/game_run.cpp           | 28 ++++++++++++++++++++++++++--
+ Engine/main/quit.cpp               | 13 +++++++++++++
+ 3 files changed, 48 insertions(+), 2 deletions(-)
+
+diff --git a/Engine/main/dos_port_tick_timing.h b/Engine/main/dos_port_tick_timing.h
+index ffc34c9fe..9dd09de4a 100644
+--- a/Engine/main/dos_port_tick_timing.h
++++ b/Engine/main/dos_port_tick_timing.h
+@@ -20,6 +20,13 @@
+ // candidates were script VM execution and RenderToBackBuffer()'s
+ // CPU-side sprite compositing.
+ //
++// DOS-PORT patch 0080 extends this same struct/macro with two more
++// phases (input_poll, audio_sync) after round 2 of that investigation
++// (S16TV1/S32TV1) found that NEITHER script_vm nor render_backbuffer
++// explains the ~3x depth scaling on their own -- see patch 0080's own
++// commit message for the dos_run_tick_fixed()/MAX_CATCHUP analysis that
++// narrowed the remaining candidates to input polling and audio sync.
++//
+ // Bracket points, found by reading source (not assumed):
+ //  - script_vm: script/script.cpp's RunScriptFunction() -- the single
+ //    funnel every per-tick script callback actually runs through
+@@ -77,6 +84,8 @@ struct DosPortTickTiming
+ {
+     DosPortTickPhaseStats script_vm;         // script/script.cpp: RunScriptFunction()
+     DosPortTickPhaseStats render_backbuffer; // gfx/ali3dsw.cpp: RenderToBackBuffer()
++    DosPortTickPhaseStats input_poll;        // ac/sys_events.cpp: sys_evt_process_pending()
++    DosPortTickPhaseStats audio_sync;        // media/audio/audio.cpp: update_audio_system_on_game_loop()
+ };
+ 
+ // Defined in main.cpp, alongside dos_port_startup_timing.
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 222174948..77ddb7c8c 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -23,6 +23,8 @@
+ #include <chrono>
+ #ifdef __DJGPP__
+ #include <dpmi.h> // __dpmi_get_free_memory_information -- DOS-PORT memory KPI
++#include <time.h> // uclock_t/uclock()/UCLOCKS_PER_SEC -- DOS-PORT patch 0080
++#include "main/dos_port_tick_timing.h" // DOS-PORT patch 0080
+ #endif
+ #include <SDL3/SDL.h>
+ #include "ac/button.h"
+@@ -1412,7 +1414,18 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+ {
+     set_our_eip(1000);
+ 
+-    sys_evt_process_pending();
++    // DOS-PORT patch 0080: input polling, one candidate from the "what
++    // ELSE is in UpdateGameOnce()" list patch 0079's own real-hardware
++    // results left open (script_vm/render_backbuffer alone didn't
++    // explain the depth scaling). A clean, single, non-recursive call --
++    // SDL_PollEvent()'s own loop, no path back into script execution or
++    // rendering.
++    {
++#ifdef __DJGPP__
++        DosPortTickScope _dos_port_input_scope(dos_port_tick_timing.input_poll);
++#endif
++        sys_evt_process_pending();
++    }
+ 
+     if (want_exit)
+     {
+@@ -1472,7 +1485,18 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+     set_our_eip(1008);
+ 
+     // Sync audio with the game logic
+-    update_audio_system_on_game_loop();
++    // DOS-PORT patch 0080: second candidate from the same list -- a
++    // clean, single, non-recursive call (audio_core/mixer bookkeeping,
++    // no path back into script execution or rendering). Confirmed
++    // whether this arm's audio is actually live or a no-op via the
++    // engine's own "Audio is disabled" log line, not assumed from the
++    // ACSETUP.CFG file alone -- see this patch's own commit message.
++    {
++#ifdef __DJGPP__
++        DosPortTickScope _dos_port_audio_scope(dos_port_tick_timing.audio_sync);
++#endif
++        update_audio_system_on_game_loop();
++    }
+ 
+     set_our_eip(1009);
+ 
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index c27a8c2b4..f7b05d080 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -456,6 +456,19 @@ void quit(const char *quitmsg)
+                     "DOS-PORT tickstats_render_backbuffer calls=%ld total_ms=%ld min_ms=%ld max_ms=%ld mean_ms=%.2f\n",
+                     rb.calls, rb.total_ms, rb.min_ms, rb.max_ms,
+                     rb.calls > 0 ? (double)rb.total_ms / (double)rb.calls : 0.0);
++                // DOS-PORT patch 0080: same shape, two more candidates
++                // (input polling, audio sync) from the round-2 "what else
++                // is in UpdateGameOnce()" investigation.
++                const DosPortTickPhaseStats &ip = dos_port_tick_timing.input_poll;
++                const DosPortTickPhaseStats &au = dos_port_tick_timing.audio_sync;
++                fprintf(run_manifest_log,
++                    "DOS-PORT tickstats_input_poll calls=%ld total_ms=%ld min_ms=%ld max_ms=%ld mean_ms=%.2f\n",
++                    ip.calls, ip.total_ms, ip.min_ms, ip.max_ms,
++                    ip.calls > 0 ? (double)ip.total_ms / (double)ip.calls : 0.0);
++                fprintf(run_manifest_log,
++                    "DOS-PORT tickstats_audio_sync calls=%ld total_ms=%ld min_ms=%ld max_ms=%ld mean_ms=%.2f\n",
++                    au.calls, au.total_ms, au.min_ms, au.max_ms,
++                    au.calls > 0 ? (double)au.total_ms / (double)au.calls : 0.0);
+             }
+ 
+             // TEMPORARY DIAGNOSTIC (S7): dump the AUDIOPRB window data
+-- 
+2.47.3
+

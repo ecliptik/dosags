@@ -1,0 +1,135 @@
+From 673aadd2ba75def2b088406e94838b2d402beaca Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 15:44:20 -0700
+Subject: [PATCH] DOS-PORT: patch 0252 -- PCM chunk accounting: count every
+ chunk mixed, and the ones the silence gate would skip
+
+WHY: Gate S8/S16/S32 judge audio by counters at 512x384, where the capture
+dongle is blind, and one of the bars is "every PCM chunk played": pcm_irqs
+= the chunks the game produced. That has only ever been checked with a
+throwaway diff (UR8, 2026-09-22), which classified every mixed chunk and
+led to SDL 0192: the SB silence gate now stays off while content is
+active, so every chunk mixed during a sound -- its own digital silence and,
+on 8-bit cards, its quiet passages included -- must be played. Without the
+count in every build, "pcm accounting exact" can be neither gated nor put
+in the nightly ratchet, and a new loss (or silence inserted mid-sound)
+looks like any other change in pcm_irqs.
+
+WHAT: mix_one_chunk() takes the chunk's peak magnitude inside the clamp
+loop it already runs, and counts mixed chunks (a voice was active),
+all-zero ones and peak < 128 ones (what the gate would drop on the 16- and
+8-bit paths if content-active were off). Reset with the other mixer
+counters at init; appended to the pcm part of audio_vital_status as
+mixed=,mixed_zero=,mixed_quiet=,inflight=. The two status buffers grow
+from 512 to 640 bytes: with ags 0213s underflow_pads=/partial_pulls= the
+string reached ~470 bytes, and a truncation would cut the MIDI tail
+(late_writes= included) without a trace. inflight = chunks mixed but
+not yet played when the status is taken (SDL stream queue + driver ring,
+rounded to chunks), so a run whose sound plays through quit balances too.
+Accounting is exact when pcm_irqs + inflight == mixed (+-1: a partial
+chunk, or one the ISR plays between the reads): DOSBox-X --sb-live 5 Days,
+2026-09-23, 232 == 232 with 108 all-zero chunks among them. Cost: an abs and a compare per output sample,
+512 per ~46 ms chunk.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/platform/dos/dos_audio_mixer.cpp | 39 ++++++++++++++++++++++---
+ 1 file changed, 35 insertions(+), 4 deletions(-)
+
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index bbbce87be..d6dd710d7 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -118,6 +118,15 @@ Voice g_voices[DOS_AUDIO_MIXER_MAX_VOICES];
+ SDL_AudioStream *g_stream = nullptr; // SB path only
+ bool g_gus_open = false;             // GUS path only -- "the mixer is open" analog to g_stream != nullptr
+ int g_underruns = 0;
++// DOS-PORT patch 0252: PCM chunk accounting. Every chunk mixed while a voice
++// was active. SDL 0192 keeps the SB silence gate off while content is active,
++// so each of them must reach the device: pcm_irqs == mixed is exact accounting
++// (fewer = audio lost; more = silence played that the mixer never made, e.g.
++// SDL filling a stream the stalled main loop starved). Of those chunks, the
++// all-zero ones and the peak < 128 ones (all 0x80 after SDL's S16 -> U8
++// conversion) are counted too: what the gate WOULD drop, on 16- and 8-bit
++// paths, if content-active were ever off during a sound.
++uint32_t g_mixed_chunks = 0, g_mixed_zero = 0, g_mixed_quiet = 0;
+ // DOS-PORT (patch 0198): chunks in which an active voice's ring was empty
+ // because its clip had ended (source_done) and no voice was starving. The
+ // pre-0198 counter lumped these into g_underruns (UR1: every count on the
+@@ -161,7 +170,7 @@ uint32_t g_room_since = 0;
+ // shutdown_sound()) still reports the real final state instead of the
+ // "never opened" NA sentinel. Left at "NA" if the device was never
+ // opened at all, so that genuine case is still distinguishable.
+-char g_last_status[512] = "NA";
++char g_last_status[640] = "NA"; // patch 0252: 512 -> 640, room for mixed=,...,inflight= beside 0213's fields
+ 
+ void format_status_string(char *buf, size_t bufsize)
+ {
+@@ -193,9 +202,22 @@ void format_status_string(char *buf, size_t bufsize)
+             (unsigned)(dos_port_audio_idle_pause_count - g_idle_pause_base),
+             (unsigned)(dos_port_audio_underflow_pads - g_underflow_pad_base),
+             (unsigned)(dos_port_audio_partial_pulls - g_partial_pull_base));
+-    std::snprintf(buf, bufsize, "pcm=%s@%d%c%d,voices=%d,underruns=%d,drains=%d,%s,%s;%s",
++    // patch 0252: chunks mixed but not yet played when this status is taken --
++    // still in the SDL stream or in the driver ring -- so a run whose sound
++    // plays through quit still balances: pcm_irqs + inflight == mixed (+-1
++    // for a partial chunk, and one the ISR may play between the two reads).
++    int inflight = -1;
++    if (g_stream && !g_gus_backend)
++    {
++        const int q = SDL_GetAudioStreamQueued(g_stream);
++        const int ring = SDL_DOSAudioRingFillFrames();
++        if (q >= 0 && ring >= 0)
++            inflight = (q / static_cast<int>(sizeof(int16_t)) + ring + MIX_CHUNK_SAMPLES / 2) / MIX_CHUNK_SAMPLES;
++    }
++    std::snprintf(buf, bufsize, "pcm=%s@%d%c%d,voices=%d,underruns=%d,drains=%d,%s,%s,mixed=%u,mixed_zero=%u,mixed_quiet=%u,inflight=%d;%s",
+         device, DOS_AUDIO_MIXER_RATE, chan_letter, bits, DOS_AUDIO_MIXER_MAX_VOICES, g_underruns,
+-        g_drains, irq_fragment, ring_fragment, midi_fragment);
++        g_drains, irq_fragment, ring_fragment, (unsigned)g_mixed_chunks, (unsigned)g_mixed_zero,
++        (unsigned)g_mixed_quiet, inflight, midi_fragment);
+ }
+ 
+ } // namespace
+@@ -217,6 +239,7 @@ bool dos_audio_mixer_init()
+         v = Voice();
+     g_underruns = 0;
+     g_drains = 0;
++    g_mixed_chunks = g_mixed_zero = g_mixed_quiet = 0;   // patch 0252
+     g_owed_silent_irqs = 0;
+     g_owed_at_snap = false;
+     g_silent_snap = dos_port_audio_silent_irq_count;
+@@ -459,13 +482,21 @@ static void mix_one_chunk(bool &out_any_active)
+         g_drains++;
+ 
+     int16_t outbuf[MIX_CHUNK_SAMPLES];
++    int32_t peak = 0;   // patch 0252
+     for (int s = 0; s < MIX_CHUNK_SAMPLES; s++)
+     {
+         int32_t sample = accum[s];
+         if (sample > 32767) sample = 32767;
+         if (sample < -32768) sample = -32768;
+         outbuf[s] = static_cast<int16_t>(sample);
++        const int32_t mag = sample < 0 ? -sample : sample;
++        if (mag > peak) peak = mag;
+     }
++    g_mixed_chunks++;
++    if (peak == 0)
++        g_mixed_zero++;
++    else if (peak < 128)
++        g_mixed_quiet++;
+     SDL_PutAudioStreamData(g_stream, outbuf, MIX_CHUNK_BYTES);
+ }
+ 
+@@ -610,7 +641,7 @@ const char *dos_audio_mixer_status_string()
+ {
+     if (!g_stream && !g_gus_open)
+         return g_last_status; // "NA" if never opened, else the shutdown-time snapshot
+-    static char buf[512];
++    static char buf[640];   // patch 0252: 512 -> 640
+     format_status_string(buf, sizeof(buf));
+     return buf;
+ }
+-- 
+2.47.3
+

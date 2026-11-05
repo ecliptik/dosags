@@ -1,0 +1,56 @@
+bwprobe UCLOCKS_PER_SEC=1193180
+CONTROL sysram->sysram movsl    bytes= 64000 reps= 222 ms_per_copy=   3.606 MB_per_s=  16.93 fps_ceiling= 277.3
+CONTROL sysram->sysram memcpy   bytes= 64000 reps= 222 ms_per_copy=   3.611 MB_per_s=  16.90 fps_ceiling= 276.9
+CONTROL sysram->sysram movsl    bytes= 76800 reps= 186 ms_per_copy=   4.322 MB_per_s=  16.94 fps_ceiling= 231.4
+CONTROL sysram->sysram memcpy   bytes= 76800 reps= 185 ms_per_copy=   4.327 MB_per_s=  16.93 fps_ceiling= 231.1
+CONTROL sysram->sysram movsl    bytes=307200 reps=  47 ms_per_copy=  17.225 MB_per_s=  17.01 fps_ceiling=  58.1
+CONTROL sysram->sysram memcpy   bytes=307200 reps=  47 ms_per_copy=  17.226 MB_per_s=  17.01 fps_ceiling=  58.1
+CONTROL sysram->sysram movsl    bytes=460800 reps=  31 ms_per_copy=  25.828 MB_per_s=  17.01 fps_ceiling=  38.7
+CONTROL sysram->sysram memcpy   bytes=460800 reps=  31 ms_per_copy=  25.832 MB_per_s=  17.01 fps_ceiling=  38.7
+CONTROL sysram->sysram movsl    bytes=614400 reps=  24 ms_per_copy=  34.428 MB_per_s=  17.02 fps_ceiling=  29.0
+CONTROL sysram->sysram memcpy   bytes=614400 reps=  24 ms_per_copy=  34.432 MB_per_s=  17.02 fps_ceiling=  29.0
+WRITEONLY sysram       stosl    bytes= 64000 reps= 400 ms_per_copy=   1.495 MB_per_s=  40.82 fps_ceiling= 668.8
+WRITEONLY sysram       memset   bytes= 64000 reps= 400 ms_per_copy=   1.495 MB_per_s=  40.81 fps_ceiling= 668.7
+WRITEONLY sysram       stosl    bytes= 76800 reps= 400 ms_per_copy=   1.793 MB_per_s=  40.84 fps_ceiling= 557.6
+WRITEONLY sysram       memset   bytes= 76800 reps= 400 ms_per_copy=   1.793 MB_per_s=  40.84 fps_ceiling= 557.6
+WRITEONLY sysram       stosl    bytes=307200 reps= 112 ms_per_copy=   7.158 MB_per_s=  40.93 fps_ceiling= 139.7
+WRITEONLY sysram       memset   bytes=307200 reps= 112 ms_per_copy=   7.158 MB_per_s=  40.93 fps_ceiling= 139.7
+WRITEONLY sysram       stosl    bytes=460800 reps=  75 ms_per_copy=  10.735 MB_per_s=  40.94 fps_ceiling=  93.2
+WRITEONLY sysram       memset   bytes=460800 reps=  75 ms_per_copy=  10.734 MB_per_s=  40.94 fps_ceiling=  93.2
+WRITEONLY sysram       stosl    bytes=614400 reps=  56 ms_per_copy=  14.310 MB_per_s=  40.95 fps_ceiling=  69.9
+WRITEONLY sysram       memset   bytes=614400 reps=  56 ms_per_copy=  14.310 MB_per_s=  40.94 fps_ceiling=  69.9
+verify movsl sysram copy: ok
+mode 0x101 640x480x8: 640x480 bpp=8 physbase=0x78000000 win_gran=64KB
+0x101 banked A000+4F05 dosmemput bytes= 64000 reps= 330 ms_per_copy=   2.429 MB_per_s=  25.13 fps_ceiling= 411.8
+0x101 banked A000+4F05 dosmemput bytes= 76800 reps= 261 ms_per_copy=   3.066 MB_per_s=  23.89 fps_ceiling= 326.2
+0x101 banked A000+4F05 dosmemput bytes=307200 reps=  69 ms_per_copy=  11.635 MB_per_s=  25.18 fps_ceiling=  85.9
+0x101 LFB nearptr      movsl    bytes= 64000 reps= 357 ms_per_copy=   2.241 MB_per_s=  27.23 fps_ceiling= 446.2
+0x101 LFB nearptr      memcpy   bytes= 64000 reps= 357 ms_per_copy=   2.247 MB_per_s=  27.16 fps_ceiling= 445.0
+0x101 LFB nearptr      movsl    bytes= 76800 reps= 299 ms_per_copy=   2.684 MB_per_s=  27.29 fps_ceiling= 372.6
+0x101 LFB nearptr      memcpy   bytes= 76800 reps= 298 ms_per_copy=   2.687 MB_per_s=  27.26 fps_ceiling= 372.2
+0x101 LFB nearptr      movsl    bytes=307200 reps=  76 ms_per_copy=  10.657 MB_per_s=  27.49 fps_ceiling=  93.8
+0x101 LFB nearptr      memcpy   bytes=307200 reps=  76 ms_per_copy=  10.662 MB_per_s=  27.48 fps_ceiling=  93.8
+verify 0x101 LFB readback: ok
+mode 0x111 640x480x16: 640x480 bpp=16 physbase=0x78000000 win_gran=64KB
+0x111 banked A000+4F05 dosmemput bytes=460800 reps=  46 ms_per_copy=  17.633 MB_per_s=  24.92 fps_ceiling=  56.7
+0x111 banked A000+4F05 dosmemput bytes=614400 reps=  35 ms_per_copy=  23.467 MB_per_s=  24.97 fps_ceiling=  42.6
+0x111 LFB nearptr      movsl    bytes=460800 reps=  50 ms_per_copy=  16.102 MB_per_s=  27.29 fps_ceiling=  62.1
+0x111 LFB nearptr      memcpy   bytes=460800 reps=  50 ms_per_copy=  16.103 MB_per_s=  27.29 fps_ceiling=  62.1
+0x111 LFB nearptr      movsl    bytes=614400 reps=  38 ms_per_copy=  21.459 MB_per_s=  27.31 fps_ceiling=  46.6
+0x111 LFB nearptr      memcpy   bytes=614400 reps=  38 ms_per_copy=  21.459 MB_per_s=  27.31 fps_ceiling=  46.6
+verify 0x111 LFB readback: ok
+mode 0x1F3 512x384x8 (UniVBE): 512x384 bpp=8 physbase=0x78000000 win_gran=64KB
+0x1F3 banked A000+4F05 dosmemput bytes= 64000 reps= 320 ms_per_copy=   2.500 MB_per_s=  24.41 fps_ceiling= 399.9
+0x1F3 banked A000+4F05 dosmemput bytes= 76800 reps= 261 ms_per_copy=   3.076 MB_per_s=  23.81 fps_ceiling= 325.1
+0x1F3 banked A000+4F05 dosmemput bytes=196608 reps= 108 ms_per_copy=   7.440 MB_per_s=  25.20 fps_ceiling= 134.4
+0x1F3 LFB nearptr      movsl    bytes= 64000 reps= 370 ms_per_copy=   2.163 MB_per_s=  28.22 fps_ceiling= 462.4
+0x1F3 LFB nearptr      memcpy   bytes= 64000 reps= 356 ms_per_copy=   2.252 MB_per_s=  27.10 fps_ceiling= 444.0
+0x1F3 LFB nearptr      movsl    bytes= 76800 reps= 298 ms_per_copy=   2.690 MB_per_s=  27.23 fps_ceiling= 371.7
+0x1F3 LFB nearptr      memcpy   bytes= 76800 reps= 298 ms_per_copy=   2.693 MB_per_s=  27.19 fps_ceiling= 371.3
+0x1F3 LFB nearptr      movsl    bytes=196608 reps= 117 ms_per_copy=   6.844 MB_per_s=  27.39 fps_ceiling= 146.1
+0x1F3 LFB nearptr      memcpy   bytes=196608 reps= 117 ms_per_copy=   6.847 MB_per_s=  27.38 fps_ceiling= 146.0
+verify 0x1F3 LFB readback: ok
+mode13h A000           dosmemput bytes= 64000 reps= 123 ms_per_copy=   6.548 MB_per_s=   9.32 fps_ceiling= 152.7
+mode13h A000 nearptr   movsl    bytes= 64000 reps= 123 ms_per_copy=   6.540 MB_per_s=   9.33 fps_ceiling= 152.9
+mode13h A000 nearptr   memcpy   bytes= 64000 reps= 123 ms_per_copy=   6.544 MB_per_s=   9.33 fps_ceiling= 152.8
+done

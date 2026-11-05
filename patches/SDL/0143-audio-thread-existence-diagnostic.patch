@@ -1,0 +1,149 @@
+From 6329f4c786e144a98b4fbe985661d7d804e4fe24 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 14 Sep 2026 14:36:56 -0700
+Subject: [PATCH] dos: patch 0143 -- audio-thread-existence diagnostic (S7)
+
+WHY: dosags's S7 tick-starvation investigation
+(tests/games/trilbysnotes/results/S7-dma-cyclesteal-realhw-2026-09-14.md)
+just refuted active-DMA-transfer as the cause of the ~9.7x-11.8x uniform
+per-UpdateGameOnce() tax -- it survives, undiminished, with the SB16
+DMA channel confirmed fully halted (SDL_HINT_DOS_AUDIO_FORCE_DSP_PAUSE=1,
+zero IRQ fires for the whole run). What remains standing after six
+ruled-out hypotheses: the tax tracks the audio device merely being
+OPEN, i.e. the autonomous PlaybackAudioThread (SDL3's own stock
+SDL_audio.c thread, created unconditionally at OpenDevice) existing in
+the DOS scheduler's thread table, independent of its actual activity.
+
+WHAT: SDL_HINT_DOS_AUDIO_NO_BG_THREAD=1 sets impl->
+ProvidesOwnCallbackThread (a stock SDL3 SDL_AudioDriverImpl field,
+SDL_sysaudio.h) at DOSSOUNDBLASTER_Init() time, so SDL_audio.c's
+OpenAudioDevice never calls SDL_CreateThread() for this device at all --
+device->thread stays NULL, which the same generic core's shutdown path
+already handles as a no-op (`if (device->thread) { SDL_WaitThread(...); }`),
+so DOSSOUNDBLASTER_CloseDevice() needs no matching change. Servicing
+without the thread continues via the already-landed SDL_DOSAudioPump()
+(SDL/0067), which calls SDL_PlaybackAudioThreadIterate() directly and
+never touches WaitDevice() itself -- so every DOS_Yield()/hard-park/
+quiescence-gate mechanism inside WaitDevice() simply never runs in this
+mode, not a new path needing verification. Strict-1 env-var match,
+default OFF preserves current behavior bit-identical. Diagnostic only
+(expect underruns/silence between explicit pump calls, same framing as
+SDL_HINT_DOS_AUDIO_FORCE_DSP_PAUSE) -- not for real gameplay.
+
+Temporary -- to be reverted once this investigation concludes.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ src/audio/dos/SDL_dosaudio_sb.c | 82 +++++++++++++++++++++++++++++++++
+ 1 file changed, 82 insertions(+)
+
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index f66645b5f..0f09c5ff8 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -781,6 +781,47 @@ static Uint64 s_dsp_pause_start_ns = 0;      /* set when pause issued; read at r
+    IDLEPROB ABORT on iter J. Header decl added in SDL_dos_audio_synth.h. */
+ volatile bool g_dos_audio_force_dsp_pause = false;
+ 
++/* DOS-PORT patch 0143: audio-thread-existence diagnostic (S7).
++   S7-dma-cyclesteal-realhw-2026-09-14.md refuted active-DMA-transfer as
++   the cause of the ~9.7x-11.8x uniform per-UpdateGameOnce() tax (the tax
++   survives with the SB16 DMA channel confirmed fully halted). What
++   remains standing: the tax tracks the audio device merely being OPEN,
++   i.e. the autonomous cooperative PlaybackAudioThread (SDL3's own stock
++   SDL_audio.c thread, created unconditionally at OpenDevice today)
++   existing in the DOS scheduler's thread table -- independent of what
++   that thread actually does. This flag tests that directly, isolating
++   "thread exists" from every activity already ruled out (DMA transfer,
++   audio_core_entry_poll() cost, OPL3 register writes, yield-switch
++   volume).
++
++   Resolved once at DOSSOUNDBLASTER_Init(), not OpenDevice: SDL3's
++   generic core (SDL_audio.c's OpenAudioDevice, well before
++   DOSSOUNDBLASTER_OpenDevice ever runs) reads impl->
++   ProvidesOwnCallbackThread to decide whether to SDL_CreateThread() the
++   background playback thread at all. Setting it true here makes the
++   generic core skip that call entirely -- device->thread stays NULL --
++   which the SAME generic core's shutdown path (SDL_audio.c's
++   `if (device->thread) { SDL_WaitThread(...); }`) already handles as a
++   no-op, so DOSSOUNDBLASTER_CloseDevice() needs no matching change.
++
++   Servicing without the thread: SDL_DOSAudioPump() (SDL/0067, already
++   landed, already the only caller-invoked path -- see its own doc
++   comment) calls SDL_PlaybackAudioThreadIterate() directly and never
++   calls WaitDevice() itself (only the background thread's own
++   while(Iterate()){WaitDevice();} loop does) -- so in no-thread mode,
++   WaitDevice() (and every DOS_Yield()/hard-park/quiescence-gate
++   mechanism living inside it) simply never runs, not a new path to
++   verify. All real servicing continues via audio_core_entry_poll()'s
++   already-existing per-tick SDL_DOSAudioPump() call (and the load-stage
++   seams, SDL_HINT_DOS_AUDIO_MIDGAP_PUMP) -- unchanged.
++
++   Diagnostic only, like SDL_HINT_DOS_AUDIO_FORCE_DSP_PAUSE: expect
++   underruns/silence between explicit pump calls (nothing autonomously
++   tops off the ring anymore). Strict-1 env-var match. Default OFF
++   preserves current behavior bit-identical -- this only affects Init()
++   when the hint is exactly "1". */
++static bool g_dos_audio_no_bg_thread = false;
++
+ // ISR-visible ring buffer state (all memory-locked).
+ static volatile int isr_ring_read = 0;
+ static volatile int isr_ring_write = 0;
+@@ -3180,6 +3221,28 @@ static bool DOSSOUNDBLASTER_OpenDevice(SDL_AudioDevice *device)
+ 
+     SDL_Log("SoundBlaster opened!");
+ 
++    /* DOS-PORT patch 0143: banner for SDL_HINT_DOS_AUDIO_NO_BG_THREAD=1
++       (the actual behavior -- impl->ProvidesOwnCallbackThread -- is
++       resolved earlier, at Init() time, since SDL_audio.c's OpenAudioDevice
++       reads that impl field before OpenDevice ever runs; see
++       DOSSOUNDBLASTER_Init()'s own comment for the full rationale). This
++       banner just confirms, from a point already proven safe for
++       dos_port_dbg_log (OpenDevice, same as SDL/0040's own force-pause
++       banner), that the no-thread mode is actually active for this
++       device. S7's audio-thread-existence experiment (tests/games/
++       trilbysnotes/results/S7-dma-cyclesteal-realhw-2026-09-14.md's own
++       "Not yet done" item). */
++    if (g_dos_audio_no_bg_thread) {
++        dos_port_dbg_log("audio: SDL_HINT_DOS_AUDIO_NO_BG_THREAD=1 -- "
++                         "ProvidesOwnCallbackThread set at Init(); no "
++                         "PlaybackAudioThread will be created for this "
++                         "device. All servicing is via explicit "
++                         "SDL_DOSAudioPump() calls only (audio_core_entry_"
++                         "poll() and the load-stage seams) -- expect "
++                         "underruns/silence outside those call sites. "
++                         "Diagnostic only, not for real gameplay.");
++    }
++
+     /* DOSKUTSU patch (Phase 10 patch 0040): force-DSP-pause for fps-
+        upper-bound measurement. When SDL_HINT_DOS_AUDIO_FORCE_DSP_PAUSE=1,
+        request DSP pause immediately + suppress PlayDevice auto-resume.
+@@ -4600,6 +4663,25 @@ static bool DOSSOUNDBLASTER_Init(SDL_AudioDriverImpl *impl)
+ 
+     impl->OnlyHasDefaultPlaybackDevice = true;
+ 
++    /* DOS-PORT patch 0143: audio-thread-existence diagnostic (S7). See
++       g_dos_audio_no_bg_thread's own declaration comment for the full
++       rationale. Must be resolved HERE, not OpenDevice: SDL_audio.c's
++       OpenAudioDevice reads impl->ProvidesOwnCallbackThread before
++       DOSSOUNDBLASTER_OpenDevice ever runs, to decide whether to
++       SDL_CreateThread() the background playback thread at all -- by
++       the time OpenDevice executes, that decision has already been
++       made. Strict-1 match per CLAUDE.md "Strict env-var matching
++       convention". Default OFF (impl->ProvidesOwnCallbackThread stays
++       SDL3's own default false) preserves current behavior
++       bit-identical. */
++    {
++        const char *e = SDL_getenv("SDL_HINT_DOS_AUDIO_NO_BG_THREAD");
++        if (e && e[0] == '1' && e[1] == 0) {
++            g_dos_audio_no_bg_thread = true;
++            impl->ProvidesOwnCallbackThread = true;
++        }
++    }
++
+     return true;
+ }
+ 
+-- 
+2.47.3
+

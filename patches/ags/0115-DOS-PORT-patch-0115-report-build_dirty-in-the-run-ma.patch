@@ -1,0 +1,64 @@
+From 7f921fb4119d622d70caef3871a5229e298267b0 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 18 Sep 2026 14:53:41 -0700
+Subject: [PATCH] DOS-PORT: patch 0115 -- report build_dirty in the run
+ manifest
+
+binary_sha12 alone cannot say whether a cell ran a binary built from
+uncommitted source. Since the Makefile now folds the vendor trees' dirty
+state into that stamp, two such builds do at least get different hashes --
+but a reader seeing two different hex strings learns only that they
+differ, not that either was built from a working tree. This says so
+outright.
+
+The need is not hypothetical. Three benchmark binaries in one day were
+stamped with a tree they were not built from: an A/B arm built by
+reverse-applying a patch to the working tree, a B arm built before its own
+commit, and a confirmation cell carrying the previous patch's identity and
+colliding with a live ABBA arm. Every one failed silently, and in the
+direction that PASSES the "the two arms must differ" invalidity check.
+
+Emitted as its own line rather than as a "-dirty" suffix on binary_sha12,
+because that field is fixed-width in the manifest struct. Absent the
+compile flag it reports -1 (unknown) rather than 0, so a build stage that
+omits the flag cannot be misread as a clean build.
+---
+ Engine/main/quit.cpp | 22 ++++++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 79ab5d20b..53301f9e5 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -575,6 +575,28 @@ void quit(const char *quitmsg)
+                 }
+             }
+ 
++#ifdef __DJGPP__
++            // patch 0115: was this a WORKING-TREE build?
++            //
++            // binary_sha12 alone cannot say. It is derived from the
++            // committed vendor trees plus (since this patch) their dirty
++            // state, so two builds differing only in uncommitted edits now
++            // get different stamps -- but a reader seeing two different
++            // hex strings learns that they differ, not that either one was
++            // built from uncommitted source. This line says so outright.
++            //
++            // Deliberately its own line rather than a "-dirty" suffix on
++            // binary_sha12: that field is fixed-width in the manifest
++            // struct.
++            fprintf(run_manifest_log, "DOS-PORT build_dirty=%d\n",
++#ifdef PORT_BUILD_DIRTY
++                    (int)(PORT_BUILD_DIRTY)
++#else
++                    -1  // flag absent: unknown, not "clean"
++#endif
++                    );
++#endif
++
+ #ifdef __DJGPP__
+             // patch 0114: did this run EVER need color_map?
+             {
+-- 
+2.47.3
+

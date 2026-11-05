@@ -1,0 +1,219 @@
+# Maniac Mansion Deluxe -- porting manifest, per PLAN.md's "Game porting
+# framework" section (`record` stage's own intent: id, verified source,
+# license, pinned hash, expected DataVersion/res/depth, audio policy,
+# driving recipe -- game data itself never enters git, only this file
+# plus results/ records). Produced 2026-09-15, F2 (Game porting framework
+# -- completion plan), through tools/port-game/'s inspect -> convert ->
+# repack -> layout -> validate -> record pipeline. See
+# tests/games/trilbysnotes/manifest.yaml for the first golden reference
+# this follows the shape of, and tests/games/mmd/PIN for the source
+# (a named third-party mirror exception -- the developer's own site is
+# dead, see PIN for the full reasoning).
+
+id: mmd
+title: "Maniac Mansion Deluxe"
+source: see PIN (this directory) -- sha256 + download URL, never the game
+        archive itself
+
+# From tools/port-game/port_game.py inspect (see tests/games/mmd/
+# inspect-report.json, committed alongside this file):
+data_version: 25
+compiled_with_editor: "2.60"
+loadable: true              # DataVersion 25 >= kGameVersion_250 (18)
+legacy_audio_system: true   # DataVersion 25 < kGameVersion_320 (41) --
+                            # ScanOldStyleAudio's load-time compatibility
+                            # shim, same shape as Trilby's Notes/5 Days a
+                            # Stranger
+
+# Resolution/color depth: AGS games database listing (play/game/401)
+# states "320x200, 16-Bit Colour" -- independently corroborated by a
+# real user's own bug-report comment on that same page quoting the
+# game's OWN error dialog verbatim ("problem initializing graphics mode
+# 320 x 200 (16-Bit)"), a genuine second source (unlike 5 Days a
+# Stranger's manifest, which is single-sourced).
+resolution: "320x200"
+color_depth: 16
+resolution_source: "AGS games database listing (play/game/401) states
+  '320x200, 16-Bit Colour'; independently corroborated by a real user
+  comment on that page quoting the game's own graphics-mode error text
+  verbatim ('320 x 200 (16-Bit)')."
+
+audio:
+  clip_count: 102            # main CLIB: 17 music*.mid + 66 sound*.ogg +
+                              # 19 sound*.wav (inspect-report.json's own
+                              # audio_clips list) -- PLUS 10 speech WAVs
+                              # (bern1..10.wav) in the sibling speech.vox,
+                              # see sibling_vox below
+  formats: [midi, ogg, wav]
+  needs_host_transcode: true   # convert.py: 66 of 172 main-CLIB assets
+                                # are OGG music, host-transcoded to WAV by
+                                # ffmpeg (decision 2) -- the first golden
+                                # reference in THIS framework to actually
+                                # exercise that transcode path (Trilby's
+                                # Notes/5 Days a Stranger were both
+                                # all-passthrough)
+  has_audio_vox: false
+  has_speech_vox: true        # speech.vox sibling CLIB, 10 assets, all
+                               # RIFF WAV passthrough (bern1..10.wav --
+                               # "bern" = Bernard, one of the seven
+                               # playable kids)
+fonts:
+  - {count: 15, kind: TrueType (alfont/FreeType path), files: "agsfnt0.ttf..agsfnt14.ttf"}
+  - {count: 3, kind: native bitmap (WFNFont), files: "agsfnt0.wfn, agsfnt1.wfn, agsfnt2.wfn"}
+  # first golden reference in this framework's tests/games/ (not
+  # tests/harness/) tree to ship TTF fonts -- the alfont/FreeType text
+  # path itself was already exercised elsewhere (Shards of God's four
+  # TTF fonts, PLAN.md), so this is not a new engine-side gap, just a
+  # first hit for tools/port-game's own font classifier on this shape.
+
+clib:
+  original_lib_version: 11   # MFLUtil::kMFLVersion_MultiV11; ReadV10's
+                              # code path handles versions 10-19
+  repacked_lib_version: 30   # tools/port-game/port_game.py repack always
+                              # emits V30 regardless of source version
+  asset_count: 172
+  multi_volume: true          # REAL, PREVIOUSLY UNEXERCISED GAP, found
+    # and fixed this session: this game's CLIB is split across SIX
+    # physical files (old floppy-disk-era AGS packaging) -- Maniac.exe
+    # itself (122 of 172 assets, LibUid 0) plus Maniac.001..005 (50
+    # assets total, LibUid 1..5, confirmed by direct header read: counts
+    # 11/7/9/14/9 respectively). multifilelib.cpp's own ReadHeader only
+    # adds the base file's abs_offset to LibUid==0 assets (multifilelib.
+    # cpp:122-132) -- ANY other LibUid's Offset indexes into ITS OWN
+    # separate file (named by lib_file_names[uid]), never into the base
+    # file's bytes. tools/port-game/clib.py's read_header() already
+    # replicated this correctly for the HEADER/TOC; port_game.py's
+    # _convert_lib_assets()/cmd_convert did NOT -- they read
+    # `data[a.offset:a.offset+a.size]` from the single base-file buffer
+    # unconditionally, which silently produced wrong bytes (or a slice
+    # past EOF) for any LibUid!=0 asset. Fixed: new find_lib_volumes()
+    # (case-insensitive sibling-file lookup, same style as
+    # find_sibling_vox()) locates and opens Maniac.001..005 next to
+    # Maniac.exe; _convert_lib_assets() now picks the right buffer per
+    # asset's own LibUid. See tools/port-game/port_game.py's own comments
+    # on find_lib_volumes() for the full source citation. No prior golden
+    # reference (Trilby's Notes, 5 Days a Stranger, Shards of God,
+    # IOAWN4T, AGS Quest) exercised a non-zero LibUid at all, so this
+    # path was silently blind exactly like the sibling-vox gap once was.
+  single_lib_bug_fixed: true  # SEPARATE real bug, also found and fixed
+    # this session, in the OLDER SingleLib (v6) filename decryption
+    # path -- exercised for the first time by this game's own speech.vox
+    # sibling CLIB (lib_version 6). multifilelib.cpp's ReadSingleFileLib
+    # (lines 222-230) decrypts a fixed 13-byte filename field ONE BYTE AT
+    # A TIME, stopping at the first byte that is ALREADY zero in the RAW
+    # (undecrypted) data -- it never touches or includes anything at or
+    # after that point. clib.py's old code decrypted the WHOLE 13-byte
+    # field first (turning raw zero padding into non-zero garbage, since
+    # 0 - passwmodifier != 0 mod 256) and only THEN stripped trailing
+    # NULs -- by then there were none left to strip, so decrypted
+    # garbage survived into every filename (e.g. "bern1.wav" read back
+    # as "bern1.wavìììB"). Fixed to walk the raw bytes one at a time
+    # exactly like the real engine, stopping at the first raw zero byte.
+    # Confirmed against speech.vox directly: all 10 filenames now read
+    # back clean (bern1.wav..bern10.wav), and RIFF/WAVE headers land
+    # exactly at each asset's own computed offset.
+  repack_verified: "byte-for-byte identical to the original CLIB for
+    every PASSTHROUGH asset (106 of 172 -- the 66 OGG->WAV transcodes are
+    a separate, pre-existing, already-verified code path and were not
+    re-verified for decode correctness here), independently for each of
+    the SIX physical source files (Maniac.exe + Maniac.001..005),
+    confirmed by a read-back + comparison script reading each asset from
+    its own correct LibUid's file, not assumed from the tool running
+    without error. The sibling SPEECH.VOX repack was separately verified
+    byte-for-byte identical across all 10 assets against the original
+    speech.vox. No V21 (encrypted) CLIB was encountered -- lib_version 11
+    (main) and 6 (speech.vox) are both within already-implemented ranges."
+
+driving_recipe: "No AutoPilot module (binary-only game, no script source
+  available) -- per PLAN.md's `validate` stage design, driving is limited
+  to DOSAGS_TAS_AUTO_EXIT_TICK (patches/ags/0044), independent of any
+  script. Same recipe shape as Trilby's Notes/5 Days a Stranger: auto-exit
+  tick 200 (5s of 40Hz logic time) gives the engine time to load,
+  transition into the first room (the character-select title screen),
+  and start music before quitting cleanly."
+
+sound_toggle: "acsetup.cfg's own [sound] enabled=0/1 (Engine/main/
+  config.cpp:416, CfgReadBoolInt) -- same already-shipping, zero-patch
+  engine feature the other golden references' manifests document.
+  sound=on additionally needs SDL_HINT_DOS_AUDIO_BACKEND=opl3 (RUN.BAT
+  SET) to select the MIDI backend; sound=off needs no MIDI backend hint
+  at all. tools/port-game/port_game.py layout emitted both
+  ACSETUP-ON.CFG/ACSETUP-OFF.CFG variants, plus SPEECH.VOX alongside
+  MANIAC.ags (picked up by convention, same as Shards of God/IOAWN4T's
+  audio.vox)."
+
+# Structured driving recipe for tools/port-game/port_game.py validate,
+# same shape as tests/games/trilbysnotes/manifest.yaml's own.
+validate:
+  pkg: mmd
+  auto_exit_tick: 200   # 5s of 40Hz logic time -- see driving_recipe above
+  timeout_s: 180
+  dosbox_conf: tests/harness/confs/dosbox-x-fast-opl3.conf
+  arms:
+    sound_on:
+      cfg: ACSETUP-ON.CFG
+      env:
+        SDL_HINT_DOS_AUDIO_BACKEND: opl3
+    sound_off:
+      cfg: ACSETUP-OFF.CFG
+      env: {}
+
+# sound_on's expectation is NOT "midi=opl3,events=..." like Trilby's
+# Notes/5 Days a Stranger -- verified by reading this game's own actual
+# STDOUT.TXT (results/F2_MMD.json), not copied from the other manifests.
+# The title sequence (room -10) calls `PlayMusic(0)`, but this game's own
+# asset list has no music0.mid (its music clips start at music1.mid) --
+# ScanOldStyleAudio's slot lookup for 0 legitimately finds nothing, so no
+# MIDI ever dispatches before the auto-exit tick fires in room 50, and
+# `midi=none,events=0` is the CORRECT, reproducible behavior for this
+# specific game's own content within this drive window, not a defect.
+# The PCM side (`pcm=sb@11025m16,voices=8,underruns=0`) still confirms
+# the audio subsystem is genuinely active with sound=on, which is what
+# distinguishes this arm from sound_off's `audio_vital_status: "NA"`
+# (audio subsystem not initialized at all).
+expected_runmanifest_dosbox_x:
+  sound_on:
+    audio_vital_status: "pcm=sb@11025m16,voices=8,underruns=0;midi=none,events=0"
+    exit_code: 0
+  sound_off:
+    audio_vital_status: "NA"
+    exit_code: 0
+
+# KNOWN GAP, not fixed here (out of F2's own scope -- see PLAN.md):
+# tools/port-game's `validate` subcommand only ever stages ONE extra file
+# (the chosen ACSETUP-*.CFG) via run-dosbox.sh --include-extra; it has no
+# mechanism to also stage a sibling SPEECH.VOX/AUDIO.VOX from the layout
+# dir into the DOSBox-X boot directory. This game's own STDOUT.TXT
+# confirms it: "Was not able to init voice pack 'speech.vox': file not
+# found or of unknown format." -- a harmless, non-fatal, non-counted
+# warning (critical_count/warn_count both still 0) for THIS gate (title
+# screen + room 50 transition never attempts actual character speech),
+# but a real functional gap for anything that reaches a real dialogue
+# line. Shards of God/IOAWN4T's own manifests never hit this because
+# their `validate:` arms are depth_32_native/depth_16_forced, not
+# sound_on/sound_off -- no prior manifest-driven `validate` run has ever
+# needed a sibling vox actually staged. Layout itself is NOT at fault
+# (cmd_layout already copies AUDIO.VOX/SPEECH.VOX into --dest correctly,
+# confirmed present in tests/harness/games/mmd/) -- the gap is purely in
+# `validate`'s own run-dosbox.sh staging step.
+
+validated:
+  - environment: dosbox-x
+    date: 2026-09-15
+    sound_on: {tag: MMD_ON, exit_code: 0, audio_vital_status: "pcm=sb@11025m16,voices=8,underruns=0;midi=none,events=0", fps_p50: 27.62, fps_p95: 29.81, tick_rate: 32.21, frames_skipped: 78, critical_count: 0, warn_count: 0, binary_sha12: c9ee2b121d04}
+    sound_off: {tag: MMDOFF, exit_code: 0, audio_vital_status: "NA", fps_p50: 39.05, fps_p95: 42.31, tick_rate: 37.17, frames_skipped: 15, critical_count: 0, warn_count: 0, binary_sha12: c9ee2b121d04}
+    note: "Game porting framework F2 -- first manifest-driven DOSBox-X validation for this golden reference. Two real port-game tooling bugs found+fixed this session: (1) multi-part CLIB asset extraction (this game's CLIB is split across Maniac.exe + Maniac.001-005 via non-zero LibUid, never exercised before -- find_lib_volumes() added); (2) SingleLib (v6) filename decryption in speech.vox (clib.py's old code decrypted padding bytes into garbage before stripping NULs instead of stopping at the first raw zero byte like the real engine). Both fixed by reading multifilelib.cpp directly and round-trip verified byte-for-byte against all six original physical files. sound_on's expected audio_vital_status corrected to midi=none (this game's own title sequence calls PlayMusic(0), which has no matching music0.mid asset -- verified real behavior, not a defect). Known gap, not fixed (out of F2 scope): validate does not stage this game's sibling SPEECH.VOX into the DOSBox-X boot dir (non-fatal for this gate, real for anything reaching actual dialogue)."
+  - environment: HW-486-66
+    date: 2026-09-15
+    sound_off: {tag: MMDHW1, exit_code: 0, audio_vital_status: "NA", fps_p50: 2.73, fps_p95: 2.75, tick_rate: 10.80, frames_skipped: 166, critical_count: 0, warn_count: 0, binary_sha12: c9ee2b121d04}
+    note: "Game porting framework F3 -- single-cell real-hardware sanity record (not an ABBA, no fps claim) through run-rig.sh -> check -> record. Identity independently confirmed: STDOUT.TXT's own 'Game title: Maniac Mansion Deluxe' / data_version 25 / compiled_with 2.60 (matches this manifest), 'Sub-files: 1: 2: 3: 4: 5:' confirms the multi-part CLIB (Maniac.001-005) loaded correctly on real hardware, binary_sha12 c9ee2b121d04 matches the same build validated on DOSBox-X and the other two F3 cells this session, RUNMANIFEST environment=realhw. Target C:\\DOSAGS cleared of the prior cell's own leftover files and verified empty via DIR before staging. Same known, documented gap as the DOSBox-X record: SPEECH.VOX was not staged (run-rig.sh has no --extra-file slot used for it here either), so STDOUT.TXT logs the same harmless 'voice pack not found' warning; critical_count/warn_count both 0, gate unaffected. capture_hash in this record is NOT genuine PH0N.BMP output from this run (same caveat as the other two F3 cells -- this game has no AutoPilot module; those three BMPs are stale leftovers from an old AGS Quest session, byte-identical across all three of this session's HW cells). fps/tick_rate numbers present in the raw RUNMANIFEST are incidental to a sanity record, not a KPI claim -- no ABBA, no threshold."
+
+compat_sweep:
+  date: 2026-09-15
+  auto_exit_tick: 200
+  boots: {ok: true, exit_code: 0}
+  title: {ok: true, evidence: "STDOUT.TXT: '(room:50) Now in room 50', no crash, exit_code=0"}
+  first_room: {ok: false, failure_reason: "only room 50 was ever loaded during the drive window -- this game's title/start screen waits for player input to advance and none was injected this pass; not a defect, an honest scope limit"}
+  playable: {ok: false, attempted: false, failure_reason: "no input-injection automation exists for binary-only games this pass (no AutoPilot module, no generic DOSBox-X input harness proven yet)"}
+  complete: {ok: false, attempted: false, failure_reason: "not attempted, same reason as playable"}
+  screenshot: not attempted -- see trilbysnotes' own compat_sweep entry for why

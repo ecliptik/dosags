@@ -1,0 +1,87 @@
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index d3bd6696f..183b468f3 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -32,6 +32,13 @@ extern "C" {
+ 
+ using namespace AGS::Common;
+ 
++// UR1 THROWAWAY PROBE -- never committed
++#include <time.h>
++extern uint32_t get_loop_counter();
++static unsigned ur1_ms() { return (unsigned)((unsigned long long)uclock() * 1000ULL / UCLOCKS_PER_SEC); }
++static int ur1_iter = -1;
++static int ur1_queued_in = -1;
++
+ namespace
+ {
+ 
+@@ -258,6 +265,7 @@ size_t dos_audio_mixer_voice_write(int voice, const void *data, size_t bytes)
+         return 0u; // reject the whole chunk; caller retries next frame
+     const uint8_t *bytes_in = static_cast<const uint8_t *>(data);
+     v.ring.insert(v.ring.end(), bytes_in, bytes_in + bytes);
++    Debug::Printf("UR1 write tick=%u ms=%u voice=%d bytes=%u buffered_before=%u", (unsigned)get_loop_counter(), ur1_ms(), voice, (unsigned)bytes, (unsigned)buffered);
+     return bytes;
+ }
+ 
+@@ -275,6 +283,8 @@ void dos_audio_mixer_voice_set_active(int voice, bool active)
+ {
+     if (voice < 0 || voice >= DOS_AUDIO_MIXER_MAX_VOICES || !g_voices[voice].used)
+         return;
++    if (g_voices[voice].active != active)
++        Debug::Printf("UR1 active tick=%u ms=%u voice=%d active=%d buffered=%u", (unsigned)get_loop_counter(), ur1_ms(), voice, (int)active, (unsigned)(g_voices[voice].ring.size() - g_voices[voice].read_pos));
+     g_voices[voice].active = active;
+     if (g_voices[voice].gus_stream)
+         gus_pcm_stream_set_active(g_voices[voice].gus_stream, active);
+@@ -285,6 +295,7 @@ void dos_audio_mixer_voice_stop(int voice)
+     if (voice < 0 || voice >= DOS_AUDIO_MIXER_MAX_VOICES || !g_voices[voice].used)
+         return;
+     Voice &v = g_voices[voice];
++    Debug::Printf("UR1 stop tick=%u ms=%u voice=%d buffered=%u", (unsigned)get_loop_counter(), ur1_ms(), voice, (unsigned)(v.ring.size() - v.read_pos));
+     if (v.gus_stream)
+     {
+         gus_pcm_stream_stop(v.gus_stream);
+@@ -315,8 +326,10 @@ static void mix_one_chunk(bool &out_any_active)
+     bool any_active = false;
+     bool any_underrun = false;
+ 
++    int ur1_idx = -1;
+     for (auto &v : g_voices)
+     {
++        ++ur1_idx;
+         if (!v.used || !v.active)
+             continue;
+         any_active = true;
+@@ -327,6 +340,7 @@ static void mix_one_chunk(bool &out_any_active)
+         if (take_samples == 0)
+         {
+             any_underrun = true;
++            Debug::Printf("UR1 underrun tick=%u ms=%u voice=%d iter=%d queued_in=%d devring_ms=%d", (unsigned)get_loop_counter(), ur1_ms(), ur1_idx, ur1_iter, ur1_queued_in, SDL_DOSAudioRingFillMs());
+             continue;
+         }
+ 
+@@ -386,15 +400,24 @@ void dos_audio_mixer_pump()
+ 
+     if (g_stream)
+     {
++        static bool ur1_once = false;
++        if (!ur1_once) { ur1_once = true; Debug::Printf("UR1 capacity devring_cap_ms=%d phys_cap_frames=%d stream_target_bytes=%d chunk_bytes=%d", SDL_DOSAudioRingCapacityMs(), SDL_DOSAudioPhysicalCapacityFrames(), TARGET_QUEUED_BYTES, MIX_CHUNK_BYTES); }
++        ur1_queued_in = SDL_GetAudioStreamQueued(g_stream);
++        const int ur1_devring_in = SDL_DOSAudioRingFillMs();
++        int iters_done = 0;
+         for (int iter = 0; iter < MAX_PUMP_ITERS; iter++)
+         {
+             if (SDL_GetAudioStreamQueued(g_stream) >= TARGET_QUEUED_BYTES)
+                 break;
+             bool any_active = false;
++            ur1_iter = iter;
+             mix_one_chunk(any_active);
+             if (!any_active)
+                 break; // nothing playing; let the device underflow to silence
++            iters_done++;
+         }
++        if (iters_done >= 3)
++            Debug::Printf("UR1 bigpump tick=%u ms=%u iters=%d queued_in=%d devring_in_ms=%d", (unsigned)get_loop_counter(), ur1_ms(), iters_done, ur1_queued_in, ur1_devring_in);
+     }
+     // Service the DOS SB ring/ISR regardless -- mandatory per frame, per
+     // the hub's own docs/audio.md convention (SDL_DOSAudioPump()).

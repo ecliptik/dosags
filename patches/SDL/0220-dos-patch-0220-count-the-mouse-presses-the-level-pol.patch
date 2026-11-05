@@ -1,0 +1,279 @@
+From 1a294a2aaa37a791e0f5a20e4409a8673aa6681a Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 13:33:48 -0700
+Subject: [PATCH] dos: patch 0220 -- count the mouse presses the level poll
+ never saw
+
+WHY: DOSVESA_PumpEvents reads the buttons as a level (INT 33h function 3)
+once per pump. A press and release that both land between two pumps never
+become a button-down event: the click is gone, with no trace in any log.
+At 40 pumps/s the gap is 25 ms and a human click survives it; at the 6 fps
+the 640x480 intro runs at on the 486 the gap is ~170 ms and quick clicks
+vanish (real hardware, 2026-09-15/16: the operator had to hold the button
+down across a poll). A journey metric for click response cannot see this
+from the engine side -- a click that never arrives has no start event -- so
+a lost click has to be counted where it is lost, or a "click latency" p95
+would improve exactly when clicks start disappearing. The same poll hides
+the wait of a click that does survive: its event is stamped when the pump
+sees it, not when the button went down, so a journey that starts at the
+event timestamp is short by up to one pump gap -- ~170 ms at 6 fps, the
+very case the metric exists for.
+
+WHAT: the mouse driver keeps its own per-button press count (function 5,
+"button press information": presses since the last call). The pump now
+counts the up->down edges of the left and right buttons its own level read
+sees (seen), and every 8th pump reads the driver's counts (hw; two more
+real-mode INT 33h calls, so ~5 reads/s at 40 fps). SDL_DOSMouseClickStats()
+(new header SDL_dosinput_stats.h) takes one more driver read and returns
+hw, seen and the read count; the port reports lost = hw - seen. The totals
+are cumulative, so the read cadence does not change them. It can read -1
+transiently (a button held when the driver was reset; a press between the
+last pump and the final read). The pump also records its own start time
+(one SDL_GetTicksNS per pump) in a 16-entry ring, and
+SDL_DOSInputWaitBoundNS(event_ts) returns the event's timestamp minus the
+start of the pump before the one that stamped it: an upper bound on the
+unseen wait, 0 when the pump has left the ring. Counting only: no event is
+synthesised and input delivery is unchanged. Main thread only; nothing
+runs in an ISR.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ include/SDL3/SDL_dosinput_stats.h | 98 +++++++++++++++++++++++++++++++
+ src/video/dos/SDL_dosevents.c     | 94 +++++++++++++++++++++++++++++
+ 2 files changed, 192 insertions(+)
+ create mode 100644 include/SDL3/SDL_dosinput_stats.h
+
+diff --git a/include/SDL3/SDL_dosinput_stats.h b/include/SDL3/SDL_dosinput_stats.h
+new file mode 100644
+index 000000000..2394a6623
+--- /dev/null
++++ b/include/SDL3/SDL_dosinput_stats.h
+@@ -0,0 +1,98 @@
++/*
++  Simple DirectMedia Layer
++  Copyright (C) 1997-2026 Sam Lantinga <slouken@libsdl.org>
++
++  This software is provided 'as-is', without any express or implied
++  warranty.  In no event will the authors be held liable for any damages
++  arising from the use of this software.
++
++  Permission is granted to anyone to use this software for any purpose,
++  including commercial applications, and to alter it and redistribute it
++  freely, subject to the following restrictions:
++
++  1. The origin of this software must not be misrepresented; you must not
++     claim that you wrote the original software. If you use this software
++     in a product, an acknowledgment in the product documentation would be
++     appreciated but is not required.
++  2. Altered source versions must be plainly marked as such, and must not be
++     misrepresented as being the original software.
++  3. This notice may not be removed or altered from any source distribution.
++*/
++
++/*
++ * dosags SDL patch 0220: mouse presses the level poll never saw.
++ *
++ * Workspace-local; NOT upstreamed (same status as SDL_dosident.h).
++ *
++ * The DOS video backend reads the mouse buttons as a LEVEL (INT 33h
++ * function 3) once per SDL_PumpEvents. A press and release that both land
++ * between two pumps never produce a button-down event: the click is gone,
++ * with no error anywhere. At 40 fps the gap is 25 ms and a human click
++ * survives; at a 6 fps render rate the gap is ~170 ms and quick clicks
++ * vanish (seen on real hardware 2026-09-15/16).
++ *
++ * The mouse driver itself counts presses (INT 33h function 5, "button
++ * press information": presses since the last call, per button). This
++ * backend compares that count with the down transitions its own level
++ * poll produced. The difference is the number of presses the engine
++ * never received. Counting only; no event is synthesised.
++ *
++ * The same poll also hides how long a press waited for it: the event is
++ * stamped when the pump sees it, not when the button went down. The pump
++ * records its own start time in a small ring so a caller can bound that
++ * wait (SDL_DOSInputWaitBoundNS).
++ */
++
++#ifndef SDL_dosinput_stats_h_
++#define SDL_dosinput_stats_h_
++
++#include <SDL3/SDL_stdinc.h>
++
++#include <SDL3/SDL_begin_code.h>
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/**
++ * Report left+right mouse button presses as counted by the mouse driver
++ * (hw_presses, INT 33h function 5) and as seen by SDL's level poll
++ * (seen_presses, up->down transitions between consecutive pumps). Reads
++ * the driver's counters once more before returning, so a press made since
++ * the last periodic read is included in hw_presses.
++ *
++ * lost = hw_presses - seen_presses. It can read -1 transiently: a button
++ * already held when the driver was reset counts as seen but not as a
++ * driver press, and a press landing between the last pump and this call
++ * counts the other way. checks is how many times the driver counters were
++ * read (0 means the count was never taken, e.g. no mouse).
++ *
++ * Any pointer may be NULL. Main thread only. All zero if no mouse driver.
++ *
++ * \since SDL 3 -- dosags workspace-local patch 0220, 2026-09-23.
++ */
++extern SDL_DECLSPEC void SDLCALL SDL_DOSMouseClickStats(Uint32 *hw_presses, Uint32 *seen_presses, Uint32 *checks);
++
++/**
++ * Upper bound, in ns, on how long an input may have waited for the poll
++ * that turned it into the event stamped event_ts (SDL's own timestamp,
++ * set by the pump that produced it). A press that happens just after one
++ * pump's read is not seen until the next pump, and nothing on the DOS side
++ * timestamps the press itself, so an input journey that starts at the
++ * event's timestamp is short by up to this much. The bound is event_ts
++ * minus the start of the pump BEFORE the one that stamped the event: one
++ * whole pump gap plus the offset of the event inside its own pump.
++ *
++ * Returns 0 if the producing pump is no longer in the recent-pump ring
++ * (older than the last 16 pumps) or event_ts is 0: unknown, not zero.
++ * Main thread only.
++ *
++ * \since SDL 3 -- dosags workspace-local patch 0220, 2026-09-23.
++ */
++extern SDL_DECLSPEC Uint64 SDLCALL SDL_DOSInputWaitBoundNS(Uint64 event_ts);
++
++#ifdef __cplusplus
++}
++#endif
++#include <SDL3/SDL_close_code.h>
++
++#endif /* SDL_dosinput_stats_h_ */
+diff --git a/src/video/dos/SDL_dosevents.c b/src/video/dos/SDL_dosevents.c
+index 01c88ea8b..37848a7a4 100644
+--- a/src/video/dos/SDL_dosevents.c
++++ b/src/video/dos/SDL_dosevents.c
+@@ -31,6 +31,7 @@
+ 
+ #include "../../core/dos/SDL_dos_scheduler.h"
+ #include "SDL_dosevents_c.h"
++#include <SDL3/SDL_dosinput_stats.h> /* dosags patch 0220 */
+ 
+ // PS/2 keyboard controller port
+ #define KBD_DATA_PORT 0x60
+@@ -313,6 +314,79 @@ volatile uint32_t dos_port_kbd_irq_install_ticks = 0;
+ volatile uint32_t dos_port_kbd_irq_vector_at_install = 0;
+ volatile uint32_t dos_port_kbd_pic1_mask_at_install = 0;
+ 
++/* dosags patch 0220: presses the level poll below never saw.
++   dos_mouse_seen_presses counts up->down transitions of the left and right
++   buttons between consecutive INT 33h function 3 reads; the mouse driver's
++   own press counters (function 5) are read every DOS_MOUSE_PRESS_CHECK_EVERY
++   pumps into dos_mouse_hw_presses. At 40 pumps/s that is 5 reads a second,
++   two real-mode INT 33h calls each; at 6 pumps/s one read every ~1.3 s. The
++   counters are cumulative, so the read cadence does not change the totals.
++   See SDL_dosinput_stats.h. Main thread only; nothing here runs in an ISR. */
++#define DOS_MOUSE_PRESS_CHECK_EVERY 8
++static Uint32 dos_mouse_seen_presses = 0;
++static Uint32 dos_mouse_hw_presses = 0;
++static Uint32 dos_mouse_press_checks = 0;
++static Uint16 dos_mouse_prev_buttons = 0;
++static int dos_mouse_check_div = 0;
++
++static void DOS_ReadMousePressCounters(void)
++{
++    __dpmi_regs regs;
++    int b;
++    for (b = 0; b < 2; b++) { /* 0 = left, 1 = right */
++        SDL_zero(regs);
++        regs.x.ax = 0x5; /* button press information; resets the count */
++        regs.x.bx = (Uint16)b;
++        __dpmi_int(0x33, &regs);
++        dos_mouse_hw_presses += (Uint32)regs.x.bx;
++    }
++    dos_mouse_press_checks++;
++}
++
++/* dosags patch 0220: the start time of the last DOS_PUMP_RING pumps, for
++   SDL_DOSInputWaitBoundNS(). One SDL_GetTicksNS() per pump; the ring is
++   written only here, on the main thread. */
++#define DOS_PUMP_RING 16
++static Uint64 dos_pump_ring_ns[DOS_PUMP_RING];
++static Uint32 dos_pump_ring_n = 0; /* pumps recorded so far (wraps) */
++
++Uint64 SDL_DOSInputWaitBoundNS(Uint64 event_ts)
++{
++    Uint32 k, avail;
++    if (event_ts == 0) {
++        return 0;
++    }
++    avail = (dos_pump_ring_n < DOS_PUMP_RING) ? dos_pump_ring_n : DOS_PUMP_RING;
++    /* newest first: the pump that stamped the event is the newest one that
++       started at or before its timestamp; the bound runs from the pump
++       before that one */
++    for (k = 0; k + 1 < avail; k++) {
++        const Uint64 start = dos_pump_ring_ns[(dos_pump_ring_n - 1 - k) % DOS_PUMP_RING];
++        if (start <= event_ts) {
++            const Uint64 prev = dos_pump_ring_ns[(dos_pump_ring_n - 2 - k) % DOS_PUMP_RING];
++            return event_ts - prev;
++        }
++    }
++    return 0;
++}
++
++void SDL_DOSMouseClickStats(Uint32 *hw_presses, Uint32 *seen_presses, Uint32 *checks)
++{
++    SDL_Mouse *mouse = SDL_GetMouse();
++    if (mouse && mouse->internal) {
++        DOS_ReadMousePressCounters();
++    }
++    if (hw_presses) {
++        *hw_presses = dos_mouse_hw_presses;
++    }
++    if (seen_presses) {
++        *seen_presses = dos_mouse_seen_presses;
++    }
++    if (checks) {
++        *checks = dos_mouse_press_checks;
++    }
++}
++
+ void DOSVESA_PumpEvents(SDL_VideoDevice *device)
+ {
+     /* DOSKUTSU patch (Phase 9 wave 13.3): the per-pump DOS_Yield() was
+@@ -325,6 +399,9 @@ void DOSVESA_PumpEvents(SDL_VideoDevice *device)
+        scheduled. Set SDL_HINT_DOS_FORCE_PUMP_YIELD=1 in the env to
+        restore the original behavior (debug fallback if audio glitches). */
+     static int yield_skip_cached = -1;
++    /* dosags patch 0220: this pump's start time (see SDL_DOSInputWaitBoundNS) */
++    dos_pump_ring_ns[dos_pump_ring_n % DOS_PUMP_RING] = SDL_GetTicksNS();
++    dos_pump_ring_n++;
+     if (yield_skip_cached == -1) {
+         const char *force = SDL_getenv("SDL_HINT_DOS_FORCE_PUMP_YIELD");
+         yield_skip_cached = (force && force[0] == '1' && force[1] == 0) ? 0 : 1;
+@@ -412,6 +489,23 @@ void DOSVESA_PumpEvents(SDL_VideoDevice *device)
+         __dpmi_int(0x33, &regs);
+         const Uint16 buttons = (int)(Sint16)regs.x.bx;
+ 
++        /* dosags patch 0220: count the down edges this poll can see, and
++           periodically what the driver counted (see the block above). */
++        {
++            const Uint16 down_edges = (Uint16)(buttons & ~dos_mouse_prev_buttons);
++            if (down_edges & (1 << 0)) {
++                dos_mouse_seen_presses++;
++            }
++            if (down_edges & (1 << 1)) {
++                dos_mouse_seen_presses++;
++            }
++            dos_mouse_prev_buttons = buttons;
++            if (++dos_mouse_check_div >= DOS_MOUSE_PRESS_CHECK_EVERY) {
++                dos_mouse_check_div = 0;
++                DOS_ReadMousePressCounters();
++            }
++        }
++
+         SDL_SendMouseButton(0, mouse->focus, SDL_DEFAULT_MOUSE_ID, SDL_BUTTON_LEFT, (buttons & (1 << 0)) != 0);
+         SDL_SendMouseButton(0, mouse->focus, SDL_DEFAULT_MOUSE_ID, SDL_BUTTON_RIGHT, (buttons & (1 << 1)) != 0);
+         SDL_SendMouseButton(0, mouse->focus, SDL_DEFAULT_MOUSE_ID, SDL_BUTTON_MIDDLE, (buttons & (1 << 2)) != 0);
+-- 
+2.47.3
+

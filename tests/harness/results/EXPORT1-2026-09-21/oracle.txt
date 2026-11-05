@@ -1,0 +1,30 @@
+# Patch-series export oracle, 2026-09-21. Tree hashes of the DIRTY vendor working state, taken via a temporary index BEFORE any commit.
+ags pin            : aee8c840489667a82bb417970380d095e441d7e8
+ags HEAD before    : 15dd818d9838bc3357139c96617a368bfe64c406
+ags snapshot tree  : 58aae479e68ea144786f71a69d221e70b554544b
+ags tree after series (clone: pin + git am --keep-cr patches/ags/*.patch): 58aae479e68ea144786f71a69d221e70b554544b
+ags tree in vendor/ after real 'make patches': 58aae479e68ea144786f71a69d221e70b554544b
+SDL pin            : 99734c62e366da4037117b64b74b17abe0e98e6a
+SDL HEAD before    : a0654223a9ac83d3f096aa1a316f0c167652a786
+SDL snapshot tree  : 178b66aad32da9335dcf3d793a7b723906090731
+SDL tree after series (clone: pin + git am --keep-cr patches/SDL/*.patch): 178b66aad32da9335dcf3d793a7b723906090731
+SDL tree in vendor/ after real 'make patches': 178b66aad32da9335dcf3d793a7b723906090731
+
+# sha256 of the pre-export snapshot artefacts (kept in the session scratchpad, not committed; the patches carry the content)
+5788ff07211ac767422bbebb2095fbc2469a18a46953d5379ed9d772dbfa3b91  ags.diff
+ca6d07eea28607b5e6399ec0a5da265d9610657b36a5df15aa2993240701cdf3  ags.files
+80f436ed5a0a67bb236313de2596dcc8e0431b4ee5e740a0fa350d87f74c01c3  ags.HEAD
+8cfddcfe97e633e0a39b4c06cc01386c99afb993f6750d6a166a046ddb23d54f  ags.modified.tar
+324b3924f0b8415dce241514d970c28a991a91840ce0565be78c959a960d4fc4  ags.status
+4affd3db689edb9f5c101ddcf01af69c24175e96ffad7e0bf43d9002ba5bec70  ags.TREE
+928f5bcfbf8b89ee4239658c8bf3dad0c0ba03a53ea7a51a133932a62c0e565f  SDL.diff
+64d77fbe1fe79d6b10aa012e2291f7cd0a6cf9b16608f9455e9a2a04fd8d4bf3  SDL.files
+efa9148233f1d1612f9525cbae528351e3cb69d1361734d03fb50795ebe01463  SDL.HEAD
+849ef3ff8936c3142cddfd811db521f5d87d3cbcb2e5db530eac4482a5287c9b  SDL.modified.tar
+fd49cc466db58639c5769c44e84657e5e57f1e6375a2ff6a95a311b1d66226c7  SDL.status
+97b046bbfcb4c832fa5760514cbd34d8ea9ea6901951d5ca93c6e2d419691ed3  SDL.TREE
+
+# series fingerprints (build/patch-series/*.sha, written by apply-patches.sh via series_sha)
+ags 0edac51fb0bf74aed4b14d8928b5370d4b7edcaca281510de3c6e52975b8cbdd
+SDL 8bbca315a4e708c5f879c1be1f87d99b00818ede91ab398ff25fc5f4e014418f
+# make build-dirty: build_dirty=0 sha12=667514e4b97d

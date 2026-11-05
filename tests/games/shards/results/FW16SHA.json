@@ -1,0 +1,161 @@
+{
+  "depth_32_native": {
+    "tag": "VSHAIVE",
+    "env": {
+      "DOSAGS_TAS_AUTO_EXIT_TICK": "1000",
+      "DOSAGS_LOG_TAG": "VSHAIVE",
+      "DOSAGS_FIXED_TIMESTEP": "1"
+    },
+    "stage_dir": "/tmp/dos-port-dosbox.VX2QRJ",
+    "runmanifest_log": "/tmp/dos-port-dosbox.VX2QRJ/VSHAIVE.LOG",
+    "runmanifest": {
+      "schema_version": "1",
+      "environment": "dosbox-x",
+      "binary_sha12": "b60f6e538323",
+      "wave_tag": "VSHAIVE",
+      "scene": "boot",
+      "env_block_sha": "46c9aaec20ba",
+      "started_utc": "2026-12-01T04:41:11Z",
+      "duration_s": "28",
+      "exit_code": "0",
+      "fps_p50": "39.42",
+      "fps_p95": "40.38",
+      "audio_vital_status": "NA",
+      "regime": "NA",
+      "banner_required_hit": "0",
+      "banner_required_total": "0",
+      "banner_forbidden_hit": "0",
+      "banner_optional_hit": "0",
+      "critical_count": "0",
+      "warn_count": "0",
+      "tick_rate": "37.94",
+      "frames_skipped": "53",
+      "memory_min_free_kb": "138480"
+    },
+    "expected": {
+      "exit_code": 0,
+      "audio_vital_status": "NA",
+      "stdout_contains": [
+        "Graphics mode set: 640 x 480 (32-bit) fullscreen desktop"
+      ]
+    },
+    "checks": {
+      "runmanifest_present": {
+        "ok": true
+      },
+      "exit_code": {
+        "ok": true,
+        "expected": 0,
+        "actual": "0"
+      },
+      "critical_count": {
+        "ok": true,
+        "expected": "0",
+        "actual": "0"
+      },
+      "warn_count": {
+        "ok": true,
+        "expected": "0",
+        "actual": "0"
+      },
+      "audio_vital_status": {
+        "ok": true,
+        "expected": "NA",
+        "actual": "NA"
+      },
+      "stdout_present": {
+        "ok": true
+      },
+      "fixed_timestep": {
+        "ok": true,
+        "expected_line": "DOS-PORT fixed-timestep: ENABLED"
+      },
+      "stdout_contains:Graphics mode set: 640 x 480 (32-bit) fullscreen desktop": {
+        "ok": true,
+        "expected_substring": "Graphics mode set: 640 x 480 (32-bit) fullscreen desktop"
+      }
+    },
+    "pass": true,
+    "capture_hash": null
+  },
+  "depth_16_forced": {
+    "tag": "VSHACED",
+    "env": {
+      "DOSAGS_TAS_AUTO_EXIT_TICK": "1000",
+      "DOSAGS_LOG_TAG": "VSHACED",
+      "DOSAGS_FIXED_TIMESTEP": "1",
+      "DOSAGS_FORCE_COLOR_DEPTH": "16"
+    },
+    "stage_dir": "/tmp/dos-port-dosbox.ODcs3V",
+    "runmanifest_log": "/tmp/dos-port-dosbox.ODcs3V/VSHACED.LOG",
+    "runmanifest": {
+      "schema_version": "1",
+      "environment": "dosbox-x",
+      "binary_sha12": "b60f6e538323",
+      "wave_tag": "VSHACED",
+      "scene": "boot",
+      "env_block_sha": "46c9aaec20ba",
+      "started_utc": "2026-12-01T04:58:05Z",
+      "duration_s": "28",
+      "exit_code": "0",
+      "fps_p50": "32.38",
+      "fps_p95": "35.58",
+      "audio_vital_status": "NA",
+      "regime": "NA",
+      "banner_required_hit": "0",
+      "banner_required_total": "0",
+      "banner_forbidden_hit": "0",
+      "banner_optional_hit": "0",
+      "critical_count": "0",
+      "warn_count": "0",
+      "tick_rate": "37.47",
+      "frames_skipped": "231",
+      "memory_min_free_kb": "148848"
+    },
+    "expected": {
+      "exit_code": 0,
+      "audio_vital_status": "NA",
+      "stdout_contains": [
+        "Graphics mode set: 640 x 480 (16-bit) fullscreen desktop"
+      ]
+    },
+    "checks": {
+      "runmanifest_present": {
+        "ok": true
+      },
+      "exit_code": {
+        "ok": true,
+        "expected": 0,
+        "actual": "0"
+      },
+      "critical_count": {
+        "ok": true,
+        "expected": "0",
+        "actual": "0"
+      },
+      "warn_count": {
+        "ok": true,
+        "expected": "0",
+        "actual": "0"
+      },
+      "audio_vital_status": {
+        "ok": true,
+        "expected": "NA",
+        "actual": "NA"
+      },
+      "stdout_present": {
+        "ok": true
+      },
+      "fixed_timestep": {
+        "ok": true,
+        "expected_line": "DOS-PORT fixed-timestep: ENABLED"
+      },
+      "stdout_contains:Graphics mode set: 640 x 480 (16-bit) fullscreen desktop": {
+        "ok": true,
+        "expected_substring": "Graphics mode set: 640 x 480 (16-bit) fullscreen desktop"
+      }
+    },
+    "pass": true,
+    "capture_hash": null
+  }
+}

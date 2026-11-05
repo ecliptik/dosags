@@ -1,0 +1,334 @@
+From a5e84bef2aec63a1392b1c38bd74e7b73201521d Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 11 Sep 2026 22:18:24 -0700
+Subject: [PATCH] [AGS] Fixed-timestep catch-up loop, decoupling game speed
+ from render fps
+
+Decided 2026-09-11, PLAN.md's "Fixed timestep and the fps KPI": AGS ties
+one script/animation tick to one render pass at frames_per_second
+(SetGameSpeed()'s value, default 40) -- on hardware too slow to render
+at that rate, the engine's own 1:1 coupling makes low fps into slow
+GAMEPLAY, not just less-smooth gameplay. This port's own HW10
+real-hardware run proved it with numbers: tick-counted phase durations
+matched DOSBox-X exactly while wall-clock diverged ~10x -- the 486 was
+running the game at whatever rate it could render, not at its
+configured speed. This lands before any Sound-milestone fps measurement
+because it changes what every later fps number means.
+
+Read in full before designing, per PLAN.md's own instruction: doskutsu's
+fixed-timestep patches (shared/patches/nxengine-evo/0152-0153 in the
+doskutsu repo -- 0152 splits Game::tick() into a drawcall-free
+tick_state() and a separate tick_render_submit(); 0153 adds the
+wall-clock accumulator that multi-runs tick_state() alone during a
+catch-up burst, rendering exactly once per displayed frame) and this
+engine's own WaitForNextFrame()/UpdateGameOnce()/render_graphics(). AGS's
+architecture doesn't need doskutsu's two-function split: UpdateGameOnce
+already puts render_graphics()/WaitForNextFrame() last and already has a
+render-skipping precedent (play.fast_forward's cutscene-skip path), so a
+new skip_render_and_wait parameter gives the same "run the logic, skip
+the render" shape without restructuring the function -- and can't
+reintroduce doskutsu's own wave-36 drawcall-coupling trap (a fixed
+timestep run over a function that ALSO draws) for the same reason
+doskutsu's post-split code can't: the guard is the same one
+play.fast_forward already uses to skip render_graphics() entirely, not a
+"draw anyway and throw it away" shim.
+
+dos_run_tick_fixed() (GameTick()'s new body under DOSAGS_FIXED_TIMESTEP=1,
+env-cached like dos_auto_exit_check()): runs UpdateGameOnce(...,
+skip_render_and_wait=true) -- logic only -- as many times as are owed at
+the game's CURRENT frames_per_second (read fresh every call, never
+cached, so a script's own mid-game SetGameSpeed() is honored the same
+tick the un-timestepped path would honor it), then always one more
+normal (logic-and-render) tick. A burst with no backlog is byte-for-byte
+today's call shape (one UpdateGameOnce(true)), so DOSAGS_FIXED_TIMESTEP
+unset/0 is unchanged behavior -- confirmed by a full DOSBox-X harness
+run, all 18 phases still ok, all 3 screenshot hashes unchanged.
+MAX_CATCHUP=5 mirrors doskutsu's own chosen spiral-of-death clamp
+(0153). A paused game (IsGamePaused()) runs one normal tick with no
+catch-up, simpler than doskutsu's own STOP-1 latch-freshness invariant
+-- that invariant exists only because THEIR split dispatches the render
+half off a latch set by the logic half; UpdateGameOnce re-reads real
+state itself on every call, so there is no stale latch to guard here.
+
+"How much is owed" got a real design wrong on the first attempt, caught
+during this same session's own validation, not after landing: a first
+version tracked a private wall-clock delta (accum += now - last_call_time)
+and treated the whole gap as backlog owed. That is wrong wherever a
+script reaches a blocking, modal AGS feature with its OWN internal
+update loop that bypasses GameTick() entirely -- found empirically via
+a frames_skipped instrumentation value reading nonzero with NO
+artificial stall at all: DialogOptions::Run() (dialog.cpp, "Run() can be
+called in a loop" by its own comment) calls UpdateGameOnce() directly
+from a nested modal loop reached from mid-script, not through
+GameTick(). While that loop runs, LoopCounter keeps advancing for real,
+but dos_run_tick_fixed() is never called and never sees it; on its next
+call, the private accum saw a large now-vs-last-call gap and wrongly
+tried to catch up for time dialog.cpp's own loop had already ticked
+through, running up to 5 spurious extra logic ticks and inflating the
+measured tick rate above the configured 40 (57.73 measured, with
+frames_skipped=578 and no stall applied -- both should have been ~40
+and 0). Fixed by anchoring to the authoritative counter instead of a
+private clock: track ticks-expected-by-now (elapsed wall time / tick_dur
+since an epoch) versus ticks-that-actually-exist (get_loop_counter(),
+which dialog.cpp's own loop also advances for real) and run only the
+difference, resyncing the epoch whenever still behind after MAX_CATCHUP
+or unexpectedly ahead. A nested loop's own ticks then show up on the
+"actual" side too, netting to zero owed instead of being double-counted.
+Prefer deriving "how far behind" from a shared, ground-truth counter
+over a private timestamp whenever more than one code path can advance
+the thing being measured -- the same lesson this port's own
+dos_auto_exit_check() and doskutsu's TAS work (patches 0280-0288)
+already encode, re-learned here the hard way.
+
+Re-verified after the fix, same method as before (a temporary, never
+committed, env-gated sleep inside UpdateGameOnce's own render call
+simulating a 50ms-per-render stall): DOSAGS_FIXED_TIMESTEP=1 with the
+stall: fps_p50=18.10 (rendered fps still honestly reports the degraded
+smoothness) while game-speed-relevant timing tracked the SAME baseline
+as an un-stalled fixed-timestep run, unlike DOSAGS_FIXED_TIMESTEP=0
+under the identical stall (fps_p50=18.27, whole run took ~2x as long --
+render cost directly became game-speed cost, the exact coupling this
+patch removes). All 18 phases still ok under the stall, including
+dialog's own chosen=14 ("Leave") result unchanged, confirming the fix
+doesn't just look right in the numbers -- the nested dialog path that
+exposed the bug still completes correctly under it.
+---
+ Engine/main/game_run.cpp | 177 +++++++++++++++++++++++++++++++++++++--
+ Engine/main/game_run.h   |   9 +-
+ 2 files changed, 180 insertions(+), 6 deletions(-)
+
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 461e77744..6bd2fcd63 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1386,7 +1386,7 @@ uint32_t get_runtime_ms()
+ //
+ // UpdateGameOnce is a primary game update routine.
+ //
+-void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int extra_x, int extra_y)
++void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int extra_x, int extra_y, bool skip_render_and_wait)
+ {
+     set_our_eip(1000);
+ 
+@@ -1463,8 +1463,11 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+ 
+     // Record necessary values for the GUI rendering
+     update_gui_context(mwasatx, mwasaty);
+-    // Only render if we are not skipping a cutscene
+-    if (!play.fast_forward)
++    // Only render if we are not skipping a cutscene, or serving a
++    // fixed-timestep catch-up tick (DOS-PORT patch 0047: skip_render_and_wait
++    // -- every logic step above this line still runs, only the render and
++    // the frame-pacing wait below are suppressed).
++    if (!play.fast_forward && !skip_render_and_wait)
+     {
+         update_gui_disabled_status(); // in case they changed it in the late script update
+         render_graphics(extra_ddb, extra_x, extra_y);
+@@ -1483,8 +1486,10 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+     game_loop_update_loop_counter();
+     game_loop_update_fps();
+ 
+-    // Immediately start the next frame if we are skipping a cutscene
+-    if (play.fast_forward)
++    // Immediately start the next frame if we are skipping a cutscene, or a
++    // fixed-timestep catch-up tick (DOS-PORT patch 0047) -- either way the
++    // pacing wait below belongs only to the tick that actually rendered.
++    if (play.fast_forward || skip_render_and_wait)
+         return;
+ 
+     set_our_eip(1013);
+@@ -1563,9 +1568,171 @@ static bool ShouldStayInWaitMode()
+     }
+ }
+ 
++#ifdef __DJGPP__
++// DOS-PORT (patch 0047): fixed-timestep killswitch. DOSAGS_FIXED_TIMESTEP=1
++// enables dos_run_tick_fixed()'s catch-up accumulator below; unset or
++// anything else keeps GameTick()'s original one-call-in, one-call-out
++// behavior. Cached on first read (getenv every tick would be silly),
++// same idiom as dos_auto_exit_check()'s own cached env read.
++static bool dos_fixed_timestep_active()
++{
++    static int cached = -1;
++    if (cached < 0)
++    {
++        const char *env = getenv("DOSAGS_FIXED_TIMESTEP");
++        cached = (env && env[0] == '1' && env[1] == '\0') ? 1 : 0;
++        Debug::Printf(kDbgMsg_Info, "DOS-PORT fixed-timestep: %s",
++            cached ? "ENABLED (logic decoupled from render)" : "DISABLED (1:1 logic/render)");
++    }
++    return cached != 0;
++}
++
++// DOS-PORT (patch 0047): wall-clock accumulator driving the fixed-
++// timestep catch-up loop. See PLAN.md's "Fixed timestep and the fps KPI"
++// (decided 2026-09-11) -- AGS ties one script/animation tick to one
++// render pass at frames_per_second (SetGameSpeed()'s current value); on
++// hardware too slow to render at that rate, that 1:1 coupling makes low
++// fps into slow GAMEPLAY, not just less-smooth gameplay (confirmed by
++// this port's own HW10 real-hardware run: tick-counted phase durations
++// matched DOSBox-X exactly while wall-clock diverged ~10x -- the 486 was
++// running the game at whatever rate it could render, not at its
++// configured speed).
++//
++// This runs UpdateGameOnce's LOGIC only (render_graphics()/
++// WaitForNextFrame() suppressed via skip_render_and_wait=true) as many
++// times as are owed, at the game's CURRENT frames_per_second (read fresh
++// every call, never cached, so a script's own mid-game SetGameSpeed() is
++// honored the same tick the un-timestepped path would honor it) -- then
++// always runs exactly one more normal (logic-and-render) tick. So a
++// burst of n catch-up ticks plus the one normal tick advances logic n+1
++// times for exactly one render, and a burst with no backlog (n=0) is
++// byte-for-byte today's un-timestepped call shape: one UpdateGameOnce(true),
++// nothing else. This mirrors the architecture of doskutsu's own
++// fixed-timestep accumulator (shared/patches/nxengine-evo/0152-0153 in
++// the doskutsu repo -- read in full before designing this, per PLAN.md's
++// own instruction) with one structural difference: doskutsu split
++// Game::tick() into a drawcall-free tick_state() and a separate
++// tick_render_submit() because rendering there is expensive enough that
++// even the ONE render pass needed its own clean seam. AGS's
++// UpdateGameOnce has no such split, but doesn't need one either -- render
++// is already the last thing UpdateGameOnce does, and skip_render_and_wait
++// already gives a clean "run the logic, skip the render" call shape
++// without restructuring the function. The catch-up loop's own cost
++// (0152's "wave-36 drawcall-coupling trap": a fixed timestep run over a
++// function that ALSO draws multiplies drawcall cost by the catch-up
++// count) cannot recur here for the same reason it can't in doskutsu
++// post-split: skip_render_and_wait's guard is the same one
++// play.fast_forward already uses to skip render_graphics() entirely, not
++// a "run render anyway but throw it away" shim.
++//
++// HOW MUCH IS OWED, GOT WRONG ONCE ALREADY (worth recording): the first
++// version of this function tracked its own private wall-clock delta
++// (accum += now - last_call_time) and treated the whole gap as backlog.
++// That is wrong wherever a script calls a blocking, modal AGS feature
++// with its OWN internal update loop that bypasses GameTick() entirely --
++// found empirically via dos_get_frames_skipped() reading a nonzero value
++// with no artificial stall at all: DialogOptions::Run() (dialog.cpp,
++// "Run() can be called in a loop" by its own comment) calls
++// UpdateGameOnce() directly from a nested modal loop reached from
++// mid-script, not through GameTick() -- so while a dialog-options screen
++// is up, LoopCounter keeps advancing for real, but THIS function is never
++// called and never sees it. The private accum, on its next call, saw a
++// large now-vs-last-call gap and (wrongly) tried to catch up for time
++// that dialog.cpp's own loop had already ticked through, inflating both
++// tick_rate and frames_skipped. Fixed by anchoring to the authoritative
++// counter instead of a private clock: track how many ticks SHOULD exist
++// by now (elapsed wall time / tick_dur, since an epoch) versus how many
++// ACTUALLY exist (get_loop_counter(), which dialog.cpp's own loop also
++// advances for real) and run the difference. A nested loop's own ticks
++// then show up in "actual" too, so they net out to zero owed instead of
++// being double-counted. Same fix class as this port's own dos_auto_exit_check()
++// and doskutsu's TAS work (patches 0280-0288) -- prefer deriving "how far
++// behind" from a shared, ground-truth counter over a private timestamp
++// whenever more than one code path can advance the thing being measured.
++//
++// MAX_CATCHUP=5 mirrors doskutsu's own chosen clamp (0153) -- bounds a
++// spiral of death after a real stall (a slow disk load, a debugger
++// breakpoint, DOSBox-X itself being paused) by dropping backlog beyond
++// that rather than repaying it, the same tradeoff doskutsu made. Here it
++// also naturally absorbs a genuinely large dialog-interlude gap on the
++// rare occasion "owed" doesn't net to zero (e.g. the nested loop's own
++// pacing drifted from this function's epoch for some other reason) --
++// the resync below still fires, so drift never compounds across calls.
++//
++// A paused game (IsGamePaused()) runs exactly one normal tick, no catch-
++// up, and the epoch resets so paused time isn't counted as backlog once
++// unpaused -- simpler than doskutsu's own STOP-1 latch-freshness
++// invariant, which exists only because THEIR split dispatches the render
++// half off a latch set by the logic half; AGS's UpdateGameOnce re-reads
++// real state itself on every call, paused or not, so there is no
++// stale-latch hazard to guard.
++static void dos_run_tick_fixed()
++{
++    static Clock::time_point epoch_ns;
++    static uint32_t epoch_tick = 0;
++    static bool inited = false;
++
++    const int MAX_CATCHUP = 5;
++
++    if (!inited)
++    {
++        inited = true;
++        epoch_ns = Clock::now();
++        epoch_tick = get_loop_counter();
++    }
++
++    if (IsGamePaused())
++    {
++        UpdateGameOnce(true); // normal tick: renders + waits, no catch-up
++        epoch_ns = Clock::now();
++        epoch_tick = get_loop_counter();
++        return;
++    }
++
++    const int fps = frames_per_second > 0 ? frames_per_second : 40;
++    const auto tick_dur = std::chrono::duration_cast<Clock::duration>(
++        std::chrono::nanoseconds(1000000000LL / fps));
++
++    const auto now_ns = Clock::now();
++    const long expected_ticks = (long)((now_ns - epoch_ns) / tick_dur);
++    const long actual_ticks = (long)(get_loop_counter() - epoch_tick);
++    long owed = expected_ticks - actual_ticks;
++
++    int n = 0;
++    while (owed > 0 && n < MAX_CATCHUP)
++    {
++        UpdateGameOnce(true, nullptr, 0, 0, /*skip_render_and_wait=*/true);
++        --owed;
++        ++n;
++    }
++
++    // Resync the epoch whenever we're still behind after MAX_CATCHUP (a
++    // real stall bigger than the clamp can repay -- drop the rest rather
++    // than let it compound) or unexpectedly ahead (a nested modal loop's
++    // own pacing drifted from this epoch) -- either way, rebasing to "now"
++    // means the NEXT call starts counting backlog from a clean baseline
++    // rather than carrying stale drift forward indefinitely.
++    if (owed > 0 || owed < -MAX_CATCHUP)
++    {
++        epoch_ns = Clock::now();
++        epoch_tick = get_loop_counter();
++    }
++
++    // The one tick that actually renders + paces via WaitForNextFrame().
++    UpdateGameOnce(true);
++}
++#endif // __DJGPP__
++
+ // Run single game iteration; calls UpdateGameOnce() internally
+ static void GameTick()
+ {
++#ifdef __DJGPP__
++    if (dos_fixed_timestep_active())
++    {
++        dos_run_tick_fixed();
++        return;
++    }
++#endif
+     UpdateGameOnce(true);
+ }
+ 
+diff --git a/Engine/main/game_run.h b/Engine/main/game_run.h
+index 8d646d158..41aa61922 100644
+--- a/Engine/main/game_run.h
++++ b/Engine/main/game_run.h
+@@ -36,7 +36,14 @@ void RunGameUntilAborted();
+ // * extra_ddb, x and y - adds an additional arbitrary texture to the render list,
+ //       rendered on top of everything else (except cursor).
+ //       This is a leftover used only for built-in dialogs, and must be replaced eventually.
+-void UpdateGameOnce(bool do_controls = false, AGS::Engine::IDriverDependantBitmap *extra_ddb = nullptr, int extra_x = 0, int extra_y = 0);
++// * skip_render_and_wait - DOS-PORT (patch 0047): when true, this call
++//       still runs every logic step (script/animation/audio update,
++//       loop-counter advance) but skips render_graphics() and
++//       WaitForNextFrame() -- the "logic-only tick" the fixed-timestep
++//       catch-up loop needs. Every existing caller keeps the default
++//       (false), a no-op change for them; see dos_run_tick_fixed() in
++//       game_run.cpp.
++void UpdateGameOnce(bool do_controls = false, AGS::Engine::IDriverDependantBitmap *extra_ddb = nullptr, int extra_x = 0, int extra_y = 0, bool skip_render_and_wait = false);
+ // Update minimal required game state: audio, loop counter, etc; wait for the next frame
+ void UpdateGameAudioOnly();
+ // Updates everything related to object views that could have changed in the midst of a
+-- 
+2.47.3
+

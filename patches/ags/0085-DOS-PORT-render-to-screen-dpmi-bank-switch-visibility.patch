@@ -1,0 +1,127 @@
+From d779567084128eefa0b93e2e753a7846b11187b9 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 16 Sep 2026 23:31:58 -0700
+Subject: [PATCH] DOS-PORT: patch 0085 -- bracket render_to_screen(), surface
+ DPMI bank-switch visibility
+
+Operator-directed DPMI/interrupt investigation. Read render_graphics()
+(ac/draw.cpp) fully: after the scene_construct-bracketed block, it
+calls render_to_screen(), which was completely unbracketed until now.
+render_to_screen() calls gfxDriver->Render(xoff,yoff,flip), which
+calls RenderToBackBuffer() (already bracketed as render_backbuffer)
+THEN Present() (ali3dsw.cpp) -- Present()'s own cost (a format-
+converting blit plus SDL_UpdateWindowSurface(), which reaches the DOS
+framebuffer driver's flush/bank-switch mechanism, SDL_dosframebuffer.c)
+had never been measured by anything. render_backbuffer's own
+consistently-near-zero measurement across every prior round is
+consistent with the real display cost living entirely in this
+previously-invisible sibling call.
+
+Bracketed as render_to_screen (whole function, inclusive of
+render_backbuffer's own nested cost, same "report alongside, not
+summed with" convention as rep_exec_wrapper/drawable_object_states/
+process_events_dispatch).
+
+Also surfaces real-mode-callback visibility per the operator's own
+suggestion (SDL patch 0148, vendor/SDL): SDL_DOSVideoIsBankedMode()
+(the resolved LFB-vs-banked flush decision) and
+SDL_DOSVideoGetBankSwitchCount() (cumulative real BIOS-issued VESA
+bank switches, each a genuine protected-to-real-mode DPMI switch) are
+logged to RUNMANIFEST as "DOS-PORT video_banked_mode=.. bank_switches=..".
+This answers "does this hardware/mode even take the banked path at
+all" empirically rather than by inference from a differently-tagged
+debug log line.
+
+port_game.py's parser gains render_to_screen (same tickstats_ shape)
+and video_banked_mode/bank_switches.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hnodGZ6cg8CWuFXEDTsUq
+---
+ Engine/ac/draw.cpp                 | 10 ++++++++++
+ Engine/main/dos_port_tick_timing.h | 14 ++++++++++++++
+ Engine/main/quit.cpp               | 13 +++++++++++++
+ 3 files changed, 37 insertions(+)
+
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index a1a0b47d5..978820237 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -1337,6 +1337,16 @@ extern volatile bool want_exit, abort_engine;
+ 
+ void render_to_screen()
+ {
++    // DOS-PORT patch 0085: whole-function bracket, first line so it
++    // covers every return path. Calls gfxDriver->Render(...), which
++    // calls RenderToBackBuffer() (already bracketed as render_backbuffer,
++    // its own nested cost included here, not summed separately) THEN
++    // Present() -- Present()'s own cost (a format-converting blit plus
++    // SDL_UpdateWindowSurface(), reaching the DOS framebuffer driver's
++    // flush/bank-switch mechanism) had never been measured before this.
++#ifdef __DJGPP__
++    DosPortTickScope _dos_port_render_to_screen_scope(dos_port_tick_timing.render_to_screen);
++#endif
+     // Stage: final plugin callback (still drawn on game screen)
+     if (pl_any_want_hook(kPluginEvt_FinalScreenDraw))
+     {
+diff --git a/Engine/main/dos_port_tick_timing.h b/Engine/main/dos_port_tick_timing.h
+index d669e3900..cd9bbdbf1 100644
+--- a/Engine/main/dos_port_tick_timing.h
++++ b/Engine/main/dos_port_tick_timing.h
+@@ -302,6 +302,20 @@ struct DosPortTickTiming
+     // WaitForNextFrame() (ac/timer.cpp) is this function's only other
+     // call site and that one is already inside wait_next_frame.
+     DosPortTickPhaseStats catchup_audio_poll; // main/game_run.cpp: UpdateGameOnce()'s catch-up-path audio_core_entry_poll()
++
++    // patch 0085 (operator-directed DPMI/interrupt audit): render_graphics()
++    // (ac/draw.cpp) calls scene_construct's own bracketed block, THEN
++    // render_to_screen() -- completely unbracketed until now.
++    // render_to_screen() calls gfxDriver->Render(xoff,yoff,flip), which
++    // calls RenderToBackBuffer() (already bracketed as render_backbuffer)
++    // THEN Present() (ali3dsw.cpp) -- Present()'s own cost (a format-
++    // converting blit plus SDL_UpdateWindowSurface(), which reaches the
++    // DOS framebuffer driver's flush/bank-switch mechanism) had NEVER
++    // been measured by anything. Whole-function bracket, inclusive of
++    // render_backbuffer's own nested cost -- same "report alongside, not
++    // summed with" convention as rep_exec_wrapper/drawable_object_states/
++    // process_events_dispatch.
++    DosPortTickPhaseStats render_to_screen; // ac/draw.cpp: render_to_screen()
+ };
+ 
+ // Defined in main.cpp, alongside dos_port_startup_timing.
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 2a409a02f..6cc447332 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -33,6 +33,7 @@
+ #include "platform/dos/dos_audio_mixer.h"
+ #include "media/audio/audio_core.h" // dos_diag_dump_audio_poll() -- TEMPORARY DIAGNOSTIC, see audio_core.cpp
+ #include "main/dos_port_tick_timing.h" // DosPortTickTiming, patch 0079
++#include <SDL3/SDL_dosident.h> // SDL_DOSVideoIsBankedMode()/SDL_DOSVideoGetBankSwitchCount(), patch 0085
+ #endif
+ 
+ #include "platform/platform.h"
+@@ -504,8 +505,20 @@ void quit(const char *quitmsg)
+                 dos_port_tick_emit(run_manifest_log, "drawable_object_states", t.drawable_object_states);
+                 dos_port_tick_emit(run_manifest_log, "process_events_dispatch", t.process_events_dispatch);
+                 dos_port_tick_emit(run_manifest_log, "catchup_audio_poll", t.catchup_audio_poll);
++                dos_port_tick_emit(run_manifest_log, "render_to_screen", t.render_to_screen);
+             }
+ 
++            // DOS-PORT patch 0085 (operator-directed DPMI/interrupt audit):
++            // real-mode-callback visibility. banked_mode=0 means the
++            // resolved flush path this run used is LFB (direct nearptr
++            // writes, no bank-switch DPMI calls at all) -- in that case
++            // bank_switches is expected to be 0 and rules out VESA bank-
++            // switching as a source of the remaining per-tick gap outright,
++            // rather than leaving it an assumption.
++            fprintf(run_manifest_log, "DOS-PORT video_banked_mode=%d bank_switches=%lu\n",
++                (int)SDL_DOSVideoIsBankedMode(),
++                (unsigned long)SDL_DOSVideoGetBankSwitchCount());
++
+             // TEMPORARY DIAGNOSTIC (S7): dump the AUDIOPRB window data
+             // (audio_core.cpp) through THIS handle rather than a separate
+             // periodically-reopened AUDIOPRB.LOG -- see that file's own
+-- 
+2.47.3
+

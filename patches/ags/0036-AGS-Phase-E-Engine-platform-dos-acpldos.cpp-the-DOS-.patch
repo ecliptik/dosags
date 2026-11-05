@@ -1,0 +1,135 @@
+From 620fc43bd5d6c03dec6acd643dd582ed2b54ba60 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 17:24:20 -0700
+Subject: [PATCH 36/36] [AGS] Phase E: Engine/platform/dos/acpldos.cpp, the DOS
+ platform driver
+
+PATCH-SEQUENCE.md's own Phase E, written per its already-reviewed plan
+(PLAN.md's 2026-09-10 review): AGSPlatformDriver::CreateDriver() had no
+DOS branch at all -- every platform provides exactly one .cpp defining
+this static factory method (see acpllnx.cpp/acplbsd.cpp's own identical
+pattern), and DOS never did, so it was undefined at link time the
+moment a full build finally got past every compile-time gap.
+
+Extends AGSPlatformDriver directly, not AGSPlatformXDGUnix, per the
+plan: the XDG unix layer's config/save directory search paths have no
+DOS equivalent and aren't wanted here; AGSPlatformDriver's own base
+defaults (every directory resolves to ".") already match this hub's
+recommended DOS filesystem policy (confirmed during PLATFORM-SURFACE.md
+research), so none of the five directory methods are overridden.
+GetDiskFreeSpaceMB() uses DJGPP's statfs() (struct statfs's f_bsize/
+f_bfree, both plain `long` under DJGPP's own <sys/vfs.h>, confirmed by
+reading it directly) -- present and linkable per
+tests/probes/djgpp-runtime/, but runtime correctness under DOSBox-X is
+not yet verified (real hardware or an emulator run, not just a
+build-host reproduction of statfs()'s own real behavior). CD player
+methods are stubbed "no CD, always fail" per the plan and patch 0007's
+own CMake-level Cda::Cda gate (never linked for DOS regardless).
+
+Verified: the undefined AGSPlatformDriver::CreateDriver() reference is
+gone, and this is the last blocker a full cmake --build build/ags
+-j$(nproc) -- -k pass found -- ags.exe links clean. COMPILES reached.
+---
+ Engine/CMakeLists.txt           |  2 +
+ Engine/platform/dos/acpldos.cpp | 76 +++++++++++++++++++++++++++++++++
+ 2 files changed, 78 insertions(+)
+ create mode 100644 Engine/platform/dos/acpldos.cpp
+
+diff --git a/Engine/CMakeLists.txt b/Engine/CMakeLists.txt
+index 47a8a1644..159d82a77 100644
+--- a/Engine/CMakeLists.txt
++++ b/Engine/CMakeLists.txt
+@@ -468,6 +468,8 @@ target_sources(engine
+ 
+     platform/bsd/acplbsd.cpp
+ 
++    platform/dos/acpldos.cpp
++
+     platform/windows/win_ex_handling.cpp
+     platform/windows/win_ex_handling.h
+     platform/windows/minidump.cpp
+diff --git a/Engine/platform/dos/acpldos.cpp b/Engine/platform/dos/acpldos.cpp
+new file mode 100644
+index 000000000..f098c681a
+--- /dev/null
++++ b/Engine/platform/dos/acpldos.cpp
+@@ -0,0 +1,76 @@
++//=============================================================================
++//
++// Adventure Game Studio (AGS)
++//
++// Copyright (C) 1999-2011 Chris Jones and 2011-2026 various contributors
++// The full list of copyright holders can be found in the Copyright.txt
++// file, which is part of this source code distribution.
++//
++// The AGS source code is provided under the Artistic License 2.0.
++// A copy of this license can be found in the file License.txt and at
++// https://opensource.org/license/artistic-2-0/
++//
++//=============================================================================
++
++#include "platform/platform.h"
++
++#if AGS_PLATFORM_OS_DOS
++
++// *************** DOS DRIVER ***************
++
++#include <sys/vfs.h>
++#include "platform/base/agsplatformdriver.h"
++
++// DOS-PORT: extends AGSPlatformDriver directly, not AGSPlatformXDGUnix --
++// the XDG unix layer (config/save directory search paths following the
++// XDG Base Directory spec) has no DOS equivalent and isn't wanted here;
++// AGSPlatformDriver's own base defaults (every save/config directory
++// resolves to ".") already match this hub's recommended DOS filesystem
++// policy, confirmed while researching PLATFORM-SURFACE.md. The five
++// directory methods are not overridden below for that reason -- they
++// inherit those "." defaults as-is.
++struct AGSDOS : AGSPlatformDriver {
++    uint64_t GetDiskFreeSpaceMB(const AGS::Common::String &path) override;
++    eScriptSystemOSID GetSystemOSID() override;
++    int  InitializeCDPlayer() override;
++    int  CDPlayerCommand(int cmdd, int datt) override;
++    void ShutdownCDPlayer() override;
++};
++
++uint64_t AGSDOS::GetDiskFreeSpaceMB(const AGS::Common::String &path) {
++    // DOS-PORT: DJGPP's statfs() (confirmed present and linkable by
++    // tests/probes/djgpp-runtime/) reports free space in f_bsize-sized
++    // blocks (both plain `long` under DJGPP's own <sys/vfs.h>) -- runtime
++    // correctness under DOSBox-X not yet verified (PATCH-SEQUENCE.md's
++    // own open item), only that this compiles and links.
++    struct statfs fs;
++    if (statfs(path.GetCStr(), &fs) != 0)
++        return 0;
++    return (static_cast<uint64_t>(fs.f_bsize) * static_cast<uint64_t>(fs.f_bfree)) / (1024 * 1024);
++}
++
++eScriptSystemOSID AGSDOS::GetSystemOSID() {
++    return eOS_DOS;
++}
++
++// DOS-PORT: no CD-audio support on this backend -- matches patch 0007's
++// own CMake-level Cda::Cda gate (never linked for DOS in the first
++// place), consistent "no CD, always fail" stub, same shape as every
++// other platform driver's CD stub where CD support isn't wired up.
++int AGSDOS::InitializeCDPlayer() {
++    return -1;
++}
++
++int AGSDOS::CDPlayerCommand(int /*cmdd*/, int /*datt*/) {
++    return -1;
++}
++
++void AGSDOS::ShutdownCDPlayer() {
++}
++
++AGSPlatformDriver *AGSPlatformDriver::CreateDriver()
++{
++    return new AGSDOS();
++}
++
++#endif // AGS_PLATFORM_OS_DOS
+-- 
+2.47.3
+

@@ -1,0 +1,222 @@
+From 9cf1f96779d2017a04df0ddab94cb7cbfc7d9985 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 21 Sep 2026 12:25:10 -0700
+Subject: [PATCH] DOS-PORT: patch 0191 -- stage 1 skips a GUI's invalidation
+ only when its picture is provably unchanged
+
+Fixes a stale-pixel defect in ags 0169 stage 1 and makes its precondition sound.
+One mechanism: the skip is valid only when this frame's composite of the GUI is
+the one already on screen.
+
+The defect. Stage 1 suppresses a GUI's invalidation every frame it is drawn. A
+frame's UI marks are made after that frame's background restore, so they are
+consumed by the NEXT frame's restore: skipping the mark removes the only thing
+that would erase the GUI when it stops looking the same. Nothing else does:
+GUIMain::SetVisible marks nothing and InterfaceOff invalidates nothing. So a GUI
+that is hidden leaves its pixels on the screen. Found by the BENCH gui arm
+(FixedPose hides gMenu and waits 40 ticks before the capture): the capture
+differed at 8 and 16 bit, DOSAGS_GUI_NOINVAL=0 restored the baseline hash exactly,
+7,559 px. The AGS Quest gate passed all phases and hashes with it on, because
+none of its capture moments follows a GUI being hidden.
+
+The precondition was also unsound (see ags 0190). "Unchanged" was read after
+ClearChanged(), so it was true for every displayed GUI on every frame, including
+the frame it was re-rendered: a GUI whose content changed was composited over
+its own old pixels without a restore. And the setters for X/Y, transparency and
+z-order never mark a GUI changed at all, so a moved or re-alpha'd GUI qualified
+as "unchanged" even with a correct flag.
+
+What this does, in three parts that are one rule:
+- the skip reads the flags ags 0190 captured BEFORE the update loop cleared them;
+- and it requires the GUI's X/Y/W/H/transparency/z-order to equal what its last
+  composite was drawn from (visibility is implied by being drawn);
+- per GUI it records whether the last composite left its rect unmarked, and at the
+  top of construct_game_scene(), before the restore, invalidates that old rect if
+  the GUI is now hidden, moved, resized, re-alpha'd, re-ordered or changed. A
+  flag set between that point and the draw is caught at draw time and counted as
+  "late" (consumed a frame late).
+An unchanged, still-visible GUI dirties nothing, which is stage 1's whole win.
+GUIs beyond index 63 never skip. Stage 1.5/2 and the clip are untouched.
+
+Counters: guitally gains skipped= (marks actually suppressed) and a guiskip line
+carries flushed= (old rects invalidated ahead of the restore) and late=.
+
+Not established by this patch: that it costs the AGS Quest demo nothing. That is
+a hardware question with two pre-registered models (PLAN.md step 1, slice C).
+The DOSBox-X run of ags 0190 read gCredits as changed on 1 of 421 frames, which
+predicts almost no cost, but DOSBox-X predicts pixel accounting and not rate.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/ac/draw.cpp   | 102 ++++++++++++++++++++++++++++++++++++++++++-
+ Engine/main/quit.cpp |  15 ++++++-
+ 2 files changed, 113 insertions(+), 4 deletions(-)
+
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index 0d1340d45..0875b9763 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -412,6 +412,36 @@ long dos_port_gui_unchanged_tally[64] = {0};
+ // after that loop is a tautology -- see the comment at the snapshot.
+ static bool dos_port_gui_was_changed[64];
+ static bool dos_port_gui_was_ctrls[64];
++// DOS-PORT patch 0191: what each GUI's last composite was, and whether that
++// frame left its rect UNMARKED (patch 0169's skip), i.e. nothing is pending for
++// the next background restore to erase it with.
++struct DosPortGuiPrev
++{
++    bool valid = false;                    // the fields below describe a real composite
++    bool unmarked = false;                 // that composite skipped its invalidation
++    int rx = 0, ry = 0, rw = 0, rh = 0;    // the rect it covered: what invalidate_sprite() would have marked
++    int x = 0, y = 0, w = 0, h = 0, trans = 0, z = 0;   // the properties it was drawn from
++    // The setters for X/Y, transparency and z-order never mark a GUI changed,
++    // so "unchanged" alone does not say the picture is the same.
++    bool SameAs(const GUIMain &g) const
++    {
++        return valid && g.GetX() == x && g.GetY() == y &&
++               g.GetWidth() == w && g.GetHeight() == h &&
++               g.GetTransparency() == trans && g.GetZOrder() == z;
++    }
++    void Record(const GUIMain &g, int rx_, int ry_, int rw_, int rh_)
++    {
++        valid = true; rx = rx_; ry = ry_; rw = rw_; rh = rh_;
++        x = g.GetX(); y = g.GetY(); w = g.GetWidth(); h = g.GetHeight();
++        trans = g.GetTransparency(); z = g.GetZOrder();
++    }
++};
++static DosPortGuiPrev dos_port_gui_prev[64];
++long dos_port_gui_skip_tally[64] = {0};   // invalidations actually suppressed, per GUI
++long dos_port_gui_flush_n = 0;            // old rects invalidated ahead of the restore
++long dos_port_gui_flush_late_n = 0;       // ... found only when the GUI was drawn, a frame late
++long dos_port_gui_flush_tally[64] = {0};  // which GUI, and why: not drawn / picture properties / content flag
++long dos_port_gui_flush_hidden_n = 0, dos_port_gui_flush_props_n = 0, dos_port_gui_flush_flag_n = 0;
+ #endif
+ // GUI render targets, for rendering all controls on same texture buffer
+ std::vector<IDriverDependantBitmap*> gui_render_tex;
+@@ -2668,6 +2698,48 @@ static void draw_gui_controls_batch(int gui_id)
+ }
+ 
+ // Draw GUI and overlays of all kinds, anything outside the room space
++#ifdef __DJGPP__
++// DOS-PORT patch 0191: erase what patch 0169's skip left unerasable.
++//
++// A frame's UI marks are made after that frame's background restore, so they
++// are consumed by the NEXT frame's restore. Skipping a mark therefore means
++// that if the GUI stops looking the same next frame -- hidden, moved, resized,
++// re-alpha'd, re-ordered, or its content changed -- nothing is pending over its
++// old rect, and the old pixels stay on the screen. Hiding a GUI invalidates
++// nothing in the engine (GUIMain::SetVisible marks nothing), so this is the only
++// place that can notice.
++//
++// Called at the top of construct_game_scene(), BEFORE the restore, so the mark
++// is consumed by THIS frame's restore and is in THIS frame's present rect. Only
++// a GUI whose last composite was left unmarked can be here, and it is left alone
++// while it still looks the same -- an unchanged, still-visible GUI dirties
++// nothing, which is what stage 1 is for.
++static void dos_port_gui_flush_unmarked()
++{
++    const bool ui_drawn = ((debug_flags & DBG_NOIFACE) == 0) && (displayed_room >= 0);
++    for (int i = 0; i < game.numgui && i < 64; ++i)
++    {
++        DosPortGuiPrev &p = dos_port_gui_prev[i];
++        if (!p.unmarked)
++            continue;
++        const GUIMain &g = guis[i];
++        const bool drawn_now = ui_drawn && GUI::IsGUIVisible(&g) && g.GetTransparency() != 255;
++        const bool same = drawn_now && p.SameAs(g);
++        if (drawn_now && same && !g.HasChanged() && !g.HasControlsChanged())
++            continue; // same picture as last frame: stays unmarked
++        if (!drawn_now)     dos_port_gui_flush_hidden_n++;
++        else if (!same)     dos_port_gui_flush_props_n++;
++        else                dos_port_gui_flush_flag_n++;
++        dos_port_gui_flush_tally[i]++;
++        dos_port_dirty_source = kDirtySrc_UiSprite;
++        invalidate_rect(p.rx, p.ry, p.rx + p.rw, p.ry + p.rh, false);
++        dos_port_dirty_source = kDirtySrc_Other;
++        p.unmarked = false;
++        dos_port_gui_flush_n++;
++    }
++}
++#endif
++
+ void draw_gui_and_overlays()
+ {
+     // Draw gui controls on separate textures if:
+@@ -2870,10 +2942,35 @@ void draw_gui_and_overlays()
+                 static int _h = -1;
+                 if (_h < 0) { const char *e = getenv("DOSAGS_GUI_NOINVAL");
+                               _h = (e && e[0] == '0') ? 0 : 1; }
+-                const bool _unch = !gui.HasChanged() && !gui.HasControlsChanged();
++                // patch 0191: skip only when this frame's composite of the GUI is
++                // the one already on screen -- nothing flagged changed BEFORE the
++                // update loop cleared the flags (0190), and nothing the setters
++                // never flag has moved. The old test read the cleared flags and
++                // was true for every GUI on every frame.
++                const bool _tracked = index >= 0 && index < 64;
++                const bool _unch = _tracked &&
++                    !dos_port_gui_was_changed[index] && !dos_port_gui_was_ctrls[index];
++                const bool _skip = _h && _unch && dos_port_gui_prev[index].SameAs(gui);
+                 if (_unch) dos_port_gui_noinval_n++;
++                if (_tracked)
++                {
++                    DosPortGuiPrev &_p = dos_port_gui_prev[index];
++                    if (_p.unmarked && !_skip)
++                    {
++                        // The flush at the top of the frame judged this GUI
++                        // unchanged and it is not (a flag set in between): its
++                        // old rect goes out now, consumed one frame late.
++                        dos_port_dirty_source = kDirtySrc_UiSprite;
++                        invalidate_rect(_p.rx, _p.ry, _p.rx + _p.rw, _p.ry + _p.rh, false);
++                        dos_port_dirty_source = kDirtySrc_Other;
++                        dos_port_gui_flush_late_n++;
++                    }
++                    _p.Record(gui, gui.GetX(), gui.GetY(), gui_ddb->GetWidth(), gui_ddb->GetHeight());
++                    _p.unmarked = _skip;
++                    if (_skip) dos_port_gui_skip_tally[index]++;
++                }
+                 add_to_sprite_list(gui_ddb, gui.GetX(), gui.GetY(), gui.GetZOrder(),
+-                                   guibg[index].DrawIndex, _h && _unch);
++                                   guibg[index].DrawIndex, _skip);
+             }
+ #else
+             add_to_sprite_list(gui_ddb, gui.GetX(), gui.GetY(), gui.GetZOrder(), guibg[index].DrawIndex);
+@@ -3120,6 +3217,7 @@ void construct_game_scene(bool full_redraw)
+     dos_port_dirty.scene_path = true;
+     if (full_redraw)
+         dos_port_dirty_set_full("full_redraw requested");
++    dos_port_gui_flush_unmarked();   // patch 0191: before the restore below
+ #endif
+ 
+     // React to changes to viewports and cameras (possibly from script) just before the render
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 5a152f4b7..245715831 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -660,11 +660,22 @@ void quit(const char *quitmsg)
+                     extern long dos_port_big_gui_unchanged;
+                     extern long dos_port_gui_tally[64];        // patch 0168
+                     extern long dos_port_gui_unchanged_tally[64];
++                    extern long dos_port_gui_skip_tally[64];    // patch 0191
++                    extern long dos_port_gui_flush_n, dos_port_gui_flush_late_n;
++                    extern long dos_port_gui_flush_tally[64];
++                    extern long dos_port_gui_flush_hidden_n, dos_port_gui_flush_props_n, dos_port_gui_flush_flag_n;
+                     for (int _g = 0; _g < 64; ++_g)
+                         if (dos_port_gui_tally[_g])
+-                            Debug::Printf("DOS-PORT guitally idx=%d n=%ld unchanged=%ld changed=%ld",  // patch 0190
++                            Debug::Printf("DOS-PORT guitally idx=%d n=%ld unchanged=%ld changed=%ld skipped=%ld",  // patch 0190/0191
+                                 _g, dos_port_gui_tally[_g], dos_port_gui_unchanged_tally[_g],
+-                                dos_port_gui_tally[_g] - dos_port_gui_unchanged_tally[_g]);
++                                dos_port_gui_tally[_g] - dos_port_gui_unchanged_tally[_g],
++                                dos_port_gui_skip_tally[_g]);
++                    Debug::Printf("DOS-PORT guiskip flushed=%ld late=%ld hidden=%ld props=%ld flag=%ld",   // patch 0191
++                        dos_port_gui_flush_n, dos_port_gui_flush_late_n,
++                        dos_port_gui_flush_hidden_n, dos_port_gui_flush_props_n, dos_port_gui_flush_flag_n);
++                    for (int _g = 0; _g < 64; ++_g)
++                        if (dos_port_gui_flush_tally[_g])
++                            Debug::Printf("DOS-PORT guiflush idx=%d n=%ld", _g, dos_port_gui_flush_tally[_g]);
+                     extern long dos_port_big_gui_opaque, dos_port_big_gui_masked;  // 0176
+                     Debug::Printf("DOS-PORT bigguiopaque opaque=%ld masked=%ld",
+                         dos_port_big_gui_opaque, dos_port_big_gui_masked);
+-- 
+2.47.3
+

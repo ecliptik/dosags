@@ -1,0 +1,27 @@
+SNDA1 -- VOID (tag reused across my own two attempts within this session;
+see PLAN.md's GUS on/off ABBA step 6, 2026-09-22)
+
+First attempt used the wrong binary (run-hw.sh's own default
+build/ags/ags.exe -- a stale local rebuild left over from an unrelated
+earlier investigation this session, binary_sha12=a36f76536d71,
+build_dirty=1). Caught before recording anything: this ABBA needs Gate
+2's own established baseline binary, build/abba/ags-0194.exe
+(binary_sha12=e8d4b76c5cd9, build_dirty=0). Re-ran the SAME tag (SNDA1)
+with AGS_EXE explicitly pinned to fix it.
+
+Same mechanism as G2R1: SNDA1.LOG (collected after the corrected run)
+holds TWO run manifests -- the first is the stale wrong-binary run
+(binary_sha12=a36f76536d71, build_dirty=1, started_utc=10:18:27Z), the
+second is the corrected run (binary_sha12=e8d4b76c5cd9, build_dirty=0,
+started_utc=10:28:13Z). RUN.BAT's own cleanup deletes AUTOPLT.LOG and
+PH0?.BMP but never <TAG>.LOG, so a tag reused against the same DEST
+accumulates -- exactly the failure mode "a tag is never reused" exists
+to prevent.
+
+The second manifest block's own numbers (fps_p50=40.00, tick_rate_steady
+=40.01, ticks=5000) are internally clean and closely match SNDA3's later
+re-run under a genuinely fresh tag -- but per the G2R1 precedent this is
+not treated as "take the last block", it is VOID. SNDA3 (fresh tag, no
+history to collide with) is the real cell for this arm.
+
+Not a step-6 figure. Retained as raw data only.

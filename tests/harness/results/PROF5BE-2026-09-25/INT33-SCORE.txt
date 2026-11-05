@@ -1,0 +1,22 @@
+# lab-mmd/int33.py as committed at cf629335 (LAB-MMD 33.1, 03:16Z, before round I; unchanged at lab/mmd head)
+PROF5BE-2026-09-25: per call us -- uclock 4.34  INT21h/30h 104.3  INT33h fn3 82.6  fn5 81.6
+   implied per tick (3 pumps: 3 x fn3 + 6 x fn5): 0.74 ms
+   VERDICT: prediction FALSIFIED (both < 0.1 ms/call)
+PROF5PO-2026-09-25: per call us -- uclock 4.34  INT21h/30h 105.1  INT33h fn3 82.6  fn5 81.1
+   implied per tick (3 pumps: 3 x fn3 + 6 x fn5): 0.73 ms
+   VERDICT: prediction FALSIFIED (both < 0.1 ms/call)
+PROF5BE-2026-09-25 COLD: sweep 579.6 us/iter (subtracted)
+   int21  warm   104.3 us  cold   205.7 us  ratio 1.97
+   fn3    warm    82.6 us  cold   166.3 us  ratio 2.01
+   fn5    warm    81.6 us  cold   166.8 us  ratio 2.04
+   pump   warm    36.7 us  cold   127.1 us  ratio 3.46
+   486 reading (fn3 2.01x, fn5 2.04x): SUPPORTS
+   DOSBox-X control reading (only meaningful on a DOSBox-X cell): FAIL
+PROF5PO-2026-09-25 COLD: sweep 579.6 us/iter (subtracted)
+   int21  warm   105.1 us  cold   205.0 us  ratio 1.95
+   fn3    warm    82.6 us  cold   166.9 us  ratio 2.02
+   fn5    warm    81.1 us  cold   166.9 us  ratio 2.06
+   pump   warm   523.9 us  cold   588.5 us  ratio 1.12
+   486 reading (fn3 2.02x, fn5 2.06x): SUPPORTS
+   DOSBox-X control reading (only meaningful on a DOSBox-X cell): FAIL
+

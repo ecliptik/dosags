@@ -1,0 +1,69 @@
+From 8cf8d0b22bb53f9a6fbfa1b584d05ef689a1059d Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 13:33:24 -0700
+Subject: [PATCH] [AGS] Gate OpenAL/mojoAL acquisition out for DOS
+
+FindLocalOpenAL.cmake sets AGS_USE_MOJO_AL only for
+WIN32/LINUX/MACOS/FREEBSD; DOS fell through to find_package(OpenAL)
+(fails under a cross-compile) and then to its own automatic mojoAL
+fallback (if(AGS_USE_MOJO_AL OR NOT OPENAL_FOUND)) regardless --
+mojoal.c is SDL2 code that does not compile against SDL3 headers.
+Stubbing AGS's own al* call sites (patch 0018) is not enough on its
+own without this.
+
+Introduces AGS_OPENAL_LINK_TARGET (empty for DOS, External::OpenAL
+otherwise) so Engine/CMakeLists.txt's link line needs only a
+single-token substitution, same pattern as patch 0003's
+AGS_SDL_LINK_TARGET. apeg's own reference to External::OpenAL is
+already moot -- its add_subdirectory is gated out entirely by patch
+0004.
+
+Audio is stubbed for COMPILES; the mojoAL-vs-custom-mixer decision
+stays deferred to the Sound milestone, unaffected by this patch.
+---
+ CMakeLists.txt        | 15 ++++++++++++++-
+ Engine/CMakeLists.txt |  2 +-
+ 2 files changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index bd8d057b5..f94be254c 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -379,7 +379,20 @@ endif()
+ ###############################################################################
+ # subdirectories of this project
+ 
+-include(FindLocalOpenAL)
++if (NOT DOS)
++    # DOS-PORT: FindLocalOpenAL.cmake sets AGS_USE_MOJO_AL only for
++    # WIN32/LINUX/MACOS/FREEBSD; DOS falls through to its find_package(OpenAL)
++    # branch, which fails under this cross-compile, and then falls back to
++    # mojoAL anyway (if(AGS_USE_MOJO_AL OR NOT OPENAL_FOUND)) -- mojoal.c
++    # is SDL2 code that does not compile against SDL3 headers. Audio is
++    # stubbed for COMPILES (patches/ags/0012, 0018); the mojoAL-vs-custom-
++    # mixer decision is deliberately deferred to the Sound milestone, so
++    # nothing here should try to configure mojoAL at all yet.
++    include(FindLocalOpenAL)
++    set(AGS_OPENAL_LINK_TARGET External::OpenAL)
++else()
++    set(AGS_OPENAL_LINK_TARGET "")
++endif()
+ include(FindLocalAllegro)
+ 
+ if (NOT AGS_USE_LOCAL_GLM)
+diff --git a/Engine/CMakeLists.txt b/Engine/CMakeLists.txt
+index 61b82a944..97e4824c3 100644
+--- a/Engine/CMakeLists.txt
++++ b/Engine/CMakeLists.txt
+@@ -545,7 +545,7 @@ target_link_libraries(engine PUBLIC
+     ${CMAKE_DL_LIBS}
+     Allegro::Allegro
+     Cda::Cda
+-    External::OpenAL
++    ${AGS_OPENAL_LINK_TARGET}
+     ${AGS_SDL_LINK_TARGET}
+     SDL2_sound::SDL2_sound
+ )
+-- 
+2.47.3
+

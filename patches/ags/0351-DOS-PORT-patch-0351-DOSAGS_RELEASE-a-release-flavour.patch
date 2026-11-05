@@ -1,0 +1,462 @@
+From 2fa48553ce108ad7f4c2d9ccdd94e13ef6d03418 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 4 Nov 2026 10:33:49 -0800
+Subject: [PATCH] DOS-PORT: patch 0351 -- DOSAGS_RELEASE: a release flavour
+ without the timing instrumentation
+
+`make DOSAGS_RELEASE=1` (-DDOSAGS_RELEASE, build/ags-release) compiles out: every
+tick-timing scope, manual bracket and record (dos_port_tick_timing.h: constant-false
+fine test, empty scope); the 0230 work-vector snapshots, per-tick loops and lines; the
+stallwhat and skipframe attribution; the per-call brackets for script file I/O, object
+setup, screenshots and 8-bit fade steps; the periodic rbstruct / dirtypresent / bgstruct /
+biggui lines; the quit-time phase aggregates and counter dump; the DOSAGS_TICKSTATS_FINE,
+DOSAGS_TICKLOG, DOSAGS_FLIP_INSTR and DOSAGS_CLOCK_CROSSCHECK reads.
+
+It keeps RUNMANIFEST and every line the gate scorers and the DOSBox-X ratchet read: the
+0093 yardstick (DosTickStallScope's two clock reads per tick: tick_rate_steady, stalls,
+fps_basis, and the per-second "DOS-PORT persec" series), tick_rate / frames_skipped, build_dirty, audio_vital_status and the
+silentirq / startlat lines, journeys and room_transition, presentverify (env), the freeze
+instrument (env), the stress and break hooks (env), and every functional kill switch.
+The work-vector counters are still incremented (integer adds on hot paths), but in this
+flavour nothing reads them: the "work scope=" and "workpersec" lines are compiled out with the
+snapshots. Compiling out the increments too changes the release exe and is left for a later
+patch with its own ratchet run.
+
+Release only, operator 2026-11-04: DOSAGS_FIXED_TIMESTEP defaults on (every gate cell ran
+with it); DOSAGS_FIXED_TIMESTEP=0 turns it off.
+
+The instrumented flavour is unchanged: its clean-build exe differs from af3f0824499e's in 13
+bytes, all of them the binary_sha12 stamp's characters (four movl immediates, the last one
+overlapping the third); build_dirty does not differ.
+---
+ Engine/ac/draw.cpp                 |  2 ++
+ Engine/ac/draw_software.cpp        |  2 ++
+ Engine/ac/file.cpp                 |  7 +++++++
+ Engine/ac/global_game.cpp          |  2 +-
+ Engine/ac/object.cpp               |  7 +++++++
+ Engine/ac/screen.cpp               |  5 +++++
+ Engine/gfx/ali3dsw.cpp             |  4 ++++
+ Engine/main/dos_port_tick_timing.h | 25 +++++++++++++++++++++++++
+ Engine/main/game_run.cpp           | 20 +++++++++++++++++++-
+ Engine/main/main.cpp               |  6 ++++++
+ Engine/main/quit.cpp               | 10 ++++++++++
+ 11 files changed, 88 insertions(+), 2 deletions(-)
+
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index 31ef48371..4eed0b69f 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -3182,12 +3182,14 @@ void draw_gui_and_overlays()
+                         dos_port_gui_tally[index]++;
+                         if (_unch) dos_port_gui_unchanged_tally[index]++;
+                     }
++#ifndef DOSAGS_RELEASE   // patch 0351: no periodic biggui line in the release flavour
+                     if ((dos_port_big_gui_n % 200) == 1)
+                         Debug::Printf("DOS-PORT biggui idx=%d name=%s %ldx%ld changed=%d ctrls=%d n=%ld unchanged=%ld",
+                             index, gui.GetName().GetCStr(), _w, _h,
+                             (index >= 0 && index < 64) ? (int)dos_port_gui_was_changed[index] : -1,
+                             (index >= 0 && index < 64) ? (int)dos_port_gui_was_ctrls[index] : -1,
+                             dos_port_big_gui_n, dos_port_big_gui_unchanged);
++#endif
+                 }
+             }
+ #endif
+diff --git a/Engine/ac/draw_software.cpp b/Engine/ac/draw_software.cpp
+index 83a337106..2e57022e7 100644
+--- a/Engine/ac/draw_software.cpp
++++ b/Engine/ac/draw_software.cpp
+@@ -944,10 +944,12 @@ void update_room_invreg_and_reset(int view_index, Bitmap *ds, Bitmap *src, bool
+ #ifdef __DJGPP__
+     }
+     dos_port_dirty_note_restore();   // patch 0193: marks made from here on are repainted next frame
++#ifndef DOSAGS_RELEASE   // patch 0351: no periodic bgstruct line in the release flavour
+     if ((dos_port_tick_timing.bg_calls % 500) == 0)
+         AGS::Common::Debug::Printf("DOS-PORT bgstruct calls=%ld whole=%ld px=%ld slow_px=%ld",
+             dos_port_tick_timing.bg_calls, dos_port_tick_timing.bg_whole,
+             (long)dos_port_tick_timing.bg_px, (long)dos_port_tick_timing.bg_slow_px);
++#endif
+ #endif
+     RoomCamRects[view_index].Reset();
+ }
+diff --git a/Engine/ac/file.cpp b/Engine/ac/file.cpp
+index ad68a606a..8ff9d0fdb 100644
+--- a/Engine/ac/file.cpp
++++ b/Engine/ac/file.cpp
+@@ -240,6 +240,12 @@ void *File_GetFiles(const char *filemask, int file_sort, int sort_dir)
+ long long dos_port_scfile_open_us = 0;   long dos_port_scfile_open_n = 0;
+ long long dos_port_scfile_write_us = 0;  long dos_port_scfile_write_n = 0;
+ long long dos_port_scfile_close_us = 0;  long dos_port_scfile_close_n = 0;
++#ifdef DOSAGS_RELEASE
++// patch 0351: the release flavour times no per-call bracket; the empty scope compiles to nothing.
++struct DosPortFileScope {
++    DosPortFileScope(long long &, long &) {}
++};
++#else
+ struct DosPortFileScope {
+     uclock_t t0; long long *us; long *n;
+     DosPortFileScope(long long &u, long &c) : t0(uclock()), us(&u), n(&c) {}
+@@ -249,6 +255,7 @@ struct DosPortFileScope {
+         *us += d; (*n)++;
+     }
+ };
++#endif // DOSAGS_RELEASE
+ #endif
+ 
+ void *sc_OpenFile(const char *fnmm, int mode) {
+diff --git a/Engine/ac/global_game.cpp b/Engine/ac/global_game.cpp
+index d067f7c6a..f74597d9e 100644
+--- a/Engine/ac/global_game.cpp
++++ b/Engine/ac/global_game.cpp
+@@ -920,7 +920,7 @@ long dos_port_screenshot_n = 0;
+ 
+ int SaveScreenShot4(const char *namm, int width, int height, int layers)
+ {
+-#ifdef __DJGPP__
++#if defined(__DJGPP__) && !defined(DOSAGS_RELEASE)   // patch 0351: not timed in the release flavour
+     const uclock_t _dp_ss_t0 = uclock();
+     struct _DpSs {
+         uclock_t t0;
+diff --git a/Engine/ac/object.cpp b/Engine/ac/object.cpp
+index c99d9a366..343bd1a8d 100644
+--- a/Engine/ac/object.cpp
++++ b/Engine/ac/object.cpp
+@@ -127,6 +127,12 @@ void Object_RemoveTint(ScriptObject *objj) {
+ long long dos_port_objsetview_us = 0;  long dos_port_objsetview_n = 0;
+ long long dos_port_objanimate_us = 0;  long dos_port_objanimate_n = 0;
+ long long dos_port_objvisible_us = 0;  long dos_port_objvisible_n = 0;
++#ifdef DOSAGS_RELEASE
++// patch 0351: the release flavour times no per-call bracket; the empty scope compiles to nothing.
++struct DosPortObjScope {
++    DosPortObjScope(long long &, long &) {}
++};
++#else
+ struct DosPortObjScope {
+     uclock_t t0; long long *us; long *n;
+     DosPortObjScope(long long &u, long &c) : t0(uclock()), us(&u), n(&c) {}
+@@ -136,6 +142,7 @@ struct DosPortObjScope {
+         *us += d; (*n)++;
+     }
+ };
++#endif // DOSAGS_RELEASE
+ #endif
+ 
+ void Object_SetView(ScriptObject *objj, int view, int loop, int frame) {
+diff --git a/Engine/ac/screen.cpp b/Engine/ac/screen.cpp
+index f45caa33f..ce20067cf 100644
+--- a/Engine/ac/screen.cpp
++++ b/Engine/ac/screen.cpp
+@@ -610,6 +610,10 @@ public:
+             // which on Allegro means wait for retrace -- up to ~16 ms a
+             // step before the present is even counted.
+             dp_fade8_steps++;
++#ifdef DOSAGS_RELEASE   // patch 0351: a fade step is not timed in the release flavour
++            fade_interpolate(*_srcPal, *_destPal, _dynamicPal, _alpha, _rangeFrom, _rangeTo);
++            set_palette_range(_dynamicPal, _rangeFrom, _rangeTo, TRUE);
++#else
+             {
+                 const uclock_t _t0 = uclock();
+                 fade_interpolate(*_srcPal, *_destPal, _dynamicPal, _alpha, _rangeFrom, _rangeTo);
+@@ -619,6 +623,7 @@ public:
+                 dp_fade8_interp_us += (long long)(_t1 - _t0) * 1000000LL / UCLOCKS_PER_SEC;
+                 dp_fade8_setpal_us += (long long)(_t2 - _t1) * 1000000LL / UCLOCKS_PER_SEC;
+             }
++#endif
+             return true;
+ #else
+             fade_interpolate(*_srcPal, *_destPal, _dynamicPal, _alpha, _rangeFrom, _rangeTo);
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index b8a20ffca..6c445404f 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -635,6 +635,7 @@ void SDLRendererGraphicsDriver::RenderToBackBuffer()
+ #ifdef __DJGPP__
+     dos_port_tick_timing.rb_calls++;
+     dos_port_tick_timing.rb_batches += (long)_spriteBatchDesc.size();
++#ifndef DOSAGS_RELEASE   // patch 0351: no periodic rbstruct line in the release flavour
+     if ((dos_port_tick_timing.rb_calls % 500) == 0)
+         Debug::Printf("DOS-PORT rbstruct calls=%ld batches=%ld clears=%ld clear_px=%ld sprites=%ld sprite_px=%ld clipped=%ld flagged=%ld noflag=%ld notvs=%ld novalid=%ld isfull=%ld guimiss=%ld guihit=%ld hitpx=%ld fullpx=%ld bigmiss=%ld bighit=%ld bigisect=%ld bigfull=%ld",
+             dos_port_tick_timing.rb_calls, dos_port_tick_timing.rb_batches,
+@@ -648,6 +649,7 @@ void SDLRendererGraphicsDriver::RenderToBackBuffer()
+             (long)dos_port_tick_timing.rb_gui_hit_px, (long)dos_port_tick_timing.rb_gui_full_px,
+             dos_port_tick_timing.rb_gui_big_miss, dos_port_tick_timing.rb_gui_big_hit,
+             (long)dos_port_tick_timing.rb_gui_big_isect_px, (long)dos_port_tick_timing.rb_gui_big_full_px);
++#endif
+ #endif
+     const size_t last_batch_to_rend = _spriteBatchDesc.size() - 1;
+     for (size_t cur_bat = 0u, last_bat = 0u, cur_spr = 0u; last_bat <= last_batch_to_rend;)
+@@ -1946,6 +1948,7 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+             dos_port_dirty.px_full += (long long)dst.w * dst.h;
+         }
+         const long tot = dos_port_dirty.frames_narrow + dos_port_dirty.frames_full;
++#ifndef DOSAGS_RELEASE   // patch 0351: no periodic dirtypresent line in the release flavour
+         if ((tot % 500) == 0)
+             // patch 0128: a per-cause BREAKDOWN, not one latched string.
+             // The old "reason=" field printed "-" for every full present in
+@@ -1972,6 +1975,7 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+                 dos_port_dirty.mg_rects[1], (long)dos_port_dirty.mg_px[1],
+                 dos_port_dirty.mg_rects[2], (long)dos_port_dirty.mg_px[2],
+                 dos_port_dirty.mg_rects[3], (long)dos_port_dirty.mg_px[3]);
++#endif
+         dos_port_dirty_frame_reset();
+     }
+ #endif
+diff --git a/Engine/main/dos_port_tick_timing.h b/Engine/main/dos_port_tick_timing.h
+index 6ae23f96e..97c4a012d 100644
+--- a/Engine/main/dos_port_tick_timing.h
++++ b/Engine/main/dos_port_tick_timing.h
+@@ -502,12 +502,24 @@ static inline long long dos_port_tick_elapsed_us(uclock_t t0)
+ // The setting is read once at startup (main.cpp's ags_entry_point sets the flag); every site tests one global,
+ // so the switch costs a load and a branch per scope and no code per site beyond that.
+ extern int dos_port_tick_fine_flag;
++#ifdef DOSAGS_RELEASE
++// DOS-PORT patch 0351: the release flavour has no tick timing at all. Every fine and coarse scope, manual
++// bracket and record below compiles to nothing (constant-false tests, empty RAII scope), so no site pays a
++// clock read, a load or a branch. The counters in DosPortTickTiming that are NOT timings (presents_real,
++// presents_skipped, blits_*, ... -- the yardstick's fps_basis line and the gate scorers read them) are plain
++// increments at their sites and are untouched. The yardstick itself (DosTickStallScope, game_run.cpp) keeps
++// its two clock reads per tick: tick_rate_steady comes from them.
++static inline bool dos_port_tick_fine_on() { return false; }
++static inline uclock_t dos_port_fine_uclock() { return 0; }
++static inline long long dos_port_fine_elapsed_us(uclock_t) { return 0; }
++#else
+ static inline bool dos_port_tick_fine_on() { return dos_port_tick_fine_flag > 0; }
+ static inline uclock_t dos_port_fine_uclock() { return dos_port_tick_fine_on() ? uclock() : 0; }
+ static inline long long dos_port_fine_elapsed_us(uclock_t t0)
+ {
+     return dos_port_tick_fine_on() ? dos_port_tick_elapsed_us(t0) : 0;
+ }
++#endif
+ 
+ // DOS-PORT patch 0316: an opt-in per-tick log of the coarse scopes. The run totals above cannot say which tick
+ // a cost fell in, so a figure that must leave out a room-entry tick or a click's hitch could not be computed
+@@ -526,6 +538,9 @@ enum
+ extern unsigned long *dos_port_ticklog_buf;   // null unless DOSAGS_TICKLOG is set
+ void dos_port_ticklog_add(unsigned kind, unsigned long value);
+ 
++#ifdef DOSAGS_RELEASE
++static inline void dos_port_tick_record_us(DosPortTickPhaseStats &, long long) {}   // patch 0351
++#else
+ static inline void dos_port_tick_record_us(DosPortTickPhaseStats &stats, long long sample_us)
+ {
+     stats.calls++;
+@@ -548,10 +563,19 @@ static inline void dos_port_tick_record_us(DosPortTickPhaseStats &stats, long lo
+     if (sample_ms > stats.max_ms)
+         stats.max_ms = sample_ms;
+ }
++#endif // DOSAGS_RELEASE (patch 0351)
+ 
+ // RAII bracket for a function with more than one return path (e.g.
+ // RenderToBackBuffer()'s early "nothing to render" exit) -- one line at
+ // the top of the function instead of touching every return statement.
++#ifdef DOSAGS_RELEASE
++// patch 0351: the release flavour's scope is empty; the optimiser removes it and its arguments entirely.
++class DosPortTickScope
++{
++public:
++    explicit DosPortTickScope(DosPortTickPhaseStats &, int = 0) {}
++};
++#else
+ class DosPortTickScope
+ {
+ public:
+@@ -580,6 +604,7 @@ private:
+     unsigned char _log;   // patch 0316
+     uclock_t _t0;
+ };
++#endif // DOSAGS_RELEASE (patch 0351)
+ 
+ #endif // __DJGPP__
+ 
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 789cd93a0..e38ef6162 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1665,16 +1665,20 @@ public:
+         : _t0(uclock()), _saved_children(dos_tick_children_us), _index(GameTimer.LoopCounter + 1)
+     {
+         ++dos_tick_depth;   // patch 0159
++#ifndef DOSAGS_RELEASE   // patch 0351: no work vector in the release flavour
+         dos_port_work_snapshot(_w0);   // patch 0230
+         for (int i = 0; i < kDW_Count; i++)
+         {
+             _saved_child_w[i] = dos_work_children[i];
+             dos_work_children[i] = 0;
+         }
++#endif
+         if (!dos_tick_have_first)
+         {
++#ifndef DOSAGS_RELEASE
+             for (int i = 0; i < kDW_Count; i++)
+                 dos_work_first[i] = _w0[i];   // patch 0230
++#endif
+             dos_tick_have_first = true;
+             dos_tick_first_entry = _t0;
+             dos_tick_preloop_ms = GameTimer.RuntimeStarted ? get_runtime_ms() : 0;
+@@ -1686,6 +1690,7 @@ public:
+         // save, menu and the transitions one shape or four -- cannot be
+         // answered from a duration alone, and Gate 3's bar 2 wants one
+         // budget across all of them only if they are one shape.
++#ifndef DOSAGS_RELEASE   // patch 0351: no stall attribution in the release flavour
+         {
+             const DosPortTickTiming &t = dos_port_tick_timing;
+             _s_script = t.script_vm.total_us;
+@@ -1694,6 +1699,7 @@ public:
+             _s_rb     = t.render_backbuffer.total_us;
+             _s_present= t.present_update_window.total_us;
+         }
++#endif
+     }
+     ~DosTickStallScope()
+     {
+@@ -1717,6 +1723,7 @@ public:
+         dos_tick_children_us = _saved_children + total_us;
+         dos_tick_last_exit = t1;
+         dos_tick_count++;
++#ifndef DOSAGS_RELEASE   // patch 0351
+         {   // patch 0230: this tick's work; its self part is excluded if it stalled
+             long long w1[kDW_Count];
+             dos_port_work_snapshot(w1);
+@@ -1734,6 +1741,7 @@ public:
+             for (int i = 0; i < kDW_Count; i++)
+                 dos_work_last[i] = w1[i];
+         }
++#endif
+         if (self_us > DOS_TICK_STALL_THRESHOLD_US)
+         {
+             if (dos_tick_stall_total < DOS_TICK_STALL_CAP)
+@@ -1762,6 +1770,7 @@ public:
+             // script; one that is not is the engine doing something
+             // synchronous (a load, a save, a fade) and is a different
+             // object wearing the same duration.
++#ifndef DOSAGS_RELEASE   // patch 0351: no stallwhat line in the release flavour
+             {
+                 const DosPortTickTiming &t = dos_port_tick_timing;
+                 // patch 0142: children_ms is NOT decoration -- without it
+@@ -1784,6 +1793,7 @@ public:
+                     (long)(t.render_backbuffer.total_us    - _s_rb),
+                     (long)(t.present_update_window.total_us- _s_present));
+             }
++#endif
+         }
+     }
+ private:
+@@ -1883,6 +1893,7 @@ void dos_port_yardstick_emit(FILE *log)
+     // tick_rate_steady covers (first tick entry to last tick exit, stall ticks'
+     // self work removed); "excluded" is everything else in the run (before the
+     // loop, stall ticks, after the loop). steady + excluded = the whole run.
++#ifndef DOSAGS_RELEASE   // patch 0351: no work vector in the release flavour
+     {
+         static const char *const DWN[kDW_Count] = {
+             "ticks", "renders", "presents", "script_ins", "script_ext",
+@@ -1917,6 +1928,7 @@ void dos_port_yardstick_emit(FILE *log)
+                 i + 1, dos_persec[i].ins, dos_persec[i].push, dos_persec[i].blit,
+                 dos_persec[i].spr_px, dos_persec[i].bg_px, dos_persec[i].file);
+     }
++#endif
+ }
+ #endif // __DJGPP__
+ 
+@@ -2271,7 +2283,13 @@ static bool dos_fixed_timestep_active()
+     if (cached < 0)
+     {
+         const char *env = getenv("DOSAGS_FIXED_TIMESTEP");
++#ifdef DOSAGS_RELEASE
++        // DOS-PORT patch 0351 (operator 2026-11-04): the release flavour defaults to the fixed timestep,
++        // the mode every gate cell was measured in (run-hw.sh sets it); DOSAGS_FIXED_TIMESTEP=0 turns it off.
++        cached = (env && env[0] == '0' && env[1] == '\0') ? 0 : 1;
++#else
+         cached = (env && env[0] == '1' && env[1] == '\0') ? 1 : 0;
++#endif
+         Debug::Printf(kDbgMsg_Info, "DOS-PORT fixed-timestep: %s",
+             cached ? "ENABLED (logic decoupled from render)" : "DISABLED (1:1 logic/render)");
+     }
+@@ -2505,7 +2523,7 @@ static void dos_run_tick_fixed()
+     const long actual_ticks = (long)(get_loop_counter() - epoch_tick);
+     long owed = expected_ticks - actual_ticks;
+ 
+-#ifdef __DJGPP__
++#if defined(__DJGPP__) && !defined(DOSAGS_RELEASE)   // patch 0351: no skip attribution in the release flavour
+     // DOS-PORT patch 0140: per-skip attribution.
+     //
+     // 426 skipped renders spread through ordinary play at a steady 13.2%,
+diff --git a/Engine/main/main.cpp b/Engine/main/main.cpp
+index 778ff92a4..91ad566f4 100644
+--- a/Engine/main/main.cpp
++++ b/Engine/main/main.cpp
+@@ -249,6 +249,7 @@ void main_init(int argc, char*argv[])
+     // DOS-PORT patch 0095: the cross-check's start edge, deliberately
+     // BEFORE the two engine-start anchors below so the up-to-one-second
+     // sync is outside duration_s and every startup/t_ms figure.
++#ifndef DOSAGS_RELEASE   // patch 0351: no clock cross-check in the release flavour
+     {
+         const char *want_crosscheck = getenv("DOSAGS_CLOCK_CROSSCHECK");
+         if (want_crosscheck && want_crosscheck[0] == '1' && want_crosscheck[1] == 0)
+@@ -257,6 +258,7 @@ void main_init(int argc, char*argv[])
+             dos_port_crosscheck_active = true;
+         }
+     }
++#endif
+     dos_port_engine_start_time = time(nullptr);
+     dos_port_engine_start_uclock = uclock();
+     // DOS-PORT patch 0078: DOSAGS_FLIP_INSTR=1 is this port's own naming
+@@ -271,11 +273,13 @@ void main_init(int argc, char*argv[])
+     // call, so this must run before the first Present()). Off by
+     // default, same as the flag it bridges to -- it has a real per-flip
+     // cost (patch 0035's own comment), so an operator must ask for it.
++#ifndef DOSAGS_RELEASE   // patch 0351: no per-flip instrumentation in the release flavour
+     {
+         const char *want_flip_instr = getenv("DOSAGS_FLIP_INSTR");
+         if (want_flip_instr && want_flip_instr[0] == '1' && want_flip_instr[1] == 0)
+             setenv("SDL_HINT_DOS_FLIP_INSTR", "1", 1);
+     }
++#endif
+ #endif
+ 
+     set_our_eip(-999);
+@@ -596,6 +600,7 @@ static int main_process_cmdline(ConfigTree &cfg, int argc, char *argv[])
+ 
+ int ags_entry_point(int argc, char *argv[]) { 
+ #ifdef __DJGPP__
++#ifndef DOSAGS_RELEASE   // patch 0351: the release flavour has no tick timing and no tick log
+     { // DOS-PORT patch 0315: fine timing is off unless DOSAGS_TICKSTATS_FINE=1 (read once, here, before any timing)
+         extern int dos_port_tick_fine_flag;
+         const char *e = getenv("DOSAGS_TICKSTATS_FINE");
+@@ -603,6 +608,7 @@ int ags_entry_point(int argc, char *argv[]) {
+         extern void dos_port_ticklog_init(const char *env);   // patch 0316: DOSAGS_TICKLOG=<ticks>, opt-in
+         dos_port_ticklog_init(getenv("DOSAGS_TICKLOG"));
+     }
++#endif // DOSAGS_RELEASE
+ #endif
+     main_init(argc, argv);
+ 
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 8d398cf21..f0a874760 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -581,6 +581,15 @@ void quit(const char *quitmsg)
+             // phase instead of a repeated fprintf now that patch 0082's
+             // exhaustive partition brings the phase count to 17 -- see
+             // dos_port_tick_emit()'s own definition above quit().
++#ifdef DOSAGS_RELEASE
++            // DOS-PORT patch 0351: the release flavour times nothing, so it has no phase aggregates and none of
++            // the quit-time counter dump below. It keeps the one line the DOSBox-X ratchet reads from this
++            // block (ratchet-facts.py: presentverify, opt-in via DOSAGS_PRESENT_VERIFY, printed only if it ran).
++            if (dos_port_pv_frames)
++                Debug::Printf("DOS-PORT presentverify frames=%ld stale_frames=%ld stale_px=%lld stale_px_max=%ld first_stale_frame=%ld bbox=%d,%d..%d,%d",
++                    dos_port_pv_frames, dos_port_pv_stale_frames, dos_port_pv_stale_px, dos_port_pv_stale_max,
++                    dos_port_pv_first, dos_port_pv_bbox[0], dos_port_pv_bbox[1], dos_port_pv_bbox[2], dos_port_pv_bbox[3]);
++#else
+             {
+                 const DosPortTickTiming &t = dos_port_tick_timing;
+                 dos_port_tick_emit(run_manifest_log, "script_vm", t.script_vm);
+@@ -837,6 +846,7 @@ void quit(const char *quitmsg)
+                 dos_port_tick_emit(run_manifest_log, "present_dirty_check", t.present_dirty_check);
+                 dos_port_tick_emit(run_manifest_log, "present_skip_unchanged", t.present_skip_unchanged);
+             }
++#endif // DOSAGS_RELEASE (patch 0351)
+ 
+             // DOS-PORT patch 0085 (operator-directed DPMI/interrupt audit):
+             // real-mode-callback visibility. banked_mode=0 means the
+-- 
+2.47.3
+

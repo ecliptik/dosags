@@ -1,0 +1,122 @@
+# If On A Winter's Night, Four Travelers -- porting manifest, per
+# PLAN.md's "Game porting framework" section. Produced 2026-09-15
+# alongside the 32-bit display path's real-game validation and the
+# 8/16/32-bit KPI comparison -- see tests/games/iowna/PIN for source/
+# license (including the real-hardware-scope decision), inspect-
+# report.json for the tool's raw output.
+
+id: iowna
+title: "If On A Winter's Night, Four Travelers"
+source: see PIN (this directory) -- sha256 + download URL, never the game
+        archive itself
+
+data_version: 50
+compiled_with_editor: "3.5.0.31"
+loadable: true
+legacy_audio_system: false
+
+resolution: "320x200"
+color_depth: 32   # native -- the second real 32-bit game used to
+                  # validate patches/ags/0075/0076
+
+audio:
+  embedded_clip_count: 0
+  sibling_vox: true    # audio.vox, NOT embedded -- 235 clips, ALL OGG,
+                        # all needing host transcode. The single largest
+                        # real exercise of tools/port-game/'s 2026-09-15
+                        # sibling-vox fix (220 transcoded, 15 already WAV).
+  needs_host_transcode: true
+fonts:
+  - {file: AGSFNT0.WFN, kind: native bitmap (WFNFont)}
+  - {file: AGSFNT1.WFN, kind: native bitmap (WFNFont)}
+  - {file: AGSFNT2.WFN, kind: native bitmap (WFNFont)}
+  - {file: agsfnt3.wfn, kind: native bitmap (WFNFont)}
+  # no TTF -- does not exercise the alfont/FreeType text path
+
+clib:
+  original_lib_version: 30
+  repacked_lib_version: 30
+  asset_count: 32
+
+known_issue: "room15's room_AfterFadeIn throws a null-pointer script error
+  on every cold boot (reproduced identically across multiple DOSBox-X
+  runs) -- non-fatal, engine logs it and continues, so fps measurement
+  still completes with exit_code=0, but the scene being measured is
+  whatever state the engine is in after that error, not clean gameplay.
+  Root cause not investigated -- see PIN for the (unconfirmed) leading
+  guess. Flagged so this game's fps numbers are read with that caveat,
+  not as clean-gameplay figures."
+
+driving_recipe: "Same recipe as Shards of God and the rest of the
+  8/16/32-bit KPI comparison: DOSAGS_TAS_AUTO_EXIT_TICK=1000 +
+  DOSAGS_FIXED_TIMESTEP=1, sound disabled (ACSETUP-OFF.CFG). The 16-bit
+  arm adds DOSAGS_FORCE_COLOR_DEPTH=16 (patches/ags/0076) -- confirmed
+  via each run's own 'Graphics mode set: ... (N-bit)' log line."
+
+sibling_vox_note: "audio.vox must be staged alongside IOWN4T.ags for the
+  engine to log audio.vox found and initialized -- tools/port-game/
+  port_game.py layout now copies it automatically (2026-09-15 fix), no
+  manual step needed."
+
+# Structured driving recipe for tools/port-game/port_game.py validate
+# (added 2026-09-16, same shape and reasoning as tests/games/shards/
+# manifest.yaml's block). timeout_s is generous because the ~886 MB
+# package is copied into the staged run dir before DOSBox-X even boots.
+# warn_count is NOT expected to be 0 here if the known_issue above
+# (room15's script error) surfaces as an engine warning -- validate's
+# hard warn_count==0 check then fails HONESTLY and the record says so;
+# that is the intended signal, not a tooling defect to paper over.
+validate:
+  pkg: iowna
+  auto_exit_tick: 1000
+  timeout_s: 480
+  arms:
+    depth_32_native:
+      cfg: ACSETUP-OFF.CFG
+      env: {}
+    depth_16_forced:
+      cfg: ACSETUP-OFF.CFG
+      env:
+        DOSAGS_FORCE_COLOR_DEPTH: "16"
+
+expected_runmanifest_dosbox_x:
+  depth_32_native:
+    exit_code: 0
+    audio_vital_status: "NA"
+    stdout_contains:
+      - "Graphics mode set: 640 x 480 (32-bit) fullscreen desktop"
+  depth_16_forced:
+    exit_code: 0
+    audio_vital_status: "NA"
+    stdout_contains:
+      - "Graphics mode set: 640 x 480 (16-bit) fullscreen desktop"
+
+# validated: -- DOSBox-X only, deliberately (see PIN's REAL-HARDWARE
+# STATUS note) -- MECHANISM confirmation only, never a performance claim.
+validated:
+  - environment: dosbox-x
+    date: 2026-09-15
+    note: "mechanism confirmation only, not a performance claim; both
+      cells hit the room15 known_issue above, non-fatal"
+    depth_32_native: {tag: I32A, exit_code: 0, fps_p50: 16.35, fps_p95: 17.31, tick_rate: 34.31, graphics_mode_log: "Graphics mode set: 640 x 480 (32-bit) fullscreen desktop"}
+    depth_16_forced: {tag: I16A, exit_code: 0, fps_p50: 13.33, fps_p95: 17.31, tick_rate: 30.67, graphics_mode_log: "Graphics mode set: 640 x 480 (16-bit) fullscreen desktop"}
+  - environment: HW-486-66
+    date: null
+    note: "NOT ATTEMPTED, by operator decision -- see PIN's REAL-HARDWARE
+      STATUS note. ~988MB combined package is out of scope for this
+      rig's real transfer link regardless of REFUSE_BYTES policy."
+  - environment: dosbox-x
+    date: 2026-09-16
+    depth_32_native: {tag: VIOWIVE, exit_code: 0, audio_vital_status: "NA", fps_p50: 15.38, fps_p95: 16.35, tick_rate: 33.79, frames_skipped: 366, critical_count: 0, warn_count: 0, binary_sha12: b60f6e538323}
+    depth_16_forced: {tag: VIOWCED, exit_code: 0, audio_vital_status: "NA", fps_p50: 13.46, fps_p95: 15.38, tick_rate: 30.26, frames_skipped: 364, critical_count: 0, warn_count: 0, binary_sha12: b60f6e538323}
+    note: "Game porting framework gate check, same shape as tests/games/shards/manifest.yaml's FW16SHA entry: first run driven entirely by this manifest's own validate: block via port_game.py validate. Mechanism confirmation only. Both depth arms pass every check (fixed-timestep witness ENABLED, per-arm Graphics-mode-set witness, exit_code=0, critical/warn=0 -- the room15 known_issue did NOT surface as an engine warning in either arm). See results/FW16IOW.json."
+
+compat_sweep:
+  date: 2026-09-15
+  auto_exit_tick: 1000
+  boots: {ok: true, exit_code: 0}
+  title: {ok: true, evidence: "STDOUT.TXT: '(room:15) Now in room 15', no crash, exit_code=0"}
+  first_room: {ok: false, failure_reason: "only room 15 was ever loaded during the drive window -- this game's title/start screen waits for player input to advance and none was injected this pass; not a defect, an honest scope limit"}
+  playable: {ok: false, attempted: false, failure_reason: "no input-injection automation exists for binary-only games this pass (no AutoPilot module, no generic DOSBox-X input harness proven yet)"}
+  complete: {ok: false, attempted: false, failure_reason: "not attempted, same reason as playable"}
+  screenshot: not attempted -- see trilbysnotes' own compat_sweep entry for why

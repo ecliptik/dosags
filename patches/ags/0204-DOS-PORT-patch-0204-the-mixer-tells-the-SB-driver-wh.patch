@@ -1,0 +1,180 @@
+From 35fd5533c13383bc2e9f2b612f1e5f5987c763b0 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 22 Sep 2026 22:22:36 -0700
+Subject: [PATCH] DOS-PORT: patch 0204 -- the mixer tells the SB driver when
+ content is playing; report gate skips and idle-pauses
+
+WHY: the SB driver's silence gate dropped every buffer that was silent in the device format, which
+during a sound removes time: 5 Days' sound 9 (52 of 88 windows digital zero) lost its pauses and
+showed ~50 "silent IRQs" per play on hardware; on the PicoGUS's 8-bit path every chunk quieter than
+~-48 dBFS was dropped too, and sound 10 played ~9.0 s instead of ~10 s (PLAN.md step 8, UR5-UR8 and
+the 8.3 round). Whether a silent buffer is content or idle is only known here: SDL patch 0192 adds
+SDL_DOSAudioSetContentActive() for exactly this.
+
+WHAT: the "audio still owed to the device" predicate from 0200 (mixed PCM queued in the SDL stream,
+or a voice not yet fully mixed out) becomes a helper, audio_owed(), and drives
+SDL_DOSAudioSetContentActive(): once just before SDL_DOSAudioPump() (for the pump's own iteration)
+and once after it (for the background thread's iterations until the next pump). When every clip has
+been handed over, it goes false and the gate drops silence as before -- the ring drains, the device
+idles. audio_vital_status gains ",skipped_silent=<n>,idle_pauses=<n>" (SDL 0192's counters, deltas
+since the mixer opened; NA under GUS) after ring_max_ms; status buffers 320 -> 384 bytes. dosags does
+not enable the driver's idle-pause, so idle_pauses reads 0 here by construction; the field is there
+so that stays visible. Requires SDL patch 0192.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/platform/dos/dos_audio_mixer.cpp | 57 +++++++++++++++++++------
+ Engine/platform/dos/dos_audio_mixer.h   |  7 ++-
+ 2 files changed, 48 insertions(+), 16 deletions(-)
+
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index d11af2cfb..516ff4505 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -42,6 +42,9 @@ extern "C" volatile uint32_t dos_port_audio_sfx_active_count;
+ // DOS-PORT (patch 0201): SDL patch 0190's count of PlayDevice writes that
+ // landed on ring bytes the IRQ handler had not played yet.
+ extern "C" volatile uint32_t dos_port_audio_ring_overwrite_count;
++// DOS-PORT (patch 0204): SDL patch 0192's silence-gate skip and DSP idle-pause counts.
++extern "C" volatile uint32_t dos_port_audio_skipped_silent_count;
++extern "C" volatile uint32_t dos_port_audio_idle_pause_count;
+ 
+ // DOS-PORT (patch 0202): where a silent-IRQ run happened, for its log line.
+ extern uint32_t get_loop_counter();
+@@ -135,6 +138,9 @@ uint32_t g_pcm_irq_base = 0;
+ // A fill above capacity is only possible by overwriting. SB path only.
+ uint32_t g_overwrite_base = 0;
+ int g_ring_max_ms = 0;
++// DOS-PORT (patch 0204): bases for skipped_silent / idle_pauses.
++uint32_t g_skipped_base = 0;
++uint32_t g_idle_pause_base = 0;
+ 
+ // DOS-PORT (patch 0203): room-change tracking for the silentirq line.
+ int g_room_seen = -1000;
+@@ -147,7 +153,7 @@ uint32_t g_room_since = 0;
+ // shutdown_sound()) still reports the real final state instead of the
+ // "never opened" NA sentinel. Left at "NA" if the device was never
+ // opened at all, so that genuine case is still distinguishable.
+-char g_last_status[320] = "NA";
++char g_last_status[384] = "NA";
+ 
+ void format_status_string(char *buf, size_t bufsize)
+ {
+@@ -166,13 +172,17 @@ void format_status_string(char *buf, size_t bufsize)
+     else
+         std::snprintf(irq_fragment, sizeof(irq_fragment), "pcm_irqs=%u,silent_irqs=%u",
+             (unsigned)(dos_port_audio_sfx_active_count - g_pcm_irq_base), (unsigned)g_owed_silent_irqs);
+-    char ring_fragment[64];
++    char ring_fragment[112];
+     if (g_gus_backend)
+-        std::snprintf(ring_fragment, sizeof(ring_fragment), "overwrites=NA,ring_max_ms=NA");
++        std::snprintf(ring_fragment, sizeof(ring_fragment),
++            "overwrites=NA,ring_max_ms=NA,skipped_silent=NA,idle_pauses=NA");
+     else
+-        std::snprintf(ring_fragment, sizeof(ring_fragment), "overwrites=%u,ring_max_ms=%d/%d",
++        std::snprintf(ring_fragment, sizeof(ring_fragment),
++            "overwrites=%u,ring_max_ms=%d/%d,skipped_silent=%u,idle_pauses=%u",
+             (unsigned)(dos_port_audio_ring_overwrite_count - g_overwrite_base), g_ring_max_ms,
+-            SDL_DOSAudioRingCapacityMs());
++            SDL_DOSAudioRingCapacityMs(),
++            (unsigned)(dos_port_audio_skipped_silent_count - g_skipped_base),
++            (unsigned)(dos_port_audio_idle_pause_count - g_idle_pause_base));
+     std::snprintf(buf, bufsize, "pcm=%s@%d%c%d,voices=%d,underruns=%d,drains=%d,%s,%s;%s",
+         device, DOS_AUDIO_MIXER_RATE, chan_letter, bits, DOS_AUDIO_MIXER_MAX_VOICES, g_underruns,
+         g_drains, irq_fragment, ring_fragment, midi_fragment);
+@@ -203,6 +213,8 @@ bool dos_audio_mixer_init()
+     g_pcm_irq_base = dos_port_audio_sfx_active_count;
+     g_overwrite_base = dos_port_audio_ring_overwrite_count;
+     g_ring_max_ms = 0;
++    g_skipped_base = dos_port_audio_skipped_silent_count;
++    g_idle_pause_base = dos_port_audio_idle_pause_count;
+ 
+     if (g_gus_backend)
+     {
+@@ -445,6 +457,21 @@ static void mix_one_chunk(bool &out_any_active)
+     SDL_PutAudioStreamData(g_stream, outbuf, MIX_CHUNK_BYTES);
+ }
+ 
++// DOS-PORT (patches 0200/0204): audio is owed to the device while mixed PCM
++// waits in the SDL stream, or a voice is not yet fully mixed out (a clip that
++// has ended AND been mixed out owes nothing: its tail is in the driver's ring).
++static bool audio_owed()
++{
++    if (SDL_GetAudioStreamQueued(g_stream) > 0)
++        return true;
++    for (const auto &v : g_voices)
++    {
++        if (v.used && v.active && !(v.source_done && v.ring.size() == v.read_pos))
++            return true;
++    }
++    return false;
++}
++
+ void dos_audio_mixer_pump()
+ {
+     if (g_gus_backend)
+@@ -509,6 +536,12 @@ void dos_audio_mixer_pump()
+                 break; // nothing playing; let the device underflow to silence
+         }
+     }
++    // DOS-PORT (patch 0204): while content is owed, the driver must write a
++    // silent chunk rather than drop it -- dropping it removes that silence's
++    // TIME from the sound (a clip's own pause; on the 8-bit path any passage
++    // quieter than one U8 step). SDL patch 0192.
++    if (g_stream)
++        SDL_DOSAudioSetContentActive(audio_owed());
+     // Service the DOS SB ring/ISR regardless -- mandatory per frame, per
+     // the hub's own docs/audio.md convention (SDL_DOSAudioPump()).
+     SDL_DOSAudioPump();
+@@ -521,15 +554,11 @@ void dos_audio_mixer_pump()
+         // the driver's ring, and the silence once that drains is the end of
+         // the sound). Evaluated after the pump so it describes the interval
+         // that starts now.
+-        bool owed = SDL_GetAudioStreamQueued(g_stream) > 0;
+-        for (const auto &v : g_voices)
+-        {
+-            if (owed)
+-                break;
+-            if (v.used && v.active && !(v.source_done && v.ring.size() == v.read_pos))
+-                owed = true;
+-        }
++        const bool owed = audio_owed();
+         g_owed_at_snap = owed;
++        // DOS-PORT (patch 0204): and for the background thread's iterations
++        // until the next pump.
++        SDL_DOSAudioSetContentActive(owed);
+ 
+         // DOS-PORT (patch 0201)
+         const int fill_ms = SDL_DOSAudioRingFillMs();
+@@ -547,7 +576,7 @@ const char *dos_audio_mixer_status_string()
+ {
+     if (!g_stream && !g_gus_open)
+         return g_last_status; // "NA" if never opened, else the shutdown-time snapshot
+-    static char buf[320];
++    static char buf[384];
+     format_status_string(buf, sizeof(buf));
+     return buf;
+ }
+diff --git a/Engine/platform/dos/dos_audio_mixer.h b/Engine/platform/dos/dos_audio_mixer.h
+index 95e53b7e4..9bf18a5de 100644
+--- a/Engine/platform/dos/dos_audio_mixer.h
++++ b/Engine/platform/dos/dos_audio_mixer.h
+@@ -168,9 +168,12 @@ int dos_audio_mixer_underrun_count();
+ // fully mixed out) -- a dropout. overwrites (patch 0201) counts driver-ring
+ // writes that landed on audio not yet played (SDL patch 0190); ring_max_ms is
+ // the highest ring fill seen after a pump, over the ring's capacity -- above
+-// capacity is only possible by overwriting. NA under GUS.
++// capacity is only possible by overwriting. skipped_silent / idle_pauses
++// (patch 0204): buffers the driver's silence gate dropped, and DSP idle-pause
++// commands issued (SDL patch 0192). NA under GUS.
+ // Builds "pcm=<device>@<rate><ch><bits>,voices=<n>,underruns=<n>,drains=<n>,
+-// pcm_irqs=<n>,silent_irqs=<n>,overwrites=<n>,ring_max_ms=<n>/<cap>;midi=<backend>,
++// pcm_irqs=<n>,silent_irqs=<n>,overwrites=<n>,ring_max_ms=<n>/<cap>,skipped_silent=<n>,
++// idle_pauses=<n>;midi=<backend>,
+ // events=<n>" into a static buffer -- the "midi=" fragment comes from
+ // platform/dos/dos_midi_backend.h (S4; S1 hardcoded "midi=none" here since
+ // no MIDI backend existed yet). Returns "NA" if the PCM device never opened.
+-- 
+2.47.3
+

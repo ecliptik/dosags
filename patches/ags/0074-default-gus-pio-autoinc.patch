@@ -1,0 +1,84 @@
+From df6d728125db8e9a5abb1d558079241aa91f6803 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 15 Sep 2026 09:16:49 -0700
+Subject: [PATCH] DOS-PORT: patch 0074 -- default GUS DRAM upload to
+ auto-increment mode (S7-GUS fix)
+
+WHY: real hardware (tag GUSU1, PLAN.md's "S7-GUS -- .pat upload PIO +
+prepsong cost, real-hardware result: ROOT CAUSE CONFIRMED" entry)
+measured gus_upload_pio()'s per-byte DEFAULT DRAM-addressing path
+costing ~8.5us/byte (~115 KB/s uploading a real song's .pat sample
+data) -- accounting for essentially the ENTIRE ~6.89s per-song stall
+this whole S7-GUS sub-investigation chased (prepsong max_us=6,891,245
+vs slots_us's own outlier max_us=6,891,463, 218us apart). SDL patch
+SDL/0112 (vendor/SDL/src/audio/dos/SDL_dosaudio_gus.c) already
+implemented the fix -- SDL_HINT_DOS_GUS_PIO_AUTOINC=1, which programs
+the GF1 DRAM address once and lets the card auto-advance its own
+pointer, ~6x fewer port ops/byte -- but left it off by default,
+documented as "until g2k confirms autoinc reaches gameplay, then flip
+to ON." This hub's own history shows that confirmation was never
+followed up on: autoinc mode has never been exercised on real GF1
+hardware at all, in over three months since that patch landed.
+
+WHAT: dos_midi_backend_open()'s GUS case now sets SDL_HINT_DOS_GUS_
+PIO_AUTOINC=1 as this port's own DEFAULT (via a null-hint check, not an
+unconditional SDL_SetHint) before gus_sink_open() -> SDL_DOSGusInit()
+first reads and caches it -- an explicit SDL_HINT_DOS_GUS_PIO_AUTOINC=0
+or =1 set elsewhere (RUN.BAT's own SET, or a direct SDL_SetHint call)
+still wins, so a real-hardware A/B comparison cell can still force
+either path deliberately. Deliberately a dosags-side default (this
+file, not the vendored SDL_dosaudio_gus.c) -- keeps the original
+author's own conservative SDL-level default untouched, scoped entirely
+to this port's own patches/ags/ series, trivially revertible.
+
+Per the operator's own explicit go-ahead: land + DOSBox-X-validate this
+change, then treat its FIRST real-hardware run as a first-time
+validation of a previously-never-exercised code path (autoinc was
+originally written as a fix for a documented real CPU-freeze hazard in
+the path it replaces), not a routine re-measure.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01VVzc2V3qXnVbYZC693CTWt
+---
+ Engine/platform/dos/dos_midi_backend.cpp | 25 ++++++++++++++++++++++++
+ 1 file changed, 25 insertions(+)
+
+diff --git a/Engine/platform/dos/dos_midi_backend.cpp b/Engine/platform/dos/dos_midi_backend.cpp
+index 6426c851c..e28e3abbf 100644
+--- a/Engine/platform/dos/dos_midi_backend.cpp
++++ b/Engine/platform/dos/dos_midi_backend.cpp
+@@ -144,6 +144,31 @@ void *dos_midi_backend_open(DosMidiBackendKind *out_kind, midi_sched_sink *out_s
+     }
+     else if (SDL_strcasecmp(hint, "gus") == 0)
+     {
++        // DOS-PORT (S7-GUS fix): default this port's OWN GUS DRAM-upload
++        // path to auto-increment mode (SDL_dosaudio_gus.c's own "gus-5
++        // #41 FIX", introduced in patch SDL/0112 as a documented real-
++        // hardware fix for a CPU-freeze hazard in the per-byte path, but
++        // left OFF by that same patch's own comment "until g2k confirms
++        // autoinc reaches gameplay, then flip to ON" -- a promotion this
++        // hub's own history shows was never followed up on). Real
++        // hardware this session (tag GUSU1, PLAN.md's "S7-GUS -- .pat
++        // upload PIO ... ROOT CAUSE CONFIRMED" entry) measured the
++        // per-byte DEFAULT path costing ~8.5us/byte (~115 KB/s) --
++        // accounting for essentially the ENTIRE ~6.89s per-song stall
++        // this whole sub-investigation chased. Autoinc cuts the per-byte
++        // port-op count ~6x per that same source comment. Only sets a
++        // DEFAULT via SDL_GetHint's own null check -- an explicit
++        // SDL_HINT_DOS_GUS_PIO_AUTOINC=0/1 set elsewhere (RUN.BAT's own
++        // `SET`, or a direct SDL_SetHint call) still wins, so a
++        // real-hardware A/B cell can still force either path
++        // deliberately. Autoinc mode itself has NEVER been validated on
++        // real GF1 hardware before this change -- treat its first
++        // real-hardware run as a first-time validation, not a routine
++        // re-measure, per this hub's own dos-hardware-validation
++        // discipline.
++        if (!SDL_GetHint("SDL_HINT_DOS_GUS_PIO_AUTOINC"))
++            SDL_SetHint("SDL_HINT_DOS_GUS_PIO_AUTOINC", "1");
++
+         // Lazy, session-lifetime singleton -- see g_gus_sink's own comment
+         // above. Opened on first use (here), never per-song.
+         if (!g_gus_sink)
+-- 
+2.47.3
+

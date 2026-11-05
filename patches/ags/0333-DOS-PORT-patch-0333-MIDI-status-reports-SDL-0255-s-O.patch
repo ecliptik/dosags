@@ -1,0 +1,98 @@
+From 74a430b0ac4818ce4eed478f56e6c857a74f8ab8 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 25 Sep 2026 13:03:30 -0700
+Subject: [PATCH 333/333] DOS-PORT: patch 0333 -- MIDI status reports SDL
+ 0255's OPL window pacing and peak arrivals
+
+WHY: SDL 0255 paces OPL writes on a PicoGUS so that no 2.57 ms window of
+the card's drain carries more than 128, because the card overwrites its
+command buffer silently and nothing on the host can see it. Whether the
+pacing engaged, what it cost the ISR, and the most writes that actually
+landed in one window must be in every run's record: the peak is the only
+host-side witness of the card's buffer occupancy.
+
+WHAT: the isr-mode fragment of audio_vital_status gains
+pace=<K>/<window_us>, pwait=<waits>/<total_us>/<longest_us> and
+peak=<arrivals upper bound>/<ring overruns>, from SDL_DOSOplPaceStats. The
+wait time is inside isr_ns_per_write's numerator (0250's drain time), so a
+per-write cost without the waits is (isr_sum - total_us) / writes. The
+fragment's worst case grows from 606 to 699 characters (every %u at 10
+digits, %llu at 20, each %s at its buffer), so the fragment buffer grows
+640 -> 768 and the two status buffers 1024 -> 1280.
+
+SDL references renumbered 2026-09-25 with the SDL series (0223 -> 0250,
+0224 -> 0251, 0228 -> 0254, 0229 -> 0255). This is the pump-free cut: it
+lands on main before the RTC pump series (ags 0277-0282), which re-applies on
+top and then owns the combined buffer sizing (the max of every need).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/platform/dos/dos_audio_mixer.cpp  | 6 +++---
+ Engine/platform/dos/dos_midi_backend.cpp | 8 ++++++--
+ 2 files changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index bf8b4e5a4..97ee6ef2f 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -170,7 +170,7 @@ uint32_t g_room_since = 0;
+ // shutdown_sound()) still reports the real final state instead of the
+ // "never opened" NA sentinel. Left at "NA" if the device was never
+ // opened at all, so that genuine case is still distinguishable.
+-char g_last_status[1024] = "NA"; // patch 0252: 512 -> 640, room for mixed=,...,inflight= beside 0213's fields; patch 0275: 640 -> 768; patch 0331: -> 1024
++char g_last_status[1280] = "NA"; // patch 0252: 512 -> 640, room for mixed=,...,inflight= beside 0213's fields; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280
+ 
+ void format_status_string(char *buf, size_t bufsize)
+ {
+@@ -178,7 +178,7 @@ void format_status_string(char *buf, size_t bufsize)
+     const int bits = static_cast<int>(SDL_AUDIO_BITSIZE(fmt));
+     const char chan_letter = (DOS_AUDIO_MIXER_CHANNELS == 1) ? 'm' : 's';
+     const char *device = g_gus_backend ? "gus" : "sb";
+-    char midi_fragment[640]; // DOS-PORT (patch 0275): 320 -> 400, room for plan_behind_at=; patch 0331: -> 640
++    char midi_fragment[768]; // DOS-PORT (patch 0275): 320 -> 400, room for plan_behind_at=; patch 0331: -> 640; patch 0333: -> 768
+     // DOS-PORT (Sound milestone, S4): dos_midi_backend owns the real
+     // "midi=<backend>,events=<n>" fragment now -- S1 hardcoded ";midi=none"
+     // here since no MIDI backend existed yet.
+@@ -642,7 +642,7 @@ const char *dos_audio_mixer_status_string()
+ {
+     if (!g_stream && !g_gus_open)
+         return g_last_status; // "NA" if never opened, else the shutdown-time snapshot
+-    static char buf[1024];   // patch 0252: 512 -> 640; patch 0275: 640 -> 768; patch 0331: -> 1024
++    static char buf[1280];   // patch 0252: 512 -> 640; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280
+     format_status_string(buf, sizeof(buf));
+     return buf;
+ }
+diff --git a/Engine/platform/dos/dos_midi_backend.cpp b/Engine/platform/dos/dos_midi_backend.cpp
+index 504d24147..b3873faa4 100644
+--- a/Engine/platform/dos/dos_midi_backend.cpp
++++ b/Engine/platform/dos/dos_midi_backend.cpp
+@@ -468,6 +468,9 @@ void dos_midi_backend_status_fragment(char *buf, size_t bufsize)
+         SDL_DOSMidiDeferStats4(&dd_on, &dd_skip);
+         Uint32 pg_detect = 0, opl_reads = 0; // DOS-PORT patch 0332: SDL 0254's pacing choice
+         SDL_DOSOplPacing(&pg_detect, &opl_reads);
++        // DOS-PORT patch 0333: SDL 0255's window pacing and peak-arrival witness
++        Uint32 pk = 0, pwin = 0, pw_n = 0, pw_us = 0, pw_max = 0, peak = 0, povr = 0;
++        SDL_DOSOplPaceStats(&pk, &pwin, &pw_n, &pw_us, &pw_max, &peak, &povr);
+         // DOS-PORT (patch 0275): plan_behind_at=<song_ms>@<loop>/<gap>irq/<first|later>, empty when no event.
+         char pb_at[48] = "";
+         if (g_pb_seen)
+@@ -476,12 +479,13 @@ void dos_midi_backend_status_fragment(char *buf, size_t bufsize)
+         std::snprintf(buf, bufsize, "midi=%s,events=%llu%s,midi_tick=isr,period_us=%u,lookahead=%u,isr_writes=%u,"
+             "late_writes=%u,late_max_ms=%u,isr_burst=%u,qfull=%u,qsync=%u,qdropped=%u,plan_behind=%u,plan_behind_at=%s,"
+             "clk=%llu/%ds,real_period_us=%u,budget=%u,cap_hits=%u,isr_max_us=%u,isr_mean_us=%u,isr_ns_per_write=%u,"
+-            "dedupe=%u,skipped=%u,pgdetect=%u,opl_reads=%u",
++            "dedupe=%u,skipped=%u,pgdetect=%u,opl_reads=%u,pace=%u/%u,pwait=%u/%u/%u,peak=%u/%u",
+             kind_name(g_last_kind), (unsigned long long)g_events_dispatched, chip, g_tick_period_us, g_tick_lookahead,
+             (unsigned)wr, (unsigned)late, (unsigned)((uint64_t)late_max * g_tick_period_us / 1000u), (unsigned)burst,
+             (unsigned)full, (unsigned)sync, (unsigned)dropped, g_plan_behind, pb_at, (unsigned long long)g_song_ms, rtc_s,
+             (unsigned)g_real_period_us, (unsigned)budget, (unsigned)cap_hits, isr_max_us, isr_mean_us, isr_ns_per_write,
+-            (unsigned)dd_on, (unsigned)dd_skip, (unsigned)pg_detect, (unsigned)opl_reads);
++            (unsigned)dd_on, (unsigned)dd_skip, (unsigned)pg_detect, (unsigned)opl_reads,
++            (unsigned)pk, (unsigned)pwin, (unsigned)pw_n, (unsigned)pw_us, (unsigned)pw_max, (unsigned)peak, (unsigned)povr);
+         return;
+     }
+     std::snprintf(buf, bufsize, "midi=%s,events=%llu%s,midi_tick=poll,late_max_ms=%u,late_hist=%llu/%llu/%llu/%llu/%llu/%llu,"
+-- 
+2.47.3
+

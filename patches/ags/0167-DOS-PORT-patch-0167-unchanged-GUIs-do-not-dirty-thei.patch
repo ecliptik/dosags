@@ -1,0 +1,424 @@
+From f35930fc22145cca8744a774c513333d7583e4ad Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 21 Sep 2026 11:17:30 -0700
+Subject: [PATCH] DOS-PORT: patch 0167 -- unchanged GUIs do not dirty their
+ region; optional composite clip
+
+Consolidates 0167, 0168, 0169, 0170, 0171, 0172, 0173, 0174, 0176 and the
+room/UI-sprite half of 0175.
+
+Why. AGS Quest's tail frames were one 460x260 masked GUI (gCredits)
+composited over moving content. AGS skips re-rendering an unchanged GUI but
+still adds it to the sprite list, and put_sprite_list_on_screen() then
+invalidates every entry unconditionally, so the region was dirtied every
+frame, forcing the background restore over 460x260 and inflating the present
+to ~80% of the screen.
+- 0167/0168: identify the big GUI and tally per GUI whether it reports
+  itself changed. Measured: gCredits reports HasChanged() false on 100% of
+  421 observations.
+- 0169 (stage 1): an unchanged GUI no longer marks its region dirty. The
+  composite is NOT skipped. Correct because the restore runs before every
+  composite and the back buffer is never cleared (measured: clears=0 over
+  3,000 RenderToBackBuffer calls). DEFAULT ON; DOSAGS_GUI_NOINVAL=0 disables.
+- 0170 (stage 2): clip an unchanged sprite's composite to the dirty bbox,
+  through a one-shot DosPortClipNextToDirty() hint consumed by the next
+  DrawSprite. DEFAULT OFF; DOSAGS_GUI_CLIP=1 enables. 0171 counts which gate
+  condition fails, 0172 replaces a virtualScreen pointer-equality test with a
+  same-coordinate-space test (the 0120 alias reassigns virtualScreen and a
+  batch renders to its own surface, so the pointers never matched), 0173/0174
+  price a skip-the-composite stage before building it.
+- 0176: is the big GUI opaque across its rect.
+- 0175 (part): dirty-source tags at put_sprite_list_on_screen().
+
+The record's outcome for this work: clipping cannot reach the frame budget and
+the GUI is the entire tail; AGS Quest is closed at 38.0, 40.61 with the GUI
+hidden.
+
+Behaviour change: stage 1 is ON by default. Needs the dirty-source symbols
+from 0124 and the rb_clip_* fields from 0125.
+
+Provenance of this export (2026-09-21): these edits sat uncommitted in the
+vendor tree from patch 0123 onward, which is why every gate cell since said
+build_dirty=1. They were made under one campaign-wide patch counter shared
+with vendor/SDL, and each hunk carries its number in an in-source comment.
+Intermediate states were never committed, so this patch is a hunk-level
+partition of the final tree by concern, attributed by those comments -- not a
+replay of the order the edits were made in, and its intermediate state was not
+built on its own. The numbers named below are the ones found in its hunks.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/ac/draw.cpp          | 127 +++++++++++++++++++++++++++++++++++-
+ Engine/gfx/ali3dsw.cpp      | 118 ++++++++++++++++++++++++++++++++-
+ Engine/gfx/ali3dsw.h        |  10 +++
+ Engine/gfx/gfxdriverbase.h  |   5 ++
+ Engine/gfx/graphicsdriver.h |   6 ++
+ 5 files changed, 262 insertions(+), 4 deletions(-)
+
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index 58626a144..8e22238da 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -395,6 +395,19 @@ std::vector<ObjTexture> actsps;
+ std::vector<ObjTexture> walkbehindobj;
+ // GUI surfaces
+ std::vector<ObjTexture> guibg;
++#ifdef __DJGPP__
++long dos_port_big_gui_n = 0;          // patch 0167
++long dos_port_big_gui_unchanged = 0;
++// patch 0168: per-GUI tallies. The every-200th sample showed gTitleMenu
++// once at n=1 and gCredits at n=201 and n=401, which cannot distinguish
++// "gTitleMenu appears only at the title" from "it appears throughout and
++// the sampling missed it". A full-screen unchanged GUI invalidated during
++// play would be 230,400 px and a bigger finding than gCredits.
++long dos_port_gui_noinval_n = 0;      // patch 0169
++long dos_port_big_gui_opaque = 0, dos_port_big_gui_masked = 0;  // patch 0176
++long dos_port_gui_tally[64] = {0};
++long dos_port_gui_unchanged_tally[64] = {0};
++#endif
+ // GUI render targets, for rendering all controls on same texture buffer
+ std::vector<IDriverDependantBitmap*> gui_render_tex;
+ // GUI control surfaces
+@@ -452,6 +465,12 @@ struct SpriteListEntry
+     int RenderStage = -1;
+     // Optional sprite identifier; used as a second factor when sorting
+     uint32_t DrawIndex = 0u;
++#ifdef __DJGPP__
++    // DOS-PORT patch 0169 (stage 1): this sprite's source reports itself
++    // unchanged, so its region need not be marked dirty. It is still
++    // composited IN FULL -- only the invalidation is skipped.
++    bool SkipInvalidate = false;
++#endif
+ 
+     SpriteListEntry(IDriverDependantBitmap *ddb, int x, int y)
+         : DDB(ddb), X(x), Y(y), Z(0), RenderStage(-1), DrawIndex(0u) { }
+@@ -1579,14 +1598,19 @@ static void clear_sprite_list()
+     sprlist.clear();
+ }
+ 
+-static void add_to_sprite_list(IDriverDependantBitmap* ddb, int x, int y, int zorder, uint32_t id = 0u)
++static void add_to_sprite_list(IDriverDependantBitmap* ddb, int x, int y, int zorder, uint32_t id = 0u,
++                               bool skip_invalidate = false)
+ {
+     assert(ddb);
+     // completely invisible, so don't draw it at all
+     if (ddb->GetAlpha() == 0)
+         return;
+ 
+-    sprlist.push_back(SpriteListEntry(ddb, x, y, zorder, -1, id));
++    SpriteListEntry e(ddb, x, y, zorder, -1, id);
++#ifdef __DJGPP__
++    e.SkipInvalidate = skip_invalidate;   // patch 0169
++#endif
++    sprlist.push_back(e);
+ }
+ 
+ // Sprite drawing order sorting function,
+@@ -2749,7 +2773,84 @@ void draw_gui_and_overlays()
+                 gui_ddb = gui_render_tex[index];
+             }
+             gui_ddb->SetAlpha(GfxDef::LegacyTrans255ToAlpha255(gui.GetTransparency()));
++#ifdef __DJGPP__
++            // DOS-PORT patch 0167: identify the tail's 460x260 element and
++            // ask AGS whether it thinks the thing changed.
++            //
++            // Two questions in one place, which is why the instrument goes
++            // here rather than in the render path: WHICH gui (the software
++            // DDB returns UINT32_MAX from GetRefID, so the render path
++            // cannot identify anything), and whether HasChanged is false
++            // while we composite it anyway.
++            //
++            // Source already shows the shape -- draw_gui_and_overlays skips
++            // RE-RENDERING an unchanged gui, but adds it to the sprite list
++            // regardless, and put_sprite_list_on_screen then calls
++            // invalidate_sprite on every entry unconditionally. That would
++            // mark 460x260 dirty every frame, forcing the restore, the
++            // recomposite and the present's 80% rect. This measures it
++            // instead of concluding it.
++            {
++                const long _w = gui_ddb->GetWidth(), _h = gui_ddb->GetHeight();
++                if ((long long)_w * _h >= 50000)   // only the big ones
++                {
++                    dos_port_big_gui_n++;
++                    const bool _unch = !gui.HasChanged() && !gui.HasControlsChanged();
++                    if (_unch) dos_port_big_gui_unchanged++;
++                    // patch 0176: is the big GUI OPAQUE across its rect?
++                    //
++                    // Decisive for the third option -- restoring background
++                    // only where an opaque unchanged GUI does NOT cover.
++                    // If it has transparent regions the background shows
++                    // through them and must be restored there, and the idea
++                    // collapses back to the clip already priced at 61%.
++                    // IsOpaque() is what the compositor itself branches on:
++                    // opaque takes an unmasked Blit writing every pixel.
++                    if (gui_ddb->IsOpaque()) dos_port_big_gui_opaque++;
++                    else                     dos_port_big_gui_masked++;
++                    if (index >= 0 && index < 64)
++                    {
++                        dos_port_gui_tally[index]++;
++                        if (_unch) dos_port_gui_unchanged_tally[index]++;
++                    }
++                    if ((dos_port_big_gui_n % 200) == 1)
++                        Debug::Printf("DOS-PORT biggui idx=%d name=%s %ldx%ld changed=%d ctrls=%d n=%ld unchanged=%ld",
++                            index, gui.GetName().GetCStr(), _w, _h,
++                            (int)gui.HasChanged(), (int)gui.HasControlsChanged(),
++                            dos_port_big_gui_n, dos_port_big_gui_unchanged);
++                }
++            }
++#endif
++#ifdef __DJGPP__
++            // patch 0169 stage 1: an unchanged GUI does not dirty its region.
++            //
++            // Measured: gCredits reports HasChanged()==false on 100% of 421
++            // observations and is invalidated every frame regardless, which
++            // forces the background restore over 460x260 and inflates the
++            // present's dirty rect to 80% of the screen. The composite is
++            // deliberately NOT skipped -- that is stage 2 and it needs the
++            // final dirty set, which is not available here because the
++            // cursor invalidates after this point.
++            //
++            // Correct because the restore runs before every composite
++            // (render_to_screen -> Render() at :1401, after the scene is
++            // constructed) and the back buffer is never cleared (measured:
++            // clears=0 over 3,000 RenderToBackBuffer calls). So whatever the
++            // restore repaints under the GUI is covered by the GUI's own
++            // full composite, and everywhere else last frame's identical
++            // pixels are still there.
++            {
++                static int _h = -1;
++                if (_h < 0) { const char *e = getenv("DOSAGS_GUI_NOINVAL");
++                              _h = (e && e[0] == '0') ? 0 : 1; }
++                const bool _unch = !gui.HasChanged() && !gui.HasControlsChanged();
++                if (_unch) dos_port_gui_noinval_n++;
++                add_to_sprite_list(gui_ddb, gui.GetX(), gui.GetY(), gui.GetZOrder(),
++                                   guibg[index].DrawIndex, _h && _unch);
++            }
++#else
+             add_to_sprite_list(gui_ddb, gui.GetX(), gui.GetY(), gui.GetZOrder(), guibg[index].DrawIndex);
++#endif
+         }
+     }
+ 
+@@ -2772,8 +2873,28 @@ void put_sprite_list_on_screen(bool in_room)
+             if (t.DDB->GetAlpha() == 0)
+                 continue; // skip completely invisible things
+             // mark the image's region as dirty
+-            invalidate_sprite(t.X, t.Y, t.DDB, in_room);
++#ifdef __DJGPP__
++            if (!t.SkipInvalidate)   // patch 0169 stage 1
++#endif
++            {   // patch 0175
++                dos_port_dirty_source = in_room ? kDirtySrc_RoomSprite : kDirtySrc_UiSprite;
++                invalidate_sprite(t.X, t.Y, t.DDB, in_room);
++                dos_port_dirty_source = kDirtySrc_Other;
++            }
+             // push to the graphics driver
++#ifdef __DJGPP__
++            // patch 0170 stage 2: tell the driver this one may be clipped to
++            // whatever else dirtied the frame. Set immediately before the
++            // call, which is what makes a one-shot flag land on the right
++            // entry -- DrawSprite constructs its list entry synchronously.
++            {
++                static int _h2 = -1;
++                if (_h2 < 0) { const char *e = getenv("DOSAGS_GUI_CLIP");
++                               _h2 = (e && e[0] == '1') ? 1 : 0; }
++                if (_h2 && t.SkipInvalidate)
++                    gfxDriver->DosPortClipNextToDirty(true);
++            }
++#endif
+             gfxDriver->DrawSprite(t.X, t.Y, t.DDB);
+         }
+         else if (t.RenderStage >= 0)
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index bdd15c13e..6ca8d3f52 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -537,7 +537,18 @@ void SDLRendererGraphicsDriver::DrawSprite(int x, int y, IDriverDependantBitmap*
+     assert(ddb && ddb->IsValid());
+     assert(_actSpriteBatch != UINT32_MAX);
+     if (ddb && ddb->IsValid())
+-        _spriteList.push_back(ALDrawListEntry((ALSoftwareBitmap*)ddb, _actSpriteBatch, x, y));
++    {
++        ALDrawListEntry e((ALSoftwareBitmap*)ddb, _actSpriteBatch, x, y);
++#ifdef __DJGPP__
++        e.dos_clip_dirty = _dosNextClipDirty;   // patch 0170
++        _dosNextClipDirty = false;              // one-shot, never sticky
++#endif
++        _spriteList.push_back(e);
++    }
++#ifdef __DJGPP__
++    else
++        _dosNextClipDirty = false;   // do not leak onto the next sprite
++#endif
+ }
+ 
+ void SDLRendererGraphicsDriver::AddRenderEvent(int evt, int param)
+@@ -778,6 +789,111 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+     const bool is_opaque = bitmap->IsOpaque();
+     const Bitmap *native_bmp = bitmap->GetBitmap();
+ 
++#ifdef __DJGPP__
++    // patch 0170 stage 2: clip an unchanged sprite's composite to the region
++    // something else actually dirtied.
++    //
++    // Correct here and NOT at list-build time because the dirty set is
++    // complete by now -- the cursor invalidates during scene construction
++    // (draw.cpp:3120) and Present's reset has not run yet. Stage 1 proved
++    // the invalidation half; this is the composite half.
++    //
++    // Clips to the single accumulated BBOX rather than the box union:
++    // conservative (never smaller than the true dirty area, so it can only
++    // draw too much, never too little) and simple enough to reason about.
++    // Gated to a 1:1 main virtual screen -- on a camera surface or a scaled
++    // rung the coordinate spaces differ and the fallback is the full blit.
++    Rect _dp_saved_clip;
++    bool _dp_clipped = false;
++    // patch 0171: which gate condition is failing. clipped=0 in BOTH arms
++    // meant the clip never engaged and stage 2 was inert -- a counter on the
++    // outcome could not say why, so each condition gets its own.
++    if (sprite.dos_clip_dirty) dos_port_tick_timing.rb_clip_flagged++;
++    else                       dos_port_tick_timing.rb_clip_noflag++;
++    // patch 0172: the gate was pointer equality against virtualScreen, and
++    // it failed on ALL 6,413 flagged sprites. Patch 0120's alias reassigns
++    // virtualScreen to _aliasVScreen, and a batch renders to its own
++    // Surface, so the pointers never match even when the coordinate spaces
++    // do. What actually matters is that the surface covers the same space
++    // the dirty bbox is expressed in: full size and no batch offset.
++    const bool _dp_same_space =
++        surf_offx == 0 && surf_offy == 0 && surface && virtualScreen &&
++        surface->GetWidth() == virtualScreen->GetWidth() &&
++        surface->GetHeight() == virtualScreen->GetHeight();
++    if (sprite.dos_clip_dirty && !_dp_same_space)
++        dos_port_tick_timing.rb_clip_notvs++;
++    if (sprite.dos_clip_dirty && !dos_port_dirty.valid)
++        dos_port_tick_timing.rb_clip_novalid++;
++    if (sprite.dos_clip_dirty && dos_port_dirty.is_full)
++        dos_port_tick_timing.rb_clip_isfull++;
++    // patch 0173: price stage 1.5 before building it.
++    //
++    // Stage 1.5 would skip an unchanged GUI's composite ENTIRELY when its
++    // rect misses the dirty set -- all or nothing, no partial rectangles,
++    // no coordinate arithmetic, and correct by stage 1's own argument: if
++    // nothing there was dirtied the restore did not touch it, so last
++    // frame's pixels are still in the buffer.
++    //
++    // Whether that is worth building depends entirely on how often it
++    // fires, and the dirty region is 80,514 px of 230,400 against a GUI
++    // covering 119,600 -- they may overlap nearly always. Counting first.
++    if (sprite.dos_clip_dirty && _dp_same_space &&
++        dos_port_dirty.valid && !dos_port_dirty.is_full && native_bmp)
++    {
++        const Rect g(drawAtX, drawAtY,
++                     drawAtX + native_bmp->GetWidth() - 1,
++                     drawAtY + native_bmp->GetHeight() - 1);
++        const Rect d(dos_port_dirty.x1, dos_port_dirty.y1,
++                     dos_port_dirty.x2, dos_port_dirty.y2);
++        const Rect isect = IntersectRects(g, d);
++        // patch 0174: split by SIZE. An 80% miss rate across all unchanged
++        // GUIs says nothing about the one that matters -- mean area per hit
++        // came out at ~8,000 px against gCredits' 119,600, so the sample is
++        // dominated by small GUIs. gCredits covers 52% of the screen and
++        // the dirty region is ~35%, so geometrically it may intersect
++        // nearly always while small ones nearly never. Same denominator
++        // lesson: a rate over the wrong population is not an answer.
++        const long long _garea = (long long)g.GetWidth() * g.GetHeight();
++        const bool _big = _garea >= 50000;
++        if (isect.IsEmpty())
++        {
++            dos_port_tick_timing.rb_gui_miss++;       // stage 1.5 would fire
++            if (_big) dos_port_tick_timing.rb_gui_big_miss++;
++        }
++        else
++        {
++            dos_port_tick_timing.rb_gui_hit++;
++            if (_big)
++            {
++                dos_port_tick_timing.rb_gui_big_hit++;
++                dos_port_tick_timing.rb_gui_big_isect_px += (long long)isect.GetWidth() * isect.GetHeight();
++                dos_port_tick_timing.rb_gui_big_full_px += _garea;
++            }
++            dos_port_tick_timing.rb_gui_hit_px += (long long)isect.GetWidth() * isect.GetHeight();
++            dos_port_tick_timing.rb_gui_full_px += _garea;
++        }
++    }
++    if (sprite.dos_clip_dirty && _dp_same_space &&
++        dos_port_dirty.valid && !dos_port_dirty.is_full)
++    {
++        Rect d(dos_port_dirty.x1, dos_port_dirty.y1,
++               dos_port_dirty.x2, dos_port_dirty.y2);
++        Rect cur = surface->GetClip();
++        Rect isect = IntersectRects(cur, d);
++        if (!isect.IsEmpty())
++        {
++            _dp_saved_clip = cur;
++            _dp_clipped = true;
++            surface->SetClip(isect);
++            dos_port_tick_timing.rb_clipped_sprites++;
++        }
++    }
++    struct _DpUnclip {
++        Bitmap *s; const Rect *r; bool on;
++        ~_DpUnclip() { if (on) s->SetClip(*r); }
++    } _dp_unclip{surface, &_dp_saved_clip, _dp_clipped};
++#endif
++
+     if (alpha == 0) {} // fully transparent, do nothing
+     else if (is_opaque && (native_bmp == surface) && (alpha == 255)) {}
+     else if (is_opaque)
+diff --git a/Engine/gfx/ali3dsw.h b/Engine/gfx/ali3dsw.h
+index a5eaa6fda..87d5f3f31 100644
+--- a/Engine/gfx/ali3dsw.h
++++ b/Engine/gfx/ali3dsw.h
+@@ -436,6 +436,16 @@ private:
+     ALSpriteBatches _spriteBatches;
+     // List of sprites to render
+     std::vector<ALDrawListEntry> _spriteList;
++#ifdef __DJGPP__
++public:
++    // patch 0170: consumed by the NEXT DrawSprite call, which constructs its
++    // list entry immediately -- so a setter placed directly before the call
++    // reaches the right entry. The flag cannot live on the DDB: the same
++    // GUI bitmap is a different sprite on different frames.
++    void DosPortClipNextToDirty(bool on) { _dosNextClipDirty = on; }
++private:
++    bool _dosNextClipDirty = false;
++#endif
+ };
+ 
+ 
+diff --git a/Engine/gfx/gfxdriverbase.h b/Engine/gfx/gfxdriverbase.h
+index 03ab69a37..88d338d35 100644
+--- a/Engine/gfx/gfxdriverbase.h
++++ b/Engine/gfx/gfxdriverbase.h
+@@ -92,6 +92,11 @@ struct SpriteDrawListEntry
+     uint32_t node = 0; // sprite batch / scene node index
+     int x = 0, y = 0; // sprite position, in local batch / node coordinates
+     bool skip = false;
++#ifdef __DJGPP__
++    // DOS-PORT patch 0170 (stage 2): this sprite reported itself unchanged,
++    // so its composite may be clipped to the region something else dirtied.
++    bool dos_clip_dirty = false;
++#endif
+ 
+     SpriteDrawListEntry() = default;
+     SpriteDrawListEntry(T_DDB *ddb_, uint32_t node_, int x_, int y_)
+diff --git a/Engine/gfx/graphicsdriver.h b/Engine/gfx/graphicsdriver.h
+index 8f96cb2d4..f04aadb8f 100644
+--- a/Engine/gfx/graphicsdriver.h
++++ b/Engine/gfx/graphicsdriver.h
+@@ -230,6 +230,12 @@ public:
+     virtual void EndSpriteBatch() = 0;
+     // Adds sprite to the active batch, providing its left-top corner position
+     virtual void DrawSprite(int x, int y, IDriverDependantBitmap* bitmap) = 0;
++#ifdef __DJGPP__
++    // DOS-PORT patch 0170: one-shot hint consumed by the next DrawSprite.
++    // A no-op in the base so only the software driver -- the only one this
++    // port builds -- needs to implement it.
++    virtual void DosPortClipNextToDirty(bool) {}
++#endif
+     // Adds a render event, which runs a callback with the given parameters, to the active batch
+     virtual void AddRenderEvent(int evt, int param) = 0;
+     // Adds fade overlay fx to the active batch
+-- 
+2.47.3
+

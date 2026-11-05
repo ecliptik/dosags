@@ -1,0 +1,8 @@
+clkprobe2 UCLOCKS_PER_SEC=1193180 Clock::is_steady=1 period=1/1000000000
+1_cost uclock_us=4.598 engine_Clock_now_us=12.145 n=200000
+2_raw_uclock reads=1721029 backward_steps=46 worst_backward_us=373 over_s=8
+3_engine_Clock reads=635696 backward_steps=0 worst_forward_step_us=124 over_s=8
+4_rtc_ratio status=ok rtc_s=10 uclock_us=9999664 ratio=0.99997
+5_int1a_ah02 advanced=1 polls=7300 waited_ms=984
+6_pacer_grid frames=200 uclock_ms=5000.023 worst_overshoot_us=63 rtc_bracket_us=5999799 (expect 5000 + <1000 ms to next edge)
+sink=426952997328074

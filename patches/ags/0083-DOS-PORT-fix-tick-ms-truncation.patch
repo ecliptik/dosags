@@ -1,0 +1,168 @@
+From 88ee2ae9755be60c2c238eaef0a32ef61b368361 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 16 Sep 2026 22:53:18 -0700
+Subject: [PATCH] DOS-PORT: patch 0083 -- fix per-sample ms truncation in tick
+ timing
+
+Operator-directed audit of the fixed-timestep catch-up loop (patches
+0047/0048) as a candidate source of a unit mismatch in patch 0082's
+still-unexplained ~60% gap. That specific hypothesis was cleanly ruled
+out: update_game_once_total's own calls=1000 matches auto_exit_tick's
+1000 real logic ticks exactly (not bundled across GameTick()'s 180
+outer render-frame iterations), and every named sub-phase bracket
+scales 1:1 (or a clean 2:1) with that same 1000, never with the 180
+outer count -- confirmed with the actual TNP82E calls= numbers, not
+assumed.
+
+While tracing that call graph in full to check it, found a different,
+real mechanism: DosPortTickScope's destructor computed
+"(uclock() - _t0) * 1000 / UCLOCKS_PER_SEC" -- integer division,
+truncating EVERY individual sample to whole milliseconds BEFORE
+dos_port_tick_record() ever adds it to a running total. UCLOCKS_PER_SEC
+is 1193180 (the real 8253/8254 PIT tick rate, ~0.84us/tick) -- uclock()
+itself is fine-grained, not coarse -- but any single bracketed call
+under 1000us of real duration computed to a truncated sample of exactly
+0ms, and 0 is what got summed. A phase invoked thousands of times with
+genuinely sub-millisecond-per-call cost (looping over croom->numobj,
+game.numcharacters, or the GUI list on a small room) could have its
+entire real aggregate cost silently discarded this way, while a
+coarser bracket that nests around it (like update_game_once_total,
+~40ms/call average) only loses a bounded <1ms per call to the same
+truncation. This is a distinct failure mode from the synthetic
+overhead test already run and ruled out: that test measured the RAII
+mechanism's own CPU cost (11.4us/call, genuinely negligible) via an
+external wall-clock wrapper, not whether the mechanism's OWN recorded
+total accurately reflects sub-millisecond real production work -- the
+two are different questions, and only the first had been tested.
+
+Fix: DosPortTickPhaseStats now accumulates total_us (a long long
+microsecond sum, no per-sample truncation) instead of total_ms.
+dos_port_tick_record() takes the sample in microseconds.
+DosPortTickScope's destructor computes the microsecond delta directly
+(no per-call divide-by-1000-first). Truncation to whole milliseconds
+now happens exactly once, at print time, over the aggregate --
+quit.cpp's dos_port_tick_emit() derives total_ms/mean_ms from total_us
+and additionally prints total_us itself for full-precision visibility.
+min_ms/max_ms are unchanged (a single truncated sample was never the
+part silently losing aggregate time). tools/port-game/port_game.py's
+parser gains an optional trailing total_us= capture group per phase,
+additive to the existing calls/total_ms/min_ms/max_ms/mean_ms/
+clamped_neg shape.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hnodGZ6cg8CWuFXEDTsUq
+---
+ Engine/main/dos_port_tick_timing.h | 41 +++++++++++++++++++++++++-----
+ Engine/main/quit.cpp               | 18 ++++++++++---
+ 2 files changed, 49 insertions(+), 10 deletions(-)
+
+diff --git a/Engine/main/dos_port_tick_timing.h b/Engine/main/dos_port_tick_timing.h
+index a9df61a73..602561b27 100644
+--- a/Engine/main/dos_port_tick_timing.h
++++ b/Engine/main/dos_port_tick_timing.h
+@@ -167,7 +167,27 @@
+ struct DosPortTickPhaseStats
+ {
+     long calls = 0;
+-    long total_ms = 0;
++    // patch 0083 (operator-directed catch-up-loop audit): total_us, not
++    // total_ms -- found by that audit that the ORIGINAL total_ms
++    // accumulator truncated EVERY individual sample to whole
++    // milliseconds (via integer division) BEFORE adding it to the
++    // running total, in DosPortTickScope's destructor. UCLOCKS_PER_SEC
++    // is 1193180 (the real, fine-grained 8253/8254 PIT tick rate, ~0.84
++    // microseconds per tick) -- uclock() itself is NOT coarse -- but any
++    // single call whose real duration is under 1000 microseconds
++    // computed to a truncated ms value of exactly 0, and that 0 is what
++    // got summed. A phase called thousands of times with genuinely
++    // sub-millisecond per-call cost (e.g. looping over croom->numobj or
++    // game.numcharacters on a small room) could have its ENTIRE real
++    // aggregate cost silently discarded this way, while a coarser,
++    // longer-running bracket (like update_game_once_total, ~40ms/call
++    // average) only loses a bounded <1ms per call to the same
++    // truncation -- explaining how per-phase totals could stay at 0ms
++    // while the whole-function bracket they nest inside still measured
++    // real, substantial time. Fixed by accumulating microseconds (no
++    // per-sample truncation below prints) and truncating to ms only
++    // once, at print time, over the AGGREGATE.
++    long long total_us = 0;
+     long min_ms = -1; // -1 == no sample yet
+     long max_ms = -1;
+     // patch 0082: found live (a DOSBox-X validation run of this very
+@@ -276,19 +296,23 @@ struct DosPortTickTiming
+ // Defined in main.cpp, alongside dos_port_startup_timing.
+ extern DosPortTickTiming dos_port_tick_timing;
+ 
+-static inline void dos_port_tick_record(DosPortTickPhaseStats &stats, long sample_ms)
++static inline void dos_port_tick_record(DosPortTickPhaseStats &stats, long long sample_us)
+ {
+     stats.calls++;
+-    if (sample_ms < 0)
++    if (sample_us < 0)
+     {
+         // A negative sample is a clock-reading artifact (uclock() is
+         // not perfectly monotonic across every call pair here), never
+         // a real negative duration -- clamp to 0 rather than let it
+         // corrupt the running total, but count it so it stays visible.
+         stats.clamped_negative_count++;
+-        sample_ms = 0;
++        sample_us = 0;
+     }
+-    stats.total_ms += sample_ms;
++    stats.total_us += sample_us;
++    // min_ms/max_ms still truncate an individual sample to whole ms --
++    // fine for a single data point (only total_us's SUM was the part
++    // silently losing real aggregate time to repeated truncation).
++    const long sample_ms = (long)(sample_us / 1000);
+     if (stats.min_ms < 0 || sample_ms < stats.min_ms)
+         stats.min_ms = sample_ms;
+     if (sample_ms > stats.max_ms)
+@@ -305,8 +329,13 @@ public:
+         : _stats(stats), _t0(uclock()) {}
+     ~DosPortTickScope()
+     {
++        // Microseconds, not milliseconds -- see DosPortTickPhaseStats's
++        // own total_us comment for why summing pre-truncated ms samples
++        // was silently discarding real aggregate time. uclock_t is
++        // already `long long` (time.h), so this multiply cannot
++        // overflow within any real per-call duration this engine sees.
+         dos_port_tick_record(_stats,
+-            (long)((uclock() - _t0) * 1000 / UCLOCKS_PER_SEC));
++            (uclock() - _t0) * 1000000LL / UCLOCKS_PER_SEC);
+     }
+ private:
+     DosPortTickPhaseStats &_stats;
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index c5d7a4942..fe068437c 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -199,12 +199,22 @@ QuitReason quit_check_for_error_state(const char *qmsg, String &errmsg, String &
+ // 17. Same "DOS-PORT tickstats_<name> calls=... total_ms=... min_ms=...
+ // max_ms=... mean_ms=..." line shape patches 0079-0081 already
+ // established (tools/port-game/port_game.py's own parser expects it).
++// patch 0083: total_ms/mean_ms are now DERIVED from s.total_us (see
++// that field's own comment): the truncation to whole milliseconds
++// happens exactly once here, over the aggregate, instead of once per
++// sample -- the operator-directed catch-up-loop audit found the old
++// per-sample truncation was silently discarding real aggregate cost
++// for any phase with many sub-millisecond-per-call invocations.
++// total_us is also printed directly (new trailing field, parser-
++// optional) so the full-precision aggregate is visible without relying
++// on mean_ms's rounding.
+ static void dos_port_tick_emit(FILE *log, const char *name, const DosPortTickPhaseStats &s)
+ {
+-    fprintf(log, "DOS-PORT tickstats_%s calls=%ld total_ms=%ld min_ms=%ld max_ms=%ld mean_ms=%.2f clamped_neg=%ld\n",
+-        name, s.calls, s.total_ms, s.min_ms, s.max_ms,
+-        s.calls > 0 ? (double)s.total_ms / (double)s.calls : 0.0,
+-        s.clamped_negative_count);
++    const long total_ms = (long)(s.total_us / 1000);
++    fprintf(log, "DOS-PORT tickstats_%s calls=%ld total_ms=%ld min_ms=%ld max_ms=%ld mean_ms=%.2f clamped_neg=%ld total_us=%lld\n",
++        name, s.calls, total_ms, s.min_ms, s.max_ms,
++        s.calls > 0 ? (double)s.total_us / 1000.0 / (double)s.calls : 0.0,
++        s.clamped_negative_count, s.total_us);
+ }
+ #endif
+ 
+-- 
+2.47.3
+

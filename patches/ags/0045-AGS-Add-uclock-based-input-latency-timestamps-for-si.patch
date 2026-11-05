@@ -1,0 +1,90 @@
+From 355eaae9f3f55faebd106d37398ca122fbb2540e Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 11 Sep 2026 14:50:27 -0700
+Subject: [PATCH] [AGS] Add uclock()-based input-latency timestamps for
+ simulated clicks
+
+The tests/harness AGS Quest package's own dialog phase (slice 7) needs
+an input-latency approximation for the one place this port's autopilot
+injects a real synthetic click (Mouse.Click(), not RunInteraction()'s
+own queued dispatch) -- there was previously no way to measure the gap
+between a script-simulated click and the engine actually acting on it.
+
+Two paired "DOS-PORT input_latency t_ms=<ms> event=<inject|processed>"
+log lines, uclock()-based like patch 0042's room-transition timestamps:
+- event=inject: ags_simulate_mouseclick() (sys_events.cpp), the moment
+  Mouse.Click() queues the synthetic SDL_EVENT_MOUSE_BUTTON_DOWN/UP pair.
+- event=processed: on_sdl_mouse_down(), the moment that queued DOWN
+  event is actually drained and acted on -- gated on
+  event.button.which == SDL_TOUCH_MOUSEID (the same pseudo-device both
+  ags_simulate_mouseclick() and the touch-to-mouse emulation use, never
+  a real input device) so a real mouse's own clicks never pollute this
+  metric.
+
+Confirmed by real DOSBox-X runs against the tests/harness AGS Quest
+package: real inject/processed pairs a few ms to a few tens of ms
+apart (typical readings 11-24ms) appear in captured stdout every time
+the autopilot's dialog phase injects its one simulated click.
+---
+ Engine/ac/sys_events.cpp | 31 +++++++++++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+
+diff --git a/Engine/ac/sys_events.cpp b/Engine/ac/sys_events.cpp
+index 47c8ccdb2..66fe4d464 100644
+--- a/Engine/ac/sys_events.cpp
++++ b/Engine/ac/sys_events.cpp
+@@ -28,6 +28,10 @@
+ #include "util/string_compat.h"
+ #include "util/string_utils.h"
+ #include "util/utf8.h"
++#ifdef __DJGPP__
++#include <time.h> // uclock(), UCLOCKS_PER_SEC -- DOS-PORT input-latency timestamps
++#include "debug/debug_log.h" // debug_script_log()
++#endif
+ 
+ using namespace AGS::Common;
+ using namespace AGS::Engine;
+@@ -639,6 +643,18 @@ static void send_mouse_motion_event(int device, int x, int y, int xrel, int yrel
+ 
+ void ags_simulate_mouseclick(eAGSMouseButton but)
+ {
++#ifdef __DJGPP__
++    // DOS-PORT: paired with on_sdl_mouse_down()'s own "processed" timestamp
++    // (below) for input-latency instrumentation -- see PLAN.md's "Test
++    // harness (AGS Quest)" section. This is the moment script's
++    // Mouse.Click() actually queues the synthetic SDL event, not when the
++    // event later gets drained and acted on.
++    {
++        extern uclock_t dos_port_engine_start_uclock;
++        long t_ms = (long)((uclock() - dos_port_engine_start_uclock) * 1000 / UCLOCKS_PER_SEC);
++        debug_script_log("DOS-PORT input_latency t_ms=%ld event=inject", t_ms);
++    }
++#endif
+     // Simulate using SDL_TOUCH_MOUSEID pseudo-device, in order to distinguish
+     // from the real mouse device (we may also allocate our own ID if necessary)
+     send_mouse_button_event(SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_TOUCH_MOUSEID, ags_button_to_sdl(but), sys_mouse_x, sys_mouse_y);
+@@ -668,6 +684,21 @@ static void on_sdl_mouse_down(const SDL_Event &event)
+     if (event.button.which == disabled_mouse_device)
+         return;
+ 
++#ifdef __DJGPP__
++    // DOS-PORT: paired with ags_simulate_mouseclick()'s own "inject"
++    // timestamp (above) -- this is the point the synthetic click's queued
++    // SDL_EVENT_MOUSE_BUTTON_DOWN is actually drained and acted on. Only
++    // SDL_TOUCH_MOUSEID (the pseudo-device ags_simulate_mouseclick() and
++    // the touch-to-mouse emulation both use, never a real mouse) so a real
++    // input device's clicks don't pollute this metric.
++    if (event.button.which == SDL_TOUCH_MOUSEID)
++    {
++        extern uclock_t dos_port_engine_start_uclock;
++        long t_ms = (long)((uclock() - dos_port_engine_start_uclock) * 1000 / UCLOCKS_PER_SEC);
++        debug_script_log("DOS-PORT input_latency t_ms=%ld event=processed", t_ms);
++    }
++#endif
++
+     sys_mouse_x = static_cast<int>(event.button.x); // DOS-PORT: .x/.y are float now
+     sys_mouse_y = static_cast<int>(event.button.y);
+     mouse_button_state |= sdl_button_to_mask(event.button.button);
+-- 
+2.47.3
+

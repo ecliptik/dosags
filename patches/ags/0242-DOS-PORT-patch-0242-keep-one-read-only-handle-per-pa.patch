@@ -1,0 +1,189 @@
+From fa13917b33333c63a5c974ca3789007ea7ff5878 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <services.claude@accounts.ecliptik.com>
+Date: Sat, 26 Sep 2026 22:38:23 -0700
+Subject: [PATCH] DOS-PORT: patch 0242 -- keep one read-only handle per package
+ across asset opens (opt-in)
+
+Every packaged asset opens through File::OpenFile(filename, start, end), and
+each open fopen()ed the package again: on DJGPP findfirst + open + IOCTL +
+truename, and a close later -- two directory lookups per open. On the 486 a
+first play's asset_open is a fixed ~55 ms (AUDH16), and this reopen is part
+of it (docs/lab/io.md).
+
+Why sharing one FILE is exact: BufferedStream never relies on where the base
+FILE was left -- Open() seeks END then BEGIN, every refill seeks to its
+absolute position first, a direct large read seeks to _position first -- so
+section streams on one read-only FILE, interleaved or not, read the same
+bytes they would from their own FILE; WrapHandle streams never fclose it.
+
+Why retire instead of close on a library change: a stream opened earlier
+(music streaming, say) may still read through the handle, and fclose under it
+is the one way this could go wrong. A library change only retires the table
+entry (later opens get a fresh handle); handles are closed at engine exit;
+the table is bounded and falls back to the plain fopen when full.
+
+Opt-in: DOSAGS_PAKHANDLE=1. The manifest reports "DOS-PORT pakhandle
+opened= reused= fallback= closed=".
+---
+ Common/data/assetmanager.cpp |  6 ++++
+ Common/util/file.cpp         | 68 ++++++++++++++++++++++++++++++++++++
+ Common/util/file.h           |  5 +++
+ Engine/main/quit.cpp         |  7 ++++
+ 4 files changed, 86 insertions(+)
+
+diff --git a/Common/data/assetmanager.cpp b/Common/data/assetmanager.cpp
+index d0f7452c5..4d600176e 100644
+--- a/Common/data/assetmanager.cpp
++++ b/Common/data/assetmanager.cpp
+@@ -132,6 +132,9 @@ void AssetManager::RemoveLibrary(const String &path)
+             auto it_end = std::remove(_activeLibs.begin(), _activeLibs.end(), (*it).get());
+             _activeLibs.erase(it_end, _activeLibs.end());
+             _libs.erase(it);
++#ifdef __DJGPP__
++            File::RetireSharedPackageHandles();   // patch 0242: later opens get a fresh handle
++#endif
+             return;
+         }
+     }
+@@ -141,6 +144,9 @@ void AssetManager::RemoveAllLibraries()
+ {
+     _libs.clear();
+     _activeLibs.clear();
++#ifdef __DJGPP__
++    File::RetireSharedPackageHandles();   // patch 0242
++#endif
+ }
+ 
+ size_t AssetManager::GetLibraryCount() const
+diff --git a/Common/util/file.cpp b/Common/util/file.cpp
+index be919c84d..db20d4b93 100644
+--- a/Common/util/file.cpp
++++ b/Common/util/file.cpp
+@@ -259,8 +259,76 @@ std::unique_ptr<Stream> File::OpenFile(const String &filename, FileOpenMode open
+     return std::make_unique<Stream>(std::make_unique<BufferedStream>(std::move(fs)));
+ }
+ 
++#ifdef __DJGPP__
++// DOS-PORT patch 0242: keep ONE read-only FILE per library file across asset opens (opt-in, DOSAGS_PAKHANDLE=1).
++//
++// Every packaged asset is opened through here, and each open used to fopen the package again: on DJGPP that
++// is findfirst + open + IOCTL + truename, then a close later -- two directory lookups per open. On the 486 a
++// first play's asset_open is a fixed ~55 ms (AUDH16), and this reopen is part of it (docs/lab/io.md).
++//
++// Why sharing one FILE is exact: BufferedStream never relies on where the base FILE was left. Open() seeks
++// END then BEGIN, every buffer refill seeks to its absolute position first, and a direct large read seeks to
++// _position first, so any number of section streams on one read-only FILE -- interleaved or not -- read the
++// same bytes they would from their own FILE. WrapHandle streams never fclose it.
++//
++// Lifetime: a library change only RETIRES the table entry (later opens get a fresh handle) and the handle
++// stays open until exit, because a stream opened earlier (music streaming, say) may still read through it;
++// fclose-ing it under that stream is the one way this could go wrong. Retired handles are bounded; when the
++// bound is reached this path falls back to the plain fopen. All shared handles are closed at engine exit.
++namespace
++{
++    struct DosPakHandle { String Path; FILE *F = nullptr; bool Retired = false; };
++    DosPakHandle dos_pak_handles[8];
++    int dos_pak_mode = -1;
++}
++long dos_port_pak_opened = 0, dos_port_pak_reused = 0, dos_port_pak_fallback = 0, dos_port_pak_closed = 0;
++
++void File::RetireSharedPackageHandles()
++{
++    for (auto &h : dos_pak_handles)
++        if (h.F) h.Retired = true;
++}
++
++void File::CloseSharedPackageHandles()
++{
++    for (auto &h : dos_pak_handles)
++    {
++        if (h.F) { fclose(h.F); dos_port_pak_closed++; }
++        h = DosPakHandle();
++    }
++}
++
++static FILE *dos_pak_get(const String &filename)
++{
++    if (dos_pak_mode < 0)
++    {
++        const char *e = getenv("DOSAGS_PAKHANDLE");
++        dos_pak_mode = (e != nullptr && e[0] == '1') ? 1 : 0;   // default OFF
++    }
++    if (dos_pak_mode != 1)
++        return nullptr;
++    for (auto &h : dos_pak_handles)
++        if (h.F && !h.Retired && h.Path == filename) { dos_port_pak_reused++; return h.F; }
++    for (auto &h : dos_pak_handles)
++    {
++        if (h.F) continue;
++        FILE *f = ags_fopen(filename.GetCStr(), "rb");
++        if (!f) return nullptr;   // the plain path reports the error as before
++        h.Path = filename; h.F = f; h.Retired = false;
++        dos_port_pak_opened++;
++        return f;
++    }
++    dos_port_pak_fallback++;   // table full: plain fopen
++    return nullptr;
++}
++#endif
++
+ std::unique_ptr<Stream> File::OpenFile(const String &filename, soff_t start_off, soff_t end_off)
+ {
++#ifdef __DJGPP__
++    if (FILE *shared = dos_pak_get(filename))   // patch 0242
++        return std::make_unique<Stream>(std::make_unique<BufferedStream>(FileStream::WrapHandle(shared, kStream_Read), start_off, end_off));
++#endif
+     auto fs = OpenFileStream(filename, kFile_Open, kStream_Read);
+     if (!fs)
+         return nullptr;
+diff --git a/Common/util/file.h b/Common/util/file.h
+index 6aa93c78f..0ff4e250d 100644
+--- a/Common/util/file.h
++++ b/Common/util/file.h
+@@ -140,6 +140,11 @@ namespace File
+     {
+         return OpenFileCI("", file_name, open_mode, work_mode);
+     }
++#ifdef __DJGPP__
++    // DOS-PORT patch 0242: shared read-only package handles (see file.cpp)
++    void RetireSharedPackageHandles();
++    void CloseSharedPackageHandles();
++#endif
+ } // namespace File
+ 
+ } // namespace Common
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 39f05f2ec..c606d8f3f 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -16,6 +16,7 @@
+ // Quit game procedure
+ //
+ #include <stdio.h>
++#include "util/file.h"   // patch 0242
+ 
+ // DOS-PORT: must come before <allegro.h> below. vendored Allegro's
+ // alconfig.h #defines _farsetsel/_farnspokeb/_farnspeekb/etc. as generic
+@@ -106,6 +107,7 @@ extern "C" long dos_port_existfast_n, dos_port_existslow_n;   // patch 0241, Com
+ extern "C" int dos_port_statexists_mode;
+ extern "C" long dos_port_existshadow_n, dos_port_existshadow_bad;
+ extern "C" int dos_port_existshadow_mode;
++namespace AGS { namespace Common { extern long dos_port_pak_opened, dos_port_pak_reused, dos_port_pak_fallback, dos_port_pak_closed; } }   // patch 0242, Common/util/file.cpp
+ #endif
+ 
+ #if defined(__DJGPP__) && defined(DOSAGS_SPRITE_RUN_STATS)
+@@ -714,6 +716,11 @@ void quit(const char *quitmsg)
+                     Debug::Printf("DOS-PORT existfast mode=%d misses=%ld stat=%ld shadow=%d compared=%ld mismatches=%ld",
+                         dos_port_statexists_mode, dos_port_existfast_n, dos_port_existslow_n,
+                         dos_port_existshadow_mode, dos_port_existshadow_n, dos_port_existshadow_bad);
++                    // patch 0242: shared package handles -- opened, reused, fell back; closed right here at exit
++                    AGS::Common::File::CloseSharedPackageHandles();
++                    Debug::Printf("DOS-PORT pakhandle opened=%ld reused=%ld fallback=%ld closed=%ld",
++                        AGS::Common::dos_port_pak_opened, AGS::Common::dos_port_pak_reused,
++                        AGS::Common::dos_port_pak_fallback, AGS::Common::dos_port_pak_closed);
+                     for (int _g = 0; _g < 64; ++_g)
+                         if (dos_port_gui_flush_tally[_g])
+                             Debug::Printf("DOS-PORT guiflush idx=%d n=%ld", _g, dos_port_gui_flush_tally[_g]);
+-- 
+2.47.3
+

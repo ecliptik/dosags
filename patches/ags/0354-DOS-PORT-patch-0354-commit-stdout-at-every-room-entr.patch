@@ -1,0 +1,57 @@
+From fc873aca644060984e176224cf75d5e8a7b9cabd Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 4 Nov 2026 15:55:03 -0800
+Subject: [PATCH] DOS-PORT: patch 0354 -- commit stdout at every room entry, so
+ a host-side driver sees "Now in room" when it happens
+
+Why: the DOSBox-X harness can only see files. Its drivers (drive-clicks-dosbox.sh, and the
+title and WAIT_ROOM waits beside it) poll the mounted STDOUT.TXT for "Now in room" and inject
+input on a wall clock from there. The stdout log target already fflush()es every line, but a
+DOSBox-X mounted drive buffers the HOST file until the guest closes or commits it, so the line
+reached the host only once ~8 KB more had been written. The instrumented flavour's periodic
+lines got there ~9 s late; the DOSAGS_RELEASE flavour (ags 0351), which prints far less, took
+36-109 s of a ~106 s run, so the click driver's injections ran past the auto-exit tick and the
+ratchet read lost inputs (lost-inputs 3 / 18; 2026-11-04) that were a harness fault.
+
+What: after the engine logs "Now in room N", fflush(stdout) + fsync(fileno(stdout)) (DOS INT
+21h AH=68h). One commit per room entry, inside the existing room-load stall; both flavours,
+__DJGPP__ only. With it the release flavour's first click lands at engine t=8.8 s, lost 0 / 0.
+---
+ Engine/ac/room.cpp | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/Engine/ac/room.cpp b/Engine/ac/room.cpp
+index 04a00e54d..ae830f552 100644
+--- a/Engine/ac/room.cpp
++++ b/Engine/ac/room.cpp
+@@ -45,6 +45,10 @@
+ #include "ac/sys_events.h"
+ #include "ac/room.h"
+ #include "ac/roomobject.h"
++#ifdef __DJGPP__
++#include <cstdio>
++#include <unistd.h> // fsync() -- DOS-PORT patch 0354
++#endif
+ #include "ac/roomstatus.h"
+ #include "ac/screen.h"
+ #include "ac/string.h"
+@@ -1092,6 +1096,16 @@ void load_new_room(int newnum, CharacterInfo *forchar)
+     update_polled_stuff();
+     debug_script_log("Now in room %d", displayed_room);
+ #ifdef __DJGPP__
++    {   // DOS-PORT patch 0354: commit stdout (DOS INT 21h AH=68h) at every room entry. The stdout log
++        // target already fflush()es each line, but a DOSBox-X mounted drive buffers the HOST file until
++        // the guest closes or commits it, so a host-side driver polling STDOUT.TXT for "Now in room"
++        // saw it only once ~8 KB more had been written. The instrumented flavour's periodic lines got
++        // there in seconds; the quieter DOSAGS_RELEASE flavour took most of a run, and the click
++        // driver's injections then ran past the auto-exit tick (lost-inputs, 2026-11-04). One commit
++        // per room entry, inside the room-load stall; the no-op on a non-file stdout is harmless.
++        fflush(stdout);
++        fsync(fileno(stdout));
++    }
+     {
+         extern void dos_port_ticklog_add(unsigned kind, unsigned long value);
+         dos_port_ticklog_add(4 /* kDosTickLogRoom, patch 0316 */, (unsigned long)(displayed_room < 0 ? 0 : displayed_room));
+-- 
+2.47.3
+

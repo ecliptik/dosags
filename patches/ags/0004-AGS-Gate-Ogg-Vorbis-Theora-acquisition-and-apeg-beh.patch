@@ -1,0 +1,80 @@
+From ab84e6b5c8c9a734b344771096e7e4383c9df3ce Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 13:32:31 -0700
+Subject: [PATCH] [AGS] Gate Ogg/Vorbis/Theora acquisition and apeg behind
+ AGS_NO_VIDEO_PLAYER
+
+This port always configures with AGS_NO_VIDEO_PLAYER=ON. The three
+find_package(Ogg|Vorbis|Theora REQUIRED)/Fetch calls ran unconditionally
+at configure time regardless of that flag -- a real gap: only the *link*
+was conditional (Engine/CMakeLists.txt's own Apeg::Apeg reference), so
+configure still failed without working copies of all three even though
+nothing was ever going to link them.
+
+Also gates Engine/libsrc/apeg-1.2.1's own add_subdirectory the same way.
+EXCLUDE_FROM_ALL only excludes a target from the default build set, it
+does not defer this call's own configure-time processing -- apeg's
+CMakeLists.txt unconditionally links ${SDL2_LIBRARY}/${OGG_LIBRARIES}/
+${VORBIS_LIBRARIES}/${THEORA_LIBRARIES}, none of which exist once their
+acquisition is gated above. Found this build-testing patch 0003 alone:
+configure failed at apeg's own CMakeLists.txt:41, "Target SDL2::SDL2 ...
+not found" -- a fourth consuming site 0003's original scope (three sites,
+per PATCH-SEQUENCE.md) did not anticipate. Correcting the document in
+this same commit rather than silently, per this repo's own conventions.
+---
+ CMakeLists.txt | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a156b0ab8..bd8d057b5 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -348,6 +348,15 @@ else()
+     find_package(SDL2_sound REQUIRED)
+ endif()
+ 
++# DOS-PORT: this port always configures with AGS_NO_VIDEO_PLAYER=ON (no
++# Theora cutscene playback), but these three find_package/Fetch calls ran
++# unconditionally regardless of that flag -- a real configure-time gap,
++# not just a link-time one: Engine/libsrc/apeg-1.2.1 (the only code in
++# this whole tree that calls real ogg_/vorbis_/theora_ symbols directly)
++# is correctly dropped from the *link* by AGS_NO_VIDEO_PLAYER already
++# (see Engine/CMakeLists.txt), but configure still failed without working
++# Ogg/Vorbis/Theora copies even when nothing ends up linking them.
++if (NOT AGS_NO_VIDEO_PLAYER)
+ if(AGS_USE_LOCAL_OGG)
+     find_package(Ogg REQUIRED)
+ else()
+@@ -365,6 +374,7 @@ if (AGS_USE_LOCAL_THEORA)
+ else()
+     include(FetchTheora)
+ endif()
++endif()
+ 
+ ###############################################################################
+ # subdirectories of this project
+@@ -403,7 +413,21 @@ set(FREETYPE_LIBRARIES FreeType::FreeType)
+ add_subdirectory(Common/libsrc/alfont-2.0.9     EXCLUDE_FROM_ALL)
+ add_subdirectory(Common)
+ 
++# DOS-PORT: apeg is Theora-video-cutscene decode ONLY (the sole consumer
++# of the Ogg/Vorbis/Theora libraries gated above) -- EXCLUDE_FROM_ALL only
++# excludes it from the default build TARGET set, it does not defer this
++# add_subdirectory's own configure-time processing, and apeg's own
++# CMakeLists.txt unconditionally calls target_link_libraries against
++# ${SDL2_LIBRARY}/${OGG_LIBRARIES}/${VORBIS_LIBRARIES}/${THEORA_LIBRARIES},
++# none of which exist once the gate above skips their acquisition for
++# AGS_NO_VIDEO_PLAYER=ON. Confirmed by build: configuring this
++# unconditionally with patches 0001-0003 alone (before this gate existed)
++# failed with "Target SDL2::SDL2 ... not found" at apeg's own
++# CMakeLists.txt:41, a fourth consuming site PATCH-SEQUENCE.md's
++# original patch 0003 scope did not anticipate.
++if (NOT AGS_NO_VIDEO_PLAYER)
+ add_subdirectory(Engine/libsrc/apeg-1.2.1       EXCLUDE_FROM_ALL)
++endif()
+ if(AGS_OPENGLES2)
+     add_subdirectory(Engine/libsrc/glad-gles2       EXCLUDE_FROM_ALL)
+ else()
+-- 
+2.47.3
+

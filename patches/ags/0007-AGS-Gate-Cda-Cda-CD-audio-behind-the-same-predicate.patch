@@ -1,0 +1,45 @@
+From 9f935a723c6d9322dd6ee5dcef57c39c960226a2 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 13:35:36 -0700
+Subject: [PATCH 1/2] [AGS] Gate Cda::Cda (CD audio) behind the same predicate
+ as AGS_HAS_CD_AUDIO
+
+Cda::Cda linked into engine unconditionally, independent of whether
+AGS_HAS_CD_AUDIO (a few lines below) was even going to be compiled in.
+Moved into its own target_link_libraries call gated by the identical
+if (WIN32 OR LINUX) predicate -- don't add DOS to either; a DOS port
+has no physical CD-audio path.
+---
+ Engine/CMakeLists.txt | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/CMakeLists.txt b/Engine/CMakeLists.txt
+index 856bf1d64..468f2c9cf 100644
+--- a/Engine/CMakeLists.txt
++++ b/Engine/CMakeLists.txt
+@@ -544,12 +544,21 @@ target_link_libraries(engine PUBLIC
+     AGS::Common
+     ${CMAKE_DL_LIBS}
+     Allegro::Allegro
+-    Cda::Cda
+     ${AGS_OPENAL_LINK_TARGET}
+     ${AGS_SDL_LINK_TARGET}
+     ${AGS_SDL2_SOUND_LINK_TARGET}
+ )
+ 
++# DOS-PORT: Cda::Cda (physical CD audio) linked into every build
++# unconditionally, independent of whether AGS_HAS_CD_AUDIO (below) was
++# even going to be compiled in. Moved here, gated by the same predicate
++# that already gates AGS_HAS_CD_AUDIO itself -- don't add DOS to either;
++# a DOS port has no CD-audio path, same as every platform that isn't
++# already WIN32/LINUX.
++if (WIN32 OR LINUX)
++    target_link_libraries(engine PUBLIC Cda::Cda)
++endif ()
++
+ if(NOT AGS_DISABLE_THREADS)
+     target_link_libraries(engine PUBLIC Threads::Threads)
+ endif()
+-- 
+2.47.3
+

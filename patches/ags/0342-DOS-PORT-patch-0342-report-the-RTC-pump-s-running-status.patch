@@ -1,0 +1,47 @@
+From 07684d00f8523806e0f94c0b633dba10f02b3353 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 14:58:51 -0700
+Subject: [PATCH] DOS-PORT: patch 0342 -- report the RTC pump's running status
+
+SDL 0261 makes the WaveBlaster RTC pump send MIDI running status, on
+by default, with a killswitch. The status line has to say which way a
+run went and how much it saved, or a capture cannot be tied to the
+byte stream that made it. The rtc fields gain rs=on|off and
+rs_skipped=N, the status bytes not sent over the run. The fragment
+buffer grows to fit.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/platform/dos/dos_midi_backend.cpp | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/Engine/platform/dos/dos_midi_backend.cpp b/Engine/platform/dos/dos_midi_backend.cpp
+index e5ac63a33..7aa4e905b 100644
+--- a/Engine/platform/dos/dos_midi_backend.cpp
++++ b/Engine/platform/dos/dos_midi_backend.cpp
+@@ -488,13 +488,18 @@ void dos_midi_backend_status_fragment(char *buf, size_t bufsize)
+         // DOS-PORT (patch 0341): the RTC pump's own fields (rate, byte gap,
+         // ticks, BIOS INT 15h/86h waits it serviced, longest release-to-write
+         // in us) and clk_uc= (song ms / uclock ms since the first plan).
+-        char rtc[112] = "";
++        char rtc[144] = ""; // DOS-PORT (patch 0342): was 112
+         if (g_defer_kind == 3)
+         {
+             Uint32 hz = 0, gap = 0, ticks = 0, waits = 0, lat = 0;
+             SDL_DOSMidiDeferRtcStats(&hz, &gap, &ticks, &waits, &lat);
+-            std::snprintf(rtc, sizeof(rtc), ",rtc_hz=%u,gap_us=%u,rtc_ticks=%u,bios_waits=%u,lat_max_us=%u",
+-                (unsigned)hz, (unsigned)gap, (unsigned)ticks, (unsigned)waits, (unsigned)lat);
++            // DOS-PORT (patch 0342): running status on the pump (SDL 0261), and
++            // the status bytes it did not send.
++            bool rs_on = false;
++            const Uint32 rs_skipped = SDL_DOSMidiDeferRtcRunningStatus(&rs_on);
++            std::snprintf(rtc, sizeof(rtc), ",rtc_hz=%u,gap_us=%u,rtc_ticks=%u,bios_waits=%u,lat_max_us=%u,rs=%s,rs_skipped=%u",
++                (unsigned)hz, (unsigned)gap, (unsigned)ticks, (unsigned)waits, (unsigned)lat, rs_on ? "on" : "off",
++                (unsigned)rs_skipped);
+         }
+         // DOS-PORT patch 0330: SDL 0250's per-IRQ budget, the IRQs it bound,
+         // and the drain's own time (us, the SB ISR's timer); per-write in ns
+-- 
+2.47.3
+

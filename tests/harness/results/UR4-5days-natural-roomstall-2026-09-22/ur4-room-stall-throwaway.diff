@@ -1,0 +1,13 @@
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index d11af2cfb..75898eb4c 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -477,6 +477,8 @@ void dos_audio_mixer_pump()
+         // interval that spans the load prints since_room=0.
+         if (displayed_room != g_room_seen)
+         {
++            { static int ur4 = -1; if (ur4 < 0) { const char *e = SDL_getenv("DOSAGS_UR4_ROOM_STALL"); ur4 = (e && e[0] == '1') ? 1 : 0; } // THROWAWAY (UR4), never lands
++              if (ur4 && g_room_seen != -1000) SDL_Delay(1500); }
+             g_room_seen = displayed_room;
+             g_room_since = get_loop_counter();
+         }

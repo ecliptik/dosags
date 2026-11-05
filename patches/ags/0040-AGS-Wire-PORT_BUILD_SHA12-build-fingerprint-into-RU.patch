@@ -1,0 +1,54 @@
+From 720c1f8245014bb5d682913845a18bbbdf0d9bca Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 20:58:31 -0700
+Subject: [PATCH] Wire PORT_BUILD_SHA12 build fingerprint into RUNMANIFEST's
+ binary_sha12
+
+Patch 0038 wired RUNMANIFEST emission at quit()'s clean-shutdown path
+but left binary_sha12 empty by design -- no build-fingerprint pipeline
+existed yet for this CMake-driven engine stage. This port's own
+Makefile now computes AGS_BUILD_SHA12 (a content hash of both vendor
+trees post-patch, this stage's own CMake flags, the hub build
+fragment, and the compiler version -- see that Makefile's own "Build
+fingerprint" section) and threads it through CMAKE_CXX_FLAGS as
+-DPORT_BUILD_SHA12="<hash>", following dossage's own BUILD_SHA12
+precedent (read directly, not summarized).
+
+Why not leave it empty indefinitely: an unattributable RUNMANIFEST
+block can't tell a later analyst which build produced it, the same gap
+dossage's own BENCHMARK-PLAN.md documents hitting for real (a pinned
+build_sha12 that could not be recomputed or checked).
+---
+ Engine/main/quit.cpp | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 2c73bf227..20a11d411 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -281,6 +281,22 @@ void quit(const char *quitmsg)
+         runmanifest_t manifest;
+         runmanifest_init(&manifest);
+ 
++        // DOS-PORT: PORT_BUILD_SHA12 is a content-hash fingerprint of the
++        // inputs that determine this engine-stage binary (both vendor
++        // trees post-patch, this stage's own CMake flags, the hub build
++        // fragment, the compiler version -- see the Makefile's own "Build
++        // fingerprint" section), passed in via -DPORT_BUILD_SHA12 on the
++        // CMAKE_CXX_FLAGS this target compiles with. Left at
++        // runmanifest_init()'s own empty default (not guarded by an
++        // #ifdef) if a future build stage ever omits the flag -- an
++        // honest empty field, per the schema's own documented convention,
++        // rather than a stale or guessed value.
++#ifdef PORT_BUILD_SHA12
++        strncpy(manifest.binary_sha12, PORT_BUILD_SHA12,
++                sizeof(manifest.binary_sha12) - 1);
++        manifest.binary_sha12[sizeof(manifest.binary_sha12) - 1] = '\0';
++#endif
++
+         manifest.environment = runmanifest_detect_environment(NULL);
+         runmanifest_compute_env_block_sha12(dos_port_env_allowlist,
+             manifest.env_block_sha, sizeof(manifest.env_block_sha));
+-- 
+2.47.3
+

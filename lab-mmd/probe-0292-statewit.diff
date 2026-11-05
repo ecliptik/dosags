@@ -1,0 +1,86 @@
+diff --git a/Engine/main/engine.cpp b/Engine/main/engine.cpp
+index fe227ae54..a5976c381 100644
+--- a/Engine/main/engine.cpp
++++ b/Engine/main/engine.cpp
+@@ -689,6 +689,17 @@ void engine_init_game_settings()
+ 
+     // Initialize randomizer
+     play.randseed = time(nullptr);
++#ifdef __DJGPP__
++    // DOS-PORT probe 0292 (LAB ONLY, the determinism witness build -- never a measured binary):
++    // DOSAGS_WIT_SEED=<n> replaces the time-of-day seed with n, so a Random()-using title replays
++    // identically run after run; under an emulator the time of day comes from the host and 5 Days a
++    // Stranger's own baseline did not equal itself. Unset: the time of day, as before.
++    {
++        const char *seed_env = getenv("DOSAGS_WIT_SEED");
++        if (seed_env && seed_env[0])
++            play.randseed = (int)strtol(seed_env, nullptr, 10);
++    }
++#endif
+     srand(play.randseed);
+ 
+     if (usetup.AudioEnabled)
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 3d6d01469..fd5d96d74 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1213,9 +1213,59 @@ static void game_loop_update_background_animation()
+     }
+ }
+ 
++#ifdef __DJGPP__
++// DOS-PORT probe 0292 (LAB ONLY; LAB-MMD.md 9.2): the determinism witness. Every 25 logic ticks, a
++// digest of the game state a script change could move: every character, the room's objects, the
++// GlobalInts, and the global and room script data. Two builds fed the same inputs must print the
++// same lines; a timing change must not move any of them. DOSAGS_WIT_PERTURB_TICK=N nudges the
++// player one pixel at tick N -- the CONTROL that shows the check can fail.
++static uint32_t dp_fnv(uint32_t h, const void *p, size_t n)
++{
++    const uint8_t *b = static_cast<const uint8_t*>(p);
++    for (size_t i = 0; i < n; ++i) { h ^= b[i]; h *= 16777619u; }
++    return h;
++}
++#define DP_FNV(h, v) h = dp_fnv(h, &(v), sizeof(v))
++static void dp_statewit()
++{
++    static long perturb = -2;
++    if (perturb == -2) { const char *e = getenv("DOSAGS_WIT_PERTURB_TICK"); perturb = e ? atol(e) : -1; }
++    const uint32_t tick = GameTimer.LoopCounter;
++    if (perturb >= 0 && tick == (uint32_t)perturb && game.playercharacter >= 0)
++        game.chars[game.playercharacter].x += 1;
++    if (tick % 25 != 0) return;
++    uint32_t hc = 2166136261u, ho = 2166136261u, hg = 2166136261u, hd = 2166136261u, hr = 2166136261u;
++    for (int i = 0; i < game.numcharacters; ++i)
++    {
++        const CharacterInfo &c = game.chars[i];
++        DP_FNV(hc, c.room); DP_FNV(hc, c.x); DP_FNV(hc, c.y); DP_FNV(hc, c.z); DP_FNV(hc, c.loop);
++        DP_FNV(hc, c.frame); DP_FNV(hc, c.view); DP_FNV(hc, c.walking); DP_FNV(hc, c.animating);
++        DP_FNV(hc, c.flags); DP_FNV(hc, c.wait);
++    }
++    if (croom)
++        for (uint32_t i = 0; i < croom->numobj; ++i)
++        {
++            const RoomObject &o = croom->obj[i];
++            DP_FNV(ho, o.x); DP_FNV(ho, o.y); DP_FNV(ho, o.on); DP_FNV(ho, o.view); DP_FNV(ho, o.loop);
++            DP_FNV(ho, o.frame); DP_FNV(ho, o.cycling); DP_FNV(ho, o.moving); DP_FNV(ho, o.num);
++            DP_FNV(ho, o.transparent); DP_FNV(ho, o.baseline);
++        }
++    hg = dp_fnv(hg, play.globalscriptvars, sizeof(play.globalscriptvars));
++    if (gameinst) { const auto &g = gameinst->GetGlobalData(); if (!g.empty()) hd = dp_fnv(hd, g.data(), g.size()); }
++    if (roominst) { const auto &r = roominst->GetGlobalData(); if (!r.empty()) hr = dp_fnv(hr, r.data(), r.size()); }
++    const int pc = game.playercharacter;
++    Debug::Printf("DOS-PORT statewit tick=%lu room=%d chars=%08lx objs=%08lx gints=%08lx gdata=%08lx rdata=%08lx player=%d,%d",
++        (unsigned long)tick, displayed_room, (unsigned long)hc, (unsigned long)ho, (unsigned long)hg,
++        (unsigned long)hd, (unsigned long)hr, pc >= 0 ? game.chars[pc].x : -1, pc >= 0 ? game.chars[pc].y : -1);
++}
++#endif
++
+ static void game_loop_update_loop_counter()
+ {
+     GameTimer.LoopCounter++;
++#ifdef __DJGPP__
++    dp_statewit(); // probe 0292 (LAB ONLY)
++#endif
+ 
+     if (play.wait_counter > 0) play.wait_counter--;
+     if (play.shakesc_length > 0) play.shakesc_length--;

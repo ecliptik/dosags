@@ -1,0 +1,17 @@
+int13p: threshold 20000 us
+int13p: REGISTER TRANSPARENCY GATE
+int13p: stub at 1C01:0000  handler +0x0058  ring +0x0130 x 64
+int13p: old INT 13h vector F000:CF40
+  AH=08 -> transparent
+  AH=15 -> transparent
+  AH=FE -> transparent
+  gate PASSED -- 3 of 3 transparent, flags included
+int13p SELFTEST
+  one PIT unit = 0.8381 us, one BIOS tick = 65536 units = 54925.4 us
+  WRAP TEST: composed=220003 us  uclock=220003 us  err=-0.00%  wraps spanned=4.01
+    PASS -- a 4-wrap span composes correctly instead of reading 55 ms or being discarded
+  MONOTONIC: 0 backward steps in 200000 reads -> PASS
+  HEADER: handler +0x0058 ring +0x0130 rec 16 -> PASS
+  HANDLER FIRES: direct INT 13h AH=08h -> counter 3 to 4 -> PASS
+SELFTEST PASSED
+int13p: WARNING -- the vector is F000:CF40, not ours (1C01:0058). Something hooked after us; restoring anyway.

@@ -1,0 +1,280 @@
+From 8426cec266a476bc43bb248e8d6e4a2c3848fc7b Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <services.claude@accounts.ecliptik.com>
+Date: Thu, 24 Sep 2026 09:26:16 -0700
+Subject: [PATCH] DOS-PORT: patch 0233 -- an unchanged overlay does not dirty
+ its region
+
+Why: every overlay entry was invalidated on every frame whether or not it
+changed. A blocking Say box (OVER_TEXTSPEECH) gets one new image per line and
+then sits unchanged while the line is up, yet it marked its whole rect every
+frame, and 0193's carry echoed each mark into the next present. On AGS Quest
+at 640x480x32 on the 486 the two speech windows held ~86 of the 116 skipped
+ticks (dosags LAB-S32.md 12/14; H2-POS attributed the heavy regions to it).
+
+What: the GUI treatment (0169 skip + 0190 captured flags + 0191 prev record
+and late flush + 0194 hidden flush), applied to overlays:
+- the change flag (own flag or texture notify mark) is captured in
+  construct_overlays() before ClearChanged();
+- a per-slot record of the last composite (id, layer, drawn position incl.
+  auto-placement, scaled size, sprite, transparency, z-order, alpha flag)
+  catches what the setters never flag;
+- only an idempotent composite may skip (transparency 0 and no alpha
+  channel): a skipped entry is still composited over its whole rect onto
+  pixels that already contain it, which would double-blend anything
+  translucent;
+- the old rect of an overlay left unmarked is marked when it is hidden,
+  removed, moved or changed: before the restore, else at add time, else at
+  the end of the frame as a safety net. Room-layer rects stay in room space.
+DOSAGS_OVER_NOINVAL=0 turns it off; DOSAGS_BREAK_C3=1 is the screen gate's
+control (every overlay skips, nothing flushes). Manifest line: overskip.
+---
+ Engine/ac/draw.cpp   | 167 +++++++++++++++++++++++++++++++++++++++++++
+ Engine/main/quit.cpp |  10 +++
+ 2 files changed, 177 insertions(+)
+
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index d4618d237..2d32d5d92 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -485,6 +485,147 @@ ObjTexture cursor_tx;
+ std::vector<ObjectCache> charcache;
+ ObjectCache objcache[MAX_ROOM_OBJECTS];
+ std::vector<Point> overcache;
++#ifdef __DJGPP__
++// DOS-PORT patch 0233: ags 0169/0191/0194 for OVERLAYS -- an overlay whose composite is the one
++// already on the screen does not dirty its region.
++//
++// Every overlay entry was invalidated on every frame, changed or not. A blocking Say box
++// (OVER_TEXTSPEECH: one new image per line, then unchanged for as long as the line is up) marked
++// its whole rect every frame, and 0193's carry echoed each mark into the next present. On AGS
++// Quest at 640x480x32 on the 486 the two speech windows held ~86 of the 116 skipped ticks.
++//
++// "Changed" has two halves, as for GUIs (0190 + 0191):
++//  - the overlay's own flag or its texture's notify mark, captured in construct_overlays()
++//    BEFORE ClearChanged() -- SetImage/SetSpriteNum/SetScaledSize, text re-render,
++//    shared-sprite edits, portrait frames and blinks;
++//  - what the setters never flag (SetPosition, SetTransparency, SetZOrder, SetVisible), slot
++//    reuse, and an auto-placed position that follows a character: compared against a record of
++//    the last composite.
++// Only an IDEMPOTENT composite may skip its mark: transparency 0 and no alpha channel, i.e. an
++// opaque or masked blit. A skipped entry is still composited over its whole rect, on top of last
++// frame's pixels, which already contain it -- a translucent or alpha-blended overlay would blend
++// twice there, so those are always marked (counted as refused).
++// An overlay left unmarked last frame and now hidden, removed, moved or changed gets its OLD rect
++// marked before this frame's restore (dos_port_over_flush_unmarked); if only its draw finds the
++// change, at add time (the 0191 late flush); and if it is not drawn at all, at the end of the
++// frame, so no path leaves its old pixels on the screen. Room-layer records are in room space.
++//   DOSAGS_OVER_NOINVAL=0  -> off: every overlay marked, as before
++//   DOSAGS_BREAK_C3=1      -> gate control only: every overlay skips its mark and nothing is
++//                             flushed; a screen gate must see the difference
++struct DosPortOverPrev
++{
++    bool valid = false;                    // drawn last frame; the fields describe that composite
++    bool unmarked = false;                 // that composite skipped its invalidation
++    bool in_room = false;                  // room-layer overlay: rect in room coordinates
++    bool alpha = false;
++    int id = -1, x = 0, y = 0, w = 0, h = 0, sprnum = -1, trans = 0, z = 0;
++    int rx = 0, ry = 0, rw = 0, rh = 0;    // what invalidate_sprite() would have marked
++    bool SameAs(const ScreenOverlay &o, const Point &pos) const
++    {
++        return valid && o.GetID() == id && o.IsRoomLayer() == in_room &&
++               pos.X == x && pos.Y == y && o.GetScaledWidth() == w && o.GetScaledHeight() == h &&
++               o.GetSpriteNum() == sprnum && o.GetTransparency() == trans &&
++               o.GetZOrder() == z && o.HasAlphaChannel() == alpha;
++    }
++    void Record(const ScreenOverlay &o, const Point &pos, const IDriverDependantBitmap *ddb)
++    {
++        valid = true; in_room = o.IsRoomLayer(); alpha = o.HasAlphaChannel();
++        id = o.GetID(); x = pos.X; y = pos.Y; w = o.GetScaledWidth(); h = o.GetScaledHeight();
++        sprnum = o.GetSpriteNum(); trans = o.GetTransparency(); z = o.GetZOrder();
++        rx = pos.X; ry = pos.Y; rw = ddb->GetWidth(); rh = ddb->GetHeight();
++    }
++};
++static std::vector<DosPortOverPrev> dos_port_over_prev;   // indexed by overlay id (== pool slot)
++static std::vector<char> dos_port_over_changed;           // captured before ClearChanged()
++static std::vector<char> dos_port_over_drawn;             // added to a sprite list this frame
++long dos_port_over_skip_n = 0, dos_port_over_mark_n = 0, dos_port_over_refused_n = 0;
++long dos_port_over_flush_hidden_n = 0, dos_port_over_flush_props_n = 0, dos_port_over_flush_flag_n = 0;
++long dos_port_over_flush_late_n = 0, dos_port_over_flush_end_n = 0;
++int dos_port_over_mode_v = -1;                            // 0 off, 1 on, 2 control (reported at quit)
++
++static int dos_port_over_mode()
++{
++    if (dos_port_over_mode_v < 0)
++    {
++        const char *b = getenv("DOSAGS_BREAK_C3");
++        const char *e = getenv("DOSAGS_OVER_NOINVAL");
++        dos_port_over_mode_v = (b && b[0] == '1') ? 2 : ((e && e[0] == '0') ? 0 : 1);
++    }
++    return dos_port_over_mode_v;
++}
++
++static void dos_port_over_mark_old(DosPortOverPrev &p)
++{
++    dos_port_dirty_source = p.in_room ? kDirtySrc_RoomSprite : kDirtySrc_UiSprite;
++    invalidate_rect(p.rx, p.ry, p.rx + p.rw, p.ry + p.rh, p.in_room);
++    dos_port_dirty_source = kDirtySrc_Other;
++    p.unmarked = false;
++}
++
++// Before this frame's restore: an overlay whose last composite was left unmarked and that will
++// not look the same this frame gets its old rect marked now, so the restore erases it.
++static void dos_port_over_flush_unmarked()
++{
++    if (dos_port_over_mode() != 1) return;
++    const auto &overs = get_overlays();
++    for (size_t i = 0; i < dos_port_over_prev.size(); ++i)
++    {
++        DosPortOverPrev &p = dos_port_over_prev[i];
++        if (!p.valid || !p.unmarked) continue;
++        const bool exists = i < overs.size() && !overs.IsFree(i) && overs[i].GetID() == (int)i;
++        const ScreenOverlay *o = exists ? &overs[i] : nullptr;
++        const bool shown = exists && o->IsVisible() && o->GetTransparency() != 255;
++        const bool same = shown && p.SameAs(*o, get_overlay_position(*o));
++        const bool flag = same && (o->HasChanged() || (i < overtxs.size() && overtxs[i].IsChangeNotified()));
++        if (same && !flag) continue;   // same picture as last frame: stays unmarked
++        if (!shown)     dos_port_over_flush_hidden_n++;
++        else if (!same) dos_port_over_flush_props_n++;
++        else            dos_port_over_flush_flag_n++;
++        dos_port_over_mark_old(p);
++    }
++    for (size_t i = 0; i < dos_port_over_drawn.size(); ++i) dos_port_over_drawn[i] = 0;
++}
++
++// At add time: returns true when this entry may skip its invalidation.
++static bool dos_port_over_add(const ScreenOverlay &over, const Point &pos, const IDriverDependantBitmap *ddb)
++{
++    const int mode = dos_port_over_mode();
++    const int id = over.GetID();
++    if (mode == 0 || !ddb || id < 0 || (size_t)id >= dos_port_over_prev.size()) return false;
++    if (mode == 2) { dos_port_over_skip_n++; return true; }
++    DosPortOverPrev &p = dos_port_over_prev[id];
++    const bool idem = (over.GetTransparency() == 0) && !over.HasAlphaChannel();
++    const bool unch = !dos_port_over_changed[id] && p.SameAs(over, pos);
++    const bool skip = idem && unch;
++    if (unch && !idem) dos_port_over_refused_n++;
++    if (p.valid && p.unmarked && !skip)
++    {
++        // the flush above judged it unchanged and it is not: its old rect goes out now
++        dos_port_over_mark_old(p);
++        dos_port_over_flush_late_n++;
++    }
++    p.Record(over, pos, ddb);
++    p.unmarked = skip;
++    dos_port_over_drawn[id] = 1;
++    if (skip) dos_port_over_skip_n++; else dos_port_over_mark_n++;
++    return skip;
++}
++
++// End of the frame: a record not drawn this frame no longer describes anything on the screen.
++// If it was left unmarked, its old pixels are still there -- mark them (a safety net; the flush
++// before the restore is meant to have caught every such case already).
++static void dos_port_over_end_frame()
++{
++    if (dos_port_over_mode() != 1) return;
++    for (size_t i = 0; i < dos_port_over_prev.size(); ++i)
++    {
++        DosPortOverPrev &p = dos_port_over_prev[i];
++        if (!p.valid || dos_port_over_drawn[i]) continue;
++        if (p.unmarked) { dos_port_over_mark_old(p); dos_port_over_flush_end_n++; }
++        p.valid = false;
++    }
++}
++#endif
+ 
+ // Room background sprite
+ IDriverDependantBitmap* roomBackgroundBmp = nullptr;
+@@ -2477,7 +2618,12 @@ static void add_roomovers_for_drawing()
+         if (!over.IsVisible()) continue; // not visible
+         if (over.GetTransparency() == 255) continue; // skip fully transparent
+         Point pos = get_overlay_position(over);
++#ifdef __DJGPP__
++        add_to_sprite_list(overtxs[over.GetID()].Ddb, pos.X, pos.Y, over.GetZOrder(), overtxs[over.GetID()].DrawIndex,
++                           dos_port_over_add(over, pos, overtxs[over.GetID()].Ddb));   // patch 0233
++#else
+         add_to_sprite_list(overtxs[over.GetID()].Ddb, pos.X, pos.Y, over.GetZOrder(), overtxs[over.GetID()].DrawIndex);
++#endif
+     }
+ }
+ 
+@@ -2819,7 +2965,12 @@ void draw_gui_and_overlays()
+         if (!over.IsVisible()) continue; // not visible
+         if (over.GetTransparency() == 255) continue; // skip fully transparent
+         Point pos = get_overlay_position(over);
++#ifdef __DJGPP__
++        add_to_sprite_list(overtxs[over.GetID()].Ddb, pos.X, pos.Y, over.GetZOrder(), overtxs[over.GetID()].DrawIndex,
++                           dos_port_over_add(over, pos, overtxs[over.GetID()].Ddb));   // patch 0233
++#else
+         add_to_sprite_list(overtxs[over.GetID()].Ddb, pos.X, pos.Y, over.GetZOrder(), overtxs[over.GetID()].DrawIndex);
++#endif
+     }
+ 
+     // Add GUIs
+@@ -3216,6 +3367,15 @@ static void construct_overlays()
+         if (is_software_mode)
+             overcache.resize(overs.size(), Point(INT32_MIN, INT32_MIN));
+     }
++#ifdef __DJGPP__
++    if (dos_port_over_prev.size() < overs.size())   // patch 0233
++    {
++        dos_port_over_prev.resize(overs.size());
++        dos_port_over_changed.resize(overs.size(), 1);
++        dos_port_over_drawn.resize(overs.size(), 0);
++    }
++    for (size_t _i = 0; _i < overs.size(); ++_i) dos_port_over_changed[_i] = 1;   // unknown = changed
++#endif
+ 
+     // TODO: an iterator that goes over only valid elements
+     for (size_t i = 0; i < overs.size(); ++i)
+@@ -3238,6 +3398,9 @@ static void construct_overlays()
+         // Test if must recache the unloaded sprite in software mode
+         has_changed |= (is_software_mode && spriteset.IsAssetUnloaded(over.GetSpriteNum()));
+ 
++#ifdef __DJGPP__
++        dos_port_over_changed[i] = (has_changed || overtx.IsChangeNotified()) ? 1 : 0;   // patch 0233
++#endif
+         if (has_changed || overtx.IsChangeNotified())
+         {
+             overtx.SpriteID = over.GetSpriteNum();
+@@ -3301,6 +3464,7 @@ void construct_game_scene(bool full_redraw)
+ 
+     // Overlays may be both in rooms and ui layer, prepare their textures beforehand
+ #ifdef __DJGPP__
++    dos_port_over_flush_unmarked();   // patch 0233: before the flags are cleared and before the restore
+     { DosPortTickScope _dp(dos_port_tick_timing.sc_overlays);   // patch 0133
+ #endif
+     construct_overlays();
+@@ -3347,6 +3511,9 @@ void construct_game_scene(bool full_redraw)
+         }
+ #endif
+     }
++#ifdef __DJGPP__
++    dos_port_over_end_frame();   // patch 0233
++#endif
+ 
+     // End the parent scene node
+     gfxDriver->EndSpriteBatch();
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 75673dd41..a917762be 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -700,6 +700,16 @@ void quit(const char *quitmsg)
+                             Debug::Printf("DOS-PORT guiflush idx=%d n=%ld", _g, dos_port_gui_flush_tally[_g]);
+                     // patch 0197: same mechanism as guiflush, for room Objects -- see draw.cpp's
+                     // own comment at DosPortObjPrev for why this exists.
++                    // patch 0233: overlays -- marks skipped/made, idempotence refusals, and the
++                    // old-rect flushes by path (see draw.cpp at DosPortOverPrev).
++                    extern long dos_port_over_skip_n, dos_port_over_mark_n, dos_port_over_refused_n;
++                    extern long dos_port_over_flush_hidden_n, dos_port_over_flush_props_n, dos_port_over_flush_flag_n;
++                    extern long dos_port_over_flush_late_n, dos_port_over_flush_end_n;
++                    extern int dos_port_over_mode_v;
++                    Debug::Printf("DOS-PORT overskip mode=%d skipped=%ld marked=%ld refused=%ld hidden=%ld props=%ld flag=%ld late=%ld end=%ld",
++                        dos_port_over_mode_v, dos_port_over_skip_n, dos_port_over_mark_n, dos_port_over_refused_n,
++                        dos_port_over_flush_hidden_n, dos_port_over_flush_props_n, dos_port_over_flush_flag_n,
++                        dos_port_over_flush_late_n, dos_port_over_flush_end_n);
+                     extern long dos_port_obj_flush_n;
+                     extern long dos_port_obj_flush_tally[MAX_ROOM_OBJECTS];
+                     if (dos_port_obj_flush_n)
+-- 
+2.47.3
+

@@ -1,0 +1,137 @@
+From db688333809b94d5d1717aecb182372a44ebf874 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 10:47:13 -0700
+Subject: [PATCH 253/255] dos: patch 0253 -- the ISR MIDI replay drains with
+ interrupts enabled
+
+The SB IRQ handler is installed through DJGPP's chain wrapper
+(_go32_dpmi_chain_protected_mode_interrupt_vector), which enters it with
+IF=0; neither the wrapper nor the handler ever re-enables interrupts. The
+0193 replay drain writes up to the per-IRQ budget of OPL writes (0252:
+384; each write is 2 outportb + 12 status inportb on ISA, ~14-21 us on a
+486) inside that handler, so a peak IRQ held the PIT timer, keyboard and
+mouse interrupts off for up to ~8 ms.
+
+The drain now runs with interrupts on. It is exact: by the time it
+starts the DSP is acked and the PIC has its EOI, the main thread cannot
+run until the handler returns, and no handler that can now nest (BIOS
+INT 8, the keyboard handler, the mouse driver) touches the replay queue
+or the OPL / MPU-401 ports, so the chip receives the same writes in the
+same order. Interrupts are disabled again before the handler's remaining
+bookkeeping, which runs as before.
+
+The SB's own IRQ line is masked at the PIC for the drain (slave IMR 0xA1
+for IRQ >= 8, else master 0x21; the line's previous mask bit is saved and
+restored after the cli). DJGPP's chain wrapper does not drop a nested
+entry: when its busy flag is set it skips the handler and chains to the
+old vector -- CWSDPMI's reflection to the BIOS default -- which never
+reads the DSP ack, so the SB would never interrupt again and PCM and the
+MIDI replay would stop, silently and for good, if the next SB IRQ fired
+during a drain entered more than one IRQ period late. Masked, that IRQ
+stays latched in the PIC's IRR and reaches this handler after the IRET.
+The timer, keyboard and mouse still interrupt the drain. A guard flag
+also returns at once from any nested entry of the drain itself.
+
+SDL_HINT_DOS_MIDI_DEFER_DRAIN_STI=0 keeps the old IF=0 drain, for a
+comparison or if a DPMI host misbehaves with nested interrupts.
+
+RENUMBERED 2026-09-25 from 0226 to 0253 (the coordinator's SDL block 0250-0259),
+so the series sorts after main's SDL 0240. It lands on main ahead of the RTC
+pump series (SDL 0230-0237), which re-applies on top. 0226 never landed on
+main; its slot is retired on lab/journeys.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ src/audio/dos/SDL_dosaudio_sb.c | 43 +++++++++++++++++++++++++++++++++
+ 1 file changed, 43 insertions(+)
+
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index 802efc09d..ceb93dfb7 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -1777,6 +1777,18 @@ static bool g_mdq_locked = false;
+ static volatile Uint32 g_mdq_budget = MIDI_DEFER_MAX_PER_IRQ;
+ static volatile Uint32 g_mdq_cap_hits = 0;   /* IRQs that stopped at the budget with a due entry left */
+ static volatile Uint32 g_mdq_isr_max = 0;    /* the longest drain, us */
++/* DOS-PORT patch 0253: the drain runs with interrupts ENABLED. The SB IRQ is
++   entered through DJGPP's chain wrapper with IF=0 and nothing in it re-enables
++   them, so a drain of `budget` OPL writes (up to ~8 ms on a 486 at 384) held
++   off the timer, keyboard and mouse IRQs for its whole length. The EOI and the
++   DSP ack are already done when the drain starts, the main thread cannot run
++   until the ISR returns, and no other handler touches the queue or the OPL /
++   MPU ports, so the writes and their order are exactly as with IF=0. The
++   SB's own line is masked at the PIC for the drain (v2; see the drain), so the
++   SB cannot re-enter; the guard stays as a second line of defence.
++   SDL_HINT_DOS_MIDI_DEFER_DRAIN_STI=0 keeps IF=0 (the old path). */
++static volatile Uint8 g_mdq_drain_sti = 1;
++static volatile Uint8 g_mdq_draining = 0;
+ static volatile Uint32 g_mdq_isr_sum = 0;    /* all drains that wrote anything, us */
+ static volatile Uint32 g_mdq_isr_n = 0;      /* ... how many */
+ /* DOS-PORT patch 0195: OPL key-on state of the 18 voices as last written by
+@@ -1827,8 +1839,26 @@ static void MidiDeferDrain(Uint32 irq_now)
+     if (g_mdq_hold) {
+         return; /* chip detect/init/shutdown in progress on the main thread */
+     }
++    if (g_mdq_draining) {
++        return; /* DOS-PORT patch 0253: nested entry while interrupts are on */
++    }
++    g_mdq_draining = 1;
+     const Uint64 t0 = SDL_DOSAudioReadTimer(); /* patch 0250 */
+     const Uint32 budget = g_mdq_budget;
++    const Uint8 sti = g_mdq_drain_sti;
++    /* DOS-PORT patch 0253 v2: mask the SB's own line at the PIC before sti.
++       DJGPP's chain wrapper does not drop a nested entry: on busy it chains to
++       the old vector (the BIOS default), which never reads the DSP ack, and
++       the SB never interrupts again. Masked, a second SB IRQ stays latched in
++       the IRR and reaches this handler after the IRET. */
++    const Uint16 pic_imr = (soundblaster_irq >= 8) ? 0xA1 : 0x21;
++    const Uint8 sb_bit = (Uint8)(1u << (soundblaster_irq & 7));
++    Uint8 sb_was_masked = 0;
++    if (sti) {
++        sb_was_masked = (Uint8)(inportb(pic_imr) & sb_bit);
++        outportb(pic_imr, (Uint8)(inportb(pic_imr) | sb_bit));
++        __asm__ __volatile__("sti" ::: "memory"); /* DOS-PORT patch 0253 */
++    }
+     while (g_mdq_head != g_mdq_tail && n < budget) {
+         __asm__ __volatile__("" ::: "memory"); /* read the entry after seeing the tail */
+         const Uint32 idx = g_mdq_head & (MIDI_DEFER_QUEUE - 1u);
+@@ -1847,6 +1877,12 @@ static void MidiDeferDrain(Uint32 irq_now)
+         }
+         n++;
+     }
++    if (sti) {
++        __asm__ __volatile__("cli" ::: "memory"); /* DOS-PORT patch 0253: the rest of the ISR as before */
++        if (!sb_was_masked) {
++            outportb(pic_imr, (Uint8)(inportb(pic_imr) & (Uint8)~sb_bit)); /* 0253 v2: unmask */
++        }
++    }
+     if (n > g_mdq_burst_max) {
+         g_mdq_burst_max = n;
+     }
+@@ -1862,6 +1898,7 @@ static void MidiDeferDrain(Uint32 irq_now)
+             g_mdq_cap_hits++;
+         }
+     }
++    g_mdq_draining = 0; /* DOS-PORT patch 0253 */
+ }
+ static void MidiDeferDrain_End(void) {}
+ 
+@@ -2083,8 +2120,14 @@ bool SDL_DOSMidiDeferEnable(int kind)
+         }
+         g_mdq_budget = b;
+     }
++    { /* DOS-PORT patch 0253: SDL_HINT_DOS_MIDI_DEFER_DRAIN_STI=0 keeps the drain at IF=0 */
++        const char *e = SDL_getenv("SDL_HINT_DOS_MIDI_DEFER_DRAIN_STI");
++        g_mdq_drain_sti = (e && e[0] == '0' && e[1] == 0) ? 0 : 1;
++    }
+     if (!g_mdq_locked) {
+         DOS_LockVariable(g_mdq_budget);   /* DOS-PORT patch 0250 */
++        DOS_LockVariable(g_mdq_drain_sti); /* DOS-PORT patch 0253 */
++        DOS_LockVariable(g_mdq_draining);
+         DOS_LockVariable(g_mdq_cap_hits);
+         DOS_LockVariable(g_mdq_isr_max);
+         DOS_LockVariable(g_mdq_isr_sum);
+-- 
+2.47.3
+

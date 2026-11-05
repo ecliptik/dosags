@@ -1,0 +1,245 @@
+From e9e4cad376d9561846d19cfb3cc7eb325b20836f Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 17 Sep 2026 00:37:45 -0700
+Subject: [PATCH] DOS-PORT: patch 0087 -- fast integer nearest-neighbor
+ Present() blit
+
+8-bit optimization pass, step C. The DPMI/interrupt investigation
+(patches 0085/0086) found Present()'s generic SDL_BlitSurfaceScaled()
+call costing ~121ms/tick on real hardware (TNP86A) -- ~300x
+RenderToBackBuffer's own cost, and the dominant per-tick cost this
+whole diagnostic chain was built to find.
+
+Read CreateVirtualScreen() to confirm the actual case, not assumed: an
+8-bit game's _vscreenSurface and the window surface are BOTH
+SDL_PIXELFORMAT_INDEX8 (confirmed via a real STDOUT.TXT line too) --
+no format conversion happens in this blit at all. And this port's own
+default window config (320x240 native -> 640x480 fullscreen desktop,
+confirmed via STDOUT.TXT on every real-hardware benchmark cell this
+session, matching STATUS.md's "AGS auto-scales 2x" note) is an exact,
+uniform 2x integer scale. A generic scaled blit pays per-destination-
+pixel fixed-point source-coordinate math to handle arbitrary ratios
+and formats neither of which this common case actually needs.
+
+Adds TryFastIntegerNearestBlit(): replicates each source pixel
+horizontally into a scratch row once per source row, then memcpy's
+that row vertically scale_y times. Falls back to the existing,
+always-correct SDL_BlitSurfaceScaled() for anything outside this
+specific case: mismatched pixel formats, a non-zero destination origin
+(screen-shake, letterbox/pillarbox borders), a non-integer or
+non-uniform scale ratio, or scale factor 1 -- arbitrary window sizes
+and gfxfilter options keep working exactly as before.
+
+CAUGHT AND FIXED DURING BRING-UP, before landing: a real-hardware A/B
+pair (TNP-ABBA-A1/B1) showed NO measurable improvement from the first
+version of this loop, which called std::memcpy() once per REPLICATED
+BYTE -- for an 8-bit game, ~153600 one-byte memcpy() calls per frame.
+A one-shot diagnostic (temporary, not part of this commit) confirmed
+the fast path WAS engaging correctly (all preconditions matched) even
+though the cost did not improve, ruling out "never runs" and pointing
+at the loop body: a slow libc's real per-call overhead for a 1-byte
+copy swamped whatever the replication saved. Fixed by special-casing
+bpp==1 (every 8-bit game, this port's only real-hardware-tested
+profile) with a direct byte-store loop -- no per-pixel function call
+at all. Other bpp values (16/32-bit games) keep the memcpy-per-pixel
+path, less hot in practice and proportionally cheaper per call.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hnodGZ6cg8CWuFXEDTsUq
+---
+ Engine/gfx/ali3dsw.cpp | 165 ++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 164 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index 4a77b5ff5..9b2e36e6f 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -15,6 +15,7 @@
+ #include <algorithm>
+ #include <cstring>
+ #include <stack>
++#include <vector>
+ #include "ac/sys_events.h"
+ #include "gfx/ali3dexception.h"
+ #include "gfx/gfxfilter_sdl_renderer.h"
+@@ -699,6 +700,160 @@ void SDLRendererGraphicsDriver::SyncPaletteIfNeeded(SDL_Surface *win_surface)
+     _lastAllegroPaletteSynced = true;
+ }
+ 
++#ifdef __DJGPP__
++// DOS-PORT patch 0087 (8-bit optimization pass, step C): fast integer
++// nearest-neighbor upscale, replacing SDL_BlitSurfaceScaled's generic
++// per-destination-pixel fixed-point path for the common case this port
++// actually hits every tick: source and destination share the SAME
++// pixel format (no conversion needed -- confirmed by reading
++// CreateVirtualScreen() above: an 8-bit game's _vscreenSurface is
++// SDL_PIXELFORMAT_INDEX8, matching the window surface's own format,
++// itself confirmed from a real STDOUT.TXT: "Window surface pixel
++// format: SDL_PIXELFORMAT_INDEX8"), no border/offset, and an EXACT,
++// UNIFORM integer scale factor (this port's own default config:
++// 320x240 native -> 640x480 window = 2x on both axes, confirmed via
++// STDOUT.TXT/"Game native resolution: 320 x 240"+"Graphics mode set:
++// 640 x 480" on every real-hardware benchmark cell this session, and
++// STATUS.md's own "AGS auto-scales 2x" note).
++//
++// Real per-tick cost on HW-486-66 (TNP86A, 2026-09-16): the generic
++// SDL_BlitSurfaceScaled(..., SDL_SCALEMODE_NEAREST) call this replaces
++// measured ~121ms/call for a 320x240->640x480 8-bit present -- ~300x
++// RenderToBackBuffer's own cost, and the dominant previously-unmeasured
++// per-tick cost the whole "40fps push" diagnostic chain (patches
++// 0079-0086) was built to find. No format conversion is actually
++// needed here (formats already match) and the scale is always an
++// exact integer ratio in this common case -- a generic blit routine
++// pays per-destination-pixel fixed-point source-coordinate math to
++// handle arbitrary ratios/formats it doesn't need to handle here.
++// This path instead replicates each source pixel byte-run
++// horizontally into a scratch row once, then memcpy's that expanded
++// row vertically scale_y times -- no per-pixel division/multiply, and
++// the vertical replication is a small number of large, cache-friendly
++// memcpy calls instead of per-pixel work.
++//
++// Falls back to the generic SDL_BlitSurfaceScaled() for anything this
++// does not handle: mismatched pixel formats (e.g. a real card without
++// exact RGB565, PATCH-SEQUENCE.md's still-open "16-bit surface format
++// on real cards" case), a non-zero destination origin (screen-shake
++// yoff, or any letterbox/pillarbox border), a non-integer or
++// non-uniform (x scale != y scale) ratio, or scale factor 1 (nothing
++// to replicate) -- arbitrary window sizes and gfxfilter options keep
++// working exactly as before, just without this specific speedup.
++static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const SDL_Rect &dst_rect)
++{
++    if (!src || !dst)
++        return false;
++    if (src->format != dst->format)
++        return false; // needs a format-converting blit -- not this path
++    if (dst_rect.x != 0 || dst_rect.y != 0)
++        return false; // shake-screen offset -- not the steady-state hot path
++    if (dst_rect.w != dst->w || dst_rect.h != dst->h)
++        return false; // a border/letterbox is present -- only handle full-window fills
++    if (src->w <= 0 || src->h <= 0)
++        return false;
++    if (dst_rect.w % src->w != 0 || dst_rect.h % src->h != 0)
++        return false; // not an exact integer scale
++    const int scale_x = dst_rect.w / src->w;
++    const int scale_y = dst_rect.h / src->h;
++    if (scale_x != scale_y || scale_x <= 1)
++        return false; // only a uniform integer upscale >1x (1x needs no blit math to speed up)
++
++    const SDL_PixelFormatDetails *fmt = SDL_GetPixelFormatDetails(src->format);
++    if (!fmt || fmt->bytes_per_pixel == 0)
++        return false;
++    const size_t bpp = (size_t)fmt->bytes_per_pixel;
++
++    const bool src_lock = SDL_MUSTLOCK(src);
++    const bool dst_lock = SDL_MUSTLOCK(dst);
++    if (src_lock && !SDL_LockSurface(src))
++        return false;
++    if (dst_lock && !SDL_LockSurface(dst))
++    {
++        if (src_lock) SDL_UnlockSurface(src);
++        return false;
++    }
++
++    const Uint8 *src_pixels = (const Uint8 *)src->pixels;
++    Uint8 *dst_pixels = (Uint8 *)dst->pixels;
++    const size_t dst_row_bytes = (size_t)src->w * (size_t)scale_x * bpp;
++
++    // One horizontally-replicated source row, reused for all scale_y
++    // identical destination rows that row expands into -- computed
++    // once per source row rather than re-doing the horizontal
++    // replication scale_y times.
++    static std::vector<Uint8> row_buf;
++    if (row_buf.size() < dst_row_bytes)
++        row_buf.resize(dst_row_bytes);
++
++    // TNP-ABBA-A1/B1 (2026-09-16, real hardware) found the first version
++    // of this loop made NO measurable difference over the generic blit
++    // it was meant to replace: it called std::memcpy() once per
++    // REPLICATED BYTE (for an 8-bit game: 640 one-byte memcpy() calls
++    // per row x 240 rows = ~153600 tiny calls per frame). A slow libc's
++    // real per-call overhead (argument setup, alignment/size dispatch)
++    // dominates a 1-byte copy and swamps whatever the replication
++    // itself saved -- confirmed by adding a one-shot diagnostic
++    // (temporarily patch 0088, since removed) that proved the fast
++    // path WAS engaging (fast=1, all preconditions matched) even
++    // though the measured cost did not improve, ruling out "the fast
++    // path never runs" and pointing at the loop body itself.
++    // bpp==1 (every 8-bit game, this port's only real-hardware-tested
++    // profile) gets a direct byte-store loop instead -- no per-pixel
++    // function call at all, just plain assignment in a tight loop.
++    // Other bpp values (16/32-bit games) keep the memcpy-per-pixel
++    // path: less hot in practice (32-bit is already real-hardware
++    // performance-blocked for unrelated reasons, per STATUS.md), and a
++    // multi-byte memcpy's per-call overhead is proportionally smaller
++    // relative to its payload than a 1-byte one is.
++    if (bpp == 1)
++    {
++        for (int sy = 0; sy < src->h; sy++)
++        {
++            const Uint8 *src_row = src_pixels + (size_t)sy * (size_t)src->pitch;
++            Uint8 *out = row_buf.data();
++            for (int sx = 0; sx < src->w; sx++)
++            {
++                const Uint8 v = src_row[sx];
++                for (int r = 0; r < scale_x; r++)
++                    *out++ = v;
++            }
++            Uint8 *dst_row_base = dst_pixels + (size_t)(sy * scale_y) * (size_t)dst->pitch;
++            for (int r = 0; r < scale_y; r++)
++            {
++                std::memcpy(dst_row_base + (size_t)r * (size_t)dst->pitch, row_buf.data(), dst_row_bytes);
++            }
++        }
++    }
++    else
++    {
++        for (int sy = 0; sy < src->h; sy++)
++        {
++            const Uint8 *src_row = src_pixels + (size_t)sy * (size_t)src->pitch;
++            Uint8 *out = row_buf.data();
++            for (int sx = 0; sx < src->w; sx++)
++            {
++                const Uint8 *px = src_row + (size_t)sx * bpp;
++                for (int r = 0; r < scale_x; r++)
++                {
++                    std::memcpy(out, px, bpp);
++                    out += bpp;
++                }
++            }
++            Uint8 *dst_row_base = dst_pixels + (size_t)(sy * scale_y) * (size_t)dst->pitch;
++            for (int r = 0; r < scale_y; r++)
++            {
++                std::memcpy(dst_row_base + (size_t)r * (size_t)dst->pitch, row_buf.data(), dst_row_bytes);
++            }
++        }
++    }
++
++    if (dst_lock) SDL_UnlockSurface(dst);
++    if (src_lock) SDL_UnlockSurface(src);
++    return true;
++}
++#endif // __DJGPP__
++
+ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+ {
+     SDL_Window *window = sys_get_window();
+@@ -768,7 +923,15 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+     if (dst.x != 0 || dst.y != 0 || dst.w != win_surface->w || dst.h != win_surface->h)
+         SDL_FillSurfaceRect(win_surface, nullptr, SDL_MapSurfaceRGB(win_surface, 0, 0, 0));
+ 
+-    if (!SDL_BlitSurfaceScaled(blit_src, nullptr, win_surface, &dst, SDL_SCALEMODE_NEAREST))
++    // DOS-PORT patch 0087: try the fast integer-nearest-neighbor path
++    // first (see TryFastIntegerNearestBlit's own comment) -- falls back
++    // to the generic, always-correct SDL_BlitSurfaceScaled() for any
++    // case it does not specifically handle.
++    bool blitted = false;
++#ifdef __DJGPP__
++    blitted = TryFastIntegerNearestBlit(blit_src, win_surface, dst);
++#endif
++    if (!blitted && !SDL_BlitSurfaceScaled(blit_src, nullptr, win_surface, &dst, SDL_SCALEMODE_NEAREST))
+         Debug::Printf(kDbgMsg_Error, "SDLRenderer: blit to window surface failed: %s", SDL_GetError());
+ 
+     if (!SDL_UpdateWindowSurface(window))
+-- 
+2.47.3
+

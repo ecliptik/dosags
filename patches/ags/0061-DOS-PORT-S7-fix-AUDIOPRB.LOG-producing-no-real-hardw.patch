@@ -1,0 +1,290 @@
+From d18de766b072b9023a4eed5214d8f6c39cd39499 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 14 Sep 2026 09:38:44 -0700
+Subject: [PATCH] DOS-PORT: S7 -- fix AUDIOPRB.LOG producing no real-hardware
+ data
+
+WHY: the S7 real-hardware re-run (2026-09-14,
+tests/games/trilbysnotes/results/S7-fix-realhw-2026-09-14.md, "A second
+open question") found patch 0059's own AUDIOPRB.LOG diagnostic never
+appended anything during either 308s/309s real sound-on run on
+HW-486-66, despite genuine MIDI activity (4980/4976 events dispatched
+per audio_vital_status) -- the only line ever recovered came from the
+very first cell of that four-cell A/B/B/A block and nothing after it,
+in that cell or any later one, ever added another.
+
+The one thing in this engine's own log writing PROVEN reliable across
+all four of that same real-hardware block's cells is quit.cpp's own
+RUNMANIFEST-tag log: a single fopen(tag,"a") kept open across several
+fprintf()s and closed exactly once at clean shutdown -- never reopened
+mid-run. AUDIOPRB.LOG's original design was the opposite: a fresh
+fopen("AUDIOPRB.LOG","a")/fprintf/fclose cycle every
+AUDIO_POLL_DIAG_WINDOW (200) calls, repeatedly reopening the same
+already-populated file over a single run and across every cell of one
+boot session. That repeated-reopen pattern is the one structural
+difference from the write pattern that worked every time, so this
+converges the diagnostic onto the proven pattern instead of guessing at
+the exact underlying DOS/FAT mechanism.
+
+WHAT: audio_core.cpp's window-close routine (renamed
+dos_diag_close_window(), was dos_diag_flush_audio_poll()) no longer does
+any file I/O -- it appends the closed window's summary into a small
+bounded in-memory array (AUDIO_POLL_DIAG_MAX_WINDOWS=64, well above the
+low thousands of calls DOSAGS_TAS_AUTO_EXIT_TICK bounds any S7 cell to)
+instead. A new dos_diag_dump_audio_poll(FILE *fp), declared in
+audio_core.h under __DJGPP__, folds in the still-open partial window and
+writes every recorded window as "DOS-PORT audioprb ..." lines through a
+caller-supplied, already-open FILE* -- it never opens or closes anything
+itself. quit.cpp calls it with its own run_manifest_log handle, right
+before that handle's single fclose(), same DJGPP-gated block as the
+existing memory_min_free_kb/tick_rate lines already use for exactly this
+reason.
+
+DOSBox-X validated (dosbox-run.sh, oplmode=opl3 scratch conf, Trilby's
+Notes, DOSAGS_FIXED_TIMESTEP=1, DOSAGS_TAS_AUTO_EXIT_TICK=200,
+--user-data-dir c:\ per PLAN.md's own check_write_access() note): a real
+SB16 device opened, audio_core_entry_poll() was called 69 times, and the
+tag log now carries "DOS-PORT audioprb total_calls=69 windows_recorded=1
+windows_dropped=0" plus the window's own "slots_us(...) pump_us(min=460
+mean=10097 max=14317)" line -- the pump_us mean matches the ~10-11ms/call
+this same investigation already measured on DOSBox-X via the original
+(working, there) sink, confirming the new sink reproduces the same data,
+not just that it runs. This is NOT yet a real-hardware confirmation that
+the fix resolves the actual gap -- DOSBox-X already proved unreliable
+once this same investigation for predicting real-hardware audio timing
+behavior (S7-fix-realhw-2026-09-14.md) -- only that the new sink is wired
+correctly end to end and produces the expected shape of data. A real
+HW-486-66 sound-on cell is still required before trusting this.
+
+Still temporary, same as 0059 -- to be reverted once S7's investigation
+concludes and both diagnostics are no longer needed.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/main/quit.cpp              |   9 +++
+ Engine/media/audio/audio_core.cpp | 126 ++++++++++++++++++++++++------
+ Engine/media/audio/audio_core.h   |  11 +++
+ 3 files changed, 121 insertions(+), 25 deletions(-)
+
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 5c60d76d8..9485b11fd 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -31,6 +31,7 @@
+ #ifdef __DJGPP__
+ #include "runmanifest.h"
+ #include "platform/dos/dos_audio_mixer.h"
++#include "media/audio/audio_core.h" // dos_diag_dump_audio_poll() -- TEMPORARY DIAGNOSTIC, see audio_core.cpp
+ #endif
+ 
+ #include "platform/platform.h"
+@@ -419,6 +420,14 @@ void quit(const char *quitmsg)
+                     tick_rate_hz, dos_get_frames_skipped());
+             }
+ 
++            // TEMPORARY DIAGNOSTIC (S7): dump the AUDIOPRB window data
++            // (audio_core.cpp) through THIS handle rather than a separate
++            // periodically-reopened AUDIOPRB.LOG -- see that file's own
++            // comment on why the original separate-file sink produced no
++            // data on real hardware and this one reuses the pattern proven
++            // reliable across every S7 real-hardware cell instead.
++            dos_diag_dump_audio_poll(run_manifest_log);
++
+             fclose(run_manifest_log);
+         }
+     }
+diff --git a/Engine/media/audio/audio_core.cpp b/Engine/media/audio/audio_core.cpp
+index 07351f569..0dc753b4c 100644
+--- a/Engine/media/audio/audio_core.cpp
++++ b/Engine/media/audio/audio_core.cpp
+@@ -213,21 +213,62 @@ extern uclock_t dos_port_engine_start_uclock;
+ // that, directly at the two call sites named in the writeup's own "not
+ // yet done" section.
+ //
+-// Same in-memory-accumulate, periodic-flush idiom as .sdl-dos-ports/
+-// shared/patches/sdl3-dos/0136 -- that investigation independently
+-// measured a per-call fopen/fprintf/fclose (even "every 20 frames") to
+-// cost a real ~0.4-0.5fps, so this does no I/O on the hot path either.
+-// Stats are per-window (reset every AUDIO_POLL_DIAG_WINDOW calls, not
+-// cumulative-since-start) so a shift in behavior over the run (e.g. once
+-// the fixed-timestep backlog maxes out) is visible rather than averaged
+-// away; window size is a call count, not a time interval, since this
+-// function's own call RATE is the thing under suspicion.
++// S7 real-hardware re-run (2026-09-14,
++// tests/games/trilbysnotes/results/S7-fix-realhw-2026-09-14.md, "A second
++// open question") found this diagnostic's ORIGINAL sink -- a periodic
++// fopen("AUDIOPRB.LOG","a")/fprintf/fclose cycle, repeated every
++// AUDIO_POLL_DIAG_WINDOW calls -- produced exactly ONE line on real
++// hardware across a whole four-cell A/B/B/A block (one successful flush,
++// from the very first cell; every flush after that, in that same cell and
++// every cell after it, wrote nothing), while DOSBox-X flushed the same
++// pattern cleanly every time. The one thing in this engine's own log
++// writing that is PROVEN reliable across all four of that same block's
++// real-hardware cells is quit.cpp's RUNMANIFEST-tag log: a single
++// fopen(tag,"a") kept open for several fprintf()s and closed exactly once
++// at clean shutdown -- never reopened mid-run. That is the one structural
++// difference between the write pattern that worked every time and the one
++// that broke after its first success, so this fix converges onto it
++// instead of guessing at the underlying DOS/FAT mechanism: stop opening
++// AUDIOPRB.LOG at all, accumulate every window's summary in a small
++// bounded in-memory array instead of flushing to disk immediately, and
++// dump the whole array as extra lines through quit.cpp's own already-open
++// run_manifest_log handle (dos_diag_dump_audio_poll(), audio_core.h) right
++// before that handle's own single fclose(). This still needs a real-
++// hardware re-run to confirm the data actually lands this time -- treat
++// the mechanism above as the best-supported hypothesis from the evidence
++// on hand, not a confirmed root cause.
++//
++// Same in-memory-accumulate idiom as .sdl-dos-ports/shared/patches/
++// sdl3-dos/0136 -- that investigation independently measured a per-call
++// fopen/fprintf/fclose (even "every 20 frames") to cost a real ~0.4-0.5fps,
++// so this still does no I/O on the hot path. Stats are per-window (reset
++// every AUDIO_POLL_DIAG_WINDOW calls, not cumulative-since-start) so a
++// shift in behavior over the run is visible rather than averaged away;
++// window size is a call count, not a time interval, since this function's
++// own call RATE is the thing under suspicion.
++//
++// AUDIO_POLL_DIAG_MAX_WINDOWS bounds the array: DOSAGS_TAS_AUTO_EXIT_TICK
++// (the fixed tick cap every S7 cell runs under) keeps total real-tick
++// audio_core_entry_poll() calls in the low thousands at most, so 64
++// windows (12800 calls) is generous headroom; a run that somehow exceeds
++// it just stops recording NEW windows (total_calls keeps counting) rather
++// than overflowing or dropping early (more interesting, per the S1 catch-
++// up-burst history) windows to make room.
+ //
+ // Temporary -- to be reverted once S7's fix lands and re-measures clean,
+ // same convention as 0136 itself.
+ namespace {
+ 
+ const uint32_t AUDIO_POLL_DIAG_WINDOW = 200;
++const uint32_t AUDIO_POLL_DIAG_MAX_WINDOWS = 64;
++
++struct AudioPollWindow
++{
++    uint32_t total_calls_at_close;
++    uint32_t window_calls;
++    uint64_t slots_min_us, slots_mean_us, slots_max_us;
++    uint64_t pump_min_us, pump_mean_us, pump_max_us;
++};
+ 
+ struct AudioPollDiag
+ {
+@@ -235,6 +276,10 @@ struct AudioPollDiag
+     uint32_t window_calls = 0;
+     uint64_t slots_sum_us = 0, slots_min_us = UINT64_MAX, slots_max_us = 0;
+     uint64_t pump_sum_us = 0, pump_min_us = UINT64_MAX, pump_max_us = 0;
++
++    AudioPollWindow windows[AUDIO_POLL_DIAG_MAX_WINDOWS];
++    uint32_t windows_recorded = 0;
++    uint32_t windows_dropped = 0;   // AUDIO_POLL_DIAG_MAX_WINDOWS exceeded
+ };
+ AudioPollDiag g_audio_poll_diag;
+ 
+@@ -243,26 +288,29 @@ uint64_t dos_diag_now_us()
+     return (uint64_t)((uclock() - dos_port_engine_start_uclock) * 1000000ULL / UCLOCKS_PER_SEC);
+ }
+ 
+-void dos_diag_flush_audio_poll()
++// Closes out the current in-progress window (if it has any calls) into the
++// in-memory array and resets the accumulators. No file I/O -- see the
++// block comment above for why this no longer opens AUDIOPRB.LOG itself.
++void dos_diag_close_window()
+ {
+     AudioPollDiag &d = g_audio_poll_diag;
+     if (d.window_calls == 0)
+         return;
+-    FILE *fp = fopen("AUDIOPRB.LOG", "a");
+-    if (fp)
++    if (d.windows_recorded < AUDIO_POLL_DIAG_MAX_WINDOWS)
+     {
+-        fprintf(fp,
+-            "total_calls=%lu window_calls=%lu "
+-            "slots_us(min=%lu mean=%lu max=%lu) "
+-            "pump_us(min=%lu mean=%lu max=%lu)\n",
+-            (unsigned long)d.total_calls, (unsigned long)d.window_calls,
+-            (unsigned long)(d.slots_min_us == UINT64_MAX ? 0 : d.slots_min_us),
+-            (unsigned long)(d.slots_sum_us / d.window_calls),
+-            (unsigned long)d.slots_max_us,
+-            (unsigned long)(d.pump_min_us == UINT64_MAX ? 0 : d.pump_min_us),
+-            (unsigned long)(d.pump_sum_us / d.window_calls),
+-            (unsigned long)d.pump_max_us);
+-        fclose(fp);
++        AudioPollWindow &w = d.windows[d.windows_recorded++];
++        w.total_calls_at_close = d.total_calls;
++        w.window_calls = d.window_calls;
++        w.slots_min_us = (d.slots_min_us == UINT64_MAX ? 0 : d.slots_min_us);
++        w.slots_mean_us = d.slots_sum_us / d.window_calls;
++        w.slots_max_us = d.slots_max_us;
++        w.pump_min_us = (d.pump_min_us == UINT64_MAX ? 0 : d.pump_min_us);
++        w.pump_mean_us = d.pump_sum_us / d.window_calls;
++        w.pump_max_us = d.pump_max_us;
++    }
++    else
++    {
++        d.windows_dropped++;
+     }
+     d.window_calls = 0;
+     d.slots_sum_us = 0; d.slots_min_us = UINT64_MAX; d.slots_max_us = 0;
+@@ -281,10 +329,38 @@ void dos_diag_record_audio_poll(uint64_t slots_us, uint64_t pump_us)
+     if (pump_us < d.pump_min_us) d.pump_min_us = pump_us;
+     if (pump_us > d.pump_max_us) d.pump_max_us = pump_us;
+     if (d.window_calls >= AUDIO_POLL_DIAG_WINDOW)
+-        dos_diag_flush_audio_poll();
++        dos_diag_close_window();
+ }
+ 
+ } // anonymous namespace
++
++// Declared in audio_core.h (DJGPP-gated); called from quit.cpp right
++// before it closes its own RUNMANIFEST-tag log handle. `fp` is that
++// already-open handle -- this function never opens or closes anything
++// itself, deliberately, per the block comment above.
++void dos_diag_dump_audio_poll(FILE *fp)
++{
++    if (!fp)
++        return;
++    AudioPollDiag &d = g_audio_poll_diag;
++    // Fold the still-in-progress partial window in too, so a run that
++    // exits mid-window doesn't silently lose its tail.
++    dos_diag_close_window();
++    fprintf(fp, "DOS-PORT audioprb total_calls=%lu windows_recorded=%lu windows_dropped=%lu\n",
++        (unsigned long)d.total_calls, (unsigned long)d.windows_recorded,
++        (unsigned long)d.windows_dropped);
++    for (uint32_t i = 0; i < d.windows_recorded; i++)
++    {
++        const AudioPollWindow &w = d.windows[i];
++        fprintf(fp,
++            "DOS-PORT audioprb total_calls=%lu window_calls=%lu "
++            "slots_us(min=%lu mean=%lu max=%lu) "
++            "pump_us(min=%lu mean=%lu max=%lu)\n",
++            (unsigned long)w.total_calls_at_close, (unsigned long)w.window_calls,
++            (unsigned long)w.slots_min_us, (unsigned long)w.slots_mean_us, (unsigned long)w.slots_max_us,
++            (unsigned long)w.pump_min_us, (unsigned long)w.pump_mean_us, (unsigned long)w.pump_max_us);
++    }
++}
+ #endif // __DJGPP__
+ 
+ void audio_core_entry_poll()
+diff --git a/Engine/media/audio/audio_core.h b/Engine/media/audio/audio_core.h
+index 938b3a5d4..133f3b3e8 100644
+--- a/Engine/media/audio/audio_core.h
++++ b/Engine/media/audio/audio_core.h
+@@ -107,4 +107,15 @@ void audio_core_slot_stop(int slot_handle);
+ void audio_core_entry_poll();
+ #endif
+ 
++#ifdef __DJGPP__
++#include <cstdio>
++// TEMPORARY DIAGNOSTIC (S7, see audio_core.cpp): dumps every in-memory
++// AUDIOPRB window recorded so far (plus the still-open partial window) as
++// "DOS-PORT audioprb ..." lines into an ALREADY-OPEN, caller-owned FILE*.
++// Called from quit.cpp right before it closes its own RUNMANIFEST-tag log
++// handle -- see that call site for why this piggybacks on that handle
++// instead of opening AUDIOPRB.LOG itself.
++void dos_diag_dump_audio_poll(FILE *fp);
++#endif
++
+ #endif // __AGS_EE_MEDIA__AUDIOCORE_H
+-- 
+2.47.3
+

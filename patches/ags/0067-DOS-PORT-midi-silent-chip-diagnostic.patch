@@ -1,0 +1,89 @@
+From 81def694e118f3906d5d1b63787fdc8ee0eadab3 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 14 Sep 2026 19:05:10 -0700
+Subject: [PATCH] DOS-PORT: patch 0067 -- DOSAGS_MIDI_SILENT_CHIP diagnostic
+ (S7)
+
+WHY: real hardware (dosags PLAN.md, "S7 -- SDL_INIT_AUDIO-never-touched,
+real-hardware result") proved the entire ~10-12x tick-rate tax lives
+outside SDL's audio subsystem entirely -- SUBSY1/SUBSY2 reproduced the
+full tax with zero SDL audio device ever opened and SDL_InitSubSystem(
+SDL_INIT_AUDIO) never even called. Since catch-up ticks call neither
+audio_core_entry_poll() nor any MIDI function at all (gated to
+play.fast_forward only since patch 0060) yet pay the identical tax as
+real ticks, no "MIDI software work costs X per tick" hypothesis can
+explain it. The remaining candidate: a real hardware/electrical effect
+from the OPL3 chip's own active synthesis -- untested because nothing
+before now isolated "chip initialized" from "chip actively producing
+audible output."
+
+WHAT: a new strict-"1" env killswitch, DOSAGS_MIDI_SILENT_CHIP, checked
+in AudioPlayer::MidiInit(). dos_midi_backend_open() (already run in this
+class's own MIDI constructor) has already fully programmed the OPL3
+chip (SDL_DOSOpl3InitChip(): OPL3 mode enabled, 4-op disabled, all 18
+voices key-off) by the time MidiInit() runs, regardless of this flag.
+Skipping ONLY midi_sched_start() here leaves midi_sched's own
+m->playing at its calloc()-zeroed default (midi_sched_open(), shared/
+audio/midi_sched.c) -- verified by reading midi_sched_tick()'s own
+entry guard (`if (!m || !m->playing || m->nevents == 0) return`) that
+this makes every subsequent tick call an immediate, safe no-op forever:
+no note-on ever dispatched, no register write beyond the InitChip
+sequence. This isolates "chip initialized, never producing audible
+output" as its own condition for the first time.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/media/audio/audioplayer.cpp | 30 +++++++++++++++++++++++++++++-
+ 1 file changed, 29 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/media/audio/audioplayer.cpp b/Engine/media/audio/audioplayer.cpp
+index 5c3cee86d..fd26ed3ae 100644
+--- a/Engine/media/audio/audioplayer.cpp
++++ b/Engine/media/audio/audioplayer.cpp
+@@ -13,6 +13,7 @@
+ //=============================================================================
+ #include "media/audio/audioplayer.h"
+ #include <cstdio>
++#include <cstdlib> // std::getenv -- DOS-PORT (S7) DOSAGS_MIDI_SILENT_CHIP
+ #include <time.h> // uclock(), UCLOCKS_PER_SEC -- DOS-PORT (S4) MIDI wall clock
+ #include "util/memory_compat.h"
+ 
+@@ -101,7 +102,34 @@ void AudioPlayer::MidiInit()
+         // before midi_sched_start(), which is what gus_sink's own per-song
+         // lazy .pat residency contract requires.
+         dos_midi_backend_prepare_song(_midiSink, _midiBackendKind, _midiSched);
+-        midi_sched_start(_midiSched, MidiNowMs());
++
++        // DOS-PORT (S7 diagnostic, TEMPORARY): DOSAGS_MIDI_SILENT_CHIP=1 --
++        // the "chip initialized but never sounding" half of the
++        // silence-vs-sounding OPL3 test (PLAN.md's "S7 -- SDL_INIT_AUDIO-
++        // never-touched, real-hardware result" entry's own "Not yet done"
++        // item 1). dos_midi_backend_open() (in this class's own MIDI
++        // constructor, above) already ran opl3_sink_open() ->
++        // SDL_DOSOpl3InitChip() by the time MidiInit() runs -- the chip is
++        // fully programmed (OPL3 mode enabled, 4-op disabled, all 18
++        // voices key-off) regardless of this flag. Skipping ONLY
++        // midi_sched_start() here leaves midi_sched's own m->playing at
++        // its calloc()-zeroed default (midi_sched_open(), shared/audio/
++        // midi_sched.c) -- confirmed by reading midi_sched_tick()'s own
++        // entry guard (`if (!m || !m->playing || m->nevents == 0) return`)
++        // that this makes every subsequent midi_sched_tick() call (from
++        // AudioPlayer::MidiPoll(), audio_core_entry_poll()'s slot loop) an
++        // immediate, safe no-op forever -- no note-on ever dispatched, no
++        // SDL_DOSOpl3WriteRegister() call beyond the InitChip sequence
++        // above. This isolates "chip initialized, never producing audible
++        // output" from the already-tested "chip initialized AND actively
++        // synthesizing real music" (every prior S7 sound-on cell).
++        {
++            const char *silent = std::getenv("DOSAGS_MIDI_SILENT_CHIP");
++            if (!(silent && silent[0] == '1' && silent[1] == '\0'))
++            {
++                midi_sched_start(_midiSched, MidiNowMs());
++            }
++        }
+     }
+     _playState = success ? _onLoadPlayState : PlayStateError;
+ }
+-- 
+2.47.3
+

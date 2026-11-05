@@ -1,0 +1,56 @@
+From 06ca6f1330ab3bdc98151d1b4e876ff1ae08ebb8 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 28 Sep 2026 11:50:20 -0700
+Subject: [PATCH 1/2] DOS-PORT: patch 0243 -- 0241's one-call existence check
+ is on by default (DOSAGS_STATEXISTS=0 kills)
+
+0241 answered "not found" with one read-only INT 21h get-attributes call
+before stat(), but shipped default OFF: its exactness rests on what the DOS
+kernel's 4300h/7143h answers, and its lab gates ran on DOSBox-X's DOS, not
+MS-DOS 6.22's FAT code. Its registered rule was to flip only after a
+real-DOS shadow run read 0 mismatches and the coordinator agreed.
+
+The 486 has now answered (dosags round U, a2049c50): the shadow arm
+compared 25 fast misses against stat() with 0 mismatches, and the 0241 arm
+cut a packaged first play's asset_open from 55.2 to 21.2 ms (33.9 ms saved,
+predicted 25-45). lab-metric recommends the flip (docs/lab/io.md e93f0894)
+and the coordinator agreed. So the default is ON; DOSAGS_STATEXISTS=0 is
+the killswitch and restores the plain stat() route exactly. The shadow
+check (DOSAGS_EXISTSHADOW=1) stays opt-in.
+---
+ Common/util/stdio_compat.c | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/Common/util/stdio_compat.c b/Common/util/stdio_compat.c
+index 558698131..034a58e82 100644
+--- a/Common/util/stdio_compat.c
++++ b/Common/util/stdio_compat.c
+@@ -119,11 +119,11 @@ file_off_t ags_ftell(FILE * stream)
+  * "not found" on such a name cannot flip an answer; ags_path_exists keeps
+  * plain stat().
+  *
+- * Default OFF; DOSAGS_STATEXISTS=1 turns it on. The exactness argument rests
+- * on what the DOS kernel's 4300h/7143h answers, and the lab gates ran on
+- * DOSBox-X's DOS, not MS-DOS 6.22's FAT code: a false "not found" would
+- * break asset lookup or saves, which is worse than a slow click. So it
+- * stays off until a real-DOS shadow run reads 0 mismatches.
++ * Default ON since patch 0243; DOSAGS_STATEXISTS=0 restores plain stat().
++ * The exactness argument rests on what the DOS kernel's 4300h/7143h answers,
++ * so the default stayed off until a real-DOS shadow run read 0 mismatches:
++ * dosags round U (2026-09-28, the 486's MS-DOS) read compared=25
++ * mismatches=0 (patch 0243).
+  * DOSAGS_EXISTSHADOW=1 (with the fast path on) is that check: every fast
+  * "not found" is re-asked of stat(), and disagreements are counted in the
+  * manifest line (the stat() answer is the one returned in shadow mode, so
+@@ -174,7 +174,7 @@ static int dos_port_definitely_missing(const char *path)
+     if (dos_port_statexists_mode < 0)
+     {
+         const char *e = getenv("DOSAGS_STATEXISTS");
+-        dos_port_statexists_mode = (e != NULL && e[0] == '1') ? 1 : 0;   /* default OFF (see above) */
++        dos_port_statexists_mode = (e != NULL && e[0] == '0') ? 0 : 1;   /* default ON, =0 kills (patch 0243) */
+     }
+     if (!dos_port_statexists_mode || !dos_port_exist_candidate(path))
+     {
+-- 
+2.47.3
+

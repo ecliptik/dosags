@@ -1,0 +1,202 @@
+From 487145c4fc6b114818c12417f59afbca69ae4827 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <services.claude@accounts.ecliptik.com>
+Date: Sat, 26 Sep 2026 08:43:09 -0700
+Subject: [PATCH] DOS-PORT: patch 0240 -- 32-bpp fade step without Fill or
+ per-pixel blender calls, byte-identical to the stock step
+
+At 32 bpp every software-fade step takes the stock path: Fill the back
+buffer with the fade colour, then draw_trans_sprite with set_trans_blender,
+a call through _blender_func32 (_blender_trans24) for every pixel. On S32P
+(5 Days forced to 32 bpp, the S32 gate fixture) the room-entry fade costs
+1437 ms against 583 ms at 16 bpp, where 0123's LUT step runs, and that gap
+is ~0.27 of S32P's whole-run tick figure (docs/lab/s32.md, D16). On the 486
+a 640x360 stock step is ~610 ms, so a fade is ~8 s of black.
+
+Why exact rather than a new animation: the blend reads a destination the
+Fill has just set to the constant fade colour Y, so each output pixel is
+_blender_trans24(c, Y, a) with Y and a fixed for the step. For Y == 0 that
+is, bit for bit, (ch * n) >> 8 per channel (n = a ? a + 1 : 0), so a
+256-entry table per step reproduces it; for any other Y the exact
+expression is inlined as colblend.c writes it, carries included. Mask
+pixels keep Y as after the Fill. The Fill is skipped only when the blend
+rectangle is exactly the clip rectangle clear_to_color would fill; the same
+global blender state is left set. Host fuzz: 12.8M pixels plus exhaustive
+per-channel values at Y == 0, identical to a verbatim _blender_trans24.
+
+DOSAGS_FADEFAST32=0 keeps the stock step in the same binary. With
+DOSAGS_FADE_TRACE=1 (0106's switch) each fade step also logs an FNV hash of
+the whole back buffer ("DOS-PORT fade_buf ... hash="), so ON and OFF can be
+compared step by step.
+---
+ Engine/ac/screen.cpp | 140 ++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 139 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/ac/screen.cpp b/Engine/ac/screen.cpp
+index 859753cc5..92425810e 100644
+--- a/Engine/ac/screen.cpp
++++ b/Engine/ac/screen.cpp
+@@ -408,6 +408,140 @@ public:
+         }
+         return true;
+     }
++
++    // DOS-PORT patch 0240: the 32-bpp fade step without Fill, per-pixel
++    // blender calls or destination reads -- byte-identical to the stock step.
++    //
++    // At 32 bpp a fade step takes the stock path: Fill the back buffer with
++    // the fade colour, then draw_trans_sprite with set_trans_blender, i.e. a
++    // call through _blender_func32 (= _blender_trans24, colblend.c) for every
++    // non-mask pixel. On S32P (5 Days forced to 32 bpp) the room-entry fade is
++    // 1437 ms against 583 ms at 16 bpp, where 0123's LUT step runs, and that
++    // gap is ~0.27 of S32P's whole-run tick figure (docs/lab/s32.md, D16); on
++    // the 486 a 640x360 stock step is ~610 ms.
++    //
++    // Why exact and not approximate: the blend reads a destination that the
++    // Fill has just set to the constant fade colour Y, so each output pixel is
++    // _blender_trans24(c, Y, a) with Y and a fixed for the step. With Y == 0
++    // (a fade to black) that expression is, bit for bit, (ch * n) >> 8 per
++    // channel (n = a ? a + 1 : 0): the red/blue product cannot carry into the
++    // next field and the + Y term vanishes. So a 256-entry table per step
++    // gives the same bytes. For any other Y the exact expression is inlined
++    // as colblend.c writes it (its cross-field carries included). Mask-colour
++    // source pixels keep Y, as draw_trans_sprite leaves them after the Fill.
++    // The Fill is skipped only when the blend rectangle is exactly the area
++    // clear_to_color would fill (the clip rectangle); otherwise it still runs.
++    // Clipping mirrors _linear_draw_trans_sprite32. DOSAGS_FADEFAST32=0 keeps
++    // the stock step in the same binary.
++    // patch 0240: with DOSAGS_FADE_TRACE=1 (0106's trace switch), log an FNV-1a hash of the whole back
++    // buffer after each fade step, so a fast step can be shown byte-identical to the stock one step by step.
++    // Off (one cached getenv) unless the trace is asked for.
++    void DosPortFadeBufHash()
++    {
++        static int on = -1;
++        if (on < 0)
++        {
++            const char *e = getenv("DOSAGS_FADE_TRACE");
++            on = (e && e[0] == '1' && e[1] == 0) ? 1 : 0;
++        }
++        if (!on || !_bmpBuff)
++            return;
++        unsigned long hsh = 2166136261UL;
++        const int bpr = _bmpBuff->GetWidth() * _bmpBuff->GetBPP();
++        for (int y = 0; y < _bmpBuff->GetHeight(); y++)
++        {
++            const unsigned char *r = _bmpBuff->GetScanLine(y);
++            for (int i = 0; i < bpr; i++) { hsh ^= r[i]; hsh *= 16777619UL; }
++        }
++        Debug::Printf(kDbgMsg_Info, "DOS-PORT fade_buf step=%d fadein=%d alpha=%d depth=%d hash=%08lx",
++                      _traceStep, _fadein ? 1 : 0, _alpha, _bmpBuff->GetColorDepth(), hsh);
++    }
++
++    bool DosPortFadeStepFast32()
++    {
++        if (!_bmpBuff || !_bmpFrame)
++            return false;
++        if (_bmpBuff->GetColorDepth() != 32 || _bmpFrame->GetColorDepth() != 32)
++            return false;
++        static int enabled = -1;
++        if (enabled < 0)
++        {
++            const char *e = getenv("DOSAGS_FADEFAST32");
++            enabled = (e != nullptr && e[0] == '0') ? 0 : 1;
++        }
++        if (!enabled)
++            return false;
++        BITMAP *dst = _bmpBuff->GetAllegroBitmap();
++        BITMAP *src = _bmpFrame->GetAllegroBitmap();
++        const int dx = _view.Left, dy = _view.Top;
++        int w, h, sxbeg, sybeg, dxbeg, dybeg;
++        if (dst->clip)
++        {
++            int tmp = dst->cl - dx;
++            sxbeg = ((tmp < 0) ? 0 : tmp);
++            dxbeg = sxbeg + dx;
++            tmp = dst->cr - dx;
++            w = ((tmp > src->w) ? src->w : tmp) - sxbeg;
++            tmp = dst->ct - dy;
++            sybeg = ((tmp < 0) ? 0 : tmp);
++            dybeg = sybeg + dy;
++            tmp = dst->cb - dy;
++            h = ((tmp > src->h) ? src->h : tmp) - sybeg;
++        }
++        else
++        {
++            w = src->w; h = src->h;
++            sxbeg = 0; sybeg = 0;
++            dxbeg = dx; dybeg = dy;
++        }
++        const uint32_t Y = (uint32_t)_clearCol;
++        const bool covers = w > 0 && h > 0 && dxbeg == dst->cl && dybeg == dst->ct &&
++                            dxbeg + w == dst->cr && dybeg + h == dst->cb;
++        if (!covers)
++            _bmpBuff->Fill(_clearCol);
++        if (w <= 0 || h <= 0)
++            return true;
++        const int a = _fadein ? _alpha : 255 - _alpha;   // what set_trans_blender() would get
++        set_trans_blender(0, 0, 0, a);   // leave the same global blender state the stock step leaves
++        uint32_t n = (uint32_t)a;
++        if (n)
++            n++;
++        uint32_t lut[256];
++        if (Y == 0)
++            for (uint32_t i = 0; i < 256; i++)
++                lut[i] = (i * n) >> 8;
++        for (int y = 0; y < h; y++)
++        {
++            const uint32_t *s = (const uint32_t *)src->line[sybeg + y] + sxbeg;
++            uint32_t *d = (uint32_t *)dst->line[dybeg + y] + dxbeg;
++            if (Y == 0)
++            {
++                for (int x = 0; x < w; x++)
++                {
++                    const uint32_t c = s[x];
++                    d[x] = (c == MASK_COLOR_32) ? 0u :
++                           ((lut[(c >> 16) & 0xFF] << 16) | (lut[(c >> 8) & 0xFF] << 8) | lut[c & 0xFF]);
++                }
++            }
++            else
++            {
++                const uint32_t yrb = Y & 0xFF00FFu, yg = Y & 0xFF00u;
++                for (int x = 0; x < w; x++)
++                {
++                    const uint32_t c = s[x];
++                    if (c == MASK_COLOR_32)
++                    {
++                        d[x] = Y;
++                        continue;
++                    }
++                    const uint32_t res = ((c & 0xFF00FFu) - yrb) * n / 256u + Y;
++                    const uint32_t g = ((c & 0xFF00u) - yg) * n / 256u + yg;
++                    d[x] = (res & 0xFF00FFu) | (g & 0xFF00u);
++                }
++            }
++        }
++        return true;
++    }
+ #endif
+     // Draw the state
+     void Draw() override
+@@ -422,8 +556,9 @@ public:
+             // is fewer steps or a cheaper per-step blend depends entirely
+             // on the step COUNT, which nothing currently reports.
+             dp_fade_steps++;
+-            if (DosPortFadeStepFast())
++            if (DosPortFadeStepFast() || DosPortFadeStepFast32())   // patch 0240: the 32-bpp step
+             {
++                DosPortFadeBufHash();
+                 render_to_screen();
+                 return;
+             }
+@@ -431,6 +566,9 @@ public:
+             _bmpBuff->Fill(_clearCol);
+             set_trans_blender(0, 0, 0, _fadein ? _alpha : 255 - _alpha);
+             _bmpBuff->TransBlendBlt(_bmpFrame.get(), _view.Left, _view.Top);
++#ifdef __DJGPP__
++            DosPortFadeBufHash();
++#endif
+             render_to_screen();
+         }
+         else
+-- 
+2.47.3
+

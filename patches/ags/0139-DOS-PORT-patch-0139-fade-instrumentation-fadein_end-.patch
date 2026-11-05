@@ -1,0 +1,133 @@
+From 64e04e839108122f17289f05d116329a9841c874 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 21 Sep 2026 11:17:30 -0700
+Subject: [PATCH] DOS-PORT: patch 0139 -- fade instrumentation: fadein_end
+ stamp, 8-bit fade step cost
+
+Consolidates 0139 and 0185. Both in ac/screen.cpp.
+
+- 0139: the fifth transition milestone, fadein_end. Without a completion stamp
+  a transition segment could only be measured to fadein_begin, which
+  under-excludes transition time and makes Gate 3 bar 1 an upper bound rather
+  than a figure. RAII, because current_fade_in_effect() has three exits and a
+  stamp before the last return would miss the plugin-hook and fast-forward
+  ones.
+- 0185: the 8-bit fade had never been measured; patch 0122's step counter
+  sits inside the color_depth > 1 branch, so every fade figure held was
+  16-bit only. Counts steps and splits fade_interpolate from
+  set_palette_range (whose last argument waits for retrace).
+
+The 8-bit change re-spells the same two calls under #ifdef with timing around
+them; it is meant to be behaviour-preserving.
+
+Provenance of this export (2026-09-21): these edits sat uncommitted in the
+vendor tree from patch 0123 onward, which is why every gate cell since said
+build_dirty=1. They were made under one campaign-wide patch counter shared
+with vendor/SDL, and each hunk carries its number in an in-source comment.
+Intermediate states were never committed, so this patch is a hunk-level
+partition of the final tree by concern, attributed by those comments -- not a
+replay of the order the edits were made in, and its intermediate state was not
+built on its own. The numbers named below are the ones found in its hunks.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/ac/screen.cpp | 59 ++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 59 insertions(+)
+
+diff --git a/Engine/ac/screen.cpp b/Engine/ac/screen.cpp
+index 88f12b570..77c0dcd61 100644
+--- a/Engine/ac/screen.cpp
++++ b/Engine/ac/screen.cpp
+@@ -254,6 +254,9 @@ private:
+ // TODO: split further onto 256- and highcolor- software fade
+ #ifdef __DJGPP__
+ long dp_fade_steps = 0;   // patch 0122
++long dp_fade8_steps = 0;             // patch 0185: the 8-bit palette ramp
++long long dp_fade8_interp_us = 0;
++long long dp_fade8_setpal_us = 0;
+ #endif
+ 
+ class ScreenFadeSoftware : public ScreenTransition
+@@ -444,9 +447,39 @@ public:
+             if (_alpha >= 64)
+                 return false;
+             _alpha = std::min(_alpha + _speed, 64);
++#ifdef __DJGPP__
++            // DOS-PORT patch 0185: the 8-BIT fade has never been measured.
++            //
++            // Patch 0122's step counter sits inside the `color_depth > 1`
++            // branch, so every fade figure this campaign holds -- 5.23 s
++            // stock, 2.30 s after the LUT, 13 steps, 177 ms/step -- is
++            // 16-bit only. The operator reported the fades looking slow and
++            // steppy; this path is what BENCH8 at Mode 13h actually runs.
++            //
++            // Good news from the source read: it IS a palette ramp --
++            // fade_interpolate + set_palette_range, not pixel blending. So
++            // it is already doing the cheap thing algorithmically, and the
++            // question is what a step costs, not whether the approach is
++            // wrong. 64 alpha steps, each a DAC reprogram plus a full
++            // render_to_screen. set_palette_range's last argument is TRUE,
++            // which on Allegro means wait for retrace -- up to ~16 ms a
++            // step before the present is even counted.
++            dp_fade8_steps++;
++            {
++                const uclock_t _t0 = uclock();
++                fade_interpolate(*_srcPal, *_destPal, _dynamicPal, _alpha, _rangeFrom, _rangeTo);
++                const uclock_t _t1 = uclock();
++                set_palette_range(_dynamicPal, _rangeFrom, _rangeTo, TRUE);
++                const uclock_t _t2 = uclock();
++                dp_fade8_interp_us += (long long)(_t1 - _t0) * 1000000LL / UCLOCKS_PER_SEC;
++                dp_fade8_setpal_us += (long long)(_t2 - _t1) * 1000000LL / UCLOCKS_PER_SEC;
++            }
++            return true;
++#else
+             fade_interpolate(*_srcPal, *_destPal, _dynamicPal, _alpha, _rangeFrom, _rangeTo);
+             set_palette_range(_dynamicPal, _rangeFrom, _rangeTo, TRUE);
+             return true;
++#endif
+         }
+     }
+ 
+@@ -873,6 +906,31 @@ void run_fade_out_effect(ScreenTransitionStyle style, int speed)
+     play.screen_is_faded_out |= (!instant_transition); // mark screen as faded
+ }
+ 
++#ifdef __DJGPP__
++// DOS-PORT patch 0139: the fifth milestone stamp, fadein_end.
++//
++// Carried as a convenience all campaign and it is not one: the operator's
++// Gate 3 bar 1 excludes "fadeout_begin to fade-in COMPLETE", and with no
++// completion stamp a transition segment could only be measured to
++// fadein_begin. That under-excludes transition time, which makes bar 1 an
++// upper bound -- 20.22 rather than a figure. A gate number cannot be an
++// upper bound.
++//
++// RAII because current_fade_in_effect() has THREE exits: the plugin-hook
++// path, the fast_forward path, and the normal fall-through past
++// run_fade_in_effect(). Stamping before the last return would silently
++// miss the first two, and fast_forward in particular is the cheap case
++// whose absence would bias the average upward.
++struct DosPortFadeInEndStamp
++{
++    ~DosPortFadeInEndStamp()
++    {
++        debug_script_log("DOSAGS_XT t_ms=%u phase=fadein_end room=%d",
++                         (unsigned)get_runtime_ms(), displayed_room);
++    }
++};
++#endif
++
+ void current_fade_in_effect()
+ {
+     debug_script_log("Transition-in in room %d", displayed_room);
+@@ -881,6 +939,7 @@ void current_fade_in_effect()
+ #endif
+ #ifdef __DJGPP__
+     debug_script_log("DOSAGS_XT t_ms=%u phase=fadein_begin room=%d", (unsigned)get_runtime_ms(), displayed_room);
++    DosPortFadeInEndStamp _dp_fade_in_end;   // patch 0139, all three exits
+ #endif
+ 
+     // determine the transition style
+-- 
+2.47.3
+

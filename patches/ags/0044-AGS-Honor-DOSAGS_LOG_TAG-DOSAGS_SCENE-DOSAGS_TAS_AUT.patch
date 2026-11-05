@@ -1,0 +1,184 @@
+From 11db213cb2141e3c9df9ad7b93a5a83a30792722 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 11 Sep 2026 00:19:37 -0700
+Subject: [PATCH] [AGS] Honor
+ DOSAGS_LOG_TAG/DOSAGS_SCENE/DOSAGS_TAS_AUTO_EXIT_TICK
+
+Last of PLAN.md's four slice-3 instrumentation items. All three names
+were already reserved as placeholders in profiles/dosags.yaml ("not yet
+implemented"); this makes them real:
+
+- DOSAGS_LOG_TAG: read once at quit()'s clean-shutdown path, fills
+  RUNMANIFEST's wave_tag (falling back to the previous hardcoded
+  "DEV0" when unset) and now ALSO picks the RUNMANI.LOG filename
+  itself -- a real collision today between any two runs sharing a
+  stage directory (the rig flow, or two harness runs kept side by
+  side), fixed by writing <TAG>.LOG instead of always RUNMANI.LOG when
+  a tag is set. DOS 8.3-safe: the tag is uppercased, restricted to
+  [A-Z0-9_], and truncated to 8 characters for the base name.
+- DOSAGS_SCENE: same read, fills RUNMANIFEST's scene field (falling
+  back to "boot"). Not previously in profiles/dosags.yaml's own env
+  block -- added there alongside this patch.
+- DOSAGS_TAS_AUTO_EXIT_TICK: dos_auto_exit_check() (game_run.cpp, same
+  once-per-game-loop call site as the fps/memory samplers) reads it
+  once (cached) and calls quit() through the normal-exit path once the
+  loop counter reaches it -- independent of any script/AutoPilot
+  module, for TAS-style automated runs that just want "run N ticks
+  then quit cleanly" without game-specific script logic.
+
+Confirmed by a real DOSBox-X run with a hand-edited RUN.BAT (SET
+DOSAGS_LOG_TAG=tagtest, SET DOSAGS_SCENE=forestx, SET
+DOSAGS_TAS_AUTO_EXIT_TICK=30 -- dosbox-run.sh itself has no generic env
+passthrough flag yet, a real gap noted for later, not this patch's
+scope): produced TAGTEST.LOG (not RUNMANI.LOG) containing
+wave_tag=tagtest, scene=forestx, and the engine quit cleanly
+(exit_code=0, duration_s=3) well before the AutoPilot module's own
+splash-phase wait would naturally have completed, confirming the
+auto-exit fired independent of it. A normal run with no env vars set
+still produces RUNMANI.LOG with wave_tag=DEV0/scene=boot, confirmed
+against the tests/harness AGS Quest package's own full 16-phase
+autopilot run (still all green).
+---
+ Engine/main/game_run.cpp | 20 ++++++++++++++++
+ Engine/main/game_run.h   |  9 +++++++
+ Engine/main/quit.cpp     | 52 +++++++++++++++++++++++++++++++++-------
+ 3 files changed, 72 insertions(+), 9 deletions(-)
+
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 8039547ba..ae55c8713 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -18,6 +18,7 @@
+ 
+ #include <algorithm>
+ #include <cmath>
++#include <cstdlib>
+ #include <limits>
+ #include <chrono>
+ #ifdef __DJGPP__
+@@ -1172,6 +1173,7 @@ static void game_loop_update_fps()
+ #ifdef __DJGPP__
+     dos_fps_sample_tick();
+     dos_memory_sample_tick();
++    dos_auto_exit_check();
+ #endif
+ }
+ 
+@@ -1265,6 +1267,24 @@ long dos_memory_min_free_kb()
+ {
+     return dos_mem_min_free_kb;
+ }
++
++// DOS-PORT: TAS-style auto-exit, independent of any script/AutoPilot
++// module -- see game_run.h's own comment for the intent.
++static bool dos_auto_exit_env_checked = false;
++static long dos_auto_exit_tick = -1;
++
++void dos_auto_exit_check()
++{
++    if (!dos_auto_exit_env_checked)
++    {
++        dos_auto_exit_env_checked = true;
++        const char *env = getenv("DOSAGS_TAS_AUTO_EXIT_TICK");
++        if (env && env[0])
++            dos_auto_exit_tick = atol(env);
++    }
++    if (dos_auto_exit_tick >= 0 && (long)get_loop_counter() >= dos_auto_exit_tick)
++        quit("|DOS-PORT: DOSAGS_TAS_AUTO_EXIT_TICK reached");
++}
+ #endif // __DJGPP__
+ 
+ float get_game_fps()
+diff --git a/Engine/main/game_run.h b/Engine/main/game_run.h
+index 5dd78aeae..a24bc017e 100644
+--- a/Engine/main/game_run.h
++++ b/Engine/main/game_run.h
+@@ -88,6 +88,15 @@ void dos_fps_percentiles(double *p50_out, double *p95_out);
+ // (some DPMI hosts report 0xFFFFFFFF/"unknown" for some fields).
+ void dos_memory_sample_tick();
+ long dos_memory_min_free_kb();
++
++// DOS-PORT: honors DOSAGS_TAS_AUTO_EXIT_TICK (profiles/dosags.yaml's
++// own reserved name, "not yet implemented" until now) -- reads it once
++// (cached), and once the loop counter reaches that tick, calls quit()
++// through the same normal-exit path QuitGame(0) uses, independent of
++// any script/AutoPilot module. A no-op if the env var was never set.
++// For TAS-style automated runs that want "just run N ticks then quit
++// cleanly" without any game-specific script logic.
++void dos_auto_exit_check();
+ #endif
+ // Tells if the runtime counter was initialized
+ bool is_runtime_set();
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 831bfdf62..125e70e92 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -321,14 +321,24 @@ void quit(const char *quitmsg)
+         // that case, so no separate guard is needed here.
+         dos_fps_percentiles(&manifest.fps_p50, &manifest.fps_p95);
+ 
+-        // audio/banner data has no source yet (pre-Sound-milestone,
+-        // no banner-witness mechanism exists) -- left at
+-        // runmanifest_init()'s own NA/zero defaults. wave_tag/scene
+-        // identify this as bring-up telemetry, not a real benchmark
+-        // wave, until the run-identity patch wires DOSAGS_LOG_TAG/
+-        // DOSAGS_SCENE through from the environment.
+-        strncpy(manifest.wave_tag, "DEV0", sizeof(manifest.wave_tag) - 1);
+-        strncpy(manifest.scene, "boot", sizeof(manifest.scene) - 1);
++        // audio/banner data has no source yet (pre-Sound-milestone, no
++        // banner-witness mechanism exists) -- left at
++        // runmanifest_init()'s own NA/zero defaults.
++        //
++        // DOS-PORT: wave_tag/scene honor DOSAGS_LOG_TAG/DOSAGS_SCENE
++        // (profiles/dosags.yaml's own reserved names, "not yet
++        // implemented" until now) when the environment sets them,
++        // falling back to the previous hardcoded "DEV0"/"boot" when it
++        // doesn't -- so an ad hoc DOSBox-X run still gets a sensible
++        // default, and a scripted/rig run can tag itself.
++        const char *log_tag_env = getenv("DOSAGS_LOG_TAG");
++        const char *scene_env = getenv("DOSAGS_SCENE");
++        strncpy(manifest.wave_tag, (log_tag_env && log_tag_env[0]) ? log_tag_env : "DEV0",
++                sizeof(manifest.wave_tag) - 1);
++        manifest.wave_tag[sizeof(manifest.wave_tag) - 1] = '\0';
++        strncpy(manifest.scene, (scene_env && scene_env[0]) ? scene_env : "boot",
++                sizeof(manifest.scene) - 1);
++        manifest.scene[sizeof(manifest.scene) - 1] = '\0';
+ 
+         // quit() unconditionally calls exit(EXIT_NORMAL) below regardless
+         // of qreason (see this function's own tail) -- confirmed by the
+@@ -336,7 +346,31 @@ void quit(const char *quitmsg)
+         // here, not derived from qreason.
+         manifest.exit_code = EXIT_NORMAL;
+ 
+-        FILE *run_manifest_log = fopen("RUNMANI.LOG", "a");
++        // DOS-PORT: one RUNMANI.LOG per DOSAGS_LOG_TAG instead of always
++        // appending to the same fixed filename -- a real collision
++        // today between any two runs sharing a stage directory (e.g.
++        // the rig flow, or two harness runs kept side by side for
++        // comparison). Falls back to the previous "RUNMANI.LOG" when no
++        // tag is set. DOS 8.3-safe: the tag is uppercased, restricted to
++        // [A-Z0-9_], and truncated to 8 characters for the base name.
++        char run_manifest_filename[13] = "RUNMANI.LOG";
++        if (log_tag_env && log_tag_env[0])
++        {
++            char safe_tag[9];
++            size_t si = 0;
++            for (const char *p = log_tag_env; *p && si < sizeof(safe_tag) - 1; p++)
++            {
++                char c = *p;
++                if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
++                if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_')
++                    safe_tag[si++] = c;
++            }
++            safe_tag[si] = '\0';
++            if (si > 0)
++                snprintf(run_manifest_filename, sizeof(run_manifest_filename), "%s.LOG", safe_tag);
++        }
++
++        FILE *run_manifest_log = fopen(run_manifest_filename, "a");
+         if (run_manifest_log)
+         {
+             runmanifest_emit(run_manifest_log, &manifest);
+-- 
+2.47.3
+

@@ -1,0 +1,53 @@
+# 5 Days a Stranger -- source pin, confirmed 2026-09-15 via direct download
+# + hash, not re-cited from memory. Re-verify independently before bumping.
+#
+# Game porting framework F2 (PLAN.md "Game porting framework -- completion
+# plan"), one of the milestone's five golden references (16-bit, in-profile).
+# Freeware, local-testing-only, never committed -- same rule as Trilby's
+# Notes and AGS Quest. Only this PIN, hashes, logs, and manifest.yaml enter
+# git; the game archive/binary itself never does.
+
+GAME_TITLE="5 Days a Stranger"
+GAME_YEAR=2003
+GAME_DEVELOPER="Ben 'Yahtzee' Croshaw (fullyramblomatic.com)"
+
+# Official listing (freeware classification, resolution/depth cross-check):
+# https://www.adventuregamestudio.co.uk/play/game/269/
+# Release Type field: "Freeware". Graphics field: "320x200, 16-Bit Colour".
+# The site's own "DOWNLOAD" button is gated behind a JS-driven click
+# handler (data-download-id, no real href) -- not scripted around, same
+# policy as Trilby's Notes. The developer's own game-website link on that
+# same page ("Game Website", http://www.fullyramblomatic.com/5days/) leads
+# to three download options instead; used here.
+SOURCE_URL="http://www.clawofcat.com/yahtzee/5days13.zip"
+SOURCE_URL_ALTERNATE_MIRRORS="http://www.the-underdogs.org/game.php?name=5+Days+a+Stranger (404, 2026-09-15, this is the page's own PRIMARY listed link); http://www.acid-play.com/download/5-days-a-stranger/ (404, 2026-09-15). The clawofcat.com link used as SOURCE_URL is the page's third listed option ('another mirror, thanks Reality Blights') -- the only one of the three still live."
+DOWNLOADED_UTC="2026-09-15"
+
+# 5days13.zip itself
+ZIP_SIZE_BYTES=1286583
+ZIP_SHA256=3b5ccc444612d2570a77234ac41df3b86738c7a8456988a9407d2f29476e20c5
+ZIP_LAST_MODIFIED="2006-02-19T20:46:01Z"  # HTTP Last-Modified header. Later than
+                                          # the 2003-09-22 AGS database release
+                                          # date -- this is v1.3 (see readme's own
+                                          # "Changes" section), not the original
+                                          # release build.
+
+# 5days.exe (UPX-compressed PE stub + appended CLIB game data), extracted
+# from 5days13.zip. The zip also ships winsetup.exe (a separate DOS-era
+# style setup utility, not needed by this port's own layout stage).
+EXE_SIZE_BYTES=4440143
+EXE_SHA256=d992699ff1f2ea90baa9cbf78683f784a68b7fb412faea3674509e2cc14b03f8
+
+# Licensing: "Freeware" per the AGS database's own release-type field
+# (confirmed above). 5days_readme.txt (inside the zip, not committed)
+# carries no separate redistribution terms beyond crediting the author
+# (same shape as Trilby's Notes' readme) -- no LICENSE/COPYING file ships
+# with the game, and no source license question applies since this is a
+# compiled binary from a hobbyist developer. The developer's own page
+# (fullyramblomatic.com/5days/) additionally states "5 Days A Stranger, 7
+# Days A Skeptic and probably all my games will always be available for
+# free download." Consistent with PLAN.md's "Golden-reference games"
+# decision (freeware, local-testing-only, never committed, never
+# redistributed) -- not a new license judgment call, just recording it
+# here per this port's own licensing rules (never guess, always cite the
+# actual read).

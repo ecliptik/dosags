@@ -1,0 +1,202 @@
+From c7c0841a24e2fe89ac03e9ff0bafe0b70e1f39c6 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sat, 26 Sep 2026 21:26:53 -0700
+Subject: [PATCH] DOS-PORT: patch 0321 -- parse a MIDI clip from memory, not a
+ scratch file
+
+WHY: a MIDI clip's first play wrote its SMF bytes, already in memory from
+the asset reader, to DOSMIDI.TMP and had midi_sched_open() read them back.
+That is a DOS file create, write, close, open, seek and read on the boot
+medium on every first play of a song. It is 4.3 ms of music4.mid's 37 ms
+at DOSBox-X's fixed 40000, which charges host file I/O almost nothing. On
+the 486 target the medium is a CF card with a write-stall history, so the
+round trip may cost far more. The scratch file only existed because
+shared/audio had no buffer entry point (hub 9593c9d adds one).
+
+WHAT: audio_core_slot_init_midi() hands the clip's bytes to AudioPlayer's
+MIDI constructor, which calls shared/audio's midi_sched_open_mem() (the
+same parse and result as the path-based open, with no file I/O). No
+DOSMIDI.TMP is written. A null data pointer still fails the slot init,
+and an empty clip still gives no scheduler, as before.
+- DOSAGS_MIDI_MEM=0 is the killswitch: it writes DOSMIDI.TMP and parses
+  it with midi_sched_open(), exactly as before this patch, for a
+  same-binary A/B on the 486 or a back-out without a rebuild.
+
+Needs hub 9593c9d (midi_sched_open_mem) in the .sdl-dos-ports subtree.
+Lab: the scheduled event list is identical on all 32 SMF clips of 5 Days,
+Trilby's Notes, MMD and AGS Quest (dosags docs/lab/s8.md).
+---
+ Engine/media/audio/audio_core.cpp  | 58 ++++++++++++++++++++----------
+ Engine/media/audio/audioplayer.cpp | 13 ++++---
+ Engine/media/audio/audioplayer.h   | 15 ++++----
+ 3 files changed, 57 insertions(+), 29 deletions(-)
+
+diff --git a/Engine/media/audio/audio_core.cpp b/Engine/media/audio/audio_core.cpp
+index 2f402d13a..8796fad28 100644
+--- a/Engine/media/audio/audio_core.cpp
++++ b/Engine/media/audio/audio_core.cpp
+@@ -14,6 +14,7 @@
+ #include "media/audio/audio_core.h"
+ #include <math.h>
+ #include <cstdio>
++#include <cstdlib> // std::getenv, DOS-PORT patch 0321
+ #include <condition_variable>
+ #include <mutex>
+ #include <stdexcept>
+@@ -129,36 +130,57 @@ int audio_core_slot_init(std::unique_ptr<Stream> in, const String &extension_hin
+     return audio_core_slot_init(std::move(decoder));
+ }
+ 
+-// DOS-PORT (Sound milestone, S4): scratch DOS path a MIDI clip's raw SMF
+-// bytes are written to before AudioPlayer's MIDI constructor calls
+-// midi_sched_open() on it -- shared/audio's midi_sched_open() reads a file
+-// path, not an in-memory buffer (see audioplayer.h's own header note), and
+-// the music channel is AGS's single reserved SCHAN_MUSIC slot, so only one
+-// MIDI clip is ever live at a time -- a single fixed 8.3 filename is
+-// sufficient, no per-clip uniqueness needed. Binary write per this hub's
+-// own hard DJGPP constraint (fopen mode, CRLF translation would corrupt
+-// the SMF bytes).
++// DOS-PORT (Sound milestone, S4): a MIDI clip's raw SMF bytes go to
++// AudioPlayer's MIDI constructor. DOS-PORT patch 0321: they are parsed in
++// memory (shared/audio's midi_sched_open_mem()). Before it they were written
++// to a scratch DOSMIDI.TMP and read back by the path-based midi_sched_open():
++// a DOS file create, write, close, open and read on the boot medium on every
++// first play of a song (a CF card on the 486 target). DOSAGS_MIDI_MEM=0 is
++// the killswitch: it restores that file round trip exactly (binary mode; the
++// music channel is the single SCHAN_MUSIC slot, so one fixed 8.3 name is
++// enough), for a same-binary A/B or a back-out without a rebuild.
+ static const char *DOS_MIDI_SCRATCH_PATH = "DOSMIDI.TMP";
+ 
++static bool dos_midi_from_memory()
++{
++    static int on = -1;
++    if (on < 0)
++    {
++        const char *e = std::getenv("DOSAGS_MIDI_MEM");
++        on = (e && e[0] == '0' && e[1] == '\0') ? 0 : 1;
++    }
++    return on == 1;
++}
++
+ int audio_core_slot_init_midi(std::shared_ptr<std::vector<uint8_t>> &data, bool repeat)
+ {
+-    FILE *fp = fopen(DOS_MIDI_SCRATCH_PATH, "wb");
+-    if (!fp)
++    if (!data)
+     {
+-        Debug::Printf(kDbgMsg_Error, "audio_core_slot_init_midi: could not open %s for write", DOS_MIDI_SCRATCH_PATH);
++        Debug::Printf(kDbgMsg_Error, "audio_core_slot_init_midi: no clip data");
+         return -1;
+     }
+-    const size_t written = data ? fwrite(data->data(), 1, data->size(), fp) : 0u;
+-    fclose(fp);
+-    if (!data || written != data->size())
++    String midi_path; // empty: parse in memory
++    if (!dos_midi_from_memory())
+     {
+-        Debug::Printf(kDbgMsg_Error, "audio_core_slot_init_midi: short write to %s", DOS_MIDI_SCRATCH_PATH);
+-        return -1;
++        FILE *fp = fopen(DOS_MIDI_SCRATCH_PATH, "wb");
++        if (!fp)
++        {
++            Debug::Printf(kDbgMsg_Error, "audio_core_slot_init_midi: could not open %s for write", DOS_MIDI_SCRATCH_PATH);
++            return -1;
++        }
++        const size_t written = fwrite(data->data(), 1, data->size(), fp);
++        fclose(fp);
++        if (written != data->size())
++        {
++            Debug::Printf(kDbgMsg_Error, "audio_core_slot_init_midi: short write to %s", DOS_MIDI_SCRATCH_PATH);
++            return -1;
++        }
++        midi_path = DOS_MIDI_SCRATCH_PATH;
+     }
+ 
+     auto handle = avail_slot_id();
+     std::lock_guard<std::mutex> lk(g_acore.mixer_mutex_m);
+-    g_acore.slots_[handle] = std::make_unique<AudioPlayer>(handle, String(DOS_MIDI_SCRATCH_PATH), repeat);
++    g_acore.slots_[handle] = std::make_unique<AudioPlayer>(handle, *data, midi_path, repeat);
+     g_acore.mixer_cv.notify_all();
+     return handle;
+ }
+diff --git a/Engine/media/audio/audioplayer.cpp b/Engine/media/audio/audioplayer.cpp
+index ab1ae387b..c23bc57c9 100644
+--- a/Engine/media/audio/audioplayer.cpp
++++ b/Engine/media/audio/audioplayer.cpp
+@@ -48,10 +48,14 @@ AudioPlayer::AudioPlayer(int handle, std::unique_ptr<SDLDecoder> decoder)
+ // binds `sink` for us -- this class never touches a backend-specific sink
+ // type (see dos_midi_backend.h's own doc comment for why that stopped
+ // being possible once wb's lifecycle genuinely diverged from opl3's).
+-AudioPlayer::AudioPlayer(int handle, const AGS::Common::String &midi_path, bool repeat)
+-    : handle_(handle), _isMidi(true), _midiRepeat(repeat), _midiPath(midi_path)
++AudioPlayer::AudioPlayer(int handle, const std::vector<uint8_t> &midi_data, const AGS::Common::String &midi_path, bool repeat)
++    : handle_(handle), _isMidi(true), _midiRepeat(repeat)
+ {
+-    _midiSched = midi_sched_open(_midiPath.GetCStr());
++    // DOS-PORT patch 0321: parse the bytes in memory (no DOSMIDI.TMP round trip); a path is the killswitch's file
++    if (!midi_path.IsEmpty())
++        _midiSched = midi_sched_open(midi_path.GetCStr());
++    else
++        _midiSched = midi_data.empty() ? nullptr : midi_sched_open_mem(midi_data.data(), midi_data.size());
+     midi_sched_sink sink;
+ 
+     // DOS-PORT (S7 diagnostic, TEMPORARY): DOSAGS_MIDI_NO_BACKEND=1 -- the
+@@ -66,7 +70,8 @@ AudioPlayer::AudioPlayer(int handle, const AGS::Common::String &midi_path, bool
+     // everything ABOVE dos_midi_backend_open()'s own dispatch:
+     // midi_sched_open() (just above, unconditional either way) and
+     // audio_core_slot_init_midi()'s own DOSMIDI.TMP write (audio_
+-    // core.cpp, runs before this constructor). This flag skips dos_
++    // core.cpp, runs before this constructor; both became one in-memory
++    // midi_sched_open_mem() call in patch 0321). This flag skips dos_
+     // midi_backend_open() entirely -- no backend, OPL3 or otherwise, is
+     // ever touched -- leaving _midiSink null. MidiInit()'s own existing
+     // success check ((_midiSched != nullptr) && (_midiSink != nullptr))
+diff --git a/Engine/media/audio/audioplayer.h b/Engine/media/audio/audioplayer.h
+index 85d186330..d399810d3 100644
+--- a/Engine/media/audio/audioplayer.h
++++ b/Engine/media/audio/audioplayer.h
+@@ -41,6 +41,7 @@
+ #define __AGS_EE_MEDIA__AUDIOPLAYER_H
+ #include <cstdint>
+ #include <memory>
++#include <vector>
+ #include "media/audio/audiodefines.h" // PlaybackState etc
+ #include "media/audio/sdldecoder.h"
+ #include "media/audio/openalsource.h"
+@@ -56,18 +57,19 @@ class AudioPlayer
+ {
+ public:
+     AudioPlayer(int handle, std::unique_ptr<SDLDecoder> decoder);
+-    // DOS-PORT (Sound milestone, S4): MIDI-mode constructor. midi_path is a
+-    // real DOS file path (8.3) the caller has already written the clip's
+-    // SMF bytes to -- midi_sched_open() reads a file, not a memory buffer,
+-    // and shared/audio is not this patch's to extend with a buffer-based
+-    // open (see dos_midi_backend.h's own header note). repeat mirrors the
++    // DOS-PORT (Sound milestone, S4): MIDI-mode constructor. DOS-PORT patch
++    // 0321: midi_data is the clip's SMF bytes as the asset reader loaded
++    // them; midi_sched_open_mem() (shared/audio) parses them in place, so
++    // no scratch file is written and read back. A non-empty midi_path (the
++    // DOSAGS_MIDI_MEM=0 killswitch, audio_core.cpp) parses that file
++    // instead, as before 0321. repeat mirrors the
+     // PCM constructor's own semantics but is honored differently: OPL3
+     // playback restarts from the song start on Stop()->Play() the same as
+     // PCM, but midi_sched itself ALSO auto-loops at end-of-song (its own
+     // documented behavior, unconditional) -- so in practice a MIDI clip
+     // loops regardless of `repeat`, matching how background music is
+     // actually used and not worth suppressing for the non-repeat case.
+-    AudioPlayer(int handle, const AGS::Common::String &midi_path, bool repeat);
++    AudioPlayer(int handle, const std::vector<uint8_t> &midi_data, const AGS::Common::String &midi_path, bool repeat);
+     ~AudioPlayer();
+ 
+     // Gets current playback state
+@@ -149,7 +151,6 @@ private:
+     // <AudioPlayer>>) and SoundClip's slot-handle contract need no change.
+     bool _isMidi = false;
+     bool _midiRepeat = false;
+-    AGS::Common::String _midiPath;
+     midi_sched *_midiSched = nullptr;
+     // DOS-PORT (S5): opaque -- dos_midi_backend.h's own handle, whose real
+     // type (opl3_sink* or waveblaster_sink*) and lifecycle both depend on
+-- 
+2.47.3
+

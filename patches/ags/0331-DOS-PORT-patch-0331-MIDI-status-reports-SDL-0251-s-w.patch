@@ -1,0 +1,102 @@
+From 31b871281fc4f6dd18d85c18229152d7ed2f328c Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 08:27:56 -0700
+Subject: [PATCH 331/333] DOS-PORT: patch 0331 -- MIDI status reports SDL
+ 0251's write skip
+
+WHY: SDL 0251 skips queued OPL writes that would not change their
+register. Whether it is on and how much it removes must be in every run's
+manifest, or the fix cannot be judged in a lab cell or trusted in a
+hardware cell.
+
+WHAT: the isr-mode part of audio_vital_status gains dedupe= (1 on, 0 off)
+and skipped= (writes not queued), from SDL_DOSMidiDeferStats4.
+The MIDI fragment buffer grows 400 -> 640 bytes and the two status buffers
+768 -> 1024. With these fields the isr-mode fragment measured 322 of 400
+bytes in the room-35 lab runs (more with wider counters), so the next field
+would be cut silently, as the lab witness fields were (lab CAP2c lost them
+without a trace).
+
+RE-CUT 2026-09-25 onto main's ags 0275: the sizes above now step from
+0275's 400 / 768. Worst case of the isr-mode fragment with 0275's
+plan_behind_at= and every field here: 606 characters + NUL, every %u at
+10 digits, %llu at 20, and each %s at its buffer's size -- under 640.
+Renumbered from 0255 to 0331: it must apply after 0275, and the series applies in
+number order. 0255 never landed on main; its slot is retired on lab/journeys.
+
+SDL references renumbered 2026-09-25 with the SDL series (0223 -> 0250,
+0224 -> 0251, 0228 -> 0254, 0229 -> 0255). This is the pump-free cut: it
+lands on main before the RTC pump series (ags 0277-0282), which re-applies on
+top and then owns the combined buffer sizing (the max of every need).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/platform/dos/dos_audio_mixer.cpp  | 6 +++---
+ Engine/platform/dos/dos_midi_backend.cpp | 9 +++++++--
+ 2 files changed, 10 insertions(+), 5 deletions(-)
+
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index 4942b3573..bf8b4e5a4 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -170,7 +170,7 @@ uint32_t g_room_since = 0;
+ // shutdown_sound()) still reports the real final state instead of the
+ // "never opened" NA sentinel. Left at "NA" if the device was never
+ // opened at all, so that genuine case is still distinguishable.
+-char g_last_status[768] = "NA"; // patch 0252: 512 -> 640, room for mixed=,...,inflight= beside 0213's fields; patch 0275: 640 -> 768
++char g_last_status[1024] = "NA"; // patch 0252: 512 -> 640, room for mixed=,...,inflight= beside 0213's fields; patch 0275: 640 -> 768; patch 0331: -> 1024
+ 
+ void format_status_string(char *buf, size_t bufsize)
+ {
+@@ -178,7 +178,7 @@ void format_status_string(char *buf, size_t bufsize)
+     const int bits = static_cast<int>(SDL_AUDIO_BITSIZE(fmt));
+     const char chan_letter = (DOS_AUDIO_MIXER_CHANNELS == 1) ? 'm' : 's';
+     const char *device = g_gus_backend ? "gus" : "sb";
+-    char midi_fragment[400]; // DOS-PORT (patch 0275): 320 -> 400, room for plan_behind_at=
++    char midi_fragment[640]; // DOS-PORT (patch 0275): 320 -> 400, room for plan_behind_at=; patch 0331: -> 640
+     // DOS-PORT (Sound milestone, S4): dos_midi_backend owns the real
+     // "midi=<backend>,events=<n>" fragment now -- S1 hardcoded ";midi=none"
+     // here since no MIDI backend existed yet.
+@@ -642,7 +642,7 @@ const char *dos_audio_mixer_status_string()
+ {
+     if (!g_stream && !g_gus_open)
+         return g_last_status; // "NA" if never opened, else the shutdown-time snapshot
+-    static char buf[768];   // patch 0252: 512 -> 640; patch 0275: 640 -> 768
++    static char buf[1024];   // patch 0252: 512 -> 640; patch 0275: 640 -> 768; patch 0331: -> 1024
+     format_status_string(buf, sizeof(buf));
+     return buf;
+ }
+diff --git a/Engine/platform/dos/dos_midi_backend.cpp b/Engine/platform/dos/dos_midi_backend.cpp
+index c212dbd40..3836fe5c5 100644
+--- a/Engine/platform/dos/dos_midi_backend.cpp
++++ b/Engine/platform/dos/dos_midi_backend.cpp
+@@ -463,6 +463,9 @@ void dos_midi_backend_status_fragment(char *buf, size_t bufsize)
+         const unsigned isr_max_us = (unsigned)imax;
+         const unsigned isr_mean_us = in ? (unsigned)(isum / in) : 0;
+         const unsigned isr_ns_per_write = wr ? (unsigned)((uint64_t)isum * 1000u / wr) : 0;
++        // DOS-PORT patch 0331: SDL 0251's skip of writes that change nothing
++        Uint32 dd_on = 0, dd_skip = 0;
++        SDL_DOSMidiDeferStats4(&dd_on, &dd_skip);
+         // DOS-PORT (patch 0275): plan_behind_at=<song_ms>@<loop>/<gap>irq/<first|later>, empty when no event.
+         char pb_at[48] = "";
+         if (g_pb_seen)
+@@ -470,11 +473,13 @@ void dos_midi_backend_status_fragment(char *buf, size_t bufsize)
+                 (unsigned)g_pb_gap_irqs, g_pb_first ? "first" : "later");
+         std::snprintf(buf, bufsize, "midi=%s,events=%llu%s,midi_tick=isr,period_us=%u,lookahead=%u,isr_writes=%u,"
+             "late_writes=%u,late_max_ms=%u,isr_burst=%u,qfull=%u,qsync=%u,qdropped=%u,plan_behind=%u,plan_behind_at=%s,"
+-            "clk=%llu/%ds,real_period_us=%u,budget=%u,cap_hits=%u,isr_max_us=%u,isr_mean_us=%u,isr_ns_per_write=%u",
++            "clk=%llu/%ds,real_period_us=%u,budget=%u,cap_hits=%u,isr_max_us=%u,isr_mean_us=%u,isr_ns_per_write=%u,"
++            "dedupe=%u,skipped=%u",
+             kind_name(g_last_kind), (unsigned long long)g_events_dispatched, chip, g_tick_period_us, g_tick_lookahead,
+             (unsigned)wr, (unsigned)late, (unsigned)((uint64_t)late_max * g_tick_period_us / 1000u), (unsigned)burst,
+             (unsigned)full, (unsigned)sync, (unsigned)dropped, g_plan_behind, pb_at, (unsigned long long)g_song_ms, rtc_s,
+-            (unsigned)g_real_period_us, (unsigned)budget, (unsigned)cap_hits, isr_max_us, isr_mean_us, isr_ns_per_write);
++            (unsigned)g_real_period_us, (unsigned)budget, (unsigned)cap_hits, isr_max_us, isr_mean_us, isr_ns_per_write,
++            (unsigned)dd_on, (unsigned)dd_skip);
+         return;
+     }
+     std::snprintf(buf, bufsize, "midi=%s,events=%llu%s,midi_tick=poll,late_max_ms=%u,late_hist=%llu/%llu/%llu/%llu/%llu/%llu,"
+-- 
+2.47.3
+

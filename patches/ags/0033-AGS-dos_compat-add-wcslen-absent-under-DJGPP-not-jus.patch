@@ -1,0 +1,138 @@
+From bd6da9fb552ab42f5af0f6a8ee63eda573d08db5 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 17:23:46 -0700
+Subject: [PATCH 33/36] [AGS] dos_compat: add wcslen -- absent under DJGPP, not
+ just undeclared
+
+Same continued build (see the patch before this one) reached a genuinely
+different DJGPP gap: DJGPP's own <wchar.h> is documented in its own text
+as a "Bare bones header to satisfy SGI STL's basic_string<>" -- it
+declares mbstate_t/wint_t/WEOF but no wide string functions at all, not
+even under its own version-gated #if blocks (empty bodies). This is a
+real absence, the same shape as the already-known missing <iconv.h> and
+std::mutex gaps (BOOTSTRAP-0 probes), not a missing-#include bug -- no
+#include fixes this.
+
+Real callers, found by a tree-wide grep -- and a real caveat about that
+grep worth recording: the shell's default `grep` here is ugrep, and it
+silently gave a false negative on Common/libsrc/alfont-2.0.9/alfont.c (a
+C file with 13 real wcslen call sites) on the first pass; re-running
+with /usr/bin/grep explicitly found them. Common/util/string_utils.cpp's
+ConvertWstrToUtf8() (one call, C++) compiled clean once dos_compat.h
+declared wcslen, but alfont.c.obj still failed at *link* time with an
+undefined reference -- alfont.c is a plain C file, never touched by the
+top-level CMakeLists.txt's -include dos_compat.h (that flag is
+CXX-only), so it never saw any declaration from this header at all
+(DJGPP's C mode only warns, not errors, on the resulting implicit
+declaration); and even where dos_compat.h's shim IS visible, a header
+inline function has no obligation to produce a real externally-linkable
+symbol anywhere if the compiler can inline every call away, which a C
+object file's undefined reference has no way to rely on.
+
+Fixed by giving wcslen a real, single, non-inline, extern "C" definition
+in a new companion Common/platform/dos_compat.cpp (declared, not
+defined, in dos_compat.h) -- a linker-visible, C-callable symbol any
+object file can resolve against regardless of source language, wired
+into Common/CMakeLists.txt's file list alongside dos_compat.h itself.
+
+Verified: string_utils.cpp.obj and alfont.c.obj both build clean, and
+the previously-undefined `wcslen` link error is gone from a full
+cmake --build build/ags -j$(nproc) -- -k pass.
+---
+ Common/CMakeLists.txt          |  2 ++
+ Common/platform/dos_compat.cpp | 28 ++++++++++++++++++++++++++++
+ Common/platform/dos_compat.h   | 30 ++++++++++++++++++++++++++++++
+ 3 files changed, 60 insertions(+)
+ create mode 100644 Common/platform/dos_compat.cpp
+
+diff --git a/Common/CMakeLists.txt b/Common/CMakeLists.txt
+index e1b51cde1..639ec9324 100644
+--- a/Common/CMakeLists.txt
++++ b/Common/CMakeLists.txt
+@@ -194,6 +194,8 @@ target_sources(common
+     platform/platform.h
+     platform/types.h
+     platform/windows/windows.h
++    platform/dos_compat.cpp
++    platform/dos_compat.h
+ )
+ 
+ target_link_libraries(common PUBLIC
+diff --git a/Common/platform/dos_compat.cpp b/Common/platform/dos_compat.cpp
+new file mode 100644
+index 000000000..ee84bb4fe
+--- /dev/null
++++ b/Common/platform/dos_compat.cpp
+@@ -0,0 +1,28 @@
++//=============================================================================
++//
++// Adventure Game Studio (AGS)
++//
++// Copyright (C) 1999-2011 Chris Jones and 2011-2026 various contributors
++// The full list of copyright holders can be found in the Copyright.txt
++// file, which is part of this source code distribution.
++//
++// The AGS source code is provided under the Artistic License 2.0.
++// A copy of this license can be found in the file License.txt and at
++// https://opensource.org/license/artistic-2-0/
++//
++//=============================================================================
++//
++// Out-of-line definitions for dos_compat.h shims that need a single, real,
++// externally-linkable symbol rather than a header-only inline -- see each
++// symbol's own comment in dos_compat.h for why.
++//
++//=============================================================================
++#include "platform/dos_compat.h"
++
++extern "C" size_t wcslen(const wchar_t *s)
++{
++    size_t len = 0;
++    while (s[len] != L'\0')
++        ++len;
++    return len;
++}
+diff --git a/Common/platform/dos_compat.h b/Common/platform/dos_compat.h
+index d87731ee2..c08c114b1 100644
+--- a/Common/platform/dos_compat.h
++++ b/Common/platform/dos_compat.h
+@@ -208,6 +208,36 @@ public:
+ 
+ } // namespace std
+ 
++// --- wcslen: absent under DJGPP, not merely undeclared ---
++//
++// DJGPP's own <wchar.h> (i586-pc-msdosdjgpp/sys-include/wchar.h) is
++// documented in its own text as a "Bare bones header to satisfy SGI
++// STL's basic_string<>" -- it declares mbstate_t/wint_t/WEOF but no wide
++// string functions at all, not even under its own version-gated #if
++// blocks (those bodies are empty). GCC's bundled C++ <cwchar> wrapper
++// expects a real global ::wcslen to already exist (it does `using
++// ::wcslen;`), which is exactly what DJGPP's own header never provides
++// -- confirmed by reading both files directly, not assumed from the
++// compile error alone. This is a genuine absence, the same shape as the
++// already-known missing <iconv.h> and std::mutex gaps (BOOTSTRAP-0
++// probes), not a missing-#include bug: no #include fixes this.
++//
++// Real callers, found by a tree-wide grep (the shell's default `grep` is
++// ugrep here and gave a false negative on Common/libsrc/alfont-2.0.9/alfont.c
++// -- re-run with /usr/bin/grep explicitly before trusting a "no other
++// callers" conclusion): Common/util/string_utils.cpp's ConvertWstrToUtf8()
++// (one call, C++), and alfont.c itself (13 calls, C) -- alfont.c compiled
++// clean with only an -Wimplicit-function-declaration warning (DJGPP's C
++// mode doesn't error on it), but needs a real, C-linkable symbol at link
++// time, which a header-only inline C++ definition does not reliably
++// provide to a separately-compiled C object file (name mangling aside, an
++// unreferenced-address inline function does not have to have an
++// externally-linkable copy anywhere at all). Declared here, defined once,
++// non-inline, with C linkage in the companion dos_compat.cpp instead.
++#include <cstddef>
++
++extern "C" size_t wcslen(const wchar_t *s);
++
+ #endif // __cplusplus
+ 
+ #endif // __AGS_DOS_COMPAT_H
+-- 
+2.47.3
+

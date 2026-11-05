@@ -1,0 +1,255 @@
+From 895eb6d805e531d44a0a0acc1e3847b2d4fc898b Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 17 Sep 2026 08:09:47 -0700
+Subject: [PATCH] DOS-PORT: patch 0091 -- skip Present() entirely when the
+ frame is unchanged
+
+Operator-directed investigation of present_update_window's own
+~22-25ms/call real-hardware cost. Read the actual mechanism first:
+SDL_UpdateWindowSurface() (SDL_video.c) always wraps
+SDL_UpdateWindowSurfaceRects() with a single full-window rect, and the
+DOS backend's LFB path (SDL_dosframebuffer.c's
+DOSVESA_UpdateWindowFramebuffer) already has dirty-rect dispatch logic
+from an earlier DOSKUTSU wave (patch 0033) but always takes the full
+SDL_memcpy(fb_state.vram_ptr, fb_state.pixels, fb_state.fb_size)
+branch because it never receives a real partial rect list -- AGS's own
+Present() never provides one. 307200 bytes get copied every single
+call regardless of whether anything actually changed.
+
+Rather than build full sub-window dirty-rect tracking (a much larger
+change to RenderToBackBuffer(), flagged as a gap all the way back in
+the first round of this whole investigation but never revisited),
+this takes the simpler, still-real win: cache the last-presented
+frame's raw pixel content and skip BOTH the blit and
+SDL_UpdateWindowSurface() entirely when the new frame is byte-
+identical to it, the palette did not change (SyncPaletteIfNeeded() now
+returns whether it actually changed anything), and xoff/yoff/flip
+match the cached call's own. Restricted to the case with no flip and
+no border/offset (dst fills the whole window) -- anything else always
+falls through to the normal path and invalidates the cache, so
+arbitrary window configurations remain correct, just without this
+specific skip.
+
+present_dirty_check brackets the comparison's own cost (paid every
+"clean case" present); present_skip_unchanged's own calls= count is
+how many times the skip actually fired.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hnodGZ6cg8CWuFXEDTsUq
+---
+ Engine/gfx/ali3dsw.cpp             | 64 +++++++++++++++++++++++++++---
+ Engine/gfx/ali3dsw.h               | 29 +++++++++++++-
+ Engine/main/dos_port_tick_timing.h | 13 ++++++
+ Engine/main/quit.cpp               |  2 +
+ 4 files changed, 101 insertions(+), 7 deletions(-)
+
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index 32219880b..e0ac13f4e 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -640,10 +640,10 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+   return from;
+ }
+ 
+-void SDLRendererGraphicsDriver::SyncPaletteIfNeeded(SDL_Surface *win_surface)
++bool SDLRendererGraphicsDriver::SyncPaletteIfNeeded(SDL_Surface *win_surface)
+ {
+     if (!SDL_ISPIXELFORMAT_INDEXED(_vscreenSurface->format))
+-        return; // 16-bit game, no palette involved
++        return false; // 16-bit game, no palette involved
+ 
+     // DOS-PORT: AGS calls Allegro's own set_palette()/set_palette_range()
+     // directly (Engine/ac/screen.cpp, global_palette.cpp, main/engine.cpp,
+@@ -667,7 +667,7 @@ void SDLRendererGraphicsDriver::SyncPaletteIfNeeded(SDL_Surface *win_surface)
+     if (!pal)
+     {
+         Debug::Printf(kDbgMsg_Error, "SDLRenderer: failed to create window surface palette: %s", SDL_GetError());
+-        return;
++        return false;
+     }
+     if (SDL_GetSurfacePalette(_vscreenSurface) != pal)
+         SDL_SetSurfacePalette(_vscreenSurface, pal);
+@@ -678,7 +678,7 @@ void SDLRendererGraphicsDriver::SyncPaletteIfNeeded(SDL_Surface *win_surface)
+     PALETTE al_pal;
+     get_palette(al_pal);
+     if (_lastAllegroPaletteSynced && std::memcmp(al_pal, _lastAllegroPalette, sizeof(PALETTE)) == 0)
+-        return; // unchanged since last present, nothing to push
++        return false; // unchanged since last present, nothing to push
+ 
+     // DOS-PORT: Allegro's RGB::a is "alpha if available, otherwise a
+     // filler" (color.h) -- this engine's own 8-bit palette entries never
+@@ -698,6 +698,7 @@ void SDLRendererGraphicsDriver::SyncPaletteIfNeeded(SDL_Surface *win_surface)
+ 
+     std::memcpy(_lastAllegroPalette, al_pal, sizeof(PALETTE));
+     _lastAllegroPaletteSynced = true;
++    return true;
+ }
+ 
+ #ifdef __DJGPP__
+@@ -935,11 +936,12 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+         return;
+     }
+ 
++    bool palette_changed = false;
+     {
+ #ifdef __DJGPP__
+         DosPortTickScope _dos_port_syncpal_scope(dos_port_tick_timing.present_sync_palette);
+ #endif
+-        SyncPaletteIfNeeded(win_surface);
++        palette_changed = SyncPaletteIfNeeded(win_surface);
+     }
+ 
+     // DOS-PORT: AGS's own screen-shake / mirror-display script features
+@@ -992,6 +994,58 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+     dst.w = _dstRect.GetWidth();
+     dst.h = _dstRect.GetHeight();
+ 
++    // DOS-PORT patch 0091 (operator-directed investigation of
++    // present_update_window's own ~22-25ms/call cost): SDL_UpdateWindowSurface()
++    // always copies the FULL window surface regardless of what actually
++    // changed (SDL_video.c's own SDL_UpdateWindowSurface() wraps
++    // SDL_UpdateWindowSurfaceRects() with a single full-window rect, and
++    // the DOS backend's LFB path takes the full-frame SDL_memcpy branch
++    // whenever it sees a full-window rect list -- confirmed by reading
++    // both directly). Skip the blit AND the update entirely when this
++    // frame is byte-identical to the last one actually presented, the
++    // palette did not change, and xoff/yoff/flip match -- restricted to
++    // the case with no flip and no border/offset (dst fills the whole
++    // window) so the cache never has to reason about a flipped or
++    // partially-covered frame's own equivalence; anything else always
++    // falls through to the normal path and invalidates the cache.
++    const bool clean_case = (flip == kFlip_None) &&
++        (blit_src->format == win_surface->format) &&
++        (dst.x == 0 && dst.y == 0 && dst.w == win_surface->w && dst.h == win_surface->h);
++    if (clean_case)
++    {
++        const size_t frame_bytes = (size_t)blit_src->pitch * (size_t)blit_src->h;
++#ifdef __DJGPP__
++        DosPortTickScope _dos_port_dirty_scope(dos_port_tick_timing.present_dirty_check);
++#endif
++        const bool same_geometry = _lastPresentedValid &&
++            _lastPresentedPixels.size() == frame_bytes &&
++            _lastPresentedXoff == xoff && _lastPresentedYoff == yoff &&
++            _lastPresentedFlip == flip;
++        const bool unchanged = same_geometry && !palette_changed &&
++            std::memcmp(blit_src->pixels, _lastPresentedPixels.data(), frame_bytes) == 0;
++        if (unchanged)
++        {
++#ifdef __DJGPP__
++            dos_port_tick_record(dos_port_tick_timing.present_skip_unchanged, 0);
++#endif
++            return;
++        }
++        // About to render a real change (or this is the first call ever) --
++        // update the cache to what's about to be presented, so the NEXT
++        // call can compare against it.
++        if (_lastPresentedPixels.size() != frame_bytes)
++            _lastPresentedPixels.resize(frame_bytes);
++        std::memcpy(_lastPresentedPixels.data(), blit_src->pixels, frame_bytes);
++        _lastPresentedValid = true;
++        _lastPresentedXoff = xoff;
++        _lastPresentedYoff = yoff;
++        _lastPresentedFlip = flip;
++    }
++    else
++    {
++        _lastPresentedValid = false;
++    }
++
+     // DOS-PORT: the old SDL_Renderer path called SDL_RenderClear() every
+     // frame before compositing, which kept any letterbox/pillarbox border
+     // outside the scaled dst rect clean -- a plain blit only touches dst
+diff --git a/Engine/gfx/ali3dsw.h b/Engine/gfx/ali3dsw.h
+index 3fef403d9..7f4a06fd0 100644
+--- a/Engine/gfx/ali3dsw.h
++++ b/Engine/gfx/ali3dsw.h
+@@ -35,6 +35,7 @@
+ #ifndef __AGS_EE_GFX__ALI3DSW_H
+ #define __AGS_EE_GFX__ALI3DSW_H
+ #include <memory>
++#include <vector>
+ #include <SDL3/SDL.h>
+ #include "platform/platform.h"
+ #include "gfx/bitmap.h"
+@@ -344,8 +345,11 @@ private:
+     // SDL_Palette shared by the window surface and _vscreenSurface, if it
+     // has changed since the last present. See Present()'s own comment for
+     // why AGS's set_palette()/set_palette_range() call sites don't need a
+-    // hook of their own.
+-    void SyncPaletteIfNeeded(SDL_Surface *win_surface);
++    // hook of their own. Returns true if the palette actually changed this
++    // call (used by Present()'s own unchanged-frame skip, patch 0091 --
++    // a palette-only change must never be treated as "nothing changed"
++    // even when every pixel INDEX is identical).
++    bool SyncPaletteIfNeeded(SDL_Surface *win_surface);
+ 
+ 
+     PSDLRenderFilter _filter;
+@@ -377,6 +381,27 @@ private:
+     PALETTE _lastAllegroPalette{};
+     bool _lastAllegroPaletteSynced = false;
+ 
++    // DOS-PORT patch 0091 (8-bit optimization pass): operator-directed
++    // investigation of present_update_window's own ~22-25ms/call real-
++    // hardware cost (SDL_UpdateWindowSurface() always copies the FULL
++    // window surface -- confirmed by reading SDL_video.c's own
++    // SDL_UpdateWindowSurface(), which wraps SDL_UpdateWindowSurfaceRects()
++    // with a single full-window rect; the DOS backend's own LFB path,
++    // SDL_dosframebuffer.c's DOSVESA_UpdateWindowFramebuffer, already has
++    // dirty-rect dispatch logic from an earlier DOSKUTSU wave, but never
++    // receives a real partial rect list because AGS never provides one).
++    // Rather than build full sub-window dirty-rect tracking (a much
++    // larger change), this caches the last-presented frame's raw pixel
++    // content and skips BOTH the blit and SDL_UpdateWindowSurface() when
++    // the new frame is byte-identical, the palette did not change, and
++    // xoff/yoff/flip match the cached call's own. See Present()'s own
++    // comment for the exact invalidation conditions.
++    std::vector<Uint8> _lastPresentedPixels;
++    bool _lastPresentedValid = false;
++    int _lastPresentedXoff = 0;
++    int _lastPresentedYoff = 0;
++    Common::GraphicFlip _lastPresentedFlip = Common::kFlip_None;
++
+     // Original virtual screen created and managed by the renderer.
+     std::unique_ptr<Bitmap> _origVirtualScreen;
+     // Current virtual screen bitmap; may be either pointing to _origVirtualScreen,
+diff --git a/Engine/main/dos_port_tick_timing.h b/Engine/main/dos_port_tick_timing.h
+index a65954b20..71a5010c6 100644
+--- a/Engine/main/dos_port_tick_timing.h
++++ b/Engine/main/dos_port_tick_timing.h
+@@ -343,6 +343,19 @@ struct DosPortTickTiming
+     DosPortTickPhaseStats fastblit_lock;       // SDL_LockSurface() calls (src+dst)
+     DosPortTickPhaseStats fastblit_hreplicate; // the horizontal pixel-replication loop, summed across all source rows
+     DosPortTickPhaseStats fastblit_vmemcpy;    // the vertical memcpy() replication, summed across all source rows
++
++    // patch 0091 (operator-directed investigation of present_update_window's
++    // own ~22-25ms/call cost): SDL_UpdateWindowSurface() always copies the
++    // FULL window surface regardless of what changed (confirmed by reading
++    // SDL_video.c) -- Present() now checks whether the frame is byte-
++    // identical to the last one presented (same palette, same xoff/yoff/
++    // flip) and skips the blit + SDL_UpdateWindowSurface() entirely when
++    // it is. present_dirty_check is the cost of that comparison itself
++    // (paid every "clean case" present, skip or not); present_skip_unchanged's
++    // own calls= count is how many times the skip actually fired (no
++    // meaningful timing of its own -- it is exactly the cost NOT paid).
++    DosPortTickPhaseStats present_dirty_check;
++    DosPortTickPhaseStats present_skip_unchanged;
+ };
+ 
+ // Defined in main.cpp, alongside dos_port_startup_timing.
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 85025ff0c..14703ab10 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -516,6 +516,8 @@ void quit(const char *quitmsg)
+                 dos_port_tick_emit(run_manifest_log, "fastblit_lock", t.fastblit_lock);
+                 dos_port_tick_emit(run_manifest_log, "fastblit_hreplicate", t.fastblit_hreplicate);
+                 dos_port_tick_emit(run_manifest_log, "fastblit_vmemcpy", t.fastblit_vmemcpy);
++                dos_port_tick_emit(run_manifest_log, "present_dirty_check", t.present_dirty_check);
++                dos_port_tick_emit(run_manifest_log, "present_skip_unchanged", t.present_skip_unchanged);
+             }
+ 
+             // DOS-PORT patch 0085 (operator-directed DPMI/interrupt audit):
+-- 
+2.47.3
+

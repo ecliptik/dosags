@@ -1,0 +1,17 @@
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index dfffa1e04..f3015400b 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -466,6 +466,12 @@ void dos_audio_mixer_pump()
+         return;
+     }
+ 
++    { // THROWAWAY (UR3 field check for 0202): never lands
++        static int ur3 = -1; static uint32_t ur3_last = 0;
++        if (ur3 < 0) { const char *e = SDL_getenv("DOSAGS_UR3_STALL_EVERY"); ur3 = e ? SDL_atoi(e) : 0; }
++        const uint32_t t = get_loop_counter();
++        if (ur3 > 0 && t > 0 && t % (uint32_t)ur3 == 0 && t != ur3_last) { ur3_last = t; SDL_Delay(1500); }
++    }
+     if (g_stream)
+     {
+         // DOS-PORT (patch 0199/0200): charge the silent IRQs since the last

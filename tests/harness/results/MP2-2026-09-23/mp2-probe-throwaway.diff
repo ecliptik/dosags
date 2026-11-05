@@ -1,0 +1,47 @@
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 3d6d01469..3f9a0f226 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -22,7 +22,11 @@
+ #include <limits>
+ #include <chrono>
+ #ifdef __DJGPP__
+-#include <dpmi.h> // __dpmi_get_free_memory_information -- DOS-PORT memory KPI
++#include <dpmi.h>
++#include <SDL3/SDL.h> // THROWAWAY MP
++#include <SDL3/SDL_dosmidi_tick.h> // THROWAWAY MP
++extern "C" bool SDL_DOSOpl3Detect(void); // THROWAWAY MP2: internal, its wrapper holds then releases
++#include "media/audio/audio.h" // THROWAWAY MP // __dpmi_get_free_memory_information -- DOS-PORT memory KPI
+ #include <stdio.h> // FILE -- DOS-PORT patch 0093 (dos_port_yardstick_emit)
+ #include <time.h> // uclock_t/uclock()/UCLOCKS_PER_SEC -- DOS-PORT patch 0080
+ #include "main/dos_port_tick_timing.h" // DOS-PORT patch 0080
+@@ -1375,6 +1379,29 @@ void dos_auto_exit_check()
+     }
+     if (dos_auto_exit_tick >= 0 && (long)get_loop_counter() >= dos_auto_exit_tick)
+         quit("|DOS-PORT: DOSAGS_TAS_AUTO_EXIT_TICK reached");
++    { // THROWAWAY (MP probe): DOSAGS_MP_PAUSE="pause,resume,stop" loop ticks, via the channels
++      // the way script AudioChannel.Pause/Resume/Stop do; never lands
++        static long mp[4] = {-2, -2, -2, -2};
++        if (mp[0] == -2) { const char *e = getenv("DOSAGS_MP_PAUSE"); mp[0] = mp[1] = mp[2] = mp[3] = -1;
++            if (e) sscanf(e, "%ld,%ld,%ld,%ld", &mp[0], &mp[1], &mp[2], &mp[3]); }
++        const long t = (long)get_loop_counter();
++        auto wait2 = [](){ if (SDL_DOSMidiDeferIrqNow() == 0) return; const uint32_t p0 = SDL_DOSMidiDeferIrqNow(); while (SDL_DOSMidiDeferIrqNow() < p0 + 2) SDL_Delay(1); };
++        if (mp[0] >= 0 && t >= mp[0]) { mp[0] = -1; int n = 0;
++            for (int i = 0; i < TOTAL_AUDIO_CHANNELS; i++) { auto *ch = AudioChans::GetChannelIfPlaying(i); if (ch) { ch->pause(); n++; } }
++            wait2(); Debug::Printf(kDbgMsg_Info, "MPPAUSE tick=%ld channels=%d keys_on_after_1irq=%u", t, n, (unsigned)SDL_DOSMidiDeferKeysOn()); }
++        if (mp[3] >= 0 && t >= mp[3]) { mp[3] = -1; // MP2: a nested hold/release while paused
++            Uint32 w0 = 0, w1 = 0; SDL_DOSMidiDeferStats(&w0, nullptr, nullptr, nullptr, nullptr);
++            const bool det = SDL_DOSOpl3Detect();
++            for (int k = 0; k < 3; k++) wait2(); // 6 IRQs
++            SDL_DOSMidiDeferStats(&w1, nullptr, nullptr, nullptr, nullptr);
++            Debug::Printf(kDbgMsg_Info, "MPNEST tick=%ld detect=%d written_during=%u keys_on=%u", t, det ? 1 : 0, (unsigned)(w1 - w0), (unsigned)SDL_DOSMidiDeferKeysOn()); }
++        if (mp[1] >= 0 && t >= mp[1]) { mp[1] = -1; int n = 0;
++            for (int i = 0; i < TOTAL_AUDIO_CHANNELS; i++) { auto *ch = AudioChans::GetChannel(i); if (ch) { ch->resume(); n++; } }
++            Debug::Printf(kDbgMsg_Info, "MPRESUME tick=%ld channels=%d", t, n); }
++        if (mp[2] >= 0 && t >= mp[2]) { mp[2] = -1;
++            for (int i = 0; i < TOTAL_AUDIO_CHANNELS; i++) if (AudioChans::GetChannel(i)) stop_and_destroy_channel(i);
++            wait2(); Debug::Printf(kDbgMsg_Info, "MPSTOP tick=%ld keys_on_after_1irq=%u", t, (unsigned)SDL_DOSMidiDeferKeysOn()); }
++    }
+ }
+ 
+ // DOS-PORT (patch 0048): see game_run.h's own comment. A plain

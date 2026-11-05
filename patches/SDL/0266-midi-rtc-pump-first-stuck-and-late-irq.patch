@@ -1,0 +1,161 @@
+From 478d393d8d99a7be5ad2a6ba7e2075350d2f9f27 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 25 Sep 2026 01:12:20 -0700
+Subject: [PATCH] dos: patch 0266 -- record when the RTC pump's first stuck
+ repair and the first late write happened
+
+The pump's stuck repairs and late writes are run totals. On the real 486
+a run now has one or a few of each (dosags WBH6R: 1 and 1; WBH6W: 1 and 4),
+and the totals cannot say where in the run they fell: inside a room load,
+at a song boundary, or at random. The 0264 witness says what the hardware
+looked like at the first repair, but not when. Each look so far has needed
+a throwaway build.
+
+This keeps, in locked ISR data:
+- the SB IRQ index of the first stuck repair (0262's "on and unmasked but
+  no tick since the last kick", or 0264's forced mode);
+- the RTC ticks counted in the kick interval before it. About 95 is
+  normal, so a short interval says the silence began mid-interval, and a
+  normal one says the line went quiet just after the previous kick;
+- the SB IRQ index of the first late write, on the pump and the blind
+  paths alike.
+SDL_DOSMidiDeferFirstEvents() returns them. 0xFFFFFFFF means none yet.
+The caller maps IRQ indices to song time, since only the planner knows
+the song. Reporting only: nothing changes when or what the pump writes.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ include/SDL3/SDL_dosmidi_tick.h |  4 ++++
+ src/audio/dos/SDL_dosaudio_sb.c | 32 ++++++++++++++++++++++++++++++++
+ 2 files changed, 36 insertions(+)
+
+diff --git a/include/SDL3/SDL_dosmidi_tick.h b/include/SDL3/SDL_dosmidi_tick.h
+index 84b13b9d1..475994ed7 100644
+--- a/include/SDL3/SDL_dosmidi_tick.h
++++ b/include/SDL3/SDL_dosmidi_tick.h
+@@ -346,6 +346,10 @@ extern SDL_DECLSPEC bool SDLCALL SDL_DOSMidiDeferRtcStuckWitness(Uint32 *counts5
+    kept as a tick, never a second byte); *enabled = on (killswitch SDL_HINT_DOS_AUDIO_WB_RTC_REDRAIN=0).
+    SDL_HINT_DOS_AUDIO_WB_RTC_TEST_REDRAIN=N forces one every N ticks (lab only). */
+ extern SDL_DECLSPEC Uint32 SDLCALL SDL_DOSMidiDeferRtcRedrains(bool *enabled);
++/* DOS-PORT patch 0266: when the first stuck repair and the first late write happened, as SB IRQ
++   indices (0xFFFFFFFF = none yet), and the RTC ticks counted in the kick interval before the stuck
++   repair (~95 is normal). Reporting only; the caller maps IRQ indices to song time. */
++extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferFirstEvents(Uint32 *stuck_irq, Uint32 *stuck_prev_ticks, Uint32 *late_irq);
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index 126abd38d..4874c07f2 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -1764,6 +1764,7 @@ static Uint8 g_mdq_val[MIDI_DEFER_QUEUE];
+ static volatile Uint32 g_mdq_written = 0;  /* entries written out by the ISR */
+ static volatile Uint32 g_mdq_late = 0;     /* ... of which written >= 1 IRQ after their stamp */
+ static volatile Uint32 g_mdq_late_max = 0; /* the most IRQs any entry was late */
++static volatile Uint32 g_mdq_first_late_irq = 0xFFFFFFFFu; /* DOS-PORT patch 0266: SB IRQ of the first late write */
+ static volatile Uint32 g_mdq_burst_max = 0;/* the most entries written in one IRQ */
+ static volatile Uint32 g_mdq_full = 0;     /* captures refused because the queue was full */
+ static volatile Uint32 g_mdq_dropped = 0;  /* entries discarded unplayed (bounded disable, device close) */
+@@ -1892,6 +1893,11 @@ static Uint32 g_rtc_rate_hz = 0;             /* rate of the last install (stats)
+ enum { RTC_REARM_PIE, RTC_REARM_RATE, RTC_REARM_MASK, RTC_REARM_STUCK, RTC_REARM_N };
+ static volatile Uint32 g_rtc_rearm[RTC_REARM_N];
+ static volatile Uint32 g_rtc_kick_ticks = 0;  /* g_rtc_ticks at the previous kick */
++/* DOS-PORT patch 0266: RTC ticks counted in the last complete kick interval (~95 normally), and the
++   first stuck repair's SB IRQ index and the interval before it. */
++static volatile Uint32 g_rtc_prev_interval = 0;
++static volatile Uint32 g_rtc_first_stuck_irq = 0xFFFFFFFFu;
++static volatile Uint32 g_rtc_first_stuck_prev = 0;
+ static volatile Uint8 g_rtc_snap_taken = 0;
+ static volatile Uint8 g_rtc_snap[8];          /* kind, reg A, reg B, IMR slave, IMR master, BDA 0040:00A0, g_rtc_pie, 0 */
+ static volatile Uint32 g_rtc_snap_irq = 0;
+@@ -1950,6 +1956,10 @@ static void MidiRtcRearmed(int kind, Uint8 a, Uint8 b, Uint8 imr_s, Uint8 imr_m,
+ static void MidiRtcStuckWitness(Uint8 a, Uint8 b, Uint8 imr_s, Uint8 imr_m, Uint32 irq_now)
+ {
+     MidiRtcRearmed(RTC_REARM_STUCK, a, b, imr_s, imr_m, irq_now);
++    if (g_rtc_first_stuck_irq == 0xFFFFFFFFu) { /* DOS-PORT patch 0266: when, and the interval before */
++        g_rtc_first_stuck_irq = irq_now;
++        g_rtc_first_stuck_prev = g_rtc_prev_interval;
++    }
+     {
+         const Uint8 c = MidiRtcRead(0x0C);
+         Uint8 irr_s, isr_s, irr_m, isr_m, bda;
+@@ -1987,11 +1997,13 @@ static void MidiRtcStuckWitness(Uint8 a, Uint8 b, Uint8 imr_s, Uint8 imr_m, Uint
+ static void MidiRtcKick(Uint32 irq_now)
+ {
+     if (g_mdq_hold || g_mdq_head == g_mdq_tail) {
++        g_rtc_prev_interval = g_rtc_ticks - g_rtc_kick_ticks; /* DOS-PORT patch 0266 */
+         g_rtc_kick_ticks = g_rtc_ticks;
+         return;
+     }
+     __asm__ __volatile__("" ::: "memory"); /* read the entry after seeing the tail */
+     if ((Sint32)(irq_now - g_mdq_stamp[g_mdq_head & (MIDI_DEFER_QUEUE - 1u)]) < 0) {
++        g_rtc_prev_interval = g_rtc_ticks - g_rtc_kick_ticks; /* DOS-PORT patch 0266 */
+         g_rtc_kick_ticks = g_rtc_ticks;
+         return;
+     }
+@@ -2031,6 +2043,7 @@ static void MidiRtcKick(Uint32 irq_now)
+             MidiRtcStuckWitness(a, b, imr_s, imr_m, irq_now);
+         }
+     }
++    g_rtc_prev_interval = g_rtc_ticks - g_rtc_kick_ticks; /* DOS-PORT patch 0266 */
+     g_rtc_kick_ticks = g_rtc_ticks;
+ }
+ 
+@@ -2150,6 +2163,9 @@ static void MidiRtcISR(void)
+                     g_mdq_written++;
+                     if (late >= 1) {
+                         g_mdq_late++;
++                        if (g_mdq_first_late_irq == 0xFFFFFFFFu) {
++                            g_mdq_first_late_irq = irq_now; /* DOS-PORT patch 0266 */
++                        }
+                         if ((Uint32)late > g_mdq_late_max) {
+                             g_mdq_late_max = (Uint32)late;
+                         }
+@@ -2344,6 +2360,9 @@ static bool MidiRtcInstall(Uint32 gap_us)
+         DOS_LockVariable(g_rtc_redrain);
+         DOS_LockVariable(g_rtc_test_redrain);
+         DOS_LockVariable(g_rtc_test_redrain_n);
++        DOS_LockVariable(g_rtc_prev_interval); /* DOS-PORT patch 0266 */
++        DOS_LockVariable(g_rtc_first_stuck_irq);
++        DOS_LockVariable(g_rtc_first_stuck_prev);
+         g_rtc_locked = true;
+     }
+     DOS_DisableInterrupts();
+@@ -2519,6 +2538,9 @@ static void MidiDeferDrain(Uint32 irq_now)
+         }
+         if (late >= 1) {
+             g_mdq_late++;
++            if (g_mdq_first_late_irq == 0xFFFFFFFFu) {
++                g_mdq_first_late_irq = irq_now; /* DOS-PORT patch 0266 */
++            }
+             if ((Uint32)late > g_mdq_late_max) {
+                 g_mdq_late_max = (Uint32)late;
+             }
+@@ -2752,6 +2774,15 @@ bool SDL_DOSMidiDeferRtcStuckWitness(Uint32 *counts5, Uint8 *snap8)
+     return g_rtc_stucksnap_taken != 0;
+ }
+ 
++/* DOS-PORT patch 0266: the SB IRQ index of the first stuck repair (0xFFFFFFFF = none) and the RTC
++   ticks counted in the kick interval before it, and the SB IRQ index of the first late write. */
++void SDL_DOSMidiDeferFirstEvents(Uint32 *stuck_irq, Uint32 *stuck_prev_ticks, Uint32 *late_irq)
++{
++    if (stuck_irq) *stuck_irq = g_rtc_first_stuck_irq;
++    if (stuck_prev_ticks) *stuck_prev_ticks = g_rtc_first_stuck_prev;
++    if (late_irq) *late_irq = g_mdq_first_late_irq;
++}
++
+ /* DOS-PORT patch 0265: redrain reads that found a periodic flag set (run total); *enabled = the
+    setting of the current/last install. */
+ Uint32 SDL_DOSMidiDeferRtcRedrains(bool *enabled)
+@@ -2940,6 +2971,7 @@ bool SDL_DOSMidiDeferEnable(int kind)
+         DOS_LockVariable(g_mdq_written);
+         DOS_LockVariable(g_mdq_late);
+         DOS_LockVariable(g_mdq_late_max);
++        DOS_LockVariable(g_mdq_first_late_irq); /* DOS-PORT patch 0266 */
+         DOS_LockVariable(g_mdq_burst_max);
+         DOS_LockVariable(g_mdq_keys); /* DOS-PORT patch 0195 */
+         DOS_LockData(g_mdq_b0, sizeof(g_mdq_b0));
+-- 
+2.47.3
+

@@ -1,0 +1,79 @@
+# If On A Winter's Night, Four Travelers -- source pin, confirmed
+# 2026-09-15 via direct download + hash, not re-cited from memory or from
+# PLAN.md's own earlier web survey (that survey was compiled from store/
+# database PAGES, "nothing downloaded" -- explicitly not itself a
+# verification). Re-verify independently before bumping.
+#
+# The second of the two candidates PLAN.md's "Requested titles" section
+# (2026-09-11) flagged as free/NYOP and needing only the 32-bit display
+# path. Downloaded to get a second real 32-bit fps datapoint for the
+# 8/16/32-bit KPI comparison. Local-testing-only, never committed -- same
+# rule as AGS Quest/Trilby's Notes. Only this PIN, hashes, logs, and
+# manifest.yaml enter git; the game archive/binary itself never does.
+#
+# REAL-HARDWARE STATUS: DOSBox-X only, deliberately -- this game's main
+# .ags is 885 MB (988 MB combined with audio.vox), categorically beyond
+# what this hub's rig can safely transfer even after the one-time
+# REFUSE_BYTES accommodation made for Shards of God's much smaller ~126 MB
+# package (see tests/games/shards/PIN). At the rig's own measured real
+# transfer rate (~700 KB/s), 988 MB is 20+ minutes one-way with real wedge
+# risk the whole time (vcctrl's own vcctrld.py: "a transfer that wedges
+# cannot be interrupted -- a cancel lands between files, never inside
+# FTP.EXE"). Operator decision, 2026-09-15: not attempted.
+
+GAME_TITLE="If On A Winter's Night, Four Travelers"
+GAME_YEAR=2021
+GAME_DEVELOPER="Laura Hunt"
+
+# Official listing: the developer's own itch.io page. Free / name-your-
+# own-price, $0 minimum -- confirmed by actually fetching the page and
+# its purchase/download flow (POST .../download_url then .../file/<id>,
+# the same "No thanks, just take me to the downloads" flow the site's
+# own JS performs for a free title; no payment made, no paywall bypassed).
+# A separate $1+ "Supporter Pack" (artbook + OST) exists on the same page
+# and was NOT downloaded -- only the base game, which has a real $0 tier.
+SOURCE_URL="https://laurahunt.itch.io/if-on-a-winters-night-four-travelers"
+DOWNLOADED_UTC="2026-09-15"
+DOWNLOADED_PLATFORM="Linux build (upload id 4486598) -- platform choice is
+    irrelevant to the AGS data itself (same .ags/audio.vox either way)."
+
+# IOAWN4T_Linux.zip itself (gzip-compressed tar despite the .zip name on
+# the page -- confirmed by content, not the extension: `file` reports
+# gzip magic; `tar tzf` lists a real tar stream inside)
+ARCHIVE_SIZE_BYTES=211458536
+ARCHIVE_SHA256=86409d2e84746c8032c03e9a20b5789e127d2d788cac1987f519145e3c034ad3
+
+# ioawn4t.ags (V30 CLIB, extracted from the archive's data/ dir)
+AGS_SIZE_BYTES=885857965
+AGS_SHA256=998a19ebc70cc28d08013edac1b8cb11afc6f0551a0aa50d56d5637dfc4ac8b2
+
+# audio.vox (sibling CLIB, NOT embedded in the main .ags -- see
+# tools/port-game/README.md's 2026-09-15 "a sibling audio.vox" entry;
+# 235 clips, ALL OGG, needing the host-transcode step that entry's fix
+# added)
+AUDIO_VOX_SIZE_BYTES=96947229
+
+# Licensing: no explicit game-content license or LICENSE/COPYING file
+# ships with the download -- data/licenses/ holds only third-party
+# ENGINE dependency copyrights (ags-copyright, liballegro4.4-copyright,
+# libdumb1-copyright, libogg0-copyright, libtheora0-copyright,
+# libvorbis0a-copyright), not a license for the game's own story/art/
+# audio. The game is copyrighted by its author and distributed free/NYOP
+# via itch.io, with no redistribution rights granted beyond "download
+# and play" -- same posture as any other freeware golden reference here
+# (Trilby's Notes, AGS Quest): local-testing-only, never committed,
+# never redistributed. Not a new license judgment call -- recording what
+# was actually read, per this port's own "never guess a license" rule.
+
+# Known engine-side issue, unrelated to the 32-bit display path: room15's
+# room_AfterFadeIn throws "Error: Error running function 'room_AfterFadeIn':
+# Error (line 60): Null pointer referenced" on every run from a cold boot
+# (reproduced identically on DOSBox-X across multiple runs). Non-fatal --
+# the engine logs it and continues, so fps measurement through the full
+# DOSAGS_TAS_AUTO_EXIT_TICK window still completes with exit_code=0 -- but
+# this means this game's own fps numbers reflect whatever state the
+# engine is actually in after that error, not necessarily clean gameplay.
+# Root cause not investigated (plausibly this build's AGS_NO_VIDEO_PLAYER=ON
+# hitting an intro-video call this room's AfterFadeIn makes, but that is a
+# guess, not confirmed by reading the room's own script). Flagged here so
+# a future session doesn't have to rediscover it from scratch.

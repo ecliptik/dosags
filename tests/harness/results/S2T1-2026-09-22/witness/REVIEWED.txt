@@ -1,0 +1,8 @@
+who=dosags-worker
+when=2026-09-22T01:03:34Z
+verdict=clean
+mode=camera-only
+sheet_sha256=65cba79d7d92f623d858c1e1ee1d32e4e18f5c79126947173be45a2454c216cc
+sheet_camera_sha256=5f8ba59bcbb55370633f2c7a1ce2b8eebaf10a0a89023809c86c0b651987b41c
+card_reason=capture card frozen: unique_frames=11 of 25, state samples {'locked': 42, 'frozen': 3, 'nosignal': 55}
+note=S2T1 Trilby's Notes in play, room 3, 512x384x8 (no alias, matches prediction). Card: 1 frame (boot text) then solid black for the rest of the run (min=max=0 raw pixel value) -- the card cannot see this mode, anticipated in the pre-registration ('may or may not see 512x384'). Camera: real content throughout, but VERY dark (the thumbnail grid at normal brightness looks black; a 6-7x brightness boost shows a complete, legible scene each frame -- a standing character sprite, a doorway, no trails, no missing background, single character instance every frame). Room 3 confirmed reached ('Now in room 3' in STDOUT.TXT), no VOID condition. SEPARATE FINDING, not a witness defect: presents_real=180 of renders=4968 (3.6%) is far below the pre-registration's own 30% in-play threshold, despite drive-walk.sh running 23 clicks over the run -- the character is visibly near-stationary across most ~8s-cadence camera samples. Per the pre-registration's own falsification rule this is reported as an idle-room cell, not as sustained in-play; see PLAN.md.

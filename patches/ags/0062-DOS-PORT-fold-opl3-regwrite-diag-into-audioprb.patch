@@ -1,0 +1,207 @@
+From 6d2d16a8a7542cde30310d353a9a73d282f31635 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 14 Sep 2026 10:15:58 -0700
+Subject: [PATCH] DOS-PORT: patch 0062 -- fold SDL/0141's OPL3 regwrite cost
+ diagnostic into AUDIOPRB.LOG (S7)
+
+WHY: S7's real-hardware confirmation of the AUDIOPRB.LOG fix (2026-09-14,
+tests/games/trilbysnotes/results/S7-audioprb-fix-realhw-2026-09-14.md)
+found slots_us did not generalize from DOSBox-X the way pump_us did --
+1403us mean / 15270us max on HW-486-66 vs. DOSBox-X's own 22-126us mean.
+Per this hub's "instrument the thing that produces the unexplained
+quantity, not its neighbors" rule, applied now to slots_us itself: this
+folds SDL patches/SDL/0141's new SDL_DOSOpl3RegWriteDiagSnapshot()
+accessor into the existing AUDIOPRB.LOG windows, splitting slots_us into
+"time inside SDL_DOSOpl3WriteRegister() itself" (register I/O, including
+its inter-write delay loop) versus "everything else the slot Poll() loop
+does" (MIDI event-list traversal, voice allocation bookkeeping).
+
+WHAT: one snapshot-and-reset call per audio_core_entry_poll() invocation,
+right after the slot loop, folded into the existing AudioPollWindow/
+AudioPollDiag structures and AUDIOPRB.LOG line via a new regwrite(...)
+field. No new file I/O, no new log -- same already-open quit.cpp handle
+0061 converged this diagnostic onto.
+
+Also adds a DISCARD-snapshot at function entry, before the slot loop.
+Caught by this patch's own first DOSBox-X smoke run: without it,
+SDL_DOSOpl3WriteRegister() calls from OUTSIDE this function entirely
+(opl3_sink_open() -> SDL_DOSOpl3InitChip() at MIDI-slot-creation time,
+triggered by the engine's music dispatch, not this poll loop) sit in the
+SDL-side accumulator until whichever audio_core_entry_poll() call
+happens to run next and get misattributed to it -- visible as
+regwrite max_us (54950) exceeding that same window's own slots_us max
+(4807), structurally impossible if regwrite time is truly a subset of
+slots_us time. The discard-snapshot resets the accumulator immediately
+before the slot loop so only writes that happen during THIS call's own
+loop reach the real snapshot after it.
+
+Temporary -- to be reverted alongside 0059/0060/0061 once S7 concludes.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/media/audio/audio_core.cpp | 84 ++++++++++++++++++++++++++++++-
+ 1 file changed, 82 insertions(+), 2 deletions(-)
+
+diff --git a/Engine/media/audio/audio_core.cpp b/Engine/media/audio/audio_core.cpp
+index 0dc753b4c..75a4e2dee 100644
+--- a/Engine/media/audio/audio_core.cpp
++++ b/Engine/media/audio/audio_core.cpp
+@@ -198,6 +198,20 @@ void audio_core_slot_stop(int slot_handle)
+ // namespace-scope extern here mangles to a different (unresolved) symbol.
+ extern uclock_t dos_port_engine_start_uclock;
+ 
++// DOS-PORT (S7): SDL-internal diagnostic accessor (SDL patches/SDL/0141,
++// SDL_dos_audio_synth.c/.h). Declared here with C linkage rather than
++// #included, matching shared/audio/opl3_sink.c's own established
++// convention for reaching an SDL-DOS-backend-internal helper from
++// engine-side code -- that header lives under vendor/SDL/src/core/dos/,
++// not on any include path this translation unit can reach. Snapshots
++// SDL_DOSOpl3WriteRegister()'s own in-memory call count + min/mean/max
++// cost since the last snapshot, THEN RESETS it -- called once per
++// audio_core_entry_poll() invocation below so each call's own register-
++// write cost is attributed to the right AudioPollWindow, not smeared
++// across window boundaries.
++extern "C" void SDL_DOSOpl3RegWriteDiagSnapshot(
++    uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us);
++
+ // TEMPORARY DIAGNOSTIC (AUDIOPRB.LOG): S7's real-hardware ABBA
+ // (2026-09-13, tests/games/trilbysnotes/results/S7-abba-2026-09-13.md)
+ // found dos_run_tick_fixed()'s catch-up loop (patch 0047, game_run.cpp)
+@@ -255,6 +269,17 @@ extern uclock_t dos_port_engine_start_uclock;
+ // than overflowing or dropping early (more interesting, per the S1 catch-
+ // up-burst history) windows to make room.
+ //
++// S7 (2026-09-14, real-hardware confirmation + new lead -- see
++// tests/games/trilbysnotes/results/S7-audioprb-fix-realhw-2026-09-14.md):
++// slots_us did NOT generalize from DOSBox-X (22-126us mean there vs.
++// 1403us mean / 15270us max on HW-486-66) the way pump_us did. This adds
++// a regwrite_* rollup -- SDL patches/SDL/0141's own diagnostic, folded in
++// here -- splitting how much of slots_us is SDL_DOSOpl3WriteRegister()
++// itself (register I/O, including its inter-write delay loop) versus
++// everything else the slot Poll() loop does (MIDI event-list traversal,
++// voice allocation bookkeeping). Same in-memory/no-extra-I/O idiom as the
++// rest of this diagnostic.
++//
+ // Temporary -- to be reverted once S7's fix lands and re-measures clean,
+ // same convention as 0136 itself.
+ namespace {
+@@ -268,6 +293,8 @@ struct AudioPollWindow
+     uint32_t window_calls;
+     uint64_t slots_min_us, slots_mean_us, slots_max_us;
+     uint64_t pump_min_us, pump_mean_us, pump_max_us;
++    uint32_t regwrite_calls;
++    uint64_t regwrite_min_us, regwrite_mean_us, regwrite_max_us;
+ };
+ 
+ struct AudioPollDiag
+@@ -276,6 +303,14 @@ struct AudioPollDiag
+     uint32_t window_calls = 0;
+     uint64_t slots_sum_us = 0, slots_min_us = UINT64_MAX, slots_max_us = 0;
+     uint64_t pump_sum_us = 0, pump_min_us = UINT64_MAX, pump_max_us = 0;
++    // regwrite_us_sum is a sum of SDL-side per-audio_core_entry_poll-call
++    // MEANS weighted by that call's own regwrite count (see
++    // dos_diag_record_regwrite) -- SDL_DOSOpl3RegWriteDiagSnapshot()
++    // already collapsed each individual SDL_DOSOpl3WriteRegister() call
++    // into a mean before this layer ever sees it, so this is a rollup of
++    // rollups, not raw per-write samples.
++    uint32_t regwrite_calls_sum = 0;
++    uint64_t regwrite_us_sum = 0, regwrite_min_us = UINT64_MAX, regwrite_max_us = 0;
+ 
+     AudioPollWindow windows[AUDIO_POLL_DIAG_MAX_WINDOWS];
+     uint32_t windows_recorded = 0;
+@@ -307,6 +342,10 @@ void dos_diag_close_window()
+         w.pump_min_us = (d.pump_min_us == UINT64_MAX ? 0 : d.pump_min_us);
+         w.pump_mean_us = d.pump_sum_us / d.window_calls;
+         w.pump_max_us = d.pump_max_us;
++        w.regwrite_calls = d.regwrite_calls_sum;
++        w.regwrite_min_us = (d.regwrite_min_us == UINT64_MAX ? 0 : d.regwrite_min_us);
++        w.regwrite_mean_us = (d.regwrite_calls_sum > 0) ? (d.regwrite_us_sum / d.regwrite_calls_sum) : 0;
++        w.regwrite_max_us = d.regwrite_max_us;
+     }
+     else
+     {
+@@ -315,6 +354,8 @@ void dos_diag_close_window()
+     d.window_calls = 0;
+     d.slots_sum_us = 0; d.slots_min_us = UINT64_MAX; d.slots_max_us = 0;
+     d.pump_sum_us = 0; d.pump_min_us = UINT64_MAX; d.pump_max_us = 0;
++    d.regwrite_calls_sum = 0;
++    d.regwrite_us_sum = 0; d.regwrite_min_us = UINT64_MAX; d.regwrite_max_us = 0;
+ }
+ 
+ void dos_diag_record_audio_poll(uint64_t slots_us, uint64_t pump_us)
+@@ -332,6 +373,22 @@ void dos_diag_record_audio_poll(uint64_t slots_us, uint64_t pump_us)
+         dos_diag_close_window();
+ }
+ 
++// One snapshot per audio_core_entry_poll() call (see the call site below)
++// -- `calls` is how many SDL_DOSOpl3WriteRegister() calls happened during
++// THIS call's slot Poll() loop specifically, so a call with zero register
++// writes (no MIDI backend, or a call that touched no OPL3 register) is a
++// correctly-recorded zero, not folded into a neighboring call's numbers.
++void dos_diag_record_regwrite(uint32_t calls, uint32_t min_us, uint32_t mean_us, uint32_t max_us)
++{
++    if (calls == 0)
++        return;
++    AudioPollDiag &d = g_audio_poll_diag;
++    d.regwrite_calls_sum += calls;
++    d.regwrite_us_sum += (uint64_t)mean_us * calls;
++    if ((uint64_t)min_us < d.regwrite_min_us) d.regwrite_min_us = min_us;
++    if ((uint64_t)max_us > d.regwrite_max_us) d.regwrite_max_us = max_us;
++}
++
+ } // anonymous namespace
+ 
+ // Declared in audio_core.h (DJGPP-gated); called from quit.cpp right
+@@ -355,10 +412,13 @@ void dos_diag_dump_audio_poll(FILE *fp)
+         fprintf(fp,
+             "DOS-PORT audioprb total_calls=%lu window_calls=%lu "
+             "slots_us(min=%lu mean=%lu max=%lu) "
+-            "pump_us(min=%lu mean=%lu max=%lu)\n",
++            "pump_us(min=%lu mean=%lu max=%lu) "
++            "regwrite(calls=%lu min_us=%lu mean_us=%lu max_us=%lu)\n",
+             (unsigned long)w.total_calls_at_close, (unsigned long)w.window_calls,
+             (unsigned long)w.slots_min_us, (unsigned long)w.slots_mean_us, (unsigned long)w.slots_max_us,
+-            (unsigned long)w.pump_min_us, (unsigned long)w.pump_mean_us, (unsigned long)w.pump_max_us);
++            (unsigned long)w.pump_min_us, (unsigned long)w.pump_mean_us, (unsigned long)w.pump_max_us,
++            (unsigned long)w.regwrite_calls, (unsigned long)w.regwrite_min_us,
++            (unsigned long)w.regwrite_mean_us, (unsigned long)w.regwrite_max_us);
+     }
+ }
+ #endif // __DJGPP__
+@@ -367,6 +427,21 @@ void audio_core_entry_poll()
+ {
+ #ifdef __DJGPP__
+     const uint64_t t_entry_us = dos_diag_now_us();
++    // Discard-snapshot: SDL_DOSOpl3WriteRegister() can also be called from
++    // OUTSIDE this function entirely -- e.g. opl3_sink_open() ->
++    // SDL_DOSOpl3InitChip() at MIDI-slot-creation time
++    // (audio_core_slot_init_midi(), triggered by the engine's own music
++    // dispatch, not by this poll loop). Without this, that unrelated
++    // burst of writes sits in the SDL-side accumulator until whichever
++    // audio_core_entry_poll() call happens to run next, and gets folded
++    // into THAT call's regwrite snapshot even though its own slots_us
++    // never saw it -- a real bug this diagnostic's own first DOSBox-X
++    // smoke run caught directly (regwrite max_us=54950 exceeding that
++    // same window's own slots_us max=4807, which is structurally
++    // impossible if regwrite time is truly a subset of slots_us time).
++    // Reset here, before the slot loop, so only writes that happen
++    // DURING this call's own slot loop reach the real snapshot below.
++    SDL_DOSOpl3RegWriteDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
+ #endif
+ 
+     for (auto &entry : g_acore.slots_) {
+@@ -381,6 +456,11 @@ void audio_core_entry_poll()
+ 
+ #ifdef __DJGPP__
+     const uint64_t t_after_slots_us = dos_diag_now_us();
++    {
++        uint32_t rw_calls, rw_min_us, rw_mean_us, rw_max_us;
++        SDL_DOSOpl3RegWriteDiagSnapshot(&rw_calls, &rw_min_us, &rw_mean_us, &rw_max_us);
++        dos_diag_record_regwrite(rw_calls, rw_min_us, rw_mean_us, rw_max_us);
++    }
+ #endif
+ 
+     // DOS-PORT (Sound milestone, S1): mix every active voice into the
+-- 
+2.47.3
+

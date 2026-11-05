@@ -1,0 +1,120 @@
+From 1a09319eb4755dd88b30b5c5fcb4ec9bcf6f2e5b Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 21 Sep 2026 21:55:07 -0700
+Subject: [PATCH] DOS-PORT: patch 0196 -- the alias engages on a horizontally
+ centred (pillarboxed) 1x rung, not just full window width
+
+Why not just what: the alias's own activation check required dst.x == 0
+and dst.w == win->w (the picture spans the window's full width), so it
+could never engage for a game narrower than its window at any 1x rung --
+including every 320-wide title at 512x384 or 640x480, since Mach64 has
+no native 320-width VESA mode (HARDWARE.md) and AGS's own round-scaling
+centres the picture instead, giving a permanently nonzero dst.x. The
+vertical case (a nonzero dst.y, a top/bottom letterbox) was already
+supported and is proven in production (AQF1/AQF2, alias ON y=60); this
+brings the horizontal case to the same standard, since nothing about the
+aliasing technique itself required full width -- each row of the picture
+still sits exactly win->pitch apart regardless of how much of that row it
+occupies, which is the only thing contiguity ever needed. The bound
+check becomes dst.x/dst.x+dst.w within [0, win->w) (mirroring the
+existing dst.y bound), the base pointer gains a + dst.x * bytes_per_pixel
+term, and a new _aliasX field (alongside the existing _aliasY) lets the
+present-time 'already rendered in place' fast path compare against the
+offset the alias actually activated at instead of a hardcoded zero --
+without that second change the alias would activate on one frame and
+immediately deactivate on the next, since dst.x would never again match
+a hardcoded 0.
+---
+ Engine/gfx/ali3dsw.cpp | 34 +++++++++++++++++++++++++---------
+ Engine/gfx/ali3dsw.h   |  2 +-
+ 2 files changed, 26 insertions(+), 10 deletions(-)
+
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index ee9e2a2d5..cf2a2bd60 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -220,7 +220,7 @@ void SDLRendererGraphicsDriver::DosPortAliasDeactivate()
+     if (!_aliasActive)
+         return;
+     _aliasActive = false;
+-    _aliasY = _aliasW = _aliasH = -1;
++    _aliasX = _aliasY = _aliasW = _aliasH = -1;
+     _aliasBase = nullptr;
+     virtualScreen = _origVirtualScreen.get();
+     _stageVirtualScreen = virtualScreen;
+@@ -251,17 +251,33 @@ bool SDLRendererGraphicsDriver::DosPortAliasTryActivate(SDL_Surface *win, const
+     }
+     if (!_aliasHint || _aliasActive || !win || !_origVirtualScreen || !_vscreenSurface)
+         return false;
+-    // Contiguity: the picture must span the full window width, so aliased
+-    // rows sit exactly win->pitch apart with nothing beside them.
+-    if (dst.x != 0 || dst.w != win->w)
+-        return false;
+     if (dst.w != _origVirtualScreen->GetWidth() || dst.h != _origVirtualScreen->GetHeight())
+         return false;   // 1x only; a scaled rung needs the real blit
+     if (_vscreenSurface->format != win->format)
+         return false;   // e.g. a card offering 555 where AGS is hardwired 565
++    // DOS-PORT patch 0196: bounds, not full-span. Every row of the picture still
++    // sits exactly win->pitch apart no matter how much of that row it occupies --
++    // the ONLY thing contiguity ever needed was that dst not run off either edge of
++    // the window's own row, which win->pitch already accounts for on its own. The
++    // old check (dst.x != 0 || dst.w != win->w) required zero horizontal offset,
++    // which is true at Mode 13h (the window IS 320 wide) but can never be true at
++    // any wider rung for a 320-wide game: Mach64 has no native 320-width VESA mode
++    // (HARDWARE.md), so AGS's own "round" scaling centres the picture horizontally,
++    // giving a permanently nonzero dst.x (confirmed live, S2M1 2026-09-22: "render
++    // dest (96, 92, 415, 291 : 320 x 200)" at the 512x384 rung) -- the alias could
++    // never engage there under the old check regardless of anything else about the
++    // picture. The vertical case (dst.y != 0, a top/bottom letterbox) was already
++    // supported below and is proven in production (AQF1/AQF2, "alias ON y=60");
++    // this brings the horizontal case to the same standard.
++    if (dst.x < 0 || dst.x + dst.w > win->w)
++        return false;
+     if (dst.y < 0 || dst.y + dst.h > win->h)
+         return false;
+-    uint8_t *base = (uint8_t *)win->pixels + (size_t)dst.y * (size_t)win->pitch;
++    const SDL_PixelFormatDetails *win_fmt = SDL_GetPixelFormatDetails(win->format);
++    if (!win_fmt || win_fmt->bytes_per_pixel <= 0)
++        return false;
++    uint8_t *base = (uint8_t *)win->pixels + (size_t)dst.y * (size_t)win->pitch +
++                     (size_t)dst.x * (size_t)win_fmt->bytes_per_pixel;
+     BITMAP *al = create_bitmap_userdata(_srcColorDepth, dst.w, dst.h, base,
+                                         (size_t)win->pitch * (size_t)dst.h,
+                                         (size_t)win->pitch, nullptr);
+@@ -278,9 +294,9 @@ bool SDLRendererGraphicsDriver::DosPortAliasTryActivate(SDL_Surface *win, const
+     if (_vscreenSurface && win->format == SDL_PIXELFORMAT_INDEX8)
+         SDL_CreateSurfacePalette(_vscreenSurface);
+     _aliasActive = true;
+-    _aliasY = dst.y; _aliasW = dst.w; _aliasH = dst.h; _aliasBase = win->pixels;
++    _aliasX = dst.x; _aliasY = dst.y; _aliasW = dst.w; _aliasH = dst.h; _aliasBase = win->pixels;
+     dos_port_tick_timing.vscreen_alias_on++;
+-    Debug::Printf("DOS-PORT vscreen alias ON y=%d %dx%d pitch=%d", dst.y, dst.w, dst.h, win->pitch);
++    Debug::Printf("DOS-PORT vscreen alias ON x=%d y=%d %dx%d pitch=%d", dst.x, dst.y, dst.w, dst.h, win->pitch);
+     return true;
+ }
+ #endif
+@@ -1630,7 +1646,7 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+     }
+ #ifdef __DJGPP__
+     else if (_aliasActive && blit_src == _vscreenSurface &&
+-             _aliasBase == win_surface->pixels && dst.x == 0 && dst.y == _aliasY &&
++             _aliasBase == win_surface->pixels && dst.x == _aliasX && dst.y == _aliasY &&
+              dst.w == _aliasW && dst.h == _aliasH)
+     {
+         blitted = true;   // already rendered in place: nothing to copy
+diff --git a/Engine/gfx/ali3dsw.h b/Engine/gfx/ali3dsw.h
+index 87d5f3f31..5ae1fd93a 100644
+--- a/Engine/gfx/ali3dsw.h
++++ b/Engine/gfx/ali3dsw.h
+@@ -416,7 +416,7 @@ private:
+     bool _aliasActive = false;
+     bool _aliasHint = true;      // DOSAGS_DIRECT_VSCREEN=0 disables
+     bool _aliasHintRead = false;
+-    int  _aliasY = -1, _aliasW = -1, _aliasH = -1;
++    int  _aliasX = -1, _aliasY = -1, _aliasW = -1, _aliasH = -1;   // patch 0196: _aliasX, a horizontal offset
+     void *_aliasBase = nullptr;
+     void DosPortAliasDeactivate();
+     bool DosPortAliasTryActivate(SDL_Surface *win, const SDL_Rect &dst);
+-- 
+2.47.3
+

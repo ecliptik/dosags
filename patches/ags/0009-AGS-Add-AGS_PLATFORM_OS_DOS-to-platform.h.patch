@@ -1,0 +1,131 @@
+From 4bc2153d6e426fb34f6e8a7b8b063ab363dbacb4 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 13:39:11 -0700
+Subject: [PATCH] [AGS] Add AGS_PLATFORM_OS_DOS to platform.h's platform-macro
+ chain
+
+Adds a new #elif defined(__DJGPP__) branch defining
+AGS_PLATFORM_OS_DOS (1) and the eight existing AGS_PLATFORM_OS_*
+macros (0), and adds AGS_PLATFORM_OS_DOS (0) to each of the eight
+existing branches (this file redefines the whole flat macro set per
+branch, not an enum -- every branch needs the new macro defined,
+including the ones DOS never takes). Also adds
+AGS_PLATFORM_OS_DOS to the AGS_SEARCH_FOR_GAME_ON_LAUNCH list -- DOS
+launches from the game directory with no wrapper passing a path, same
+as desktop.
+
+Everything else (AGS_PLATFORM_DESKTOP, AGS_SUPPORT_MULTIDISPLAY,
+AGS_HAS_DIRECT3D, AGS_HAS_OPENGL, AGS_OPENGL_ES2,
+AGS_PLATFORM_IS_XDG_UNIX) falls out on its own -- all explicit OS
+lists DOS is simply not in, confirmed by reading each definition
+directly, no further patch needed for any of them.
+---
+ Common/platform/platform.h | 31 ++++++++++++++++++++++++++++++-
+ 1 file changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/Common/platform/platform.h b/Common/platform/platform.h
+index ebf59b889..2f0357ddf 100644
+--- a/Common/platform/platform.h
++++ b/Common/platform/platform.h
+@@ -26,6 +26,7 @@
+     #define AGS_PLATFORM_OS_PSP        (0)
+     #define AGS_PLATFORM_OS_EMSCRIPTEN (0)
+     #define AGS_PLATFORM_OS_FREEBSD    (0)
++    #define AGS_PLATFORM_OS_DOS        (0)
+ #elif defined(_WIN32)
+     //define something for Windows (32-bit and 64-bit)
+     #define AGS_PLATFORM_OS_WINDOWS    (1)
+@@ -36,6 +37,7 @@
+     #define AGS_PLATFORM_OS_PSP        (0)
+     #define AGS_PLATFORM_OS_EMSCRIPTEN (0)
+     #define AGS_PLATFORM_OS_FREEBSD    (0)
++    #define AGS_PLATFORM_OS_DOS        (0)
+ #elif defined(__APPLE__)
+     #include "TargetConditionals.h"
+     #ifndef TARGET_OS_SIMULATOR
+@@ -57,6 +59,7 @@
+         #define AGS_PLATFORM_OS_PSP        (0)
+         #define AGS_PLATFORM_OS_EMSCRIPTEN (0)
+         #define AGS_PLATFORM_OS_FREEBSD    (0)
++        #define AGS_PLATFORM_OS_DOS        (0)
+     #elif TARGET_OS_IOS || TARGET_OS_IPHONE
+         #define AGS_PLATFORM_OS_WINDOWS    (0)
+         #define AGS_PLATFORM_OS_LINUX      (0)
+@@ -66,6 +69,7 @@
+         #define AGS_PLATFORM_OS_PSP        (0)
+         #define AGS_PLATFORM_OS_EMSCRIPTEN (0)
+         #define AGS_PLATFORM_OS_FREEBSD    (0)
++        #define AGS_PLATFORM_OS_DOS        (0)
+     #elif TARGET_OS_OSX || TARGET_OS_MAC
+         #define AGS_PLATFORM_OS_WINDOWS    (0)
+         #define AGS_PLATFORM_OS_LINUX      (0)
+@@ -75,6 +79,7 @@
+         #define AGS_PLATFORM_OS_PSP        (0)
+         #define AGS_PLATFORM_OS_EMSCRIPTEN (0)
+         #define AGS_PLATFORM_OS_FREEBSD    (0)
++        #define AGS_PLATFORM_OS_DOS        (0)
+     #else
+         #error "Unknown Apple platform"
+     #endif
+@@ -87,6 +92,7 @@
+     #define AGS_PLATFORM_OS_PSP        (0)
+     #define AGS_PLATFORM_OS_EMSCRIPTEN (0)
+     #define AGS_PLATFORM_OS_FREEBSD    (0)
++    #define AGS_PLATFORM_OS_DOS        (0)
+ #elif defined(__EMSCRIPTEN__)
+     #define AGS_PLATFORM_OS_WINDOWS    (0)
+     #define AGS_PLATFORM_OS_LINUX      (0)
+@@ -96,6 +102,7 @@
+     #define AGS_PLATFORM_OS_PSP        (0)
+     #define AGS_PLATFORM_OS_EMSCRIPTEN (1)
+     #define AGS_PLATFORM_OS_FREEBSD    (0)
++    #define AGS_PLATFORM_OS_DOS        (0)
+ #elif defined(__FreeBSD__)
+     #define AGS_PLATFORM_OS_WINDOWS    (0)
+     #define AGS_PLATFORM_OS_LINUX      (0)
+@@ -105,6 +112,25 @@
+     #define AGS_PLATFORM_OS_PSP        (0)
+     #define AGS_PLATFORM_OS_EMSCRIPTEN (0)
+     #define AGS_PLATFORM_OS_FREEBSD    (1)
++    #define AGS_PLATFORM_OS_DOS        (0)
++#elif defined(__DJGPP__)
++    // DOS-PORT: DJGPP's GCC predefines __DJGPP__ (and __MSDOS__, not used
++    // here to match this chain's own defined()-per-compiler-macro style).
++    // Everything else in this file derives from these nine flat macros,
++    // confirmed by reading lines 162-194 of the pinned upstream version:
++    // AGS_PLATFORM_DESKTOP, AGS_SUPPORT_MULTIDISPLAY, AGS_HAS_DIRECT3D,
++    // AGS_HAS_OPENGL, AGS_OPENGL_ES2, and AGS_PLATFORM_IS_XDG_UNIX are all
++    // explicit OS lists DOS is simply not in, so no separate patch is
++    // needed for any of them.
++    #define AGS_PLATFORM_OS_WINDOWS    (0)
++    #define AGS_PLATFORM_OS_LINUX      (0)
++    #define AGS_PLATFORM_OS_MACOS      (0)
++    #define AGS_PLATFORM_OS_ANDROID    (0)
++    #define AGS_PLATFORM_OS_IOS        (0)
++    #define AGS_PLATFORM_OS_PSP        (0)
++    #define AGS_PLATFORM_OS_EMSCRIPTEN (0)
++    #define AGS_PLATFORM_OS_FREEBSD    (0)
++    #define AGS_PLATFORM_OS_DOS        (1)
+ #else
+     #error "Unknown platform"
+ #endif
+@@ -184,12 +210,15 @@
+ //  FIXME: AGS_PLATFORM_OS_IOS normally should not be here;
+ //         need to find out how to pass a path to game file
+ //         from the ObjectiveC application side.
++// DOS-PORT: DOS added -- launches from the game directory with no wrapper
++// passing a path, same reasoning as desktop.
+ #define AGS_SEARCH_FOR_GAME_ON_LAUNCH (AGS_PLATFORM_OS_WINDOWS    || \
+                                        AGS_PLATFORM_OS_LINUX      || \
+                                        AGS_PLATFORM_OS_MACOS      || \
+                                        AGS_PLATFORM_OS_IOS        || \
+                                        AGS_PLATFORM_OS_EMSCRIPTEN || \
+-                                       AGS_PLATFORM_OS_FREEBSD )
++                                       AGS_PLATFORM_OS_FREEBSD    || \
++                                       AGS_PLATFORM_OS_DOS )
+ 
+ #define AGS_PLATFORM_IS_XDG_UNIX (AGS_PLATFORM_OS_LINUX || AGS_PLATFORM_OS_FREEBSD)
+ 
+-- 
+2.47.3
+

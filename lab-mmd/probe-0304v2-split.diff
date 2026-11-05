@@ -1,0 +1,89 @@
+diff --git a/Engine/ac/event.cpp b/Engine/ac/event.cpp
+index 927a10a4d..8bf4b7ec8 100644
+--- a/Engine/ac/event.cpp
++++ b/Engine/ac/event.cpp
+@@ -223,13 +223,15 @@ struct DosPortEventInteractionScope
+     }
+ };
+ 
++int dp_split_in_evt = 0; // DOS-PORT probe 0304 (LAB ONLY): inside a kAGSEvent_Script dispatch
+ struct DosPortEventScope
+ {
+     uclock_t t0; int type; int sub; int roomev;
+     DosPortEventScope(int ty, int sb, int rv)
+-        : t0(uclock()), type(ty), sub(sb), roomev(rv) {}
++        : t0(uclock()), type(ty), sub(sb), roomev(rv) { if (ty == 1) dp_split_in_evt++; } // probe 0304
+     ~DosPortEventScope()
+     {
++        if (type == 1) dp_split_in_evt--; // probe 0304
+         long long us = (long long)(uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC;
+         if (us < 0) us = 0;
+         if (type >= 0 && type < 6) { dos_port_evt_us[type] += us; dos_port_evt_n[type]++; }
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index b309b043c..576c601da 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -595,6 +595,7 @@ void quit(const char *quitmsg)
+                     t.bg_spans, t.bg_span_lt16, t.bg_span_lt64, t.bg_span_ge64,
+                     t.bg_spans ? (long)(t.bg_px / t.bg_spans) : 0L);
+ #ifdef __DJGPP__
++                { extern void dp_split_dump(); dp_split_dump(); } // probe 0304 (LAB ONLY)
+                 {   // patch 0150: what event dispatch actually spends its time on
+                     extern long long dos_port_evt_us[6];
+                     extern long dos_port_evt_n[6];
+diff --git a/Engine/script/cc_instance.cpp b/Engine/script/cc_instance.cpp
+index c2cb3d44d..5835b79ee 100644
+--- a/Engine/script/cc_instance.cpp
++++ b/Engine/script/cc_instance.cpp
+@@ -380,6 +380,34 @@ bool ccInstance::FindExportedFunction(const String &fn_name, int32_t &start_at,
+     return true;
+ }
+ 
++
++#ifdef __DJGPP__
++// DOS-PORT probe 0304 v2 (LAB ONLY, never in patches/; LAB-MMD.md 16.6-16.8): time the outermost
++// ccInstance::Run of each kAGSEvent_Script dispatch FROM ITS CALLER, so Run's own code is untouched
++// (v1 put code inside Run and moved `this` out of its register). R_out = script event - Run.
++// Raw uclock_t sums, converted at dump. DOSAGS_SPLIT=0 keeps the counts, takes no clock reads.
++#include <time.h>
++extern int dp_split_in_evt;
++static int dp_split_on = -1, dp_split_depth = 0;
++static long long dp_split_run_t = 0, dp_split_reads = 0, dp_split_pair_t = -1;
++static long dp_split_runs = 0;
++static void dp_split_init()
++{
++    if (dp_split_on >= 0) return;
++    const char *e = getenv("DOSAGS_SPLIT"); dp_split_on = (e && atoi(e) == 0) ? 0 : 1;
++    long long pair = 0;
++    for (int i = 0; i < 1000; ++i) { const uclock_t a = uclock(); const uclock_t b = uclock(); pair += (long long)(b - a); }
++    dp_split_pair_t = pair;
++}
++static uclock_t dp_split_now() { if (!dp_split_on) return 0; dp_split_reads++; return uclock(); }
++void dp_split_dump()
++{
++    Debug::Printf("DOS-PORT split v2 on=%d runs=%ld reads=%ld run_t=%ld pair1000_t=%ld ucps=%ld",
++        dp_split_on, dp_split_runs, (long)dp_split_reads, (long)dp_split_run_t, (long)dp_split_pair_t,
++        (long)UCLOCKS_PER_SEC);
++}
++#endif
++
+ ccInstError ccInstance::CallScriptFunction(const String &funcname, int32_t numargs, const RuntimeScriptValue *params)
+ {
+     cc_clear_error();
+@@ -448,7 +476,16 @@ ccInstError ccInstance::CallScriptFunction(const String &funcname, int32_t numar
+ 
+     InstThreads.push_back(this); // push instance thread
+     _runningInst = this;
++#ifdef __DJGPP__
++    dp_split_init(); // probe 0304 v2: outermost Run inside a script event, timed from here
++    const bool dp_st = dp_split_in_evt > 0 && dp_split_depth == 0;
++    if (dp_st) { dp_split_depth = 1; dp_split_runs++; }
++    const uclock_t dp_s0 = dp_st ? dp_split_now() : 0;
++#endif
+     const ccInstError reterr = Run(start_at);
++#ifdef __DJGPP__
++    if (dp_st) { dp_split_run_t += (long long)(dp_split_now() - dp_s0); dp_split_depth = 0; }
++#endif
+     // Cleanup before returning, even if error
+     ASSERT_STACK_SIZE(numargs);
+     PopValuesFromStack(numargs);

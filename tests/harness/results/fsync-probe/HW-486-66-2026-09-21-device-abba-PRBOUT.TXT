@@ -1,0 +1,137 @@
+fsprobe: sweep path = FSSWEEP.TMP
+fsprobe: default drive = C:, interrogating the default drive
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14581 volume_bytes=2014511104 free_bytes=477790208
+fsprobe: GEOMETRY MATCHES THE CF VOLUME (32768-byte clusters, 61478 total) -- this is C:, NOT a different device.
+fsprobe: 200 iterations per arm, line length 128 bytes
+fsprobe: UCLOCKS_PER_SEC=1193180
+fsprobe: arm order = none
+fsprobe: arms SKIPPED -- the sweep's fsync'd bytes are then
+fsprobe: the only bytes forced to the device in this run.
+
+raw     n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+flush   n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+sync    n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+reopen  n=0 min_us=4294967295 mean_us=0.0 max_us=0 total_ms=0.0
+
+fsprobe: fsync cost per call = mean_us(sync) - mean_us(flush) = 0.0 us
+fsprobe: 240 such calls in a gate run = 0.0 ms
+fsprobe: FSPROBE_STAGES=4, found 4 of FSPROBE_S1..S8
+
+fsprobe: stage 1 sweep path = C:\FSTEST\FSSWEEP.TMP
+
+===== STAGE1: ECHO ARM-A1-CF =====
+ARM-A1-CF
+===== STAGE1 rc=0 =====
+
+fsprobe: ===== SWEEP 1 (STAGE1) =====
+
+fsprobe: sweep -- 800-byte records for 6000 ms (TIME-terminated), wrap=1048576 bytes, spikes >= 20000 us
+fsprobe: at this record size, byte 6400 is record 8 and byte 58400 is record 73; record 8 is byte 6400 and record 73 is byte 58400
+  FIRST rec=1     end_off=800     us=241541   cum_ms=241.5  (first cluster + directory entry)
+  SPIKE rec=1     end_off=800     us=241541   cum_ms=241.5
+  SPIKE rec=50    end_off=40000   us=222930   cum_ms=785.4
+  SPIKE rec=82    end_off=65600   us=224323   cum_ms=1208.6
+  SPIKE rec=118   end_off=94400   us=219320   cum_ms=1656.5
+  SPIKE rec=143   end_off=114400  us=221236   cum_ms=2038.0
+  SPIKE rec=180   end_off=144000  us=221852   cum_ms=2497.4
+  SPIKE rec=205   end_off=164000  us=225524   cum_ms=2878.8
+  SPIKE rec=246   end_off=196800  us=223262   cum_ms=3357.9
+  SPIKE rec=282   end_off=225600  us=217058   cum_ms=3801.3
+  SPIKE rec=317   end_off=253600  us=216291   cum_ms=4245.3
+  SPIKE rec=354   end_off=283200  us=218795   cum_ms=4701.6
+  SPIKE rec=390   end_off=312000  us=215712   cum_ms=5145.4
+  SPIKE rec=425   end_off=340000  us=219604   cum_ms=5591.7
+  SPIKE rec=461   end_off=368800  us=215798   cum_ms=6037.4
+fsprobe: sweep done -- 461 records, 368800 device bytes, 14 spikes, worst 241541 us at off=800
+fsprobe: INTEGRITY attempted=368800 written=368800 short_writes=0 sync_fails=0 -> OK
+fsprobe: free bytes on the sweep drive: start=477790208 end=477790208
+fsprobe: sweep elapsed 6089.2 ms by uclock, 6037.4 ms summed per-record; quiet records n=447 mean_us=6564.2
+fsprobe: events=14 bytes=368800 (NO rate printed: detection is intermittent -- 7, 10 and 14 events across three runs of one configuration)
+fsprobe: volume after sweep:
+fsprobe: default drive = C:, interrogating the sweep's own drive
+fsprobe: sweep drive = C:
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14581 volume_bytes=2014511104 free_bytes=477790208
+fsprobe: GEOMETRY MATCHES THE CF VOLUME (32768-byte clusters, 61478 total) -- this is C:, NOT a different device.
+
+fsprobe: stage 2 sweep path = D:\FSSWEEP.TMP
+
+===== STAGE2: ECHO ARM-B1-RAM =====
+ARM-B1-RAM
+===== STAGE2 rc=0 =====
+
+fsprobe: ===== SWEEP 2 (STAGE2) =====
+
+fsprobe: sweep -- 800-byte records for 6000 ms (TIME-terminated), wrap=1048576 bytes, spikes >= 20000 us
+fsprobe: at this record size, byte 6400 is record 8 and byte 58400 is record 73; record 8 is byte 6400 and record 73 is byte 58400
+  FIRST rec=1     end_off=800     us=1654     cum_ms=1.7  (first cluster + directory entry)
+fsprobe: sweep done -- 3406 records, 627200 device bytes, 0 spikes, worst 2058 us at off=697600
+fsprobe: INTEGRITY attempted=2724800 written=2724800 short_writes=0 sync_fails=0 -> OK
+fsprobe: free bytes on the sweep drive: start=2088960 end=2088960
+fsprobe: sweep elapsed 6014.1 ms by uclock, 5884.7 ms summed per-record; quiet records n=3406 mean_us=1727.7
+fsprobe: events=0 bytes=627200 (NO rate printed: detection is intermittent -- 7, 10 and 14 events across three runs of one configuration)
+fsprobe: volume after sweep:
+fsprobe: default drive = C:, interrogating the sweep's own drive
+fsprobe: sweep drive = D:
+fsprobe: bytes_per_sector=512 sectors_per_cluster=2 CLUSTER_BYTES=1024
+fsprobe: total_clusters=2040 free_clusters=2040 volume_bytes=2088960 free_bytes=2088960
+fsprobe: geometry differs from the CF volume (which is 32768 x 61478) -- this is a DIFFERENT device.
+
+fsprobe: stage 3 sweep path = D:\FSSWEEP.TMP
+
+===== STAGE3: ECHO ARM-B2-RAM =====
+ARM-B2-RAM
+===== STAGE3 rc=0 =====
+
+fsprobe: ===== SWEEP 3 (STAGE3) =====
+
+fsprobe: sweep -- 800-byte records for 6000 ms (TIME-terminated), wrap=1048576 bytes, spikes >= 20000 us
+fsprobe: at this record size, byte 6400 is record 8 and byte 58400 is record 73; record 8 is byte 6400 and record 73 is byte 58400
+  FIRST rec=1     end_off=800     us=1825     cum_ms=1.8  (first cluster + directory entry)
+fsprobe: sweep done -- 3406 records, 627200 device bytes, 0 spikes, worst 2217 us at off=696000
+fsprobe: INTEGRITY attempted=2724800 written=2724800 short_writes=0 sync_fails=0 -> OK
+fsprobe: free bytes on the sweep drive: start=2088960 end=2088960
+fsprobe: sweep elapsed 6013.9 ms by uclock, 5884.6 ms summed per-record; quiet records n=3406 mean_us=1727.7
+fsprobe: events=0 bytes=627200 (NO rate printed: detection is intermittent -- 7, 10 and 14 events across three runs of one configuration)
+fsprobe: volume after sweep:
+fsprobe: default drive = C:, interrogating the sweep's own drive
+fsprobe: sweep drive = D:
+fsprobe: bytes_per_sector=512 sectors_per_cluster=2 CLUSTER_BYTES=1024
+fsprobe: total_clusters=2040 free_clusters=2040 volume_bytes=2088960 free_bytes=2088960
+fsprobe: geometry differs from the CF volume (which is 32768 x 61478) -- this is a DIFFERENT device.
+
+fsprobe: stage 4 sweep path = C:\FSTEST\FSSWEEP.TMP
+
+===== STAGE4: ECHO ARM-A2-CF =====
+ARM-A2-CF
+===== STAGE4 rc=0 =====
+
+fsprobe: ===== SWEEP 4 (STAGE4) =====
+
+fsprobe: sweep -- 800-byte records for 6000 ms (TIME-terminated), wrap=1048576 bytes, spikes >= 20000 us
+fsprobe: at this record size, byte 6400 is record 8 and byte 58400 is record 73; record 8 is byte 6400 and record 73 is byte 58400
+  FIRST rec=1     end_off=800     us=14959    cum_ms=15.0  (first cluster + directory entry)
+  SPIKE rec=35    end_off=28000   us=217113   cum_ms=452.3
+  SPIKE rec=72    end_off=57600   us=217802   cum_ms=905.7
+  SPIKE rec=108   end_off=86400   us=215753   cum_ms=1347.2
+  SPIKE rec=143   end_off=114400  us=216633   cum_ms=1785.7
+  SPIKE rec=164   end_off=131200  us=223695   cum_ms=2133.0
+  SPIKE rec=216   end_off=172800  us=219717   cum_ms=2681.1
+  SPIKE rec=287   end_off=229600  us=223684   cum_ms=3350.9
+  SPIKE rec=358   end_off=286400  us=216292   cum_ms=4014.9
+  SPIKE rec=431   end_off=344800  us=218699   cum_ms=4697.6
+  SPIKE rec=502   end_off=401600  us=220228   cum_ms=5367.5
+  SPIKE rec=573   end_off=458400  us=215744   cum_ms=6039.7
+fsprobe: sweep done -- 573 records, 458400 device bytes, 11 spikes, worst 223695 us at off=131200
+fsprobe: INTEGRITY attempted=458400 written=458400 short_writes=0 sync_fails=0 -> OK
+fsprobe: free bytes on the sweep drive: start=477790208 end=477790208
+fsprobe: sweep elapsed 6085.8 ms by uclock, 6039.7 ms summed per-record; quiet records n=562 mean_us=6466.7
+fsprobe: events=11 bytes=458400 (NO rate printed: detection is intermittent -- 7, 10 and 14 events across three runs of one configuration)
+fsprobe: volume after sweep:
+fsprobe: default drive = C:, interrogating the sweep's own drive
+fsprobe: sweep drive = C:
+fsprobe: bytes_per_sector=512 sectors_per_cluster=64 CLUSTER_BYTES=32768
+fsprobe: total_clusters=61478 free_clusters=14581 volume_bytes=2014511104 free_bytes=477790208
+fsprobe: GEOMETRY MATCHES THE CF VOLUME (32768-byte clusters, 61478 total) -- this is C:, NOT a different device.
+fsprobe: done

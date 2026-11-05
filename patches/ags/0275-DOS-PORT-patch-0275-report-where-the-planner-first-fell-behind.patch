@@ -1,0 +1,198 @@
+From 927f092dc7f4721ebe80a6919e40ea249a28bccf Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 21:49:47 -0700
+Subject: [PATCH] DOS-PORT: patch 0275 -- report where the MIDI planner first
+ fell behind
+
+plan_behind counts the times MidiIsrPlan() found its plan below the
+device floor (now + 2 SB IRQs) outside a resume, and skipped the gap in
+song time. That skip is audible when it lands mid-song. But the count
+alone cannot say where it happened. In the lab, 5 of 65 fixed-cycles
+runs read 1 and the rest 0. Every instrumented rebuild made the event
+vanish, and a byte ring showed no skip inside the played music. Each
+look needed a throwaway build that moved the timing it was chasing.
+
+The status line now carries plan_behind_at=<song_ms>@<loop>/<gap>irq/
+<first|later> for the first event, and stays empty while plan_behind is
+0:
+- song ms: where in the song;
+- the main-loop tick: where in the run;
+- the planner-call gap in SB IRQs: a starved planner shows ~42 or more,
+  a short gap points elsewhere;
+- first: whether it was the first plan after the song's MidiIsrBegin().
+  A start-of-song IRQ landing between Begin and that plan shifts the
+  song by one slot before its first note and skips nothing.
+Any run that shows the counter then also says where. It needs no extra
+build and serves both deferred MIDI transports on this series (OPL3 and
+the blind MPU replay), since they share the planner.
+
+Reporting only: the counter, the skip and the plan are unchanged. One
+bool member marks the song's first plan. The first event's fields are
+kept in statics.
+
+The status buffers grow so the new field is never cut off:
+- midi_fragment 320 -> 400. The isr fragment was 258 bytes at long-run
+  values before this patch (8-digit event and write counts). It is 308
+  with the field filled, which fits 320 with only 12 to spare. With every
+  field at its type maximum it is 390 bytes, which fits 400.
+- the line buffers g_last_status and the status string 640 -> 768. The
+  PCM part at its type maximum is 350 bytes, plus a full 399-byte
+  fragment, gives 749.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/media/audio/audioplayer.cpp       |  7 ++++--
+ Engine/media/audio/audioplayer.h         |  1 +
+ Engine/platform/dos/dos_audio_mixer.cpp  |  6 +++---
+ Engine/platform/dos/dos_midi_backend.cpp | 27 ++++++++++++++++++++----
+ Engine/platform/dos/dos_midi_backend.h   |  4 +++-
+ 5 files changed, 35 insertions(+), 10 deletions(-)
+
+diff --git a/Engine/media/audio/audioplayer.cpp b/Engine/media/audio/audioplayer.cpp
+index 368679b58..63e4d0ec1 100644
+--- a/Engine/media/audio/audioplayer.cpp
++++ b/Engine/media/audio/audioplayer.cpp
+@@ -118,6 +118,7 @@ void AudioPlayer::MidiIsrBegin()
+         _midiPlanUs = (uint64_t)(_midiLastIrq + 2) * _midiPeriodUs;
+         _midiShiftUs = _midiPlanUs;
+         _midiResumed = false;
++        _midiFirstPlan = true; // DOS-PORT (patch 0275): the next plan is this song's first
+         // DOS-PORT (patch 0208): calibration base -- IRQ count and uclock now.
+         _midiSongUs = 0;
+         _midiLastSongMs = 0;
+@@ -150,12 +151,14 @@ void AudioPlayer::MidiIsrPlan()
+         // Fell behind the device (a stall longer than the lookahead) or
+         // resumed from a pause: skip the gap in SONG time instead of
+         // replaying it late, all at once.
+-        if (!_midiResumed)
+-            dos_midi_backend_note_plan_behind();
++        if (!_midiResumed) // DOS-PORT (patch 0275): with where it happened
++            dos_midi_backend_note_plan_behind((uint32_t)(_midiSongUs / 1000u), get_loop_counter(),
++                now - _midiLastIrq, _midiFirstPlan);
+         _midiShiftUs += floor_us - _midiPlanUs;
+         _midiPlanUs = floor_us;
+     }
+     _midiResumed = false;
++    _midiFirstPlan = false; // DOS-PORT (patch 0275)
+     // DOS-PORT (patch 0208): the real IRQ period, measured against uclock
+     // (read only -- the PIT is never reprogrammed) since the song started.
+     // Used once 43 IRQs (~2 s) have elapsed, clamped to +-5% of nominal; the
+diff --git a/Engine/media/audio/audioplayer.h b/Engine/media/audio/audioplayer.h
+index 7c80cf234..85d186330 100644
+--- a/Engine/media/audio/audioplayer.h
++++ b/Engine/media/audio/audioplayer.h
+@@ -174,6 +174,7 @@ private:
+     uint32_t _midiLookIrqs = 0;
+     uint32_t _midiLastIrq = 0;
+     bool _midiResumed = false;
++    bool _midiFirstPlan = false; // DOS-PORT (patch 0275): no plan yet since MidiIsrBegin()
+     uint64_t MidiSongMs() const { return (_midiPlanUs - _midiShiftUs) / 1000u + 1000u; }
+     // DOS-PORT (patch 0208): the song clock advances by the MEASURED IRQ
+     // period (IRQ count against uclock since song start), not the nominal
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index 529b6fc32..4942b3573 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -170,7 +170,7 @@ uint32_t g_room_since = 0;
+ // shutdown_sound()) still reports the real final state instead of the
+ // "never opened" NA sentinel. Left at "NA" if the device was never
+ // opened at all, so that genuine case is still distinguishable.
+-char g_last_status[640] = "NA"; // patch 0252: 512 -> 640, room for mixed=,...,inflight= beside 0213's fields
++char g_last_status[768] = "NA"; // patch 0252: 512 -> 640, room for mixed=,...,inflight= beside 0213's fields; patch 0275: 640 -> 768
+ 
+ void format_status_string(char *buf, size_t bufsize)
+ {
+@@ -178,7 +178,7 @@ void format_status_string(char *buf, size_t bufsize)
+     const int bits = static_cast<int>(SDL_AUDIO_BITSIZE(fmt));
+     const char chan_letter = (DOS_AUDIO_MIXER_CHANNELS == 1) ? 'm' : 's';
+     const char *device = g_gus_backend ? "gus" : "sb";
+-    char midi_fragment[320];
++    char midi_fragment[400]; // DOS-PORT (patch 0275): 320 -> 400, room for plan_behind_at=
+     // DOS-PORT (Sound milestone, S4): dos_midi_backend owns the real
+     // "midi=<backend>,events=<n>" fragment now -- S1 hardcoded ";midi=none"
+     // here since no MIDI backend existed yet.
+@@ -642,7 +642,7 @@ const char *dos_audio_mixer_status_string()
+ {
+     if (!g_stream && !g_gus_open)
+         return g_last_status; // "NA" if never opened, else the shutdown-time snapshot
+-    static char buf[640];   // patch 0252: 512 -> 640
++    static char buf[768];   // patch 0252: 512 -> 640; patch 0275: 640 -> 768
+     format_status_string(buf, sizeof(buf));
+     return buf;
+ }
+diff --git a/Engine/platform/dos/dos_midi_backend.cpp b/Engine/platform/dos/dos_midi_backend.cpp
+index bca8f43d0..b102bd047 100644
+--- a/Engine/platform/dos/dos_midi_backend.cpp
++++ b/Engine/platform/dos/dos_midi_backend.cpp
+@@ -51,6 +51,12 @@ bool g_tick_isr = false;
+ uint32_t g_tick_period_us = 0;
+ uint32_t g_tick_lookahead = 0;
+ uint32_t g_plan_behind = 0;
++// DOS-PORT (patch 0275): where the first plan_behind event happened -- song ms,
++// main-loop tick, the planner-call gap in SB IRQs, and whether it was the
++// first plan after the song's start. Reporting only.
++static bool g_pb_seen = false;
++static uint32_t g_pb_song_ms = 0, g_pb_loop = 0, g_pb_gap_irqs = 0;
++static bool g_pb_first = false;
+ uint32_t g_real_period_us = 0; // DOS-PORT (patch 0208)
+ int g_rtc_last_s = -1;
+ 
+@@ -387,9 +393,17 @@ void dos_midi_backend_note_isr_period(uint32_t period_us)
+     g_real_period_us = period_us;
+ }
+ 
+-void dos_midi_backend_note_plan_behind()
++void dos_midi_backend_note_plan_behind(uint32_t song_ms, uint32_t loop_tick, uint32_t gap_irqs, bool first_plan)
+ {
+     g_plan_behind++;
++    if (!g_pb_seen) // DOS-PORT (patch 0275): keep the first event only
++    {
++        g_pb_seen = true;
++        g_pb_song_ms = song_ms;
++        g_pb_loop = loop_tick;
++        g_pb_gap_irqs = gap_irqs;
++        g_pb_first = first_plan;
++    }
+ }
+ 
+ void dos_midi_backend_note_tick(uint32_t events, uint32_t gap_ms, uint32_t loop_tick)
+@@ -438,12 +452,17 @@ void dos_midi_backend_status_fragment(char *buf, size_t bufsize)
+         Uint32 wr = 0, late = 0, late_max = 0, burst = 0, full = 0, dropped = 0, sync = 0;
+         SDL_DOSMidiDeferStats(&wr, &late, &late_max, &burst, &full);
+         SDL_DOSMidiDeferStats2(&dropped, &sync);
++        // DOS-PORT (patch 0275): plan_behind_at=<song_ms>@<loop>/<gap>irq/<first|later>, empty when no event.
++        char pb_at[48] = "";
++        if (g_pb_seen)
++            std::snprintf(pb_at, sizeof(pb_at), "%u@%u/%uirq/%s", (unsigned)g_pb_song_ms, (unsigned)g_pb_loop,
++                (unsigned)g_pb_gap_irqs, g_pb_first ? "first" : "later");
+         std::snprintf(buf, bufsize, "midi=%s,events=%llu%s,midi_tick=isr,period_us=%u,lookahead=%u,isr_writes=%u,"
+-            "late_writes=%u,late_max_ms=%u,isr_burst=%u,qfull=%u,qsync=%u,qdropped=%u,plan_behind=%u,clk=%llu/%ds,"
+-            "real_period_us=%u",
++            "late_writes=%u,late_max_ms=%u,isr_burst=%u,qfull=%u,qsync=%u,qdropped=%u,plan_behind=%u,plan_behind_at=%s,"
++            "clk=%llu/%ds,real_period_us=%u",
+             kind_name(g_last_kind), (unsigned long long)g_events_dispatched, chip, g_tick_period_us, g_tick_lookahead,
+             (unsigned)wr, (unsigned)late, (unsigned)((uint64_t)late_max * g_tick_period_us / 1000u), (unsigned)burst,
+-            (unsigned)full, (unsigned)sync, (unsigned)dropped, g_plan_behind, (unsigned long long)g_song_ms, rtc_s,
++            (unsigned)full, (unsigned)sync, (unsigned)dropped, g_plan_behind, pb_at, (unsigned long long)g_song_ms, rtc_s,
+             g_real_period_us);
+         return;
+     }
+diff --git a/Engine/platform/dos/dos_midi_backend.h b/Engine/platform/dos/dos_midi_backend.h
+index 06d8b2cb7..b1abd38db 100644
+--- a/Engine/platform/dos/dos_midi_backend.h
++++ b/Engine/platform/dos/dos_midi_backend.h
+@@ -166,7 +166,9 @@ void dos_midi_backend_note_tick(uint32_t events, uint32_t gap_ms, uint32_t loop_
+ // the device (a main-loop stall longer than the lookahead).
+ int dos_midi_backend_defer_kind(DosMidiBackendKind kind);
+ void dos_midi_backend_set_tick_mode(bool isr, uint32_t period_us, uint32_t lookahead_irqs);
+-void dos_midi_backend_note_plan_behind();
++// DOS-PORT (patch 0275): the first event's song ms, main-loop tick, planner-call
++// gap in SB IRQs and first-plan-after-start flag go to plan_behind_at=.
++void dos_midi_backend_note_plan_behind(uint32_t song_ms, uint32_t loop_tick, uint32_t gap_irqs, bool first_plan);
+ // DOS-PORT (patch 0208): the measured IRQ period the planner is using.
+ void dos_midi_backend_note_isr_period(uint32_t period_us);
+ 
+-- 
+2.47.3
+

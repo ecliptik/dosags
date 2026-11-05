@@ -1,0 +1,286 @@
+From ac64721eb614b8f6083616d6af0fdaad2e79b985 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 21 Sep 2026 11:17:30 -0700
+Subject: [PATCH] DOS-PORT: patch 0186 -- report the campaign counters in the
+ run manifest
+
+Consolidates the reporting side of 0125, 0126, 0127, 0133, 0135, 0146, 0150,
+0152, 0154, 0155, 0156, 0157, 0158, 0159, 0162, 0167, 0168, 0175, 0176, 0177,
+0179, 0180, 0181, 0184, 0185 and 0186. Engine/main/quit.cpp only.
+
+Every counter added by the earlier patches in this series needs a line at
+shutdown to be readable at all, and a bracket that is added but never emitted
+is exactly the failure this campaign hit once already (RBB1: a cell spent,
+nothing printed). So the emit code sits in one place, after everything it
+reads.
+
+0146 adds the second defence to the tick-phase writer: a phase that was
+entered cannot have taken no time, and one that was never entered is an
+instrument that did not fire. Both are flagged in the output rather than
+asserted, because a legitimately tiny phase can round to zero microseconds
+and a crash there would be worse than a wrong number.
+
+Link dependency: this file declares extern "C" counters defined in
+vendor/SDL (dos_port_vblank_*, dos_port_flush_*, dos_port_fb_created), so it
+builds only with SDL patch 0177 applied as well. Both series are applied
+together by apply-patches.sh.
+
+Provenance of this export (2026-09-21): these edits sat uncommitted in the
+vendor tree from patch 0123 onward, which is why every gate cell since said
+build_dirty=1. They were made under one campaign-wide patch counter shared
+with vendor/SDL, and each hunk carries its number in an in-source comment.
+Intermediate states were never committed, so this patch is a hunk-level
+partition of the final tree by concern, attributed by those comments -- not a
+replay of the order the edits were made in, and its intermediate state was not
+built on its own. The numbers named below are the ones found in its hunks.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/main/quit.cpp | 207 +++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 207 insertions(+)
+
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 53301f9e5..0c399e8d8 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -68,6 +68,35 @@
+ #include "script/cc_common.h"
+ #include "media/audio/audio_system.h"
+ #include "media/video/video.h"
++#include "ac/draw_software.h"   // patch 0175: dirty-source tally
++
++#ifdef __DJGPP__
++// patch 0177: defined in SDL_dosframebuffer.c, so C linkage -- and at file
++// scope, because a linkage specification is not a statement and cannot sit
++// inside a function body.
++extern "C" {
++extern long dos_port_vblank_vsync_leg;
++extern long dos_port_vblank_dac_leg;
++extern long dos_port_vblank_calls;
++extern long dos_port_vblank_skipped;
++extern long dos_port_vblank2_vsync_leg;
++extern long dos_port_vblank2_dac_leg;
++extern long dos_port_vblank2_calls;
++extern long dos_port_vblank2_skipped;
++extern long dos_port_flush_banked;
++extern long dos_port_flush_lfb;
++extern long dos_port_vblank_entered;   // patch 0184: the callee itself
++extern long dos_port_fb_created;       // patch 0186: surface rebuilds
++}
++#endif
++
++#if defined(__DJGPP__) && defined(DOSAGS_SPRITE_RUN_STATS)
++extern "C" {
++extern unsigned long dosags_spr_px;
++extern unsigned long dosags_spr_opaque_px;
++extern unsigned long dosags_spr_runs;
++}
++#endif
+ 
+ using namespace AGS::Common;
+ using namespace AGS::Engine;
+@@ -209,13 +238,47 @@ QuitReason quit_check_for_error_state(const char *qmsg, String &errmsg, String &
+ // total_us is also printed directly (new trailing field, parser-
+ // optional) so the full-precision aggregate is visible without relying
+ // on mean_ms's rounding.
++// DOS-PORT patch 0146: the SECOND defence, for the failure class the
++// sum-check assertion cannot see.
++//
++// The sum check (game_run.cpp, patch 0144) asks whether a decomposition
++// adds up. It cannot ask whether the interval measured is the intended
++// one -- a bracket that spans nothing decomposes perfectly into nothing.
++// Today the per-skip instrument printed a well-formed row of zeros for
++// exactly that reason, and patch 0083's truncation bug had the same shape:
++// thousands of calls summing to a total of zero, which is arithmetically
++// consistent and physically impossible.
++//
++// So: a phase that was ENTERED cannot have taken no time. Flagged in the
++// output rather than asserted, because a legitimately tiny phase on a fast
++// host can round to zero microseconds and a crash here would be worse than
++// a wrong number. The flag is for whoever reads the file.
++static long dos_port_tick_emit_suspect = 0;
++
+ static void dos_port_tick_emit(FILE *log, const char *name, const DosPortTickPhaseStats &s)
+ {
+     const long total_ms = (long)(s.total_us / 1000);
++    const char *suspect = "";
++    if (s.calls > 0 && s.total_us == 0)
++    {
++        suspect = " SUSPECT=entered-but-zero-time";
++        dos_port_tick_emit_suspect++;
++    }
++    else if (s.calls == 0)
++    {
++        // Distinct from the above and a different bug: an instrument that
++        // never fired at all. That is the RBB1 failure -- a bracket added,
++        // a cell spent, and nothing emitted -- and it is worth naming in
++        // the file so it cannot be missed twice.
++        suspect = " SUSPECT=never-entered";
++        dos_port_tick_emit_suspect++;
++    }
+     fprintf(log, "DOS-PORT tickstats_%s calls=%ld total_ms=%ld min_ms=%ld max_ms=%ld mean_ms=%.2f clamped_neg=%ld total_us=%lld\n",
+         name, s.calls, total_ms, s.min_ms, s.max_ms,
+         s.calls > 0 ? (double)s.total_us / 1000.0 / (double)s.calls : 0.0,
+         s.clamped_negative_count, s.total_us);
++    if (suspect[0])
++        fprintf(log, "DOS-PORT tickstats_%s%s\n", name, suspect);
+ }
+ #endif
+ 
+@@ -489,9 +552,153 @@ void quit(const char *quitmsg)
+                 const DosPortTickTiming &t = dos_port_tick_timing;
+                 dos_port_tick_emit(run_manifest_log, "script_vm", t.script_vm);
+                 dos_port_tick_emit(run_manifest_log, "render_backbuffer", t.render_backbuffer);
++                dos_port_tick_emit(run_manifest_log, "rb_sprite_time", t.rb_sprite_time);  // patch 0125
+                 dos_port_tick_emit(run_manifest_log, "input_poll", t.input_poll);
+                 dos_port_tick_emit(run_manifest_log, "audio_sync", t.audio_sync);
+                 dos_port_tick_emit(run_manifest_log, "scene_construct", t.scene_construct);
++                // patch 0126: both instruments emitted, because a patch
++                // with two instruments needs both checked -- the batch
++                // bracket silently produced nothing when only one was.
++                dos_port_tick_emit(run_manifest_log, "bg_restore", t.bg_restore);
++                // patch 0133: all four, because a patch with N instruments
++                // needs N checked -- learned the hard way twice today.
++                dos_port_tick_emit(run_manifest_log, "sc_overlays", t.sc_overlays);
++                dos_port_tick_emit(run_manifest_log, "sc_room_view", t.sc_room_view);
++                dos_port_tick_emit(run_manifest_log, "sc_ui_view", t.sc_ui_view);
++                dos_port_tick_emit(run_manifest_log, "sc_screen_ovl", t.sc_screen_ovl);
++                dos_port_tick_emit(run_manifest_log, "sc_preroom", t.sc_preroom);       // patch 0135
++                dos_port_tick_emit(run_manifest_log, "sc_prep_objects", t.sc_prep_objects);
++                dos_port_tick_emit(run_manifest_log, "sc_prep_chars", t.sc_prep_chars);
++                dos_port_tick_emit(run_manifest_log, "sc_draw_list", t.sc_draw_list);
++                dos_port_tick_emit(run_manifest_log, "sc_viewports", t.sc_viewports);
++                Debug::Printf("DOS-PORT bgstruct_final calls=%ld whole=%ld px=%ld slow_px=%ld",
++                    t.bg_calls, t.bg_whole, (long)t.bg_px, (long)t.bg_slow_px);
++                Debug::Printf("DOS-PORT bgspans n=%ld lt16=%ld lt64=%ld ge64=%ld mean_px=%ld",  // patch 0162
++                    t.bg_spans, t.bg_span_lt16, t.bg_span_lt64, t.bg_span_ge64,
++                    t.bg_spans ? (long)(t.bg_px / t.bg_spans) : 0L);
++#ifdef __DJGPP__
++                {   // patch 0150: what event dispatch actually spends its time on
++                    extern long long dos_port_evt_us[6];
++                    extern long dos_port_evt_n[6];
++                    extern long long dos_port_evt_obj_us[8];
++                    extern long dos_port_evt_obj_n[8];
++                    static const char *EVN[6] =
++                        { "none", "script", "object", "fadein", "gui", "newroom" };
++                    for (int i = 0; i < 6; ++i)
++                        Debug::Printf("DOS-PORT evtype %s n=%ld us=%ld",
++                            EVN[i], dos_port_evt_n[i], (long)dos_port_evt_us[i]);
++                    // patch 0152: the SYMBOLIC name, not the numeric code.
++                    // This line printed "subtype=1" and I read it as Hotspot
++                    // because the switch in process_event lists Hotspot
++                    // first; the enum says Room is 1 and Hotspot is 2. The
++                    // right answer came from checking the enum, which is a
++                    // discipline. Printing the name is a fix -- it removes
++                    // the downstream mapping that can be got wrong at all.
++                    static const char *OBN[8] =
++                        { "none", "room", "hotspot", "region",
++                          "sub4", "sub5", "sub6", "sub7" };
++                    for (int i = 0; i < 8; ++i)
++                        if (dos_port_evt_obj_n[i])
++                            Debug::Printf("DOS-PORT evobj %s n=%ld us=%ld",
++                                OBN[i], dos_port_evt_obj_n[i], (long)dos_port_evt_obj_us[i]);
++                    extern long long dos_port_afterfadein_gui_us;   // patch 0155
++                    extern long dos_port_afterfadein_gui_n;
++                    extern long long dos_port_afterfadein_log_us;
++                    extern long dos_port_afterfadein_log_n;
++                    extern long long dos_port_afterfadein_line_us;  // patch 0156
++                    extern long dos_port_afterfadein_line_n;
++                    Debug::Printf("DOS-PORT afterfadein gui_n=%ld gui_us=%ld log_n=%ld log_us=%ld line_n=%ld line_us=%ld",
++                        dos_port_afterfadein_gui_n, (long)dos_port_afterfadein_gui_us,
++                        dos_port_afterfadein_log_n, (long)dos_port_afterfadein_log_us,
++                        dos_port_afterfadein_line_n, (long)dos_port_afterfadein_line_us);
++                    extern long long dos_port_afterfadein_onevent_us;   // patch 0157
++                    extern long dos_port_afterfadein_onevent_n;
++                    extern long long dos_port_afterfadein_nested_us;   // patch 0159
++                    extern long long dos_port_afterfadein_script_us;   // patch 0180
++                    Debug::Printf("DOS-PORT afterfadein_script us=%ld", (long)dos_port_afterfadein_script_us);
++                    Debug::Printf("DOS-PORT afterfadein onevent_n=%ld onevent_us=%ld nested_us=%ld",
++                        dos_port_afterfadein_onevent_n, (long)dos_port_afterfadein_onevent_us,
++                        (long)dos_port_afterfadein_nested_us);
++                    {   // patch 0175: dirty pixels by source
++                        static const char *DSN[] = {"other","roomsprite","uisprite","cursor","screen"};
++                        for (int _d = 0; _d < kDirtySrc_Count; ++_d)
++                            Debug::Printf("DOS-PORT dirtysrc %s n=%ld px=%ld",
++                                DSN[_d], dos_port_dirty_src_n[_d], (long)dos_port_dirty_src_px[_d]);
++                    }
++                    {   // patch 0177: HARDWARE.md row 59's one-variable test
++                        Debug::Printf("DOS-PORT vblank vsync_leg=%ld dac_leg=%ld called=%ld skipped=%ld",
++                            dos_port_vblank_vsync_leg, dos_port_vblank_dac_leg,
++                            dos_port_vblank_calls, dos_port_vblank_skipped);
++                        Debug::Printf("DOS-PORT vblank2 vsync_leg=%ld dac_leg=%ld called=%ld skipped=%ld",
++                            dos_port_vblank2_vsync_leg, dos_port_vblank2_dac_leg,
++                            dos_port_vblank2_calls, dos_port_vblank2_skipped);
++                        extern long dp_fade8_steps;   // patch 0185
++                        extern long long dp_fade8_interp_us, dp_fade8_setpal_us;
++                        Debug::Printf("DOS-PORT fade8 steps=%ld interp_us=%ld setpal_us=%ld",
++                            dp_fade8_steps, (long)dp_fade8_interp_us, (long)dp_fade8_setpal_us);
++                        Debug::Printf("DOS-PORT flushpath banked=%ld lfb=%ld vblank_entered=%ld fb_created=%ld",
++                            dos_port_flush_banked, dos_port_flush_lfb, dos_port_vblank_entered,
++                            dos_port_fb_created);
++                    }
++                    {   // patch 0179: per-object scene-setup split
++                        extern long long dos_port_objsetview_us, dos_port_objanimate_us, dos_port_objvisible_us;
++                        extern long dos_port_objsetview_n, dos_port_objanimate_n, dos_port_objvisible_n;
++                        Debug::Printf("DOS-PORT objsetup setview_n=%ld setview_us=%ld animate_n=%ld animate_us=%ld visible_n=%ld visible_us=%ld",
++                            dos_port_objsetview_n, (long)dos_port_objsetview_us,
++                            dos_port_objanimate_n, (long)dos_port_objanimate_us,
++                            dos_port_objvisible_n, (long)dos_port_objvisible_us);
++                    }
++                    {   // patch 0181: the script's own file I/O
++                        extern long long dos_port_scfile_open_us, dos_port_scfile_write_us, dos_port_scfile_close_us;
++                        extern long dos_port_scfile_open_n, dos_port_scfile_write_n, dos_port_scfile_close_n;
++                        Debug::Printf("DOS-PORT scfile open_n=%ld open_us=%ld write_n=%ld write_us=%ld close_n=%ld close_us=%ld",
++                            dos_port_scfile_open_n, (long)dos_port_scfile_open_us,
++                            dos_port_scfile_write_n, (long)dos_port_scfile_write_us,
++                            dos_port_scfile_close_n, (long)dos_port_scfile_close_us);
++                    }
++                    extern long dos_port_big_gui_n;            // patch 0167
++                    extern long dos_port_big_gui_unchanged;
++                    extern long dos_port_gui_tally[64];        // patch 0168
++                    extern long dos_port_gui_unchanged_tally[64];
++                    for (int _g = 0; _g < 64; ++_g)
++                        if (dos_port_gui_tally[_g])
++                            Debug::Printf("DOS-PORT guitally idx=%d n=%ld unchanged=%ld",
++                                _g, dos_port_gui_tally[_g], dos_port_gui_unchanged_tally[_g]);
++                    extern long dos_port_big_gui_opaque, dos_port_big_gui_masked;  // 0176
++                    Debug::Printf("DOS-PORT bigguiopaque opaque=%ld masked=%ld",
++                        dos_port_big_gui_opaque, dos_port_big_gui_masked);
++                    Debug::Printf("DOS-PORT biggui_final n=%ld unchanged=%ld pct=%ld",
++                        dos_port_big_gui_n, dos_port_big_gui_unchanged,
++                        dos_port_big_gui_n ? (100 * dos_port_big_gui_unchanged / dos_port_big_gui_n) : 0L);
++                    extern long long dos_port_screenshot_us;   // patch 0158
++                    extern long dos_port_screenshot_n;
++                    Debug::Printf("DOS-PORT screenshot n=%ld us=%ld",
++                        dos_port_screenshot_n, (long)dos_port_screenshot_us);
++                    extern long long dos_port_evt_interaction_us;   // patch 0154
++                    extern long dos_port_evt_interaction_n;
++                    Debug::Printf("DOS-PORT evinteraction n=%ld us=%ld",
++                        dos_port_evt_interaction_n, (long)dos_port_evt_interaction_us);
++                    extern long long dos_port_evt_room_us[12];
++                    extern long dos_port_evt_room_n[12];
++                    static const char *RVN[12] = {
++                        "edgeleft","edgeright","edgebottom","edgetop",
++                        "firstenter","beforefadein","repexec","afterfadein",
++                        "beforefadeout","afterfadeout","ev10","ev11" };
++                    for (int i = 0; i < 12; ++i)
++                        if (dos_port_evt_room_n[i])
++                            Debug::Printf("DOS-PORT evroom %s n=%ld us=%ld",
++                                RVN[i], dos_port_evt_room_n[i], (long)dos_port_evt_room_us[i]);
++                }
++#endif
++                Debug::Printf("DOS-PORT blackfill skipped=%ld done=%ld px=%ld rects=%ld whole=%ld",
++                    t.black_fill_skipped, t.black_fill_done,
++                    (long)t.black_fill_px, t.black_fill_rects, t.black_fill_whole);
++#ifdef DOSAGS_SPRITE_RUN_STATS
++                // patch 0127: mean opaque run length decides whether a
++                // run-based blit is worth writing at all.
++                Debug::Printf("DOS-PORT sprruns px=%lu opaque_px=%lu runs=%lu",
++                    dosags_spr_px, dosags_spr_opaque_px, dosags_spr_runs);
++#endif
+                 dos_port_tick_emit(run_manifest_log, "wait_next_frame", t.wait_next_frame);
+                 fprintf(run_manifest_log,
+                     "DOS-PORT tickstats_wait_next_frame_requested sleep_calls=%ld requested_ms=%ld\n",
+-- 
+2.47.3
+

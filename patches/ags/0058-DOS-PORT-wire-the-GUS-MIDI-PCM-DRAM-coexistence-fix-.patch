@@ -1,0 +1,99 @@
+From d29d2a78bf5ccd6e8ea74cec8f6968f5907592a3 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sun, 13 Sep 2026 14:02:09 -0700
+Subject: [PATCH] DOS-PORT: wire the GUS MIDI/PCM DRAM coexistence fix (S5 GUS
+ architecture)
+
+gus_sink.c and gus_pcm_stream.c now coordinate their GF1 DRAM use via a
+new shared/audio/gus_dram_floor.{c,h} watermark (hub fix). Wires it in:
+gus_dram_floor.h is exposed through dos_midi_backend.h's existing extern
+"C" wrapper (shared by both GUS consumers, not MIDI-specific, but this
+avoids a third wrapper block for one function), gus_dram_floor_reset()
+is called once from sys_audio_shutdown() after both dos_audio_mixer_
+shutdown() and dos_midi_backend_shutdown() have torn down, and
+gus_dram_floor.c joins the CMakeLists.txt sources list alongside
+gus_sink.c/gus_pcm_stream.c.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01DXU3CduvnM9KWodDrbWQ1w
+---
+ Engine/CMakeLists.txt                  |  3 +++
+ Engine/platform/base/sys_main.cpp      | 10 ++++++++++
+ Engine/platform/dos/dos_midi_backend.h | 21 ++++++++++++++-------
+ 3 files changed, 27 insertions(+), 7 deletions(-)
+
+diff --git a/Engine/CMakeLists.txt b/Engine/CMakeLists.txt
+index 0ea9140cf..d11a6f462 100644
+--- a/Engine/CMakeLists.txt
++++ b/Engine/CMakeLists.txt
+@@ -493,6 +493,9 @@ target_sources(engine
+     # source, not just a header" reasoning as the three above.
+     ${DOS_PORT_SHARED_AUDIO_DIR}/gus_sink.c
+     ${DOS_PORT_SHARED_AUDIO_DIR}/gus_pcm_stream.c
++    # DOS-PORT (S5 GUS coexistence fix): the shared DRAM floor gus_sink.c and
++    # gus_pcm_stream.c both now call into -- see gus_dram_floor.h.
++    ${DOS_PORT_SHARED_AUDIO_DIR}/gus_dram_floor.c
+ 
+     platform/windows/win_ex_handling.cpp
+     platform/windows/win_ex_handling.h
+diff --git a/Engine/platform/base/sys_main.cpp b/Engine/platform/base/sys_main.cpp
+index 68dad6563..8a5797c03 100644
+--- a/Engine/platform/base/sys_main.cpp
++++ b/Engine/platform/base/sys_main.cpp
+@@ -342,6 +342,16 @@ void sys_audio_shutdown()
+     // fully closes its own handle via dos_midi_backend_end_song(). Also a
+     // no-op for GUS (its own cold-init only ever runs for "wb").
+     dos_midi_backend_shutdown();
++    // DOS-PORT (S5 GUS coexistence fix): reset the shared GF1 DRAM floor
++    // (shared/audio/gus_dram_floor.h) now that BOTH GUS consumers -- every
++    // gus_pcm_stream (dos_audio_mixer_shutdown(), above) and gus_sink
++    // (dos_midi_backend_shutdown(), just above) -- have finished tearing
++    // down. Harmless no-op if GUS was never used this session (the floor is
++    // already 0). Must happen here, after both, never from either
++    // individual module's own close path -- resetting it while the OTHER
++    // GUS consumer might still be alive would let its next DRAM rewind
++    // undercut a still-live allocation.
++    gus_dram_floor_reset();
+     // Note: a subsystem that failed to initialize, doesn't increment ref-count
+     // Additionally, we may not have init it at all, see engine_init_audio.
+     // Also correctly never true under GUS (S5 architecture, Gap 1 fix):
+diff --git a/Engine/platform/dos/dos_midi_backend.h b/Engine/platform/dos/dos_midi_backend.h
+index c1d9ea2d0..a4495596a 100644
+--- a/Engine/platform/dos/dos_midi_backend.h
++++ b/Engine/platform/dos/dos_midi_backend.h
+@@ -41,18 +41,25 @@
+ #include <cstddef>
+ #include <cstdint>
+ 
+-// midi_sched.h / opl3_sink.h / waveblaster_sink.h / gus_sink.h (shared/
+-// audio) are plain C with no extern "C" guard of their own -- wrap the
+-// includes here on the C++ consumer side rather than editing the shared
+-// headers, which is a hub-side change with its own review, not a dosags
+-// patch. audioplayer.cpp/.h (the only other DOS-PORT file needing the
+-// shared MIDI API) includes this header rather than any shared header
+-// directly, so this wrapper only has to exist in one place.
++// midi_sched.h / opl3_sink.h / waveblaster_sink.h / gus_sink.h / (S5 GUS
++// coexistence fix) gus_dram_floor.h (shared/audio) are plain C with no
++// extern "C" guard of their own -- wrap the includes here on the C++
++// consumer side rather than editing the shared headers, which is a
++// hub-side change with its own review, not a dosags patch. audioplayer.cpp/
++// .h (the only other DOS-PORT file needing the shared MIDI API) includes
++// this header rather than any shared header directly, so this wrapper only
++// has to exist in one place. gus_dram_floor.h lives here (not a dedicated
++// wrapper of its own) purely so sys_main.cpp -- which already includes this
++// header for dos_midi_backend_shutdown() -- can call
++// gus_dram_floor_reset() without a third extern "C" block; the floor
++// itself is shared by gus_sink.c AND gus_pcm_stream.c equally (see
++// gus_dram_floor.h), not MIDI-specific.
+ extern "C" {
+ #include "midi_sched.h"
+ #include "opl3_sink.h"
+ #include "waveblaster_sink.h"
+ #include "gus_sink.h"
++#include "gus_dram_floor.h"
+ }
+ 
+ enum DosMidiBackendKind
+-- 
+2.47.3
+

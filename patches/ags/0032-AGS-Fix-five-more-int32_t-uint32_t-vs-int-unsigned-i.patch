@@ -1,0 +1,164 @@
+From fd5cd6a3c707781d29f6fe825ccdb6e2315399c9 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 17:23:29 -0700
+Subject: [PATCH 32/36] [AGS] Fix five more
+ int32_t/uint32_t-vs-int/unsigned-int sites in Common/
+
+Same established DJGPP ILP32 divergence as patches 0013/0018/0019/0024/0027
+(int32_t is long int, uint32_t is unsigned long -- distinct types from
+int/unsigned int here, even though all are 4 bytes, unlike a 64-bit
+host where int32_t/uint32_t collapse to int/unsigned int) -- but found
+in a genuinely new way this time: a full cmake --build build/ags -j$(nproc)
+-- -k pass after patch 0031 reached COMPILES's Engine-side blocker
+(ali3dsw.cpp/gfxfilter_sdl_renderer.cpp) but then failed inside Common/
+on five files that turned out to have never actually been compiled by
+any prior session's build at all -- confirmed by comparing Common/'s own
+.obj count against its .cpp count (68 of 91) before this patch: these
+five files' real compile errors were latent, not introduced by anything
+in this session, just never reached until a CMakeLists.txt edit forced
+a full reconfigure that invalidated the stale, partial object cache.
+
+- Common/ac/gamesetupstruct.cpp (2 sites), Common/data/tra_file.cpp
+  (1 site): std::max(0, in->ReadInt32()) -- ambiguous template deduction
+  between int and int32_t. FontInfo::LineSpacing (gamestructdefines.h) is
+  a plain int, so cast ReadInt32()'s result down to int to match, rather
+  than the other way around.
+- Common/gfx/allegrobitmap.h: Bitmap::RotateBlt's two declarations said
+  plain "int angle"; both real definitions (allegrobitmap.cpp) already
+  used fixed_t (int32_t, platform/types.h) -- fixed_t is also the
+  semantically correct type here (a fixed-point angle), so the
+  declarations are fixed to match the definitions, not the reverse (same
+  choice patch 0018 made for cc_serializer's override mismatch).
+- Common/gfx/image_png.cpp: palette_colors was declared uint32_t[PAL_SIZE]
+  but passed to the vendored stb_image.h's own
+  stbi_load_from_callbacks_with_palette(..., unsigned int *palette_buffer, ...)
+  -- a pointer-type mismatch, not just a value-level ambiguity, so no
+  cast suffices; changed the local array's element type to unsigned int
+  instead (still exactly 4 bytes under DJGPP, so the later
+  reinterpret_cast<uint8_t*> byte-level read of r/g/b/a per entry is
+  unaffected).
+- Engine/ac/display.h: wouttext_aligned's 8-arg declaration said "int
+  outline_color"; its real definition (display.cpp) and its sibling
+  wouttext_outline's declaration one line above both already use
+  color_t (int32_t) -- fixed the declaration to match, an isolated typo
+  relative to its own neighboring declarations, not a systemic gap in
+  this specific file.
+
+Verified: all five files compile clean in the same full build that
+reached COMPILES (see the two patches immediately following this one
+for the remaining link-time gaps that same build surfaced).
+---
+ Common/ac/gamesetupstruct.cpp |  9 +++++++--
+ Common/data/tra_file.cpp      |  7 ++++++-
+ Common/gfx/allegrobitmap.h    | 10 ++++++++--
+ Common/gfx/image_png.cpp      |  9 ++++++++-
+ Engine/ac/display.h           |  7 ++++++-
+ 5 files changed, 35 insertions(+), 7 deletions(-)
+
+diff --git a/Common/ac/gamesetupstruct.cpp b/Common/ac/gamesetupstruct.cpp
+index ed87f0466..c3d3d6009 100644
+--- a/Common/ac/gamesetupstruct.cpp
++++ b/Common/ac/gamesetupstruct.cpp
+@@ -81,7 +81,12 @@ void GameSetupStruct::read_font_infos(Common::Stream *in, GameDataVersion data_v
+         {
+             fonts[i].YOffset = in->ReadInt32();
+             if (data_ver >= kGameVersion_341_2)
+-                fonts[i].LineSpacing = std::max(0, in->ReadInt32());
++                // DOS-PORT: std::max(int, int32_t) is ambiguous under DJGPP's
++                // ILP32 model (int32_t is long int, distinct from int) --
++                // same divergence as patches 0013/0018/0019/0024/0027;
++                // LineSpacing is a plain int (gamestructdefines.h), so cast
++                // to match it rather than the other way around.
++                fonts[i].LineSpacing = std::max(0, (int)in->ReadInt32());
+         }
+     }
+     else
+@@ -93,7 +98,7 @@ void GameSetupStruct::read_font_infos(Common::Stream *in, GameDataVersion data_v
+             fonts[i].Size = in->ReadInt32();
+             fonts[i].Outline = in->ReadInt32();
+             fonts[i].YOffset = in->ReadInt32();
+-            fonts[i].LineSpacing = std::max(0, in->ReadInt32());
++            fonts[i].LineSpacing = std::max(0, (int)in->ReadInt32());
+             fonts[i].SetFlags(flags);
+         }
+     }
+diff --git a/Common/data/tra_file.cpp b/Common/data/tra_file.cpp
+index 71a0564e1..e2caaa0cf 100644
+--- a/Common/data/tra_file.cpp
++++ b/Common/data/tra_file.cpp
+@@ -87,7 +87,12 @@ static HError ReadFontOverrides(Translation &tra, Stream *in)
+             finfo.Size = in->ReadInt32();
+             finfo.Outline = in->ReadInt32();
+             finfo.YOffset = in->ReadInt32();
+-            finfo.LineSpacing = std::max(0, in->ReadInt32());
++            // DOS-PORT: std::max(int, int32_t) is ambiguous under DJGPP's
++            // ILP32 model (int32_t is long int, distinct from int) -- same
++            // divergence as patches 0013/0018/0019/0024/0027; LineSpacing
++            // is a plain int (gamestructdefines.h), so cast to match it
++            // rather than the other way around.
++            finfo.LineSpacing = std::max(0, (int)in->ReadInt32());
+             finfo.SetFlags(flags);
+             // This corresponds to the "v360_fonts" extension in game data
+             // NOTE: we have a 3.6.0 extension right here, because this TRA
+diff --git a/Common/gfx/allegrobitmap.h b/Common/gfx/allegrobitmap.h
+index a3f11c56b..a712194be 100644
+--- a/Common/gfx/allegrobitmap.h
++++ b/Common/gfx/allegrobitmap.h
+@@ -255,8 +255,14 @@ public:
+     // Draws rotated bitmap, using angle given in degrees.
+     // Warning: does not resize destination bitmap; if it's not large enough
+     // then the resulting image may end up cropped.
+-    void    RotateBlt(const Bitmap *src, int dst_x, int dst_y, int angle);
+-    void    RotateBlt(const Bitmap *src, int dst_x, int dst_y, int pivot_x, int pivot_y, int angle);
++    // DOS-PORT: angle is fixed_t (platform/types.h: int32_t) in both real
++    // definitions (allegrobitmap.cpp) -- this declaration said plain int,
++    // a distinct type from int32_t under DJGPP's ILP32 model (unlike a
++    // 64-bit host, where int32_t is int and the mismatch is invisible).
++    // Matching the definitions' own (semantically correct -- this is a
++    // fixed-point angle) type, not the other way around.
++    void    RotateBlt(const Bitmap *src, int dst_x, int dst_y, fixed_t angle);
++    void    RotateBlt(const Bitmap *src, int dst_x, int dst_y, int pivot_x, int pivot_y, fixed_t angle);
+ 
+     //=========================================================================
+     // Pixel operations
+diff --git a/Common/gfx/image_png.cpp b/Common/gfx/image_png.cpp
+index 371cc9a07..b8e26d4a2 100644
+--- a/Common/gfx/image_png.cpp
++++ b/Common/gfx/image_png.cpp
+@@ -97,7 +97,14 @@ PixelBuffer LoadPNG(Stream *in, PixelFormat *src_fmt, RGB *pal)
+     stbi_uc *pixels;
+     int width, height;
+     int stb_format = STBI_default;
+-    uint32_t palette_colors[PAL_SIZE] = { 0 };
++    // DOS-PORT: stb_image.h's own vendored stbi_load_from_callbacks_with_palette()
++    // declares its out-param as "unsigned int *palette_buffer" -- a
++    // distinct pointer type from uint32_t* under DJGPP's ILP32 model
++    // (uint32_t is unsigned long there, not unsigned int), unlike a
++    // 64-bit host where they're the same type. unsigned int is still
++    // exactly 4 bytes here, so the byte-level reinterpret_cast<uint8_t*>
++    // read below (r/g/b/a per entry) is unaffected.
++    unsigned int palette_colors[PAL_SIZE] = { 0 };
+     if (use_palette)
+     {
+         pixels = stbi_load_from_callbacks_with_palette(
+diff --git a/Engine/ac/display.h b/Engine/ac/display.h
+index f2e6e2190..da972c9b6 100644
+--- a/Engine/ac/display.h
++++ b/Engine/ac/display.h
+@@ -161,7 +161,12 @@ void wouttext_outline(Common::Bitmap *ds, int xxp, int yyp, int usingfont, color
+ // Draw an (optionally) outlined text, using default outline color
+ void wouttext_outline(Common::Bitmap *ds, int xxp, int yyp, int usingfont, color_t text_color, const char *texx);
+ // Draw an (optionally) outlined text using a horizontal alignment
+-void wouttext_aligned(Common::Bitmap *ds, int usexp, int yy, int oriwid, int usingfont, color_t text_color, int outline_color, const char *text, HorAlignment align);
++// DOS-PORT: was "int outline_color" here -- color_t is int32_t
++// (platform/types.h), a distinct type from int under DJGPP's ILP32 model,
++// so this declaration didn't match display.cpp's real definition (which
++// already used color_t, matching wouttext_outline's own convention just
++// above). Same divergence category as patches 0013/0018/0019/0024/0027.
++void wouttext_aligned(Common::Bitmap *ds, int usexp, int yy, int oriwid, int usingfont, color_t text_color, color_t outline_color, const char *text, HorAlignment align);
+ // Draw an (optionally) outlined text using a horizontal alignment and default outline color
+ void wouttext_aligned(Common::Bitmap *ds, int usexp, int yy, int oriwid, int usingfont, color_t text_color, const char *text, HorAlignment align);
+ void do_corner(Common::Bitmap *ds, int sprn,int xx1,int yy1,int typx,int typy);
+-- 
+2.47.3
+

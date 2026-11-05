@@ -1,0 +1,127 @@
+From e7ea8c47e59eac6964511b39b3edc9662ac97a3d Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 21 Sep 2026 11:17:30 -0700
+Subject: [PATCH] DOS-PORT: patch 0163 -- do not repay catch-up debt across a
+ blocking tick (default OFF)
+
+After a tick that blocked for seconds, the fixed-timestep accumulator
+believes the game owes hundreds of ticks and repays them back to back: 496
+catch-up ticks in one run is the game visibly running fast after a block.
+Nothing was owed, since the game was doing something that took that long,
+so this rebases the epoch instead of repaying. MAX_CATCHUP already concedes
+that for blocks it cannot repay within five ticks; this applies the same
+judgement to the ones it can.
+
+DEFAULT OFF, against this port's fastest-by-default habit, on purpose: it
+changes pacing and therefore which frames skip, and the tail investigation it
+shares a binary with is measured in skipped frames. DOSAGS_STALL_RESYNC=1
+enables it. The record predicts it moves tick_rate_steady (41.5 -> 40.1), not
+fps_p50, and to run it only if a tick overshoot blocks a claim.
+
+This is the one patch in the 0124-0189 range that could be separated at line
+level, because every fragment of it is labelled 0163 in the source: the
+dos_stall_resyncs counter and its resyncs= field on the catchup line, the
+dos_tick_prev_was_stall flag and where it is set, and the pacer block in
+dos_run_tick_fixed(). The field on the catchup line is attributed to 0163 by
+its counter's own label.
+
+Provenance of this export (2026-09-21): these edits sat uncommitted in the
+vendor tree from patch 0123 onward, which is why every gate cell since said
+build_dirty=1. They were made under one campaign-wide patch counter shared
+with vendor/SDL, and each hunk carries its number in an in-source comment.
+Intermediate states were never committed, so this patch is a hunk-level
+partition of the final tree by concern, attributed by those comments -- not a
+replay of the order the edits were made in, and its intermediate state was not
+built on its own. The numbers named below are the ones found in its hunks.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/main/game_run.cpp | 44 ++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 42 insertions(+), 2 deletions(-)
+
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index fab710074..cbec047dc 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1529,6 +1529,7 @@ static long dos_tick_count = 0;
+ // tick_rate_steady of 41.35 against a 40 target. 3.375% over 3,558 ticks is
+ // ~120 excess ticks; 19 blocking stalls plus 8 transitions at MAX_CATCHUP=5
+ // apiece is 135. Predicted ~120 BEFORE measuring, from two directions.
++static long dos_stall_resyncs = 0;    // patch 0163: debts declined
+ static long dos_catchup_ticks = 0;    // extra ticks run to repay debt
+ static long dos_catchup_events = 0;   // calls that repaid anything
+ static long dos_catchup_clamped = 0;  // calls that hit MAX_CATCHUP
+@@ -1553,6 +1554,9 @@ static long long dos_tick_children_us = 0; // exclusive-time accounting (see abo
+ // watching a frozen screen for seven seconds is a bug.
+ long long dos_tick_nested_us = 0;
+ static int dos_tick_depth = 0;
++// patch 0163: set when a tick is recorded as a blocking stall, so the
++// fixed-timestep loop can decline to carry debt across it.
++static bool dos_tick_prev_was_stall = false;
+ static uclock_t dos_tick_first_entry = 0;
+ static uclock_t dos_tick_last_exit = 0;
+ static bool dos_tick_have_first = false;
+@@ -1629,6 +1633,7 @@ public:
+             }
+             dos_tick_stall_total++;
+             dos_tick_stall_us += self_us;
++            dos_tick_prev_was_stall = true;   // patch 0163
+             // patch 0141: what this one tick spent its own seconds on.
+             // script_vm is the discriminator the category question turns
+             // on -- a stall that is nearly all script_vm is a blocking
+@@ -1715,8 +1720,8 @@ void dos_port_yardstick_emit(FILE *log)
+     const long long steady_us = loop_us - dos_tick_stall_us;
+     const long steady_ticks = dos_tick_count - dos_tick_stall_total;
+     const double steady_rate = steady_us > 0 ? 1000000.0 * (double)steady_ticks / (double)steady_us : 0.0;
+-    fprintf(log, "DOS-PORT catchup ticks=%ld events=%ld clamped=%ld sumcheck_fail=%ld sumcheck_worst_us=%ld\n",
+-        dos_catchup_ticks, dos_catchup_events, dos_catchup_clamped,
++    fprintf(log, "DOS-PORT catchup ticks=%ld events=%ld clamped=%ld resyncs=%ld sumcheck_fail=%ld sumcheck_worst_us=%ld\n",
++        dos_catchup_ticks, dos_catchup_events, dos_catchup_clamped, dos_stall_resyncs,
+         dos_tick_sumcheck_fail, (long)dos_tick_sumcheck_worst_us);
+     fprintf(log, "DOS-PORT tick_rate_steady=%.2f ticks=%ld stall_ticks=%ld loop_ms=%ld stall_ms=%ld preloop_ms=%lu threshold_ms=%ld\n",
+         steady_rate, dos_tick_count, dos_tick_stall_total,
+@@ -2166,6 +2171,41 @@ static void dos_run_tick_fixed()
+     const auto tick_dur = std::chrono::duration_cast<Clock::duration>(
+         std::chrono::nanoseconds(1000000000LL / fps));
+ 
++    // DOS-PORT patch 0163: do not carry debt across a blocking operation.
++    //
++    // The standard spiral-of-death guard for a fixed-timestep loop. After a
++    // tick that blocked for seconds, the accumulator believes the game owes
++    // hundreds of ticks and repays them back-to-back -- which is both a
++    // measurement artefact and a real defect: 496 catch-up ticks in one run
++    // is the game visibly running fast after a block, and a player sees it.
++    //
++    // Rebasing instead of repaying is correct because the debt is not real.
++    // Nothing was owed: the game was doing something that took that long,
++    // and there is no state to catch up to. MAX_CATCHUP already concedes
++    // this for blocks it cannot repay within five ticks; this applies the
++    // same judgement to the ones it can, where compounding is worse because
++    // it succeeds.
++    //
++    // DOSAGS_STALL_RESYNC=0 disables, so both arms live in one binary.
++    {
++        static int hint = -1;
++        // Default OFF, against this port's usual "fastest by default"
++        // convention, and deliberately: this changes PACING, so it changes
++        // which frames skip -- and the tail investigation the operator just
++        // chose is measured in skipped frames. An untested pacing change
++        // defaulting on would confound the very thing it shares a binary
++        // with. Flip the default after 0163 has its own A/B.
++        if (hint < 0) { const char *h = getenv("DOSAGS_STALL_RESYNC");
++                        hint = (h && h[0] == '1') ? 1 : 0; }
++        if (hint && dos_tick_prev_was_stall)
++        {
++            epoch_ns = Clock::now();
++            epoch_tick = get_loop_counter();
++            dos_stall_resyncs++;
++        }
++        dos_tick_prev_was_stall = false;
++    }
++
+     const auto now_ns = Clock::now();
+     const long expected_ticks = (long)((now_ns - epoch_ns) / tick_dur);
+     const long actual_ticks = (long)(get_loop_counter() - epoch_tick);
+-- 
+2.47.3
+

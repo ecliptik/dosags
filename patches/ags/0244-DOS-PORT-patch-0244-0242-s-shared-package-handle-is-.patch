@@ -1,0 +1,48 @@
+From 10c04a88a9558653585728eabaacbb50430ca15d Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 28 Sep 2026 11:50:37 -0700
+Subject: [PATCH 2/2] DOS-PORT: patch 0244 -- 0242's shared package handle is
+ on by default (DOSAGS_PAKHANDLE=0 kills)
+
+0242 kept one read-only FILE per package across asset opens, instead of
+fopen-ing the package again for every packaged asset, but shipped default
+OFF pending its 486 reading. Its falsifier held on the 486 (dosags round U,
+a2049c50): with 0241 on, the shared handle cut a first play's asset_open a
+further 8.2 ms (21.2 -> 13.0 ms), clear of the registered "< 5 ms"
+falsifier, though below the predicted 15-25 ms. Its lab gate read the same
+bytes per package section on and off; its quit order is safe (every
+AudioPlayer is gone before the shared handles close, lab-metric
+docs/lab/io.md 6059de07); and the target's CONFIG.SYS has FILES=30 against
+a peak of 2 DOS handles. lab-metric recommends the flip (e93f0894) and the
+coordinator agreed. So the default is ON; DOSAGS_PAKHANDLE=0 is the
+killswitch and restores a fresh fopen per asset open exactly.
+---
+ Common/util/file.cpp | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/Common/util/file.cpp b/Common/util/file.cpp
+index db20d4b93..48fc7f935 100644
+--- a/Common/util/file.cpp
++++ b/Common/util/file.cpp
+@@ -260,7 +260,8 @@ std::unique_ptr<Stream> File::OpenFile(const String &filename, FileOpenMode open
+ }
+ 
+ #ifdef __DJGPP__
+-// DOS-PORT patch 0242: keep ONE read-only FILE per library file across asset opens (opt-in, DOSAGS_PAKHANDLE=1).
++// DOS-PORT patch 0242: keep ONE read-only FILE per library file across asset opens (default ON since patch 0244;
++// DOSAGS_PAKHANDLE=0 restores a fresh fopen per asset open).
+ //
+ // Every packaged asset is opened through here, and each open used to fopen the package again: on DJGPP that
+ // is findfirst + open + IOCTL + truename, then a close later -- two directory lookups per open. On the 486 a
+@@ -303,7 +304,7 @@ static FILE *dos_pak_get(const String &filename)
+     if (dos_pak_mode < 0)
+     {
+         const char *e = getenv("DOSAGS_PAKHANDLE");
+-        dos_pak_mode = (e != nullptr && e[0] == '1') ? 1 : 0;   // default OFF
++        dos_pak_mode = (e != nullptr && e[0] == '0') ? 0 : 1;   // default ON, =0 kills (patch 0244)
+     }
+     if (dos_pak_mode != 1)
+         return nullptr;
+-- 
+2.47.3
+

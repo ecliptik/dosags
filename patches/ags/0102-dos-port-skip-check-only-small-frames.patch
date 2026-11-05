@@ -1,0 +1,53 @@
+From c74c842bf321edf16612595c71de81d8c756d1d9 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 17 Sep 2026 19:07:27 -0700
+Subject: [PATCH] DOS-PORT: patch 0102 -- no unchanged-frame check on frames
+ over 100,000 bytes
+
+The first 0100 cells on AGS Quest (16-bit, 460,800-byte frame) LOST
+fps_p50 (9.58 -> 7.40) while gaining p95 (9.86 -> 13.42): patch 0100
+let the unchanged-frame skip engage on a bordered frame, and on a frame
+that size the check itself -- a full read plus, on every changed frame,
+a full copy into the cache -- costs 36.8 ms at the 486's 17 MB/s
+(measured, present_dirty_check x 1233). Moving phases paid it on every
+frame; static phases saved a ~59 ms present. The gate is on moving
+content. Frames above 100,000 bytes now present without the check, as
+they did before 0091; 320x200/320x240 8-bit frames (64,000/76,800 B,
+where the check is ~6 ms against a ~76 ms present) keep it. The real
+answer for big frames is the engine's own knowledge of what it drew
+(P2.4), not a byte compare.
+---
+ Engine/gfx/ali3dsw.cpp | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index 0045dd854..6d3a3a341 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -1110,7 +1110,22 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+          _marginsCleanH == win_surface->h &&
+          _marginsCleanDst.x == dst.x && _marginsCleanDst.y == dst.y &&
+          _marginsCleanDst.w == dst.w && _marginsCleanDst.h == dst.h);
+-    const bool clean_case = skip_allowed && (flip == kFlip_None) &&
++    // DOS-PORT patch 0102: the unchanged-frame check is only worth running
++    // on a SMALL frame. It costs a full read of the frame plus, whenever
++    // the frame did change, a full copy of it into the cache -- at the
++    // 486's 17 MB/s that is ~37 ms for AGS Quest's 460,800-byte 16-bit
++    // frame (measured, AQ100B1: present_dirty_check 36.8 ms x 1233), paid
++    // on EVERY moving frame to save a ~59 ms present on the static ones.
++    // On AGS Quest that turned a 9.6 fps_p50 into 7.4 (moving phases
++    // slower, static phases faster: p95 went 9.9 -> 13.4). For a 76,800-
++    // byte 8-bit frame the same check is ~6 ms against a ~76 ms present,
++    // which is the case patch 0091 was measured on. So: frames above
++    // 100,000 bytes are presented without the check, as before 0091; the
++    // real answer for big frames is the engine's own knowledge of what
++    // it drew (the 40/40 plan's P2.4), not a byte compare.
++    const size_t frame_bytes_for_skip = (size_t)blit_src->pitch * (size_t)blit_src->h;
++    const bool small_enough_to_check = frame_bytes_for_skip <= 100000u;
++    const bool clean_case = skip_allowed && small_enough_to_check && (flip == kFlip_None) &&
+         (blit_src->format == win_surface->format) && dst_inside && margins_clean;
+     if (clean_case)
+     {
+-- 
+2.47.3
+

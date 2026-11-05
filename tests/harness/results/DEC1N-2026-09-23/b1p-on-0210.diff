@@ -1,0 +1,174 @@
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 3d6d01469..16bdc24e4 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -17,6 +17,7 @@
+ //
+ 
+ #include <algorithm>
++extern unsigned long long g_stw_us[7]; extern unsigned g_stw_plays; // STW PROBE
+ #include <cmath>
+ #include <cstdlib>
+ #include <limits>
+@@ -1589,6 +1590,7 @@ public:
+             _s_scene  = t.scene_construct.total_us;
+             _s_rb     = t.render_backbuffer.total_us;
+             _s_present= t.present_update_window.total_us;
++            for (int k = 0; k < 7; k++) _s_stw[k] = g_stw_us[k]; _s_stwp = g_stw_plays; // STW PROBE
+         }
+     }
+     ~DosTickStallScope()
+@@ -1662,13 +1664,28 @@ public:
+                     (long)(t.scene_construct.total_us      - _s_scene),
+                     (long)(t.render_backbuffer.total_us    - _s_rb),
+                     (long)(t.present_update_window.total_us- _s_present));
++                Debug::Printf("DOS-PORT stwsplit tick=%ld io_us=%lu copy_us=%lu decode_us=%lu convert_us=%lu slot_us=%lu load_us=%lu apoll_us=%lu plays=%u", _index,
++                    (unsigned long)(g_stw_us[0]-_s_stw[0]), (unsigned long)(g_stw_us[1]-_s_stw[1]), (unsigned long)(g_stw_us[2]-_s_stw[2]),
++                    (unsigned long)(g_stw_us[3]-_s_stw[3]), (unsigned long)(g_stw_us[4]-_s_stw[4]), (unsigned long)(g_stw_us[5]-_s_stw[5]),
++                    (unsigned long)(g_stw_us[6]-_s_stw[6]), g_stw_plays - _s_stwp); // STW PROBE
+             }
+         }
++        else if (g_stw_plays != _s_stwp) // STW PROBE: a play on a tick under the stall threshold
++        {
++            const DosPortTickTiming &t = dos_port_tick_timing;
++            Debug::Printf("DOS-PORT stwtick tick=%ld self_us=%ld children_us=%ld script_us=%ld events_us=%ld io_us=%lu copy_us=%lu decode_us=%lu convert_us=%lu slot_us=%lu load_us=%lu apoll_us=%lu plays=%u",
++                (long)_index, (long)self_us, (long)this_tick_children_us,
++                (long)(t.script_vm.total_us - _s_script), (long)(t.process_events_dispatch.total_us - _s_events),
++                (unsigned long)(g_stw_us[0]-_s_stw[0]), (unsigned long)(g_stw_us[1]-_s_stw[1]), (unsigned long)(g_stw_us[2]-_s_stw[2]),
++                (unsigned long)(g_stw_us[3]-_s_stw[3]), (unsigned long)(g_stw_us[4]-_s_stw[4]), (unsigned long)(g_stw_us[5]-_s_stw[5]),
++                (unsigned long)(g_stw_us[6]-_s_stw[6]), g_stw_plays - _s_stwp);
++        }
+     }
+ private:
+     uint32_t _begin_ms = 0;   // patch 0153
+     long long _s_script = 0, _s_events = 0, _s_scene = 0,   // patch 0141
+               _s_rb = 0, _s_present = 0;
++    unsigned long long _s_stw[7] = {0}; unsigned _s_stwp = 0; // STW PROBE
+     uclock_t _t0;
+     long long _saved_children;
+     uint32_t _index;
+diff --git a/Engine/media/audio/audio_core.cpp b/Engine/media/audio/audio_core.cpp
+index 55ec06681..bc4e81d84 100644
+--- a/Engine/media/audio/audio_core.cpp
++++ b/Engine/media/audio/audio_core.cpp
+@@ -104,12 +104,15 @@ static int avail_slot_id()
+     return g_acore.nextId++;
+ }
+ 
++extern unsigned long long g_stw_us[7]; unsigned long long stw_now_us(); // STW PROBE
+ static int audio_core_slot_init(std::unique_ptr<SDLDecoder> decoder)
+ {
++    const unsigned long long _t = stw_now_us();
+     auto handle = avail_slot_id();
+     std::lock_guard<std::mutex> lk(g_acore.mixer_mutex_m);
+     g_acore.slots_[handle] = std::make_unique<AudioPlayer>(handle, std::move(decoder));
+     g_acore.mixer_cv.notify_all();
++    g_stw_us[4] += stw_now_us() - _t;
+     return handle;
+ }
+ 
+@@ -751,7 +754,14 @@ void dos_diag_dump_audio_poll(FILE *fp)
+ }
+ #endif // __DJGPP__
+ 
++static void audio_core_entry_poll_stw();
+ void audio_core_entry_poll()
++{
++    const unsigned long long _t = stw_now_us();
++    audio_core_entry_poll_stw();
++    g_stw_us[6] += stw_now_us() - _t;
++}
++static void audio_core_entry_poll_stw()
+ {
+ #ifdef __DJGPP__
+     const uint64_t t_entry_us = dos_diag_now_us();
+diff --git a/Engine/media/audio/sdldecoder.cpp b/Engine/media/audio/sdldecoder.cpp
+index a7a9f6f17..68b9f654b 100644
+--- a/Engine/media/audio/sdldecoder.cpp
++++ b/Engine/media/audio/sdldecoder.cpp
+@@ -12,6 +12,8 @@
+ //
+ //=============================================================================
+ #include "media/audio/sdldecoder.h"
++#include "debug/out.h" // B1P PROBE
++extern unsigned long long g_stw_us[7]; unsigned long long stw_now_us(); // B1P PROBE
+ #include "platform/dos/dos_audio_decode.h"
+ #include "platform/dos/dos_audio_mixer.h"
+ #include "util/sdl2_util.h"
+@@ -147,6 +149,7 @@ bool SDLDecoder::Open(float pos_ms)
+         return true;
+     }
+ 
++    const unsigned long long _b1p_t0 = stw_now_us(); // B1P PROBE
+     std::vector<uint8_t> raw;
+     // DOS-PORT patch 0210: a clip already fully in memory (the sound cache's bytes) is decoded where
+     // it is, not copied first -- the copy was a whole-clip memcpy on every play.
+@@ -180,6 +183,15 @@ bool SDLDecoder::Open(float pos_ms)
+     // format ONCE here, not per-chunk in GetData() -- see this file's own
+     // convert_to_device_format() comment.
+     convert_to_device_format(_pcm, dos_audio_mixer_format(), _pcmDevice);
++    { // B1P PROBE (throwaway): the decoded buffers' hashes, and what this Open cost
++        const unsigned long long _dt = stw_now_us() - _b1p_t0; g_stw_us[2] += _dt;
++        uint32_t h1 = 2166136261u, h2 = 2166136261u;
++        const uint8_t *p1 = reinterpret_cast<const uint8_t *>(_pcm.data());
++        for (size_t i = 0; i < _pcm.size() * 2; i++) h1 = (h1 ^ p1[i]) * 16777619u;
++        for (size_t i = 0; i < _pcmDevice.size(); i++) h2 = (h2 ^ _pcmDevice[i]) * 16777619u;
++        AGS::Common::Debug::Printf(AGS::Common::kDbgMsg_Info, "DOS-PORT decodehash samples=%lu pcm=%08x dev=%08x devbytes=%lu open_us=%lu",
++            (unsigned long)_pcm.size(), (unsigned)h1, (unsigned)h2, (unsigned long)_pcmDevice.size(), (unsigned long)_dt);
++    }
+ 
+     _opened = true;
+     _readSamples = 0u;
+diff --git a/Engine/media/audio/sound.cpp b/Engine/media/audio/sound.cpp
+index c63bc3648..2dd539e96 100644
+--- a/Engine/media/audio/sound.cpp
++++ b/Engine/media/audio/sound.cpp
+@@ -102,7 +102,28 @@ void soundcache_precache(const AssetPath &apath)
+     SndCache.Put(apath.Name, sounddata);
+ }
+ 
++// STW PROBE (throwaway, 2026-09-23): per-play split of the sound-on stall ticks.
++#include <time.h>
++unsigned long long g_stw_us[7]; // 0 io 1 copy 2 decode 3 convert 4 slot 5 load 6 apoll
++unsigned g_stw_plays = 0;
++unsigned g_stw_last_samples = 0;
++unsigned long long stw_now_us() { return (unsigned long long)uclock() * 1000000ull / UCLOCKS_PER_SEC; }
++static std::unique_ptr<SoundClip> load_sound_clip_stw(const AssetPath &apath, const char *extension_hint, bool loop);
+ std::unique_ptr<SoundClip> load_sound_clip(const AssetPath &apath, const char *extension_hint, bool loop)
++{
++    unsigned long long b[7]; for (int k = 0; k < 7; k++) b[k] = g_stw_us[k];
++    g_stw_last_samples = 0;
++    const unsigned long long t0 = stw_now_us();
++    auto r = load_sound_clip_stw(apath, extension_hint, loop);
++    const unsigned long long dt = stw_now_us() - t0;
++    g_stw_us[5] += dt; g_stw_plays++;
++    Debug::Printf("DOS-PORT stwplay name=%s samples=%u load_us=%lu io_us=%lu copy_us=%lu decode_us=%lu convert_us=%lu slot_us=%lu",
++        apath.Name.GetCStr(), g_stw_last_samples, (unsigned long)dt,
++        (unsigned long)(g_stw_us[0]-b[0]), (unsigned long)(g_stw_us[1]-b[1]), (unsigned long)(g_stw_us[2]-b[2]),
++        (unsigned long)(g_stw_us[3]-b[3]), (unsigned long)(g_stw_us[4]-b[4]));
++    return r;
++}
++static std::unique_ptr<SoundClip> load_sound_clip_stw(const AssetPath &apath, const char *extension_hint, bool loop)
+ {
+     size_t asset_size;
+     std::unique_ptr<Stream> s_in;
+@@ -113,7 +134,9 @@ std::unique_ptr<SoundClip> load_sound_clip(const AssetPath &apath, const char *e
+     }
+     else
+     {
++        { const unsigned long long _t = stw_now_us();
+         s_in = AssetMgr->OpenAsset(apath);
++        g_stw_us[0] += stw_now_us() - _t; }
+         if (!s_in)
+             return nullptr;
+         asset_size = static_cast<size_t>(s_in->GetLength());
+@@ -131,7 +154,9 @@ std::unique_ptr<SoundClip> load_sound_clip(const AssetPath &apath, const char *e
+         if (!sounddata)
+         {
+             sounddata.reset(new std::vector<uint8_t>(asset_size));
++            { const unsigned long long _t = stw_now_us();
+             s_in->Read(sounddata->data(), asset_size);
++            g_stw_us[0] += stw_now_us() - _t; }
+             SndCache.Put(apath.Name, sounddata);
+         }
+         // DOS-PORT (Sound milestone, S4): sniff the real SMF header magic

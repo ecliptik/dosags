@@ -1,0 +1,697 @@
+From b7e70e07eb627380a07760e0723449340ea6af11 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 16:53:06 -0700
+Subject: [PATCH] [AGS] ali3dsw: window-surface present-step rewrite, native
+ 8/16-bit depth
+
+The last remaining COMPILES blocker: ali3dsw.cpp/.h's SDL_CreateRenderer/
+SDL_Texture present step hard-required a 32-bit display
+(IsModeSupported() rejected anything but 32, GetDisplayDepthForNativeDepth()
+returned a hardcoded 32, CreateVirtualScreen() streamed into an ARGB8888
+texture) -- three full-frame 4-byte-per-pixel passes for an 8-bit game,
+and 320x200x32 is not a universally available VESA mode on 486-era
+cards. Per the 2026-09-10 plan review (PLAN.md, PATCH-SEQUENCE.md's 0029
+row), the DOS driver instead presents via SDL_GetWindowSurface +
+SDL_BlitSurfaceScaled + SDL_UpdateWindowSurface, at the game's own native
+depth (8 or 16, IsModeSupported()/GetDisplayDepthForNativeDepth() updated
+to match). With native depth threaded straight through, there is no
+conversion step left at all: the virtual screen's own pixel buffer
+(Bitmap::GetDataForWriting()/GetPitch()) is wrapped directly as an
+SDL_Surface (_vscreenSurface, INDEX8 or RGB565) and blitted onto the
+window surface -- no intermediate texture, no Allegro-blit depth
+conversion. Real palette sync for the 8-bit path is deferred to the next
+patch (this one only attaches a placeholder palette so the surface is
+valid); the two gfxfilter_*_sdl_renderer filter classes are deferred to
+the patch after that (they still reference SDL_render.h and keep this
+file's own build blocked on that header until they're rewritten too --
+confirmed by direct isolated compile of this file with a scratch stub
+swapped in for them, not landed).
+
+Resolves the SDL_HINT_DOS_MAX_BPP sequencing gap patch 0015 found and
+left open: the hint must be set before SDL_InitSubSystem(SDL_INIT_VIDEO),
+but sys_main_init() (where VIDEO first initializes) runs from
+engine_init_backend(), before any game package loads, so the real native
+depth isn't known until here -- the first SetDisplayMode() call, long
+after game load. Fixed by re-initializing the video subsystem once,
+right before creating this backend's one window: quit SDL_INIT_VIDEO,
+set the now-known-depth hint, re-init SDL_INIT_VIDEO so
+DOSVESA_VideoInit() (vendor/SDL/src/video/dos/SDL_dosmodes.c) re-enumerates
+against it. Confirmed safe by reading DOSVESA_VideoInit()/VideoQuit()
+directly: no static across-reinit guard, and this runs before any
+window or video-backed input state exists yet.
+
+Traced GetDisplayDepthForNativeDepth()'s two callers (graphics_mode.cpp,
+per PATCH-SEQUENCE.md's own open item) for 32-bit assumptions: found
+none needing a fix. graphics_mode.cpp treats color_depth generically
+throughout; engine_setup.cpp's engine_setup_color_conversions() already
+sets Allegro's 16-bit RGB565 shifts (_rgb_r/g/b_shift_16 = 11/5/0)
+unconditionally, regardless of display depth, on every AGS platform --
+not a DOS-specific gap to fix, and the reason _vscreenSurface always
+uses SDL_PIXELFORMAT_RGB565 for a 16-bit virtual screen rather than
+querying the window surface's own reported format up front (a real
+format mismatch on hardware without exact 565, still open per
+PATCH-SEQUENCE.md, is handled generically by SDL_BlitSurfaceScaled's own
+format conversion rather than hand-rolled here).
+
+Also, in the course of this rewrite:
+- SDL3 removed the window gamma ramp API entirely (no
+  SDL_GetWindowGammaRamp/SDL_SetWindowGammaRamp, confirmed by reading
+  vendor/SDL/include/SDL3/ directly) -- SupportsGammaControl()/SetGamma()
+  become permanent no-ops, not a DOS-specific choice.
+- No vsync-aware present call exists for the window-surface path either
+  (SDL_UpdateWindowSurface has no vsync concept) -- DoesSupportVsyncToggle()/
+  SetVsyncImpl() likewise become permanent no-ops.
+- Screen-shake/mirror-display (play.shake_screen_yoff/play.screen_flipped,
+  Engine/ac/draw.cpp's render_to_screen(), a real caller of the 3-arg
+  Render() overload with non-default flip) still needs honoring: the live
+  _vscreenSurface can't be flipped in place (RequiresFullRedrawEachFrame()
+  is false, so unredrawn regions may persist across frames), so a lazily
+  allocated scratch surface is flipped instead, only when requested.
+- The old SDL_RenderClear() every frame kept any letterbox/pillarbox
+  border outside the scaled dest rect clean; a plain blit only touches
+  its own dest rect, so this rewrite adds an explicit SDL_FillSurfaceRect
+  black-fill of the window surface, but only when dest doesn't already
+  cover the whole surface (no per-frame cost in the common no-border
+  case) -- a real gap this rewrite would otherwise have introduced, not
+  present in the original code.
+- Dropped now-dead code with no equivalent in the window-surface path:
+  the DirectX-exclusive-fullscreen-display workaround (_isDirectX/
+  _fullscreenDisplay, meaningless without a real SDL_Renderer to detect),
+  the already-unused fix_alpha_blender (confirmed via a tree-wide grep,
+  not just this file), and the 24-bit-pretends-to-be-32-bit
+  GetSupportedModeList() fallback (BOOTSTRAP-0 probe 3 already confirmed
+  SDL_HINT_DOS_MAX_BPP yields an exact 8bpp/16bpp mode list, no
+  depth-substitution needed at 8/16).
+
+Verified: ali3dsw.cpp.obj compiles clean in isolation (gmake -f
+Engine/CMakeFiles/engine.dir/build.make .../ali3dsw.cpp.obj) against the
+real DJGPP build flags, with gfxfilter_sdl_renderer.h/gfxfilter_aa_sdl_renderer.h
+temporarily swapped for a minimal SDL3-renamed scratch version (not
+landed -- the real fix is the next patch) to isolate this file's own
+correctness from that still-open blocker. Full build/link (COMPILES)
+confirmed once the next two patches (palette sync, filter collapse)
+land in the same session.
+---
+ Engine/gfx/ali3dsw.cpp | 344 ++++++++++++++++++++---------------------
+ Engine/gfx/ali3dsw.h   |  69 +++++----
+ 2 files changed, 207 insertions(+), 206 deletions(-)
+
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index ecb816ab2..9b83f2416 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -13,7 +13,6 @@
+ //=============================================================================
+ #include "gfx/ali3dsw.h"
+ #include <algorithm>
+-#include <array>
+ #include <stack>
+ #include "ac/sys_events.h"
+ #include "gfx/ali3dexception.h"
+@@ -22,7 +21,6 @@
+ #include "gfx/gfx_util.h"
+ #include "platform/base/agsplatformdriver.h"
+ #include "platform/base/sys_main.h"
+-#include "util/string_compat.h"
+ 
+ 
+ namespace AGS
+@@ -41,18 +39,6 @@ static uint32_t _trans_alpha_blender32(uint32_t x, uint32_t y, uint32_t n);
+ // SDLRendererGraphicsDriver
+ // ----------------------------------------------------------------------------
+ 
+-#if SDL_VERSION_ATLEAST(2, 0, 5)
+-// used to add alpha back to rendered screen.
+-static auto fix_alpha_blender = SDL_ComposeCustomBlendMode(
+-    SDL_BLENDFACTOR_ZERO,
+-    SDL_BLENDFACTOR_ONE,
+-    SDL_BLENDOPERATION_ADD,
+-    SDL_BLENDFACTOR_ONE,
+-    SDL_BLENDFACTOR_ZERO,
+-    SDL_BLENDOPERATION_ADD
+-);
+-#endif // SDL_VERSION_ATLEAST(2, 0, 5)
+-
+ SDLRendererGraphicsDriver::SDLRendererGraphicsDriver()
+ {
+   _tint_red = 0;
+@@ -70,28 +56,40 @@ bool SDLRendererGraphicsDriver::IsModeSupported(const DisplayMode &mode)
+     SDL_SetError("Invalid resolution parameters: %d x %d", mode.Width, mode.Height);
+     return false;
+   }
+-  if (mode.ColorDepth != 32) {
++  // DOS-PORT: v0.1 profile supports 8-bit (INDEX8 window surface, palette
++  // synced from Allegro's) and 16-bit (RGB565) games only -- 32-bit is out
++  // of scope (see PLAN.md's review-decision section). Presenting directly
++  // at the game's own native depth is the whole point of this driver on
++  // DOS (see ali3dsw.h's file comment), so there is no other depth to fall
++  // back to the way the old 32-bit-only SDL_Renderer path could.
++  if (mode.ColorDepth != 8 && mode.ColorDepth != 16) {
+     SDL_SetError("Display colour depth not supported: %d", mode.ColorDepth);
+     return false;
+   }
+   return true;
+ }
+ 
+-int SDLRendererGraphicsDriver::GetDisplayDepthForNativeDepth(int /*native_color_depth*/) const
++int SDLRendererGraphicsDriver::GetDisplayDepthForNativeDepth(int native_color_depth) const
+ {
+-    return 32;
++    // DOS-PORT: present at the game's own native depth unchanged, instead
++    // of the old hard-coded 32 (which required converting every frame
++    // through an ARGB8888 texture). IsModeSupported() is what actually
++    // enforces the v0.1 8/16-bit profile; a native depth outside that
++    // range (a 32-bit game, out of v0.1 scope) is rejected there, the same
++    // already-handled error path as any other unsupported mode.
++    return native_color_depth;
+ }
+ 
+ IGfxModeList *SDLRendererGraphicsDriver::GetSupportedModeList(int display_index, int color_depth)
+ {
+     std::vector<DisplayMode> modes;
+     sys_get_desktop_modes(display_index, modes, color_depth);
+-    if ((modes.size() == 0) && color_depth == 32)
+-    {
+-        // Pretend that 24-bit are 32-bit
+-        sys_get_desktop_modes(display_index, modes, 24);
+-        for (auto &m : modes) { m.ColorDepth = 32; }
+-    }
++    // DOS-PORT: the old 24-bit-pretends-to-be-32-bit fallback was specific
++    // to the removed 32-bit-only SDL_Renderer path (VESA/DOSBox-X modes
++    // are never reported as 24-bit to begin with) -- BOOTSTRAP-0 probe 3
++    // confirmed SDL_HINT_DOS_MAX_BPP reliably yields an exact 8bpp
++    // (INDEX8) or 16bpp (RGB565) mode list, so no depth-substitution
++    // fallback is needed at 8/16.
+     return new SDLRendererGfxModeList(modes);
+ }
+ 
+@@ -104,8 +102,6 @@ void SDLRendererGraphicsDriver::SetGraphicsFilter(PSDLRenderFilter filter)
+ {
+     _filter = filter;
+     _filter->InitSDLHint();
+-    if (_screenTex)
+-        SDL_SetTextureScaleMode(_screenTex, _filter->GetScaleMode());
+     OnSetFilter();
+ }
+ 
+@@ -119,91 +115,72 @@ bool SDLRendererGraphicsDriver::SetDisplayMode(const DisplayMode &mode)
+   if (!IsModeSupported(mode))
+     return false;
+ 
+-  _capsVsync = true; // reset vsync flag, allow to try setting again
+-
+   SDL_Window *window = sys_get_window();
+   if (!window)
+   {
+-    window = sys_window_create("", mode.DisplayIndex, mode.Width, mode.Height, mode.Mode);
+-
+-    _hasGamma = SDL_GetWindowGammaRamp(window, _defaultGammaRed, _defaultGammaGreen, _defaultGammaBlue) == 0;
+-
+-    Uint32 rendererFlags = SDL_RENDERER_ACCELERATED;
+-    if (mode.Vsync) {
+-        rendererFlags |= SDL_RENDERER_PRESENTVSYNC;
++    // DOS-PORT: SDL_HINT_DOS_MAX_BPP must be set *before*
++    // SDL_InitSubSystem(SDL_INIT_VIDEO) -- DOSVESA_VideoInit()
++    // (vendor/SDL/src/video/dos/SDL_dosmodes.c) enumerates and filters the
++    // VESA mode list by this hint exactly once, at video-subsystem init,
++    // and caches the result (BOOTSTRAP-0 probe 3,
++    // tests/probes/window-surface-smoke/README.md). But sys_main_init()
++    // -- where SDL_INIT_VIDEO is first initialized -- runs from
++    // engine_init_backend(), well before any game package is loaded
++    // (patch 0015's own finding while porting this same file), so the
++    // game's real native depth (only known here, at the first
++    // SetDisplayMode() call, long after the game package has loaded)
++    // isn't available yet at that earlier point. Resolve the gap by
++    // re-initializing the video subsystem once, right here, right before
++    // creating the one window this DOS backend ever creates: quit
++    // SDL_INIT_VIDEO, set the now-known-depth hint, then re-init
++    // SDL_INIT_VIDEO so DOSVESA_VideoInit() re-enumerates against it.
++    // Confirmed safe to do here: DOSVESA_VideoInit()/DOSVESA_VideoQuit()
++    // keep no static across-reinit guard (each call freshly re-probes and
++    // re-saves VBE state), and this runs before any window or
++    // video-backed input state (sys_events.cpp's event pump) exists yet.
++    SDL_SetHint(SDL_HINT_DOS_MAX_BPP, String::FromFormat("%d", mode.ColorDepth).GetCStr());
++    SDL_QuitSubSystem(SDL_INIT_VIDEO);
++    if (!SDL_InitSubSystem(SDL_INIT_VIDEO))
++    {
++      Debug::Printf(kDbgMsg_Error, "SDLRenderer: failed to re-init video subsystem for %d-bit mode: %s",
++          mode.ColorDepth, SDL_GetError());
++      return false;
+     }
+-    // Disable SDL_HINT_RENDER_BATCHING, causes issues with certain monitor setups
+-    // See SDL2 issue https://github.com/libsdl-org/SDL/issues/7838
+-    // (arguably we do not benefit from batching, because we only draw 1 final texture).
+-    SDL_SetHint(SDL_HINT_RENDER_BATCHING, "0");
+-    _renderer = SDL_CreateRenderer(window, -1, rendererFlags);
+-
+-    SDL_RendererInfo rinfo{};
+-    if (SDL_GetRendererInfo(_renderer, &rinfo) == 0) {
+-      Debug::Printf(kDbgMsg_Info, "Created SDL Renderer: %s", rinfo.name);
+-      Debug::Printf("Available texture formats:");
+-      for (Uint32 i = 0; i < rinfo.num_texture_formats; i++) {
+-        Debug::Printf("\t- %s", SDL_GetPixelFormatName(rinfo.texture_formats[i]));
+-      }
+-      // NOTE: SDL_RendererInfo::flags only contains VSYNC if it was requested
+-      if (rendererFlags & SDL_RENDERER_PRESENTVSYNC)
+-      {
+-        _capsVsync = (rinfo.flags & SDL_RENDERER_PRESENTVSYNC) != 0;
+-        if (!_capsVsync)
+-          Debug::Printf(kDbgMsg_Warn, "WARNING: Vertical sync is not supported. Setting will be kept at driver default.");
+-      }
+-
+-      // Record if SDL have created a DirectX renderer - we use this info for some checks
+-      const std::array<const char *, 3> directx_renderers = { { "direct3d", "direct3d11", "direct3d12" } };
+-      for (const char *name : directx_renderers)
+-      {
+-        if (ags_stricmp(rinfo.name, name) == 0)
+-        {
+-          _isDirectX = true;
+-          break;
+-        }
+-      }
+-    } else {
+-      Debug::Printf("SDLRenderer: failed to query renderer info: %s", SDL_GetError());
++
++    window = sys_window_create("", mode.DisplayIndex, mode.Width, mode.Height, mode.Mode);
++    if (!window)
++    {
++      Debug::Printf(kDbgMsg_Error, "SDLRenderer: failed to create window: %s", SDL_GetError());
++      return false;
+     }
++
++    SDL_Surface *win_surface = SDL_GetWindowSurface(window);
++    if (win_surface)
++      Debug::Printf(kDbgMsg_Info, "Window surface pixel format: %s", SDL_GetPixelFormatName(win_surface->format));
++    else
++      Debug::Printf(kDbgMsg_Error, "SDLRenderer: failed to query window surface: %s", SDL_GetError());
+   }
+   else
+   {
+-#if (AGS_SUPPORT_MULTIDISPLAY)
+-    // This is a bit of a hack, but certain drivers do not support changing
+-    // display in exclusive fullscreen mode, and here we find out if it's the case.
+-    // NOTE: we may in theory support this, but we'd have to release and recreate
+-    // ALL the resources, including all textures currently in memory.
+-    if (_isDirectX && mode.IsRealFullscreen() &&
+-        (_fullscreenDisplay > 0) && (sys_get_window_display_index() != _fullscreenDisplay))
+-    {
+-      sys_window_fit_in_display(_fullscreenDisplay);
+-    }
+-#endif // AGS_SUPPORT_MULTIDISPLAY
+     sys_window_set_style(mode.Mode, Size(mode.Width, mode.Height));
+     sys_window_bring_to_front();
+   }
+ 
+-#if AGS_PLATFORM_MOBILE
+-  SDL_RenderSetLogicalSize(_renderer,mode.Width,mode.Height);
+-#endif
+-
+   OnInit();
+   DisplayMode set_mode = mode;
+   set_mode.DisplayIndex = sys_get_window_display_index();
+-  if ((_fullscreenDisplay < 0) || set_mode.IsRealFullscreen())
+-    _fullscreenDisplay = set_mode.DisplayIndex;
+   OnModeSet(set_mode);
+   return true;
+ }
+ 
+ void SDLRendererGraphicsDriver::UpdateDeviceScreen(const Size &screen_sz)
+ {
++  // DOS-PORT: the AGS_PLATFORM_MOBILE SDL_RenderSetLogicalSize() call this
++  // used to have here was SDL_Renderer-specific and always dead code for
++  // DOS (AGS_PLATFORM_MOBILE is unconditionally 0, platform.h) -- dropped
++  // along with the rest of the renderer/texture path this patch replaces.
+   _mode.Width = screen_sz.Width;
+   _mode.Height = screen_sz.Height;
+-#if AGS_PLATFORM_MOBILE
+-  SDL_RenderSetLogicalSize(_renderer, _mode.Width, _mode.Height);
+-#endif
+ }
+ 
+ void SDLRendererGraphicsDriver::CreateVirtualScreen()
+@@ -218,25 +195,40 @@ void SDLRendererGraphicsDriver::CreateVirtualScreen()
+   virtualScreen = _origVirtualScreen.get();
+   _stageVirtualScreen = virtualScreen;
+ 
+-  _screenTex = SDL_CreateTexture(_renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, vscreen_w, vscreen_h);
+-  if (_filter)
+-    SDL_SetTextureScaleMode(_screenTex, _filter->GetScaleMode());
+-
+-  // Fake bitmap that will wrap over texture pixels for simplier conversion
+-  _fakeTexBitmap = create_bitmap_placeholder(32, vscreen_w, vscreen_h, nullptr);
+-
+-  _lastTexPixels = nullptr;
+-  _lastTexPitch = -1;
++  // DOS-PORT: wrap the virtual screen's own pixel buffer directly as an
++  // SDL_Surface, since GetDisplayDepthForNativeDepth() now returns the
++  // game's native depth unchanged (8 or 16, enforced by IsModeSupported())
++  // -- there is no depth-conversion step between the virtual screen and
++  // the display any more, so no intermediate streaming-texture buffer is
++  // needed. _srcColorDepth is guaranteed 8 or 16 here (same enforcement).
++  // 16-bit uses RGB565 unconditionally, matching engine_setup_color_conversions()'s
++  // own unconditional _rgb_r/g/b_shift_16 = 11/5/0 (Engine/main/engine_setup.cpp)
++  // -- Allegro's 16-bit bitmaps are always laid out this way in this engine,
++  // on every platform, regardless of what the display itself reports; if the
++  // window surface's own format differs (e.g. a real card without exact 565,
++  // still open per PATCH-SEQUENCE.md's "16-bit surface format on real cards"),
++  // SDL_BlitSurfaceScaled() in Present() converts formats generically.
++  const SDL_PixelFormat vscreen_fmt = (_srcColorDepth == 8) ? SDL_PIXELFORMAT_INDEX8 : SDL_PIXELFORMAT_RGB565;
++  _vscreenSurface = SDL_CreateSurfaceFrom(vscreen_w, vscreen_h, vscreen_fmt,
++      virtualScreen->GetDataForWriting(), virtualScreen->GetPitch());
++  if (!_vscreenSurface)
++    Debug::Printf(kDbgMsg_Error, "SDLRenderer: failed to wrap virtual screen as SDL_Surface: %s", SDL_GetError());
++  else if (vscreen_fmt == SDL_PIXELFORMAT_INDEX8 && !SDL_CreateSurfacePalette(_vscreenSurface))
++    Debug::Printf(kDbgMsg_Error, "SDLRenderer: failed to create virtual screen surface palette: %s", SDL_GetError());
+ }
+ 
+ void SDLRendererGraphicsDriver::DestroyVirtualScreen()
+ {
+-  destroy_bitmap(_fakeTexBitmap);
+-  _fakeTexBitmap = nullptr;
+-  if(_screenTex != nullptr) {
+-      SDL_DestroyTexture(_screenTex);
++  if (_flipScratch)
++  {
++      SDL_DestroySurface(_flipScratch);
++      _flipScratch = nullptr;
++  }
++  if (_vscreenSurface)
++  {
++      SDL_DestroySurface(_vscreenSurface);
++      _vscreenSurface = nullptr;
+   }
+-  _screenTex = nullptr;
+ 
+   _origVirtualScreen.reset();
+   virtualScreen = nullptr;
+@@ -266,8 +258,8 @@ bool SDLRendererGraphicsDriver::SetRenderFrame(const Rect &dst_rect)
+ 
+ void SDLRendererGraphicsDriver::ClearRectangle(int /*x1*/, int /*y1*/, int /*x2*/, int /*y2*/, RGB* /*colorToUse*/)
+ {
+-  // TODO: but maybe is not necessary, as we use SDL_Renderer with accelerated gfx here?
+-  // See SDL_RenderDrawRect
++  // Not implemented, matching this driver's pre-existing behavior; nothing
++  // in this rewrite's own scope depends on it doing anything.
+ }
+ 
+ SDLRendererGraphicsDriver::~SDLRendererGraphicsDriver()
+@@ -281,37 +273,19 @@ void SDLRendererGraphicsDriver::UnInit()
+   ReleaseDisplayMode();
+   DestroyVirtualScreen();
+ 
+-  if (_renderer)
+-  {
+-      SDL_DestroyRenderer(_renderer);
+-      _renderer = nullptr;
+-  }
+-
+   sys_window_destroy();
+ }
+ 
+-bool SDLRendererGraphicsDriver::SupportsGammaControl() 
++bool SDLRendererGraphicsDriver::SupportsGammaControl()
+ {
+-  return _hasGamma;
++  // DOS-PORT: SDL3 removed the window gamma ramp API entirely -- see
++  // ali3dsw.h's _vscreenSurface comment and this file's SetGamma() below.
++  return false;
+ }
+ 
+-void SDLRendererGraphicsDriver::SetGamma(int newGamma)
++void SDLRendererGraphicsDriver::SetGamma(int /*newGamma*/)
+ {
+-  if (!_hasGamma) { return; }
+-
+-  Uint16 gamma_red[256];
+-  Uint16 gamma_green[256];
+-  Uint16 gamma_blue[256];
+-
+-  for (int i = 0; i < 256; i++) {
+-    gamma_red[i] = std::min(((int)_defaultGammaRed[i] * newGamma) / 100, 0xffff);
+-    gamma_green[i] = std::min(((int)_defaultGammaGreen[i] * newGamma) / 100, 0xffff);
+-    gamma_blue[i] = std::min(((int)_defaultGammaBlue[i] * newGamma) / 100, 0xffff);
+-  }
+-
+-  _gamma = newGamma;
+-
+-  SDL_SetWindowGammaRamp(sys_get_window(), gamma_red, gamma_green, gamma_blue);
++  // no-op: see SupportsGammaControl()
+ }
+ 
+ int SDLRendererGraphicsDriver::GetCompatibleBitmapFormat(int color_depth)
+@@ -635,58 +609,78 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+   return from;
+ }
+ 
+-void SDLRendererGraphicsDriver::BlitToTexture()
+-{
+-    void *pixels = nullptr;
+-    int pitch = 0;
+-    auto res = SDL_LockTexture(_screenTex, NULL, &pixels, &pitch);
+-    if (res != 0) { return; }
+-
+-    // Because the virtual screen may be of any color depth,
+-    // we wrap texture pixels in a fake bitmap here and call
+-    // standard blit operation, for simplicity sake.
+-    const int vwidth = virtualScreen->GetWidth();
+-    const int vheight = virtualScreen->GetHeight();
+-    if ((_lastTexPixels != pixels) || (_lastTexPitch != pitch)) {
+-        attach_bitmap_data(_fakeTexBitmap, pixels, pitch * vheight, pitch, nullptr);
+-        _lastTexPixels = (unsigned char *)pixels;
+-        _lastTexPitch = pitch;
+-    }
+-
+-    blit(virtualScreen->GetAllegroBitmap(), _fakeTexBitmap, 0, 0, 0, 0, vwidth, vheight);
+-
+-    SDL_UnlockTexture(_screenTex);
+-}
+-
+ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+ {
+-    if (!_renderer) { return; }
++    SDL_Window *window = sys_get_window();
++    if (!window || !_vscreenSurface) { return; }
+ 
+-    SDL_RendererFlip sdl_flip;
+-    switch (flip)
++    SDL_Surface *win_surface = SDL_GetWindowSurface(window);
++    if (!win_surface)
+     {
+-    case kFlip_Horizontal: sdl_flip = SDL_FLIP_HORIZONTAL; break;
+-    case kFlip_Vertical: sdl_flip = SDL_FLIP_VERTICAL; break;
+-    case kFlip_Both: sdl_flip = (SDL_RendererFlip)(SDL_FLIP_HORIZONTAL | SDL_FLIP_VERTICAL); break;
+-    default: sdl_flip = SDL_FLIP_NONE; break;
++        Debug::Printf(kDbgMsg_Error, "SDLRenderer: SDL_GetWindowSurface failed: %s", SDL_GetError());
++        return;
+     }
+ 
+-    BlitToTexture();
+-
+-    SDL_SetRenderDrawColor(_renderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
+-    SDL_RenderClear(_renderer);
++    // DOS-PORT: AGS's own screen-shake / mirror-display script features
++    // (play.shake_screen_yoff / play.screen_flipped -- see Engine/ac/draw.cpp's
++    // render_to_screen(), the real caller of this 3-arg overload) still need
++    // honoring here. The live _vscreenSurface cannot be flipped in place: this
++    // driver does not require a full redraw every frame
++    // (RequiresFullRedrawEachFrame() returns false) and may rely on regions
++    // that were not redrawn this frame persisting from the last one, so an
++    // in-place flip would permanently scramble it. Flip a scratch copy
++    // instead, only when actually requested.
++    SDL_Surface *blit_src = _vscreenSurface;
++    if (flip != kFlip_None)
++    {
++        SDL_FlipMode sdl_flip = SDL_FLIP_NONE;
++        switch (flip)
++        {
++        case kFlip_Horizontal: sdl_flip = SDL_FLIP_HORIZONTAL; break;
++        case kFlip_Vertical:   sdl_flip = SDL_FLIP_VERTICAL; break;
++        case kFlip_Both:       sdl_flip = SDL_FLIP_HORIZONTAL_AND_VERTICAL; break;
++        default: break;
++        }
+ 
+-    int xoff_final = _scaling.X.ScalePt(xoff);
+-    int yoff_final = _scaling.Y.ScalePt(yoff);
++        if (!_flipScratch)
++        {
++            _flipScratch = SDL_CreateSurface(_vscreenSurface->w, _vscreenSurface->h, _vscreenSurface->format);
++            if (_flipScratch && SDL_ISPIXELFORMAT_INDEXED(_vscreenSurface->format))
++                SDL_SetSurfacePalette(_flipScratch, SDL_GetSurfacePalette(_vscreenSurface));
++        }
++        if (_flipScratch &&
++            SDL_BlitSurface(_vscreenSurface, nullptr, _flipScratch, nullptr) &&
++            SDL_FlipSurface(_flipScratch, sdl_flip))
++        {
++            blit_src = _flipScratch;
++        }
++        else
++        {
++            Debug::Printf(kDbgMsg_Error, "SDLRenderer: failed to flip presented frame: %s", SDL_GetError());
++        }
++    }
+ 
+     SDL_Rect dst;
+-    dst.x = xoff_final;
+-    dst.y = yoff_final;
++    dst.x = _scaling.X.ScalePt(xoff);
++    dst.y = _scaling.Y.ScalePt(yoff);
+     dst.w = _dstRect.GetWidth();
+     dst.h = _dstRect.GetHeight();
+-    SDL_RenderCopyEx(_renderer, _screenTex, nullptr, &dst, 0.0, nullptr, sdl_flip);
+ 
+-    SDL_RenderPresent(_renderer);
++    // DOS-PORT: the old SDL_Renderer path called SDL_RenderClear() every
++    // frame before compositing, which kept any letterbox/pillarbox border
++    // outside the scaled dst rect clean -- a plain blit only touches dst
++    // itself, leaving whatever was already on the window surface (a stale
++    // previous frame, or undefined content on the very first present)
++    // showing through any border. Only pay for the clear when there
++    // actually is a border to keep clean.
++    if (dst.x != 0 || dst.y != 0 || dst.w != win_surface->w || dst.h != win_surface->h)
++        SDL_FillSurfaceRect(win_surface, nullptr, SDL_MapSurfaceRGB(win_surface, 0, 0, 0));
++
++    if (!SDL_BlitSurfaceScaled(blit_src, nullptr, win_surface, &dst, SDL_SCALEMODE_NEAREST))
++        Debug::Printf(kDbgMsg_Error, "SDLRenderer: blit to window surface failed: %s", SDL_GetError());
++
++    if (!SDL_UpdateWindowSurface(window))
++        Debug::Printf(kDbgMsg_Warn, "SDLRenderer: SDL_UpdateWindowSurface failed: %s", SDL_GetError());
+ }
+ 
+ void SDLRendererGraphicsDriver::Render(int xoff, int yoff, GraphicFlip flip)
+@@ -808,20 +802,10 @@ static uint32_t _trans_alpha_blender32(uint32_t x, uint32_t y, uint32_t n)
+    return res | g;
+ }
+ 
+-bool SDLRendererGraphicsDriver::SetVsyncImpl(bool enabled, bool &vsync_res)
++bool SDLRendererGraphicsDriver::SetVsyncImpl(bool /*enabled*/, bool &vsync_res)
+ {
+-#if SDL_VERSION_ATLEAST(2, 0, 18)
+-    if (SDL_RenderSetVSync(_renderer, enabled) == 0) // 0 on success
+-    {
+-        // gamma might be lost after changing vsync mode at fullscreen
+-        SetGamma(_gamma);
+-        SDL_RendererInfo info;
+-        SDL_GetRendererInfo(_renderer, &info);
+-        vsync_res = (info.flags & SDL_RENDERER_PRESENTVSYNC) != 0;
+-        return true;
+-    }
+-    Debug::Printf(kDbgMsg_Warn, "SDLRenderer: SetVsync (%d) failed: %s", enabled, SDL_GetError());
+-#endif // SDL_VERSION_ATLEAST(2, 0, 18)
++    // DOS-PORT: unsupported -- see DoesSupportVsyncToggle()'s comment.
++    vsync_res = false;
+     return false;
+ }
+ 
+diff --git a/Engine/gfx/ali3dsw.h b/Engine/gfx/ali3dsw.h
+index ff4878b7f..526ce067c 100644
+--- a/Engine/gfx/ali3dsw.h
++++ b/Engine/gfx/ali3dsw.h
+@@ -12,19 +12,27 @@
+ //
+ //=============================================================================
+ //
+-// Software graphics factory, draws raw bitmaps onto a virtual screen,
+-// converts to SDL_Texture and finally presents with SDL_Renderer.
++// Software graphics factory, draws raw bitmaps onto a virtual screen and
++// presents it directly via the OS window surface (SDL_GetWindowSurface +
++// SDL_BlitSurface + SDL_UpdateWindowSurface).
+ //
+-// TODO: replace nearest-neighbour software filter with SDL's own accelerated
+-// scaling, maybe add more filter types if SDL renderer supports them.
+-// Only keep Hqx filter as a software option (might need to change how the 
+-// filter code works).
++// DOS-PORT: this used to draw onto a virtual screen, convert to a 32-bit
++// SDL_Texture, and present via SDL_Renderer -- that path hard-required a
++// 32-bit display (ali3dsw.cpp's old IsModeSupported()/
++// GetDisplayDepthForNativeDepth()), which is both unnecessarily expensive
++// (three full-frame passes at 4 bytes/pixel for an 8-bit game) and not a
++// universally available VESA mode on 486-era cards. The DOS window-surface
++// driver presents at the game's own native depth (8 or 16 bits) instead,
++// with no separate texture/depth-conversion step: the virtual screen's own
++// pixel buffer is wrapped directly as an SDL_Surface and blitted onto the
++// window surface. See PATCH-SEQUENCE.md's patch 0029 row and PLAN.md's
++// review-decision section for the full rationale.
+ //
+ //=============================================================================
+ #ifndef __AGS_EE_GFX__ALI3DSW_H
+ #define __AGS_EE_GFX__ALI3DSW_H
+ #include <memory>
+-#include <SDL.h>
++#include <SDL3/SDL.h>
+ #include "platform/platform.h"
+ #include "gfx/bitmap.h"
+ #include "gfx/ddb.h"
+@@ -200,7 +208,11 @@ public:
+     // Miscelaneous setup
+     //
+     // Tells if the renderer supports toggling vsync after initializing the display mode.
+-    bool DoesSupportVsyncToggle() override { return (SDL_VERSION_ATLEAST(2, 0, 18)) && _capsVsync; }
++    // DOS-PORT: there is no vsync-aware present call in the window-surface
++    // path (SDL_UpdateWindowSurface has no vsync concept, unlike the old
++    // SDL_Renderer's SDL_RenderSetVSync) -- unsupported outright, not a
++    // renderer-capability query.
++    bool DoesSupportVsyncToggle() override { return false; }
+     // Enables or disables rendering mode that draws sprite list directly into
+     // the final resolution, as opposed to drawing to native-resolution buffer
+     // and scaling to final frame.
+@@ -322,34 +334,39 @@ private:
+     //
+     // Renders single sprite batch on the precreated surface
+     size_t RenderSpriteBatch(const ALSpriteBatch &batch, size_t from, Common::Bitmap *surface, int surf_offx, int surf_offy);
+-    // Copy raw screen bitmap pixels to the SDL texture
+-    void BlitToTexture();
+-    // Render SDL texture on screen
++    // Blits the virtual screen (via _vscreenSurface) onto the window surface
++    // and presents it.
+     void Present(int xoff = 0, int yoff = 0, Common::GraphicFlip flip = Common::kFlip_None);
+ 
+ 
+     PSDLRenderFilter _filter;
+ 
+-    bool _hasGamma = false;
+-    Uint16 _defaultGammaRed[256]{};
+-    Uint16 _defaultGammaGreen[256]{};
+-    Uint16 _defaultGammaBlue[256]{};
+-    int _gamma = 100;
+-
+-    SDL_Renderer *_renderer = nullptr;
+-    SDL_Texture *_screenTex = nullptr;
+-    bool _isDirectX = false; // records if created DirectX based renderer
+-    int _fullscreenDisplay = -1; // a display where exclusive fullscreen was created
+-    // BITMAP struct for wrapping screen texture locked pixels, so that we may use blit()
+-    BITMAP *_fakeTexBitmap = nullptr;
+-    unsigned char *_lastTexPixels = nullptr;
+-    int _lastTexPitch = -1;
++    // DOS-PORT: SDL3 removed the window gamma ramp API entirely
++    // (SDL_GetWindowGammaRamp/SDL_SetWindowGammaRamp are gone -- confirmed
++    // by reading vendor/SDL/include/SDL3/ directly, no replacement exists)
++    // -- gamma control is simply unavailable now, see SupportsGammaControl().
++
++    // Lightweight SDL_Surface wrapping virtualScreen's own pixel buffer at
++    // its native depth (8 or 16 bit); owns no pixel memory of its own
++    // (SDL_DestroySurface on an SDL_CreateSurfaceFrom() result only frees
++    // the SDL_Surface struct, never the caller-owned buffer it wraps).
++    // Recreated whenever the virtual screen itself is (re)created, since
++    // its pixel pointer and pitch must always match virtualScreen's own.
++    SDL_Surface *_vscreenSurface = nullptr;
++    // Scratch surface used only when presenting with a non-default flip
++    // (screen mirror / shake, see Present()'s own comment) -- the live
++    // virtual screen buffer cannot be flipped in place, since this driver
++    // does not require a full redraw every frame (RequiresFullRedrawEachFrame()
++    // returns false) and may rely on unredrawn regions persisting.
++    // Lazily allocated on first use, same lifecycle as _vscreenSurface.
++    SDL_Surface *_flipScratch = nullptr;
+ 
+     // Original virtual screen created and managed by the renderer.
+     std::unique_ptr<Bitmap> _origVirtualScreen;
+     // Current virtual screen bitmap; may be either pointing to _origVirtualScreen,
+     // or provided by external user (for example - plugin).
+-    // Its pixels are copied to the video texture to be presented by SDL_Renderer.
++    // Its pixel buffer is wrapped directly by _vscreenSurface and blitted to
++    // the window surface at present time (see Present()).
+     Bitmap *virtualScreen;
+     // Stage screen meant for particular rendering stages, may be referencing
+     // actual virtual screen or separate bitmap of different size that is
+-- 
+2.47.3
+

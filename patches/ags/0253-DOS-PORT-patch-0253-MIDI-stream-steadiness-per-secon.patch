@@ -1,0 +1,193 @@
+From ba66eaf0d8175661208c033cd5276b5fb50cd6a1 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 00:48:03 -0700
+Subject: [PATCH] DOS-PORT: patch 0253 -- MIDI stream steadiness: per-second
+ MIDI work, gaps and the longest one
+
+WHY: Gate S8/S16/S32 judge music by counters (late_writes=0 on the ISR
+replay), and a counter of lateness is only as good as the stream it ran
+on. The S8 fixture as first defined (Trilby's Notes, room 3 via --startr)
+plays no MIDI at all, and nothing in the manifest said so except a
+cumulative events=0; a song that ends 20 s into a 2-minute cell would pass
+the same bar for 100 s of silence with events > 0. Whether a fixture has a
+steady MIDI stream across its measured window has to be a number in every
+run, not a listen.
+
+WHAT: dos_midi_stream_sample(), once per game tick from
+dos_audio_mixer_pump(): per 1 s window of uclock, the MIDI work that
+reached the chip -- in isr mode the register writes the SB IRQ replayed
+(SDL_DOSMidiDeferStats), in poll mode the events dispatched; whole seconds
+with no sample (a stall) are empty windows. At quit, dos_midi_stream_emit()
+writes one "DOS-PORT midistream" line to RUNMANI.LOG beside the ags 0250
+journey report: basis, windows, the first window with any MIDI, the span
+from there to the end, how many of those windows had none, the longest and
+the trailing gap in seconds, and per-window min/p5/p50/max. Cost: one
+uclock() per tick and a compare; 3.6 KB of .bss for 30 minutes of windows.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/main/quit.cpp                     |  2 +
+ Engine/platform/dos/dos_audio_mixer.cpp  |  1 +
+ Engine/platform/dos/dos_midi_backend.cpp | 85 ++++++++++++++++++++++++
+ Engine/platform/dos/dos_midi_backend.h   |  7 ++
+ 4 files changed, 95 insertions(+)
+
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 20cc70ed1..a1b4dd06c 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -57,6 +57,7 @@
+ #include "main/engine.h"
+ #include "main/game_run.h"
+ #include "platform/dos/dos_journeys.h" // DOS-PORT patch 0250
++#include "platform/dos/dos_midi_backend.h" // DOS-PORT patch 0253
+ #include "main/main.h"
+ #include "main/quit.h"
+ #include "ac/spritecache.h"
+@@ -795,6 +796,7 @@ void quit(const char *quitmsg)
+             // rather than leaving it an assumption.
+             dos_port_yardstick_emit(run_manifest_log); // patch 0093
+             dos_journey_emit(run_manifest_log);        // patch 0250
++            dos_midi_stream_emit(run_manifest_log);    // patch 0253
+ 
+             // DOS-PORT patch 0095: the cross-check's end edge and verdict.
+             // ratio = uclock span / RTC span over the same two RTC second
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index d6dd710d7..529b6fc32 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -517,6 +517,7 @@ static bool audio_owed()
+ 
+ void dos_audio_mixer_pump()
+ {
++    dos_midi_stream_sample();   // DOS-PORT patch 0253: once per tick
+     if (g_gus_backend)
+     {
+         // No software mixdown: each voice's own gus_pcm_stream drives an
+diff --git a/Engine/platform/dos/dos_midi_backend.cpp b/Engine/platform/dos/dos_midi_backend.cpp
+index 1675acb3e..bca8f43d0 100644
+--- a/Engine/platform/dos/dos_midi_backend.cpp
++++ b/Engine/platform/dos/dos_midi_backend.cpp
+@@ -14,6 +14,7 @@
+ #include "platform/dos/dos_midi_backend.h"
+ #include <cstdint> // UINT64_MAX -- TEMPORARY DIAGNOSTIC (S7-GUS), see dos_midi_backend_prepare_song() below
+ #include <cstdio>
++#include <algorithm> // std::sort, DOS-PORT patch 0253
+ #include <SDL3/SDL.h>
+ #include "debug/out.h"
+ #include <time.h> // uclock(), UCLOCKS_PER_SEC -- TEMPORARY DIAGNOSTIC (S7-GUS), see dos_midi_backend_prepare_song() below
+@@ -453,3 +454,87 @@ void dos_midi_backend_status_fragment(char *buf, size_t bufsize)
+         (unsigned long long)g_late_hist[3], (unsigned long long)g_late_hist[4], (unsigned long long)g_late_hist[5],
+         (unsigned long long)g_late50_events, g_burst_max, g_burst_tick, (unsigned long long)g_song_ms, rtc_s);
+ }
++
++// DOS-PORT patch 0253: is the music a steady stream across the run? Per 1 s
++// window of uclock (sampled once per mixer pump, i.e. per game tick), the
++// MIDI work that reached the chip: in isr mode the register writes the SB IRQ
++// replayed (SDL_DOSMidiDeferStats), in poll mode the events dispatched. At
++// quit: the windows from the first one with any MIDI to the last window, how
++// many of those had none (gaps: a song that ended, a pause, a stall that
++// outran the plan), the longest gap, and per-window p5/p50/min. A gate that
++// judges MIDI (late_writes=0) is only as good as the stream it ran on: a run
++// whose song ended after 20 s passes it vacuously for the rest.
++namespace
++{
++const int kMsCap = 1800;              // 30 min of 1 s windows, 3.6 KB
++uint16_t ms_win[kMsCap];
++int ms_nwin = 0;                      // windows closed
++long ms_idx = -1;                     // current window index
++uint64_t ms_last_total = 0;
++uclock_t ms_t0 = 0;
++bool ms_have = false;
++bool ms_isr_basis = false;
++uint64_t ms_total()
++{
++    if (g_tick_isr)
++    {
++        Uint32 wr = 0;
++        SDL_DOSMidiDeferStats(&wr, nullptr, nullptr, nullptr, nullptr);
++        return wr;
++    }
++    return g_events_dispatched;
++}
++} // namespace
++
++void dos_midi_stream_sample()
++{
++    const uclock_t now = uclock();
++    if (!ms_have)
++    {
++        ms_have = true;
++        ms_t0 = now;
++        ms_idx = 0;
++        ms_last_total = ms_total();
++        return;
++    }
++    const long idx = (long)((now - ms_t0) / UCLOCKS_PER_SEC);
++    if (idx == ms_idx)
++        return;
++    const uint64_t tot = ms_total();
++    const uint64_t d = tot - ms_last_total;
++    ms_isr_basis = g_tick_isr;
++    // the whole delta goes to the window just closed; whole seconds with no
++    // sample at all (a stall) are empty windows
++    for (long w = ms_idx; w < idx && ms_nwin < kMsCap; ++w)
++        ms_win[ms_nwin++] = (uint16_t)((w == ms_idx) ? (d > 65535 ? 65535 : d) : 0);
++    ms_last_total = tot;
++    ms_idx = idx;
++}
++
++void dos_midi_stream_emit(FILE *log)
++{
++    if (!log)
++        return;
++    int first = -1, last = ms_nwin - 1;
++    for (int i = 0; i < ms_nwin; ++i)
++        if (ms_win[i]) { first = i; break; }
++    if (first < 0)
++    {
++        fprintf(log, "DOS-PORT midistream basis=%s windows=%d active_windows=0 first_s=-1\n",
++            ms_isr_basis ? "isr_writes" : "events", ms_nwin);
++        return;
++    }
++    int zero = 0, run = 0, longest = 0, n = 0;
++    uint16_t v[kMsCap];
++    for (int i = first; i <= last; ++i)
++    {
++        v[n++] = ms_win[i];
++        if (ms_win[i] == 0) { zero++; run++; if (run > longest) longest = run; }
++        else run = 0;
++    }
++    std::sort(v, v + n);
++    fprintf(log, "DOS-PORT midistream basis=%s windows=%d first_s=%d span_windows=%d zero_windows=%d"
++        " longest_gap_s=%d trailing_gap_s=%d min=%u p5=%u p50=%u max=%u\n",
++        ms_isr_basis ? "isr_writes" : "events", ms_nwin, first, n, zero, longest, run,
++        (unsigned)v[0], (unsigned)v[(n * 5 + 99) / 100 - 1], (unsigned)v[(n * 50 + 99) / 100 - 1], (unsigned)v[n - 1]);
++}
+diff --git a/Engine/platform/dos/dos_midi_backend.h b/Engine/platform/dos/dos_midi_backend.h
+index c3ea3261b..06d8b2cb7 100644
+--- a/Engine/platform/dos/dos_midi_backend.h
++++ b/Engine/platform/dos/dos_midi_backend.h
+@@ -38,6 +38,7 @@
+ //=============================================================================
+ #ifndef __AGS_EE_PLATFORM_DOS__DOS_MIDI_BACKEND_H
+ #define __AGS_EE_PLATFORM_DOS__DOS_MIDI_BACKEND_H
++#include <cstdio> // FILE, DOS-PORT patch 0253
+ #include <cstddef>
+ #include <cstdint>
+ 
+@@ -177,4 +178,10 @@ void dos_midi_backend_note_isr_period(uint32_t period_us);
+ // called, or never resolved to a real backend, this session.
+ void dos_midi_backend_status_fragment(char *buf, size_t bufsize);
+ 
++// DOS-PORT patch 0253: MIDI stream steadiness, per 1 s window (see the .cpp).
++// sample: once per game tick (dos_audio_mixer_pump); emit: at quit, one
++// "DOS-PORT midistream" line to the run manifest.
++void dos_midi_stream_sample();
++void dos_midi_stream_emit(FILE *log);
++
+ #endif // __AGS_EE_PLATFORM_DOS__DOS_MIDI_BACKEND_H
+-- 
+2.47.3
+

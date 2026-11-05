@@ -1,0 +1,69 @@
+From 5e3fd22ed6449d52fa2c48a204c5a70ac74c9046 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 25 Sep 2026 20:29:18 -0700
+Subject: [PATCH] dos: patch 0256 -- OPL window pacing is off by default, a
+ detected PicoGUS included
+
+WHY: the confirmation cell for patch 0255 on the landed build (dosags
+LAB-JOURNEYS 8.49, PACEL, round P) failed a HEALTH row: 4 silent SB IRQs
+against a limit of 3. Every other row passed: TIMER, engagement, peak bound,
+late 0, cap 0, underruns 0, overwrites 0, SB alive, isr_max 7.8 ms. The
+pre-registered consequence (8.43 amendment 1) is that a health-row failure
+turns the PicoGUS pacing default OFF pending investigation, because the
+default reaches every PicoGUS player. Off is the conservative direction: it
+restores the pre-0255 player behaviour. Whether pacing causes the extra
+silent IRQ is not established. It sat at the intro's first play of a sound,
+and silent counts there vary by more than 1 run to run. A same-binary on/off
+ABBA settles it (LAB-JOURNEYS 8.50).
+
+WHAT: SDL_DOSMidiDeferEnable's default K is 0 on every card, where it was
+128 for a detected PicoGUS. SDL_HINT_DOS_OPL_PACE_K=N (16..1024) still turns
+pacing on at K=N, and SDL_HINT_DOS_OPL_PACE_WINDOW_US still sets the window.
+The peak-arrival witness and everything else in 0255 is unchanged. It is a
+default flip, not a re-tune. A restore-default patch comes back only with the
+ABBA's evidence.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ include/SDL3/SDL_dosmidi_tick.h | 2 +-
+ src/audio/dos/SDL_dosaudio_sb.c | 6 ++++--
+ 2 files changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/include/SDL3/SDL_dosmidi_tick.h b/include/SDL3/SDL_dosmidi_tick.h
+index 3593ab909..e61d97930 100644
+--- a/include/SDL3/SDL_dosmidi_tick.h
++++ b/include/SDL3/SDL_dosmidi_tick.h
+@@ -296,7 +296,7 @@ extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferStats4(Uint32 *dedupe_on, Uint3
+    reads = dummy status reads after each address and data write. */
+ extern SDL_DECLSPEC void SDLCALL SDL_DOSOplPacing(Uint32 *pgdetect, Uint32 *reads);
+ /* DOS-PORT patch 0255: OPL arrival pacing and its witness. k = writes allowed per
+-   window (0 = off; 128 by default on a detected PicoGUS, else 0;
++   window (0 = off; 0 by default on every card since patch 0256, a detected PicoGUS included;
+    SDL_HINT_DOS_OPL_PACE_K), win_us = the window (default 2570, one PicoGUS
+    drain period; SDL_HINT_DOS_OPL_PACE_WINDOW_US), waits and wait_us / wait_max_us
+    = the pacing waits taken and their time (included in 0250's isr_sum),
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index 69bbb753f..7899b00ab 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -2249,12 +2249,14 @@ bool SDL_DOSMidiDeferEnable(int kind)
+         const char *e = SDL_getenv("SDL_HINT_DOS_MIDI_DEFER_DRAIN_STI");
+         g_mdq_drain_sti = (e && e[0] == '0' && e[1] == 0) ? 0 : 1;
+     }
+-    { /* DOS-PORT patch 0255: window pacing -- on for a detected PicoGUS, off elsewhere.
++    { /* DOS-PORT patch 0255: window pacing -- off by default (0256; was on for a detected PicoGUS).
+          SDL_HINT_DOS_OPL_PACE_K=0 turns it off, N (16..1024) sets K on any OPL;
+          SDL_HINT_DOS_OPL_PACE_WINDOW_US (500..20000) sets the window. */
+         const char *e = SDL_getenv("SDL_HINT_DOS_OPL_PACE_K");
+         const char *w = SDL_getenv("SDL_HINT_DOS_OPL_PACE_WINDOW_US");
+-        Uint32 k = (kind == 1 && g_dos_opl_pgdetect == 1) ? 128u : 0u;
++        /* DOS-PORT patch 0256: off by default everywhere, a detected PicoGUS included, pending the
++           investigation of dosags LAB-JOURNEYS 8.49 (the hint still turns it on). */
++        Uint32 k = 0u;
+         Uint32 win = 2570u;
+         if (e && *e) {
+             const long v = SDL_strtol(e, NULL, 10);
+-- 
+2.47.3
+

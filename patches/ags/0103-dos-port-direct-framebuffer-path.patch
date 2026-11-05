@@ -1,0 +1,100 @@
+From f8fd35f493666d55ac1e0494a64d1132939da0a0 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 18 Sep 2026 00:19:07 -0700
+Subject: [PATCH] DOS-PORT: patch 0103 -- opt into the backend's
+ direct-framebuffer flush path
+
+The SDL3-DOS backend has two flush paths, and its NORMAL one ignores
+the rect list: it copies the whole window surface to VRAM on every
+present. The 40/40 plan's presentation bake-off measured exactly that
+shape on HW-486-66 -- present_update_window 7.84 / 15.95 / 21.60 ms for
+window surfaces of 64,000 / 196,608 / 307,200 bytes while the PICTURE
+was the same 64,000-byte 320x200 in all three. So the scoped
+SDL_UpdateWindowSurfaceRects that patch 0100 already issues buys
+nothing until the direct path is on. A zero-code env probe on the same
+machine measured the win directly: 22.6 -> 14.9 ms with
+ALLOW_DIRECT_FRAMEBUFFER, 13.8 with PREFER_LFB too, against 10.7 ms for
+a raw LFB write of the same bytes (P2.0).
+
+Set in sys_main_init(), which is already where this port's SDL hints go
+and runs before SDL_InitSubSystem(SDL_INIT_VIDEO); the backend reads
+both through SDL_GetHintBoolean() when it creates the window
+framebuffer. Default ON with an env kill-switch rather than
+OVERRIDE-always, so a cell can still measure both ways --
+SET SDL_DOS_ALLOW_DIRECT_FRAMEBUFFER=0 or SDL_DOS_PREFER_LFB=0 turns
+either half off, and both names are already in the RUNMANIFEST env
+allowlist. The chosen value and its source are logged.
+
+Documented trade-offs, to be CHECKED on the real monitor rather than
+assumed before this default is trusted: the direct path does no vsync
+(tearing possible) and no cursor compositing (AGS draws its own cursor
+sprite, so that should not bite -- but it is a claim about pixels and
+gets a camera photo, not a citation).
+---
+ Engine/platform/base/sys_main.cpp | 50 +++++++++++++++++++++++++++++++
+ 1 file changed, 50 insertions(+)
+
+diff --git a/Engine/platform/base/sys_main.cpp b/Engine/platform/base/sys_main.cpp
+index 8a5797c03..97e64f878 100644
+--- a/Engine/platform/base/sys_main.cpp
++++ b/Engine/platform/base/sys_main.cpp
+@@ -76,6 +76,56 @@ int sys_main_init(/*config*/) {
+     SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
+ #elif defined (SDL_HINT_ANDROID_SEPARATE_MOUSE_AND_TOUCH)
+     SDL_SetHint(SDL_HINT_ANDROID_SEPARATE_MOUSE_AND_TOUCH, "1");
++#endif
++#ifdef __DJGPP__
++    // DOS-PORT patch 0103: opt into the SDL3-DOS backend's direct-
++    // framebuffer flush path, and prefer the LFB over the banked window.
++    //
++    // WHY, measured rather than argued. The backend has two flush paths
++    // (vendor/SDL/src/video/dos/SDL_dosframebuffer.c). Its NORMAL path
++    // ignores the rect list entirely and copies the whole window surface to
++    // VRAM on every present; only the direct path honours the rects. The
++    // 40/40 plan's presentation bake-off measured exactly that on
++    // HW-486-66: `present_update_window` came out 7.84 / 15.95 / 21.60 ms
++    // for window surfaces of 64,000 / 196,608 / 307,200 bytes while the
++    // PICTURE was the same 64,000-byte 320x200 in all three -- a straight
++    // line in surface size, not in what actually changed. So the scoped
++    // SDL_UpdateWindowSurfaceRects that patch 0100 already issues buys
++    // nothing until this hint is on. A zero-code env probe on the same
++    // machine measured the difference directly: 22.6 -> 14.9 ms with
++    // ALLOW_DIRECT_FRAMEBUFFER, 13.8 with PREFER_LFB as well, against a
++    // raw LFB write of 10.7 ms for the same bytes (P2.0's bandwidth probe).
++    //
++    // TRADE-OFFS, which are real and documented in the hub's docs/video.md:
++    // the direct path does no vsync (tearing is possible) and does no
++    // cursor compositing (a game that relies on SDL to draw the mouse gets
++    // none). AGS draws its own cursor sprite into the frame, so the second
++    // does not apply here -- verified on the real monitor, not assumed.
++    //
++    // Default ON with an env kill-switch rather than OVERRIDE-always, so a
++    // cell can still measure both ways: SET SDL_DOS_ALLOW_DIRECT_FRAMEBUFFER=0
++    // (or SDL_DOS_PREFER_LFB=0) turns either half off. Both names are in
++    // quit.cpp's RUNMANIFEST env allowlist, so a run that changed them can
++    // never hash like one that did not. Set here because the backend reads
++    // them through SDL_GetHintBoolean() when it creates the window
++    // framebuffer, which is after the SDL_InitSubSystem(SDL_INIT_VIDEO)
++    // below -- this function is already where this port's SDL hints go.
++    // (each hint's macro IS its environment-variable name, so one string
++    // serves for both the getenv and the SDL_SetHint.)
++    {
++        static const char *const dos_fb_hints[] = {
++            SDL_HINT_DOS_ALLOW_DIRECT_FRAMEBUFFER,
++            SDL_HINT_DOS_PREFER_LFB,
++        };
++        for (size_t i = 0; i < SDL_arraysize(dos_fb_hints); ++i)
++        {
++            const char *env = SDL_getenv(dos_fb_hints[i]);
++            const bool off = env && env[0] == '0' && env[1] == 0;
++            SDL_SetHintWithPriority(dos_fb_hints[i], off ? "0" : "1", SDL_HINT_OVERRIDE);
++            Debug::Printf(kDbgMsg_Info, "DOS-PORT: %s=%s (%s)", dos_fb_hints[i],
++                off ? "0" : "1", env ? "from environment" : "port default");
++        }
++    }
+ #endif
+     // DOS-PORT: SDL_INIT_TIMER was removed in SDL3 (timer functions no
+     // longer need a subsystem init); SDL_InitSubSystem now returns bool
+-- 
+2.47.3
+

@@ -1,0 +1,109 @@
+diff --git a/Engine/ac/character.cpp b/Engine/ac/character.cpp
+index 5c3f5893f..a640809c2 100644
+--- a/Engine/ac/character.cpp
++++ b/Engine/ac/character.cpp
+@@ -36,6 +36,10 @@
+ #include "ac/lipsync.h"
+ #include "ac/mouse.h"
+ #include "ac/movelist.h"
++#include <time.h>
++unsigned long long g_rt_us[10]; unsigned g_rt_dij_passes, g_rt_dij_iter, g_rt_cansee_n, g_rt_findroute_calls, g_rt_rp_calls; // RT3 PROBE: phases unused
++unsigned long long rt_now_us() { return (unsigned long long)uclock() * 1000000ull / UCLOCKS_PER_SEC; }
++#include "main/game_run.h" // RT PROBE
+ #include "ac/object.h"
+ #include "ac/overlay.h"
+ #include "ac/properties.h"
+@@ -1923,6 +1927,71 @@ const int turnlooporder[MAX_FACE_DIRECTIONS] =
+ // Core character move implementation:
+ // uses a provided path or searches for a path to a given destination;
+ // starts a move or walk (with automatic animation).
++// RT PROBE (throwaway, 2026-09-23): one route request, timed per phase, with the route's own hash.
++static bool rt_probe_route(MoveList &ml, MaskRouteFinder *pathfind, int chac, int src_x, int src_y, int dst_x, int dst_y,
++    int move_speed_x, int move_speed_y, bool ignwal, const char *who)
++{
++    unsigned long long _b[10]; for (int k = 0; k < 10; k++) _b[k] = g_rt_us[k];
++    const unsigned _pa = g_rt_dij_passes, _it = g_rt_dij_iter, _cs = g_rt_cansee_n, _fr = g_rt_findroute_calls, _rp = g_rt_rp_calls;
++    const unsigned long long _t0 = rt_now_us();
++    Bitmap *_wa = prepare_walkable_areas(chac);
++    const unsigned long long _t1 = rt_now_us();
++    pathfind->SetWalkableArea(_wa, thisroom.MaskResolution);
++    const bool path_result = Pathfinding::FindRoute(ml, pathfind, src_x, src_y, dst_x, dst_y, move_speed_x, move_speed_y, false, ignwal);
++    const unsigned long long _t2 = rt_now_us();
++    uint32_t _h = 2166136261u;
++    for (const auto &pt : ml.pos) { _h = (_h ^ (uint32_t)pt.X) * 16777619u; _h = (_h ^ (uint32_t)pt.Y) * 16777619u; }
++    Debug::Printf(kDbgMsg_Info, "DOS-PORT routewhat by=%s tick=%u char=%d src=%d,%d dst=%d,%d ok=%d stages=%u hash=%08x mask=%dx%d total_us=%lu prep_us=%lu cansee0=%lu rp_copy=%lu rp_scans=%lu rp_flood=%lu rp_near=%lu bh_alloc=%lu dij_memset=%lu dij_loop=%lu old_try=%lu smooth=%lu passes=%u iter_sum=%u cansee_n=%u searches=%u rp_calls=%u",
++        who, get_loop_counter(), chac, src_x, src_y, dst_x, dst_y, path_result ? 1 : 0, path_result ? (unsigned)ml.GetNumStages() : 0u, _h,
++        _wa ? _wa->GetWidth() : 0, _wa ? _wa->GetHeight() : 0,
++        (unsigned long)(_t2 - _t0), (unsigned long)(_t1 - _t0),
++        (unsigned long)(g_rt_us[0]-_b[0]), (unsigned long)(g_rt_us[1]-_b[1]), (unsigned long)(g_rt_us[2]-_b[2]), (unsigned long)(g_rt_us[3]-_b[3]),
++        (unsigned long)(g_rt_us[4]-_b[4]), (unsigned long)(g_rt_us[5]-_b[5]), (unsigned long)(g_rt_us[6]-_b[6]), (unsigned long)(g_rt_us[7]-_b[7]),
++        (unsigned long)(g_rt_us[8]-_b[8]), (unsigned long)(g_rt_us[9]-_b[9]),
++        g_rt_dij_passes - _pa, g_rt_dij_iter - _it, g_rt_cansee_n - _cs, g_rt_findroute_calls - _fr, g_rt_rp_calls - _rp);
++    return path_result;
++}
++
++// RT PROBE: DOSAGS_RT_BENCH="tick;reps;x1,y1,x2,y2;..." -- at loop tick `tick`, run each request `reps` times
++// for the player character into a scratch MoveList (the character does not move). Room coords, as the
++// game's own MoveCharacter lines print them.
++void rt_bench_check()
++{
++    static int state = -2; static long at = -1; static int reps = 1; static std::string spec;
++    if (state == -2) { state = -1; const char *e = getenv("DOSAGS_RT_BENCH"); std::string fromfile; if (e && *e == '@') { FILE *f = fopen(e + 1, "rb"); if (f) { char buf[2048]; size_t n = fread(buf, 1, sizeof(buf) - 1, f); buf[n] = 0; fclose(f); fromfile = buf; while (!fromfile.empty() && (fromfile.back() == '\n' || fromfile.back() == '\r')) fromfile.pop_back(); e = fromfile.c_str(); } } if (e && *e && *e != '@') { spec = e; at = atol(e); state = 0;
++        size_t a = spec.find(';'); if (a != std::string::npos) { reps = atoi(spec.c_str() + a + 1); size_t b = spec.find(';', a + 1); spec = (b == std::string::npos) ? "" : spec.substr(b + 1); } } }
++    if (state != 0 || (long)get_loop_counter() < at) return;
++    state = 1;
++    const int chac = game.playercharacter;
++    MaskRouteFinder *pathfind = get_room_pathfinder();
++    const char *p = spec.c_str();
++    int x1, y1, x2, y2, n;
++    while (sscanf(p, "%d,%d,%d,%d%n", &x1, &y1, &x2, &y2, &n) == 4) {
++        for (int r = 0; r < reps; r++) {
++            MoveList scratch;
++            rt_probe_route(scratch, pathfind, chac, data_to_game_coord(x1), data_to_game_coord(y1), data_to_game_coord(x2), data_to_game_coord(y2),
++                game.chars[chac].walkspeed, game.chars[chac].walkspeed_y == UNIFORM_WALK_SPEED ? game.chars[chac].walkspeed : game.chars[chac].walkspeed_y, false, "bench");
++        }
++        p += n; if (*p == ';') p++; else break;
++    }
++    // RT3: DOSAGS_RT_RAND="N,seed" -- N more requests, a walkable source and any target, from an LCG
++    const char *rr = getenv("DOSAGS_RT_RAND"); unsigned rn = 0, seed = 1;
++    if (rr && sscanf(rr, "%u,%u", &rn, &seed) >= 1) {
++        Bitmap *wa = prepare_walkable_areas(chac);
++        const int W = wa->GetWidth(), H = wa->GetHeight(), ms = thisroom.MaskResolution > 0 ? thisroom.MaskResolution : 1;
++        auto next = [&seed]() { seed = seed * 1103515245u + 12345u; return (seed >> 8) & 0xFFFFFF; };
++        for (unsigned k = 0; k < rn; k++) {
++            int sx, sy, guard = 0;
++            do { sx = next() % W; sy = next() % H; } while (wa->GetPixel(sx, sy) < 1 && ++guard < 100000);
++            const int dx = next() % W, dy = next() % H;
++            MoveList scratch;
++            rt_probe_route(scratch, pathfind, chac, data_to_game_coord(sx * ms), data_to_game_coord(sy * ms), data_to_game_coord(dx * ms), data_to_game_coord(dy * ms),
++                game.chars[chac].walkspeed, game.chars[chac].walkspeed_y == UNIFORM_WALK_SPEED ? game.chars[chac].walkspeed : game.chars[chac].walkspeed_y, false, "rand");
++            wa = prepare_walkable_areas(chac); // rt_probe_route rebuilt it; take the current one
++        }
++    }
++}
++
+ void move_character_impl(CharacterInfo *chin, const std::vector<Point> *path, int tox, int toy, bool ignwal, bool walk_anim)
+ {
+     const int chac = chin->index_id;
+@@ -2001,8 +2070,7 @@ void move_character_impl(CharacterInfo *chin, const std::vector<Point> *path, in
+         const int dst_y = data_to_game_coord(toy);
+ 
+         MaskRouteFinder *pathfind = get_room_pathfinder();
+-        pathfind->SetWalkableArea(prepare_walkable_areas(chac), thisroom.MaskResolution);
+-        path_result = Pathfinding::FindRoute(mls[mslot], pathfind, src_x, src_y, dst_x, dst_y, move_speed_x, move_speed_y, false, ignwal);
++        path_result = rt_probe_route(mls[mslot], pathfind, chac, src_x, src_y, dst_x, dst_y, move_speed_x, move_speed_y, ignwal, "game");
+     }
+ 
+     // Double check that the path actually leads to another position;
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 3d6d01469..27151dac9 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1375,6 +1375,7 @@ void dos_auto_exit_check()
+     }
+     if (dos_auto_exit_tick >= 0 && (long)get_loop_counter() >= dos_auto_exit_tick)
+         quit("|DOS-PORT: DOSAGS_TAS_AUTO_EXIT_TICK reached");
++    { extern void rt_bench_check(); rt_bench_check(); } // RT PROBE (throwaway)
+ }
+ 
+ // DOS-PORT (patch 0048): see game_run.h's own comment. A plain

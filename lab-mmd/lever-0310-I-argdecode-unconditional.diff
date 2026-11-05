@@ -1,0 +1,65 @@
+diff --git a/Engine/script/cc_instance.cpp b/Engine/script/cc_instance.cpp
+index c2cb3d44d..cc93b32c2 100644
+--- a/Engine/script/cc_instance.cpp
++++ b/Engine/script/cc_instance.cpp
+@@ -584,6 +584,9 @@ inline bool FixupArgument(RuntimeScriptValue &arg, const int fixup, const uintpt
+ }
+ 
+ 
++#ifdef __DJGPP__
++static const size_t kCodeReadPad = 2; // DOS-PORT patch 0310
++#endif
+ #define MAXNEST 50  // number of recursive function calls allowed
+ ccInstError ccInstance::Run(int32_t curpc)
+ {
+@@ -676,6 +679,16 @@ ccInstError ccInstance::Run(int32_t curpc)
+         // (type, value, pointer, manager, size: five stores) for every argument of every
+         // instruction was work almost nobody read. The three that read the whole value (LITTOREG
+         // and WRITELIT via FixupArgument, NEWARRAY's managed flag) complete it themselves.
++#ifdef __DJGPP__
++        // DOS-PORT patch 0310: read arguments 1 and 2 unconditionally (the resolved code array is
++        // padded by kCodeReadPad words past its end, see _Create), argument 3 only when present. The
++        // argument-count branch chain cost more than two loads. A handler reads only the arguments its
++        // own opcode has (0295's contract), so what lands in the others is never read.
++        op_arg1 = static_cast<int32_t>(codeInst->_code[_pc + 1]);
++        op_arg2 = static_cast<int32_t>(codeInst->_code[_pc + 2]);
++        if (op_argc > 2)
++            op_arg3 = static_cast<int32_t>(codeInst->_code[_pc + 3]);
++#else
+         switch (op_argc)
+         {
+         case 3:
+@@ -690,6 +703,7 @@ ccInstError ccInstance::Run(int32_t curpc)
+         default:
+             break;
+         }
++#endif
+         //---------------------------------------------------------------------
+         /* End read operation */
+         //=====================================================================
+@@ -1764,7 +1778,13 @@ bool ccInstance::_Create(PScript scri, const ccInstance *joined)
+ 
+         if (scri->code.size() > 0)
+         {
++#ifdef __DJGPP__
++            // DOS-PORT patch 0310: kCodeReadPad zero words past the end, for Run()'s unconditional
++            // argument reads; _codesize below still counts only the real code.
++            _scriptData->code.resize(scri->code.size() + kCodeReadPad);
++#else
+             _scriptData->code.resize(scri->code.size());
++#endif
+             _scriptData->code_fixups.resize(scri->code.size());
+             // 64 bit: Read code into 8 byte array, necessary for being able to perform
+             // relocations on the references.
+@@ -1793,7 +1813,11 @@ bool ccInstance::_Create(PScript scri, const ccInstance *joined)
+ 
+     // Setup fast access pointers
+     _code = _scriptData->code.data();
++#ifdef __DJGPP__
++    _codesize = static_cast<int32_t>(_scriptData->code_fixups.size()); // patch 0310: the real code size
++#else
+     _codesize = static_cast<int32_t>(_scriptData->code.size());
++#endif
+     _code_fixups = _scriptData->code_fixups.data();
+ 
+     // If this is a primary script's instance:

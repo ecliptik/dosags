@@ -1,0 +1,72 @@
+From 91ce4754fcc30d68e008da0e36dccbcbc0c79555 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 18 Sep 2026 15:43:07 -0700
+Subject: [PATCH 116/117] DOS-PORT: patch 0116 -- test hook to force the
+ darkening path
+
+DOSAGS_FORCE_DARKEN=<n> sets the ambient light level (play.rtint_*) at
+start_game(), so the one path that actually needs the light table can be
+made to run on demand.
+
+Split out from the fix it exists to test, and deliberately applied FIRST,
+so it is present in BOTH arms of that A/B. A hook that existed only in the
+arm under test could not produce a comparison -- the same mistake made
+with the per-call timing in the first 0113 draft, where the A arm could
+not emit the metric the threshold was set on.
+
+It sets the AMBIENT source rather than a region's Light, because that is
+also the script-enables-it-later case, so it exercises the lazy hook
+rather than the eager branch -- the harder of the two paths.
+
+Honest note on what this does NOT achieve: on both available 8-bit
+fixtures, forcing ambient darkening on still yields
+"colormap_consumers transblend=0 litblend=0" over a whole 5000-tick run.
+It makes the table get BUILT, proving the decision path, but no sprite in
+either fixture is drawn through apply_tint_or_light, so the blend itself
+still never executes. Exercising that needs content with a visible
+character on a darkened region, which neither fixture has.
+---
+ Engine/main/game_start.cpp | 27 +++++++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/Engine/main/game_start.cpp b/Engine/main/game_start.cpp
+index 0daf32606..dc3eb734e 100644
+--- a/Engine/main/game_start.cpp
++++ b/Engine/main/game_start.cpp
+@@ -121,6 +121,33 @@ void start_game()
+     dos_port_startup_timing.preloop_game_start_script_ms = DOS_PORT_PRELOOP_MS(_dp_t0);
+ #endif
+ 
++#ifdef __DJGPP__
++    // DOS-PORT patch 0116, TEST HOOK: force ambient darkening on.
++    //
++    // Patch 0116 stops building the light table when nothing can darken.
++    // That makes the darkening path -- the one case where the table is
++    // genuinely needed -- a path our correctness gate never executes:
++    // both 8-bit fixtures report colormap_consumers 0/0, so DOSBox-X
++    // cannot catch a mistake in it. This env var forces the path to run so
++    // the lazy build and the blend output can actually be compared
++    // against the eager build, instead of being argued about.
++    //
++    // Sets the AMBIENT source (play.rtint_*), which is also the
++    // script-enables-it-later case, so it exercises the lazy hook rather
++    // than the eager branch -- the harder of the two paths.
++    {
++        const char *force_dark = getenv("DOSAGS_FORCE_DARKEN");
++        if (force_dark != nullptr)
++        {
++            play.rtint_enabled = 1;
++            play.rtint_level = 0;       // <= 0 selects the light branch
++            play.rtint_light = atoi(force_dark);   // negative == darker
++            debug_script_log("DOSAGS_FORCE_DARKEN applied rtint_light=%d",
++                             play.rtint_light);
++        }
++    }
++#endif
++
+     set_our_eip(-43);
+ 
+     // Only auto-set first restart point in < 3.6.1 games,
+-- 
+2.47.3
+

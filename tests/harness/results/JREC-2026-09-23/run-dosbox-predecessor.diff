@@ -1,0 +1,50 @@
+diff --git a/tests/harness/run-dosbox.sh b/tests/harness/run-dosbox.sh
+index d7204e79..a5777ccb 100755
+--- a/tests/harness/run-dosbox.sh
++++ b/tests/harness/run-dosbox.sh
+@@ -199,6 +199,27 @@ if [[ $INTERACTIVE -eq 1 ]]; then
+     ARGS+=(--interactive)
+ fi
+ 
++# own_stage (2026-09-23, lab/journeys): the stage dir of THIS script's own dosbox-x. It used to be
++# `ps -eo args | ... | head -1` -- the lowest-PID dosbox-x on the box. With three workers sharing it,
++# a freeze/series watcher started while another worker's dosbox-x was already up photographed the
++# wrong screen and pkill'ed the wrong run. Only a dosbox-x whose parent chain reaches this script
++# ($$ -- a subshell keeps the parent's $$) counts.
++RUNDOSBOX_PID=$$
++own_stage() {
++    local pid p
++    for pid in $(pgrep -x dosbox-x 2>/dev/null); do
++        p=$pid
++        while [[ -n "$p" && "$p" -gt 1 ]]; do
++            if [[ "$p" -eq "$RUNDOSBOX_PID" ]]; then
++                tr '\0' ' ' < "/proc/$pid/cmdline" | sed -n 's#.*-c MOUNT C \(/tmp/dos-port-dosbox\.[A-Za-z0-9]*\).*#\1#p'
++                return 0
++            fi
++            p=$(sed 's/.*) //' "/proc/$p/stat" 2>/dev/null | awk '{print $2}')   # ppid; comm may hold spaces
++            [[ "$p" =~ ^[0-9]+$ ]] || break
++        done
++    done
++    return 0
++}
+ RUN_LOG="$(mktemp)"
+ CAP_PID=""; WATCH_PID=""
+ if [[ -n "$SERIES_DIR" || -n "$FREEZE_DIR" ]]; then
+@@ -209,7 +230,7 @@ if [[ -n "$FREEZE_DIR" ]]; then
+     mkdir -p "$FREEZE_DIR/frames"; rm -f "$FREEZE_DIR"/frames/* "$FREEZE_DIR/.stop" "$FREEZE_DIR/stage"
+     (   declare -A seen
+         while [[ ! -f "$FREEZE_DIR/.stop" ]]; do
+-            _fs="$(ps -eo args | sed -n 's#^dosbox-x .*-c MOUNT C \(/tmp/dos-port-dosbox\.[A-Za-z0-9]*\).*#\1#p' | head -1)"
++            _fs="$(own_stage)"
+             if [[ -n "$_fs" ]]; then
+                 echo "$_fs" > "$FREEZE_DIR/stage"
+                 for f in "$_fs"/FRZ*.TXT; do
+@@ -243,7 +264,7 @@ if [[ -n "$SERIES_DIR" || -n "$FREEZE_DIR" ]]; then
+     # stop it -- otherwise every series run costs the full timeout at a DOS prompt.
+     (   for _ in $(seq 1 "$TIMEOUT_S"); do
+             sleep 1
+-            _stage="$(ps -eo args | sed -n 's#^dosbox-x .*-c MOUNT C \(/tmp/dos-port-dosbox\.[A-Za-z0-9]*\).*#\1#p' | head -1)"
++            _stage="$(own_stage)"
+             [[ -n "$_stage" && -f "$_stage/RUNMANI.LOG" ]] || continue
+             /usr/bin/grep -q 'RUNMANIFEST-END' "$_stage/RUNMANI.LOG" 2>/dev/null || continue
+             sleep 3

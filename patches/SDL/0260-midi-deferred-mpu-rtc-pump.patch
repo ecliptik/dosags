@@ -1,0 +1,610 @@
+From 76a87788db915e5837526a943539ae3c5455d56a Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 14:42:53 -0700
+Subject: [PATCH] dos: patch 0260 -- MPU-401 bytes paced by the CMOS RTC
+ periodic interrupt (deferred MIDI kind 3)
+
+0193 replays planned MIDI writes from the SB IRQ, but only for OPL3 and
+the blind MPU transport. The WaveBlaster's default transport
+(SDL/0097-0098, TIMED-DELAY) needs at least 320 us between two MPU data
+bytes, the fix for the DreamBlaster's input overrun. The SB IRQ comes
+every ~46 ms, and the games measured put up to 224 bytes into one such
+slot. Replaying that in the SB ISR would mean milliseconds of
+busy-waiting with interrupts off per IRQ, and a 32-byte-per-IRQ bound
+(10 ms) still leaves hundreds of bytes late on 5 Days' first song. So
+WaveBlaster stayed on the main-loop poll and played at the render rate.
+
+A faster PIT channel 0 is not an option. uclock() reads it, and ports
+pace and measure with uclock() directly. SDL/0122's timebase fixes
+only SDL's own counter.
+
+The CMOS RTC's periodic interrupt (IRQ 8) runs from its own 32.768 kHz
+crystal and never touches the PIT. Kind 3 uses it as a byte pacer. The
+SB ISR releases the queue head when its stamp comes due and sets PIE.
+Each RTC tick (2048 Hz, 488 us) writes at most one byte, and only once
+the transport's gap has passed in RTC time since the previous one. PIE
+goes off when nothing is due. Every ISR here is integer and port I/O
+only, with no busy-wait, and code and data are locked.
+The compiler does not keep the ISR between its range markers, so the
+pump refuses to install unless 0194's whole-program code lock is held.
+
+IRQ 8 is not ours alone. DJGPP's delay(), and so SDL_Delay, is BIOS
+INT 15h AH=86h, which the AT BIOS counts down on IRQ 8 through the BIOS
+data area. Replacing the vector without honouring that would hang every
+SDL_Delay. So the ISR services the contract itself, at the real tick
+period read from register A. At expiry it sets count = 0, which is what
+DOSBox-X's loop waits for. It also clears the active flag and sets
+bit 7 at the user flag, which is what the IBM AT BIOS loop waits for.
+
+Main thread: Enable(3) is accepted only for the TIMED-DELAY direct-port
+transport. It sets the RTC to 2048 Hz, PIE off, and clears stale flags.
+Enable(0) and device close stop the pump and restore register A, PIE
+and the IRQ 8 mask before anything is written directly. What is still
+queued, and pause's All Notes Off, go out at the transport's own
+spacing with interrupts on. An atexit handler restores the RTC if the
+process leaves without closing the device.
+
+The pump writes one byte per tick, so a pause can fall inside a
+message. Pause's All Notes Off then leaves the device on another
+status, and the rest of the cut message would be read under it (a
+note-on's data as a controller change). So the pump tracks the last
+status byte it put on the wire. A resume whose queue head is a data
+byte re-sends the cut message's status first.
+
+The pump is refused while a BIOS wait is in progress. The killswitch
+SDL_HINT_DOS_AUDIO_WB_RTC_PUMP=0 refuses it too, and the port keeps
+its poll. SDL_DOSMidiDeferRtcStats reports rate, gap, ticks, serviced
+BIOS waits and the longest release-to-write. Default off: nothing
+changes unless a port enables kind 3.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ include/SDL3/SDL_dosmidi_tick.h    |  14 ++
+ src/audio/dos/SDL_dosaudio_sb.c    | 374 ++++++++++++++++++++++++++++-
+ src/core/dos/SDL_dos_audio_synth.c |  27 ++-
+ src/core/dos/SDL_dos_audio_synth.h |   6 +
+ 4 files changed, 417 insertions(+), 4 deletions(-)
+
+diff --git a/include/SDL3/SDL_dosmidi_tick.h b/include/SDL3/SDL_dosmidi_tick.h
+index 3593ab909..2eddef0b8 100644
+--- a/include/SDL3/SDL_dosmidi_tick.h
++++ b/include/SDL3/SDL_dosmidi_tick.h
+@@ -312,6 +312,20 @@ extern SDL_DECLSPEC void SDLCALL SDL_DOSOplPaceStats(Uint32 *k, Uint32 *win_us,
+    returns that count. KeysOn: OPL voices currently keyed on by the replay. */
+ extern SDL_DECLSPEC Uint32 SDLCALL SDL_DOSMidiDeferPause(bool pause);
+ extern SDL_DECLSPEC Uint32 SDLCALL SDL_DOSMidiDeferKeysOn(void);
++/* DOS-PORT patch 0260: kind 3 = MPU-401 bytes on the TIMED-DELAY transport,
++   released by the SB IRQ at their stamp and written one per CMOS RTC periodic
++   tick (IRQ 8, 2048 Hz), never closer than the transport's byte spacing. The
++   PIT is not touched (uclock() unaffected). While enabled the pump owns IRQ 8
++   and services the AT BIOS INT 15h/86h wait (DJGPP delay(), SDL_Delay) itself.
++   Enable(3) returns false for any other transport, when the killswitch
++   SDL_HINT_DOS_AUDIO_WB_RTC_PUMP=0 is set, or while a BIOS wait is in progress.
++   Stats (run totals; rate and spacing of the last install, 0 if never
++   installed): the pump's rate, byte spacing, RTC ticks taken, BIOS waits
++   completed, and the longest release-to-write of an on-time byte in us (+- one
++   tick). isr_writes/late/late_max/burst come from
++   SDL_DOSMidiDeferStats as for the other kinds (burst = bytes per SB IRQ slot). */
++extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferRtcStats(Uint32 *rate_hz, Uint32 *gap_us, Uint32 *ticks,
++                                                          Uint32 *bios_waits, Uint32 *lat_max_us);
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index 69bbb753f..ccb9f8ad9 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -1752,7 +1752,7 @@ bool SDL_DOSMidiIsrTickActive(void)
+ #define MIDI_DEFER_MAX_PER_IRQ 384u        /* bound on ISR time per IRQ */
+ #define MIDI_DEFER_SYNC_MAX 1024u          /* bound on a disable's main-thread write-out */
+ #define MIDI_DEFER_SYNC_BATCH 32u          /* entries per interrupts-off batch */
+-volatile Uint8 g_mdq_kind = 0;             /* 0 off, 1 OPL3, 2 MPU-401 blind direct */
++volatile Uint8 g_mdq_kind = 0;             /* 0 off, 1 OPL3, 2 MPU-401 blind direct, 3 MPU-401 RTC-paced (0260) */
+ volatile Uint8 g_mdq_hold = 0;             /* 1 = ISR writes nothing, capture refuses */
+ static volatile Uint32 g_mdq_head = 0;     /* consumer (ISR) index, monotonic */
+ static volatile Uint32 g_mdq_tail = 0;     /* producer (main thread) index, monotonic */
+@@ -1828,6 +1828,302 @@ static volatile Uint8 g_mdq_paused = 0;
+ #define MDQ_B0_VOICE(reg) ((((reg) & 0xFF) >= 0xB0 && ((reg) & 0xFF) <= 0xB8) \
+     ? (int)(((reg) & 0xFF) - 0xB0) + (((reg) >= 0x100) ? 9 : 0) : -1)
+ 
++/* ========================================================================
++ * DOS-PORT patch 0260: MPU-401 bytes paced by the CMOS RTC periodic
++ * interrupt (queue kind 3).
++ * ========================================================================
++ * The WaveBlaster's default transport (SDL/0097-0098, TIMED-DELAY) needs at
++ * least tx_delay (320 us) between two MPU data bytes -- the fix for the
++ * DreamBlaster's input overrun. The SB IRQ comes every ~46 ms, so replaying
++ * a slot's bytes there means busy-waiting milliseconds with interrupts off,
++ * and a dense slot (over 200 bytes in the games measured) still spills.
++ * PIT channel 0 cannot be sped up: uclock() reads it, and the ports pace and
++ * measure with uclock() directly.
++ *
++ * The RTC's periodic interrupt (IRQ 8) runs from its own 32.768 kHz crystal
++ * and never touches the PIT. While kind 3 is enabled this ISR owns IRQ 8 at
++ * 2048 Hz (488 us): the SB ISR releases the queue head when its stamp comes
++ * due and sets PIE; each RTC tick writes at most one byte, only when at least
++ * tx_delay of RTC time has passed since the previous one; PIE goes off again
++ * when nothing is due. Integer and port I/O only; code and data locked.
++ *
++ * IRQ 8 is not ours alone: the AT BIOS's INT 15h AH=86h wait -- which DJGPP's
++ * delay(), and therefore SDL_Delay, uses -- counts down on it through the BIOS
++ * data area (0040:0098 user-flag far pointer, 0040:009C count in us,
++ * 0040:00A0 active flag). Replacing the vector without honouring that would
++ * make every SDL_Delay hang, so this ISR services the contract itself, by the
++ * real tick period read from register A: count down; at expiry count = 0
++ * (what DOSBox-X's INT 15h/86h loop waits for), active flag cleared, bit 7 set
++ * at the user flag (what the IBM AT BIOS loop waits for).
++ *
++ * Port 70h (the CMOS index) is shared with every other CMOS reader; this code
++ * touches it only with interrupts off (ISRs, or under cli on the main thread).
++ */
++#define MDQ_RTC_RATE_BITS 5u                /* register A rate select: 32768 >> (5 - 1) = 2048 Hz */
++#define MDQ_BDA_WAIT_PTR 0x498u             /* 0040:0098 far pointer to the user wait flag */
++#define MDQ_BDA_WAIT_COUNT 0x49Cu           /* 0040:009C wait count, us */
++#define MDQ_BDA_WAIT_ACTIVE 0x4A0u          /* 0040:00A0 bit 0 = wait in progress */
++static DOS_InterruptHook g_rtc_hook;
++static volatile Uint8 g_rtc_installed = 0;
++static volatile Uint8 g_rtc_pie = 0;        /* PIE set on the pump's behalf */
++static volatile Uint32 g_rtc_gap_us = 0;    /* minimum spacing between two MPU bytes */
++static volatile Uint32 g_rtc_since_us = 0;  /* RTC time since the previous byte (capped at the gap) */
++static volatile Uint32 g_rtc_ticks = 0;     /* RTC interrupts taken */
++static volatile Uint32 g_rtc_waits = 0;     /* BIOS INT 15h/86h waits this ISR completed */
++static volatile Uint32 g_rtc_seen_irq = 0;  /* SB IRQ index the pump last saw */
++static volatile Uint32 g_rtc_us_in_irq = 0; /* RTC time since the pump first saw that index */
++static volatile Uint32 g_rtc_lat_max_us = 0;/* longest release-to-write of an on-time byte */
++static volatile Uint32 g_rtc_slot_bytes = 0;/* bytes written since the SB IRQ index changed */
++static volatile Uint8 g_rtc_last_status = 0; /* last channel status byte on the wire, 0 = unknown */
++static volatile Uint8 g_rtc_pending_status = 0; /* status to re-send before the queue head (resume) */
++static Uint8 g_rtc_resume_status = 0;       /* the message the pump was in when a pause cut it */
++static volatile Uint16 g_rtc_dos_sel = 0;   /* _dos_ds, copied so the ISR reads locked data only */
++static Uint8 g_rtc_saved_a = 0;
++static Uint8 g_rtc_saved_pie = 0;
++static Uint8 g_rtc_saved_mask = 0;
++static bool g_rtc_atexit = false;
++static Uint32 g_rtc_rate_hz = 0;             /* rate of the last install (stats) */
++static bool g_rtc_locked = false;
++
++/* Interrupts must be off around every call (port 70h is shared). */
++static Uint8 MidiRtcRead(Uint8 reg)
++{
++    outportb(0x70, reg);
++    return inportb(0x71);
++}
++
++static void MidiRtcWrite(Uint8 reg, Uint8 val)
++{
++    outportb(0x70, reg);
++    outportb(0x71, val);
++}
++
++/* SB ISR: the head is due and the pump is idle -> start the RTC ticks. */
++static void MidiRtcKick(Uint32 irq_now)
++{
++    if (g_rtc_pie || g_mdq_hold || g_mdq_head == g_mdq_tail) {
++        return;
++    }
++    __asm__ __volatile__("" ::: "memory"); /* read the entry after seeing the tail */
++    if ((Sint32)(irq_now - g_mdq_stamp[g_mdq_head & (MIDI_DEFER_QUEUE - 1u)]) < 0) {
++        return;
++    }
++    MidiRtcWrite(0x0B, (Uint8)(MidiRtcRead(0x0B) | 0x40));
++    g_rtc_pie = 1;
++}
++
++/* The tick period in us for register A's rate bits (32.768 kHz time base). */
++static Uint32 MidiRtcPeriodUs(Uint8 reg_a)
++{
++    const Uint32 rs = reg_a & 0x0Fu;
++    if (rs == 0) {
++        return 0;
++    }
++    if (rs < 3) {
++        return (rs == 1) ? 3906u : 7813u;
++    }
++    return (15625u << (rs - 1u)) >> 9; /* 1e6 / (32768 >> (rs - 1)) */
++}
++
++/* The AT BIOS INT 70h wait duty. Returns true while a wait is still running. */
++static bool MidiRtcBiosWait(Uint32 period_us)
++{
++    const Uint16 sel = g_rtc_dos_sel;
++    if (!(_farpeekb(sel, MDQ_BDA_WAIT_ACTIVE) & 0x01) || period_us == 0) {
++        return false;
++    }
++    const Uint32 count = _farpeekl(sel, MDQ_BDA_WAIT_COUNT);
++    if (count > period_us) {
++        _farpokel(sel, MDQ_BDA_WAIT_COUNT, count - period_us);
++        return true;
++    }
++    _farpokel(sel, MDQ_BDA_WAIT_COUNT, 0);
++    _farpokeb(sel, MDQ_BDA_WAIT_ACTIVE, 0);
++    {
++        const Uint32 fp = _farpeekl(sel, MDQ_BDA_WAIT_PTR);
++        const Uint32 lin = ((fp >> 16) << 4) + (fp & 0xFFFFu);
++        _farpokeb(sel, lin, (Uint8)(_farpeekb(sel, lin) | 0x80));
++    }
++    g_rtc_waits++;
++    return false;
++}
++
++/* IRQ 8. Interrupts are off for the whole handler. */
++/* One byte to the MPU from the pump; the gap restarts. */
++static void MidiRtcPut(Uint8 v)
++{
++    outportb(g_mdq_mpu_base, v);
++    g_rtc_since_us = 0;
++    if (v >= 0x80) {
++        g_rtc_last_status = (v < 0xF0) ? v : 0; /* system messages cancel running status */
++    }
++    g_rtc_slot_bytes++;
++    if (g_rtc_slot_bytes > g_mdq_burst_max) {
++        g_mdq_burst_max = g_rtc_slot_bytes;
++    }
++}
++
++/* IRQ 8. Interrupts are off for the whole handler. */
++static void MidiRtcISR(void)
++{
++    (void)MidiRtcRead(0x0C); /* acknowledge; unread, register C holds IRQ 8 asserted */
++    const Uint32 period = MidiRtcPeriodUs(MidiRtcRead(0x0A));
++    bool keep = MidiRtcBiosWait(period);
++    g_rtc_ticks++;
++    if (g_mdq_kind == 3 && !g_mdq_hold) {
++        const Uint32 irq_now = dos_port_audio_irq_count;
++        if (irq_now != g_rtc_seen_irq) {
++            g_rtc_seen_irq = irq_now;
++            g_rtc_us_in_irq = 0;
++            g_rtc_slot_bytes = 0;
++        } else {
++            g_rtc_us_in_irq += period;
++        }
++        if (g_rtc_since_us < g_rtc_gap_us) {
++            g_rtc_since_us += period;
++        }
++        Uint32 idx = 0;
++        Sint32 late = -1;
++        if (g_mdq_head != g_mdq_tail) {
++            __asm__ __volatile__("" ::: "memory"); /* read the entry after seeing the tail */
++            idx = g_mdq_head & (MIDI_DEFER_QUEUE - 1u);
++            late = (Sint32)(irq_now - g_mdq_stamp[idx]);
++        }
++        if (late >= 0) {
++            keep = true;
++            if (g_rtc_since_us >= g_rtc_gap_us) {
++                if (g_rtc_pending_status) {
++                    /* a pause cut a message: its status first, then the rest of it */
++                    MidiRtcPut(g_rtc_pending_status);
++                    g_rtc_pending_status = 0;
++                } else {
++                    MidiRtcPut(g_mdq_val[idx]);
++                    g_mdq_head = g_mdq_head + 1u;
++                    g_mdq_written++;
++                    if (late >= 1) {
++                        g_mdq_late++;
++                        if ((Uint32)late > g_mdq_late_max) {
++                            g_mdq_late_max = (Uint32)late;
++                        }
++                    } else if (g_rtc_us_in_irq > g_rtc_lat_max_us) {
++                        g_rtc_lat_max_us = g_rtc_us_in_irq;
++                    }
++                }
++            }
++        }
++    }
++    if (!keep) {
++        MidiRtcWrite(0x0B, (Uint8)(MidiRtcRead(0x0B) & ~0x40));
++        g_rtc_pie = 0;
++    }
++    DOS_EndOfInterrupt(8);
++}
++static void MidiRtcISR_End(void) {}
++
++/* Main thread. Put IRQ 8 and the RTC back as they were. Idempotent. */
++static void MidiRtcUninstall(void)
++{
++    if (!g_rtc_installed) {
++        return;
++    }
++    DOS_DisableInterrupts();
++    {
++        const Uint8 b = MidiRtcRead(0x0B);
++        MidiRtcWrite(0x0B, (Uint8)((b & ~0x40) | g_rtc_saved_pie));
++        const Uint8 a = MidiRtcRead(0x0A);
++        MidiRtcWrite(0x0A, (Uint8)((a & 0xF0) | (g_rtc_saved_a & 0x0F)));
++        (void)MidiRtcRead(0x0C);
++    }
++    g_rtc_pie = 0;
++    DOS_EnableInterrupts();
++    DOS_UnhookInterrupt(&g_rtc_hook, false);
++    if (g_rtc_saved_mask) {
++        outportb(0xA1, (Uint8)(inportb(0xA1) | 0x01)); /* IRQ 8 was masked before us */
++    }
++    g_rtc_installed = 0;
++    dos_port_dbg_log("audio: patch 0260 RTC pump uninstalled -- register A rate bits restored "
++                     "to %u, PIE %s, IRQ 8 %s; ticks=%u bios_waits=%u lat_max_us=%u",
++                     (unsigned)(g_rtc_saved_a & 0x0F), g_rtc_saved_pie ? "on" : "off",
++                     g_rtc_saved_mask ? "re-masked" : "left unmasked", (unsigned)g_rtc_ticks,
++                     (unsigned)g_rtc_waits, (unsigned)g_rtc_lat_max_us);
++}
++
++static void MidiRtcAtExit(void)
++{
++    MidiRtcUninstall();
++}
++
++/* Main thread. Own IRQ 8 at 2048 Hz, PIE off until the SB ISR kicks. */
++static bool MidiRtcInstall(Uint32 gap_us)
++{
++    if (g_rtc_installed) {
++        return true;
++    }
++    if (_farpeekb(_dos_ds, MDQ_BDA_WAIT_ACTIVE) & 0x01) {
++        dos_port_dbg_log("audio: patch 0260 RTC pump refused -- a BIOS INT 15h wait is in progress");
++        return false;
++    }
++    /* ticks, waits and lat_max are run totals (one install per song) */
++    g_rtc_dos_sel = (Uint16)_dos_ds;
++    g_rtc_gap_us = gap_us;
++    g_rtc_since_us = gap_us;
++    g_rtc_seen_irq = dos_port_audio_irq_count;
++    g_rtc_us_in_irq = 0;
++    g_rtc_slot_bytes = 0;
++    g_rtc_last_status = 0;
++    g_rtc_pending_status = 0;
++    g_rtc_pie = 0;
++    g_rtc_rate_hz = 32768u >> (MDQ_RTC_RATE_BITS - 1u);
++    /* The compiler does not keep these functions in source order (the ISR
++       has been laid out after its end marker), so a range lock alone cannot
++       be trusted: the pump runs only under the whole-image lock (0194). */
++    if (!DOS_LockProgramText()) {
++        dos_port_dbg_log("audio: patch 0260 RTC pump refused -- program code lock not held");
++        return false;
++    }
++    if (!g_rtc_locked) {
++        DOS_LockCode(MidiRtcRead, MidiRtcISR_End);
++        DOS_LockCode(MidiRtcISR, MidiRtcISR_End); /* logged, not locked, if laid out after its end */
++        DOS_LockVariable(g_rtc_pie);
++        DOS_LockVariable(g_rtc_gap_us);
++        DOS_LockVariable(g_rtc_since_us);
++        DOS_LockVariable(g_rtc_ticks);
++        DOS_LockVariable(g_rtc_waits);
++        DOS_LockVariable(g_rtc_seen_irq);
++        DOS_LockVariable(g_rtc_us_in_irq);
++        DOS_LockVariable(g_rtc_lat_max_us);
++        DOS_LockVariable(g_rtc_slot_bytes);
++        DOS_LockVariable(g_rtc_dos_sel);
++        DOS_LockVariable(g_rtc_last_status);
++        DOS_LockVariable(g_rtc_pending_status);
++        g_rtc_locked = true;
++    }
++    DOS_DisableInterrupts();
++    g_rtc_saved_a = MidiRtcRead(0x0A);
++    {
++        const Uint8 b = MidiRtcRead(0x0B);
++        g_rtc_saved_pie = (Uint8)(b & 0x40);
++        MidiRtcWrite(0x0B, (Uint8)(b & ~0x40));
++    }
++    MidiRtcWrite(0x0A, (Uint8)((g_rtc_saved_a & 0xF0) | MDQ_RTC_RATE_BITS));
++    (void)MidiRtcRead(0x0C); /* clear stale flags so IRQ 8 can edge again */
++    g_rtc_saved_mask = (Uint8)(inportb(0xA1) & 0x01);
++    DOS_EnableInterrupts();
++    DOS_HookInterruptReplace(8, MidiRtcISR, &g_rtc_hook); /* unmasks IRQ 8 and the cascade */
++    g_rtc_installed = 1;
++    if (!g_rtc_atexit) {
++        atexit(MidiRtcAtExit); /* the RTC must not stay at 2048 Hz, or hooked, past exit */
++        g_rtc_atexit = true;
++    }
++    dos_port_dbg_log("audio: patch 0260 RTC pump installed -- IRQ 8 at %u Hz (register A "
++                     "0x%02x -> rate bits %u), byte gap %u us, PIE was %s, IRQ 8 was %s; "
++                     "MPU bytes released by the SB IRQ, written one per RTC tick",
++                     (unsigned)(32768u >> (MDQ_RTC_RATE_BITS - 1u)), (unsigned)g_rtc_saved_a,
++                     (unsigned)MDQ_RTC_RATE_BITS, (unsigned)gap_us,
++                     g_rtc_saved_pie ? "on" : "off", g_rtc_saved_mask ? "masked" : "unmasked");
++    return true;
++}
++
+ static void MidiDeferWriteOne(Uint32 idx)
+ {
+     const Uint16 reg = g_mdq_reg[idx];
+@@ -1864,6 +2160,10 @@ static void MidiDeferDrain(Uint32 irq_now)
+     if (g_mdq_hold) {
+         return; /* chip detect/init/shutdown in progress on the main thread */
+     }
++    if (g_mdq_kind == 3) {
++        MidiRtcKick(irq_now); /* DOS-PORT patch 0260: the RTC pump writes kind 3 */
++        return;
++    }
+     if (g_mdq_draining) {
+         return; /* DOS-PORT patch 0253: nested entry while interrupts are on */
+     }
+@@ -2134,6 +2434,7 @@ void SDL_DOSMidiDeferFlush(void)
+     MidiDeferShadowReset(); /* patch 0251: queued writes are dropped unplayed */
+     DOS_DisableInterrupts();
+     g_mdq_head = g_mdq_tail;
++    g_rtc_pending_status = 0; /* DOS-PORT patch 0260: nothing left to resume into */
+     DOS_EnableInterrupts();
+ }
+ 
+@@ -2165,6 +2466,17 @@ void SDL_DOSMidiDeferStats2(Uint32 *dropped, Uint32 *sync)
+     if (sync) *sync = g_mdq_sync;
+ }
+ 
++/* DOS-PORT patch 0260 */
++void SDL_DOSMidiDeferRtcStats(Uint32 *rate_hz, Uint32 *gap_us, Uint32 *ticks, Uint32 *bios_waits,
++                              Uint32 *lat_max_us)
++{
++    if (rate_hz) *rate_hz = g_rtc_rate_hz;
++    if (gap_us) *gap_us = g_rtc_gap_us;
++    if (ticks) *ticks = g_rtc_ticks;
++    if (bios_waits) *bios_waits = g_rtc_waits;
++    if (lat_max_us) *lat_max_us = g_rtc_lat_max_us;
++}
++
+ void SDL_DOSMidiDeferStats(Uint32 *written, Uint32 *late, Uint32 *late_max, Uint32 *burst_max, Uint32 *full)
+ {
+     if (written) *written = g_mdq_written;
+@@ -2197,6 +2509,23 @@ bool SDL_DOSMidiDeferEnable(int kind)
+         g_mdq_kind = 0; /* the ISR stops draining; capture refuses */
+         DOS_EnableInterrupts();
+         Uint32 done = 0;
++        if (k == 3) {
++            /* DOS-PORT patch 0260: the pump is stopped and IRQ 8 handed back
++               first; what is left goes out at the transport's own spacing,
++               interrupts on (a 320 us wait per byte is too long for cli). */
++            MidiRtcUninstall();
++            if (g_rtc_pending_status && g_mdq_head != g_mdq_tail) {
++                SDL_DOSMpu401PaceDelay();
++                outportb(g_mdq_mpu_base, g_rtc_pending_status);
++            }
++            g_rtc_pending_status = 0;
++            while (g_mdq_head != g_mdq_tail && done < MIDI_DEFER_SYNC_MAX) {
++                SDL_DOSMpu401PaceDelay();
++                outportb(g_mdq_mpu_base, g_mdq_val[g_mdq_head & (MIDI_DEFER_QUEUE - 1u)]);
++                g_mdq_head = g_mdq_head + 1u;
++                done++;
++            }
++        }
+         while (g_mdq_head != g_mdq_tail && done < MIDI_DEFER_SYNC_MAX) {
+             DOS_DisableInterrupts();
+             for (Uint32 b = 0; b < MIDI_DEFER_SYNC_BATCH && g_mdq_head != g_mdq_tail; b++) {
+@@ -2227,12 +2556,29 @@ bool SDL_DOSMidiDeferEnable(int kind)
+         g_mdq_hold = 0;
+         return true;
+     }
+-    if (!g_dos_sb_device_open || (kind != 1 && kind != 2)) {
++    if (!g_dos_sb_device_open || (kind != 1 && kind != 2 && kind != 3)) {
+         return false; /* no SB IRQ to replay from */
+     }
+     if (kind == 2 && !SDL_DOSMpu401BlindDirectBase(&g_mdq_mpu_base)) {
+         return false; /* DSP-mediated, DRR-poll or TX-delay transport: not ISR-safe here */
+     }
++    if (kind == 3) {
++        /* DOS-PORT patch 0260: the TIMED-DELAY transport, paced by the RTC pump.
++           Killswitch SDL_HINT_DOS_AUDIO_WB_RTC_PUMP=0 (strict "0"): refused, so
++           the port keeps its main-loop poll. */
++        const char *h = SDL_GetHint("SDL_HINT_DOS_AUDIO_WB_RTC_PUMP");
++        Uint32 gap_us = 0;
++        if (h && h[0] == '0' && h[1] == 0) {
++            dos_port_dbg_log("audio: patch 0260 RTC pump off (SDL_HINT_DOS_AUDIO_WB_RTC_PUMP=0)");
++            return false;
++        }
++        if (!SDL_DOSMpu401PacedDirectBase(&g_mdq_mpu_base, &gap_us)) {
++            return false; /* not the TIMED-DELAY direct-port transport */
++        }
++        if (!MidiRtcInstall(gap_us)) {
++            return false;
++        }
++    }
+     { /* DOS-PORT patch 0250: the per-IRQ budget, SDL_HINT_DOS_MIDI_DEFER_MAX_PER_IRQ */
+         const char *e = SDL_getenv("SDL_HINT_DOS_MIDI_DEFER_MAX_PER_IRQ");
+         Uint32 b = MIDI_DEFER_MAX_PER_IRQ;
+@@ -2335,6 +2681,23 @@ Uint32 SDL_DOSMidiDeferPause(bool pause)
+         g_mdq_hold = 1;
+         g_mdq_paused = 1;
+         g_mdq_pause_irq = dos_port_audio_irq_count;
++        if (g_mdq_kind == 3) {
++            /* DOS-PORT patch 0260: the pump now writes nothing (held); All Notes
++               Off at the transport's spacing, interrupts on. The pump writes a
++               byte per tick, so the pause may fall inside a message: remember
++               its status, which the All Notes Off replaces on the wire. */
++            g_rtc_resume_status = g_rtc_pending_status ? g_rtc_pending_status : g_rtc_last_status;
++            g_rtc_pending_status = 0;
++            for (int ch = 0; ch < 16; ch++) {
++                const Uint8 msg[3] = { (Uint8)(0xB0 | ch), 123, 0 };
++                for (int b = 0; b < 3; b++) {
++                    SDL_DOSMpu401PaceDelay();
++                    outportb(g_mdq_mpu_base, msg[b]);
++                }
++            }
++            g_rtc_last_status = 0xBF;
++            return 0;
++        }
+         DOS_DisableInterrupts();
+         if (g_mdq_kind == 1) {
+             for (int v = 0; v < 18; v++) {
+@@ -2368,6 +2731,12 @@ Uint32 SDL_DOSMidiDeferPause(bool pause)
+     for (Uint32 i = g_mdq_head; i != g_mdq_tail; i++) {
+         g_mdq_stamp[i & (MIDI_DEFER_QUEUE - 1u)] += delta;
+     }
++    /* DOS-PORT patch 0260: the queue resumes inside a message (its head is a
++       data byte): the pump re-sends that message's status first. */
++    if (g_mdq_kind == 3 && g_mdq_head != g_mdq_tail && g_rtc_resume_status &&
++        g_mdq_val[g_mdq_head & (MIDI_DEFER_QUEUE - 1u)] < 0x80) {
++        g_rtc_pending_status = g_rtc_resume_status;
++    }
+     g_mdq_paused = 0;
+     g_mdq_hold = 0;
+     DOS_EnableInterrupts();
+@@ -5079,6 +5448,7 @@ static void DOSSOUNDBLASTER_CloseDevice(SDL_AudioDevice *device)
+         g_mdq_head = g_mdq_tail;
+         DOS_EnableInterrupts();
+     }
++    MidiRtcUninstall(); /* DOS-PORT patch 0260: IRQ 8 and the RTC back as they were */
+     /* SDL/0099: bus is going cold (teardown begins). Clear the hot flag first so a
+        cold-init after this close sees a cold bus again. Unconditional (safe even
+        if hidden is NULL -- then nothing was hot anyway). */
+diff --git a/src/core/dos/SDL_dos_audio_synth.c b/src/core/dos/SDL_dos_audio_synth.c
+index 5e917652d..ad4772597 100644
+--- a/src/core/dos/SDL_dos_audio_synth.c
++++ b/src/core/dos/SDL_dos_audio_synth.c
+@@ -782,14 +782,37 @@ bool SDL_DOSMpu401BlindDirectBase(Uint16 *out_base)
+     return true;
+ }
+ 
++/* DOS-PORT patch 0260: the TIMED-DELAY transport, and nothing else, may be
++   paced by the RTC pump instead of this busy-wait: same direct port, same
++   minimum spacing between two bytes, no status read. */
++bool SDL_DOSMpu401PacedDirectBase(Uint16 *out_base, Uint32 *out_gap_us)
++{
++    if (s_mpu401_port_base < 0 || s_mpu401_use_dsp || s_mpu401_tx_delay_us == 0) {
++        return false;
++    }
++    if (out_base) {
++        *out_base = (Uint16)s_mpu401_port_base;
++    }
++    if (out_gap_us) {
++        *out_gap_us = s_mpu401_tx_delay_us;
++    }
++    return true;
++}
++
++void SDL_DOSMpu401PaceDelay(void)
++{
++    mpu401_tx_pace_delay(s_mpu401_tx_delay_us);
++}
++
+ void SDL_DOSMpu401WriteByte(uint8_t byte)
+ {
+     if (s_mpu401_port_base < 0) {
+         return; /* not initialized; silent no-op per docs */
+     }
+     /* DOS-PORT patch 0193: deferred to the SB ISR when the port enabled it
+-       for MPU-401 (only ever for the blind direct-port transport). */
+-    if (g_mdq_kind == 2 && !g_mdq_hold && SDL_DOSMidiDeferCapture(2, 0, byte)) {
++       for MPU-401 (only ever for the blind direct-port transport).
++       DOS-PORT patch 0260: or to the RTC pump (kind 3, TIMED-DELAY transport). */
++    if ((g_mdq_kind == 2 || g_mdq_kind == 3) && !g_mdq_hold && SDL_DOSMidiDeferCapture(g_mdq_kind, 0, byte)) {
+         dos_port_mpu_write_count++;
+         return;
+     }
+diff --git a/src/core/dos/SDL_dos_audio_synth.h b/src/core/dos/SDL_dos_audio_synth.h
+index 4716c2772..70339f914 100644
+--- a/src/core/dos/SDL_dos_audio_synth.h
++++ b/src/core/dos/SDL_dos_audio_synth.h
+@@ -134,6 +134,12 @@ extern void SDL_DOSAudioSB_DSPMidiWriteByte(uint8_t byte);
+    primitives; kind 1 = OPL register, 2 = MPU-401 byte. */
+ extern bool SDL_DOSMidiDeferCapture(Uint8 kind, Uint16 reg, Uint8 val);
+ extern bool SDL_DOSMpu401BlindDirectBase(Uint16 *out_base);
++/* DOS-PORT patch 0260: true (with the port base and the per-byte spacing in
++   us) only for the direct-port TIMED-DELAY transport (SDL/0097-0098), the one
++   the RTC-paced replay (queue kind 3) may drive. PaceDelay: the transport's
++   own busy-wait, for main-thread writes that bypass the queue. */
++extern bool SDL_DOSMpu401PacedDirectBase(Uint16 *out_base, Uint32 *out_gap_us);
++extern void SDL_DOSMpu401PaceDelay(void);
+ /* Hold: while true the ISR writes nothing and capture refuses (writes go
+    direct). Hold(true) returns false and does nothing when deferral is off. */
+ extern bool SDL_DOSMidiDeferHold(bool hold);
+-- 
+2.47.3
+

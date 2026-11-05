@@ -1,0 +1,86 @@
+From 26f3a5c90efb705a7176f8944ad48c4b877e17c0 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 19:43:44 -0700
+Subject: [PATCH] DOS-PORT: patch 0293 -- script VM: decode an
+ instruction's arguments as plain ints
+
+WHY: the interpreter's loop head built a whole RuntimeScriptValue (type, value, pointer, manager,
+size: five stores) for every argument of every instruction, and every handler but three reads an
+argument only as its integer (Arg1i/Arg2i/Arg3i). On Maniac Mansion Deluxe, whose verb template runs
+5,642 VM instructions and 8,184 arguments per tick, that was ~33k x86 instructions per tick nobody
+read (LAB-MMD.md 9.3-9.5). Measured at fixed 40000 cycles: the script event 10.984 -> 10.231 ms/tick
+(-0.753, predicted -0.72); VM op counts identical; AGS Quest and 5 Days unchanged.
+
+WHAT: the loop head stores only IValue. The three handlers that read a whole value complete it
+themselves: LITTOREG and WRITELIT call SetInt32(IValue) on their second argument before
+FixupArgument -- the exact value the old head built -- and NEWARRAY reads Arg3i() != 0, which is
+what Arg3().GetAsBool() returned for an int-set value (Ptr null, so !IsNull() is IValue != 0). The
+DEBUG_CC_EXEC instruction dump, compiled out, would print stale argument types.
+
+Equivalence: state digests every 25 ticks, script events, AutoPilot log and PH*.BMP equal to the
+baseline on MMD, AGS Quest and 5 Days (seeded), with baseline-twice and perturbation controls
+(LAB-MMD.md 9.2, 9.5, 9.7).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/script/cc_instance.cpp | 15 +++++++++++----
+ 1 file changed, 11 insertions(+), 4 deletions(-)
+
+diff --git a/Engine/script/cc_instance.cpp b/Engine/script/cc_instance.cpp
+index 3e88d7e29..baa0f5cb7 100644
+--- a/Engine/script/cc_instance.cpp
++++ b/Engine/script/cc_instance.cpp
+@@ -638,16 +638,21 @@ ccInstError ccInstance::Run(int32_t curpc)
+ 
+ 
+         // Read arguments; use switch as it proved to be faster than the loop
++        // DOS-PORT patch 0293: only the integer. Every handler but three reads an argument as
++        // Arg1i()/Arg2i()/Arg3i() -- the IValue alone -- so building a whole RuntimeScriptValue
++        // (type, value, pointer, manager, size: five stores) for every argument of every
++        // instruction was work almost nobody read. The three that read the whole value (LITTOREG
++        // and WRITELIT via FixupArgument, NEWARRAY's managed flag) complete it themselves.
+         switch (codeOp.ArgCount)
+         {
+         case 3:
+-            codeOp.Args[2].SetInt32(static_cast<int32_t>(codeInst->_code[_pc + 3]));
++            codeOp.Args[2].IValue = static_cast<int32_t>(codeInst->_code[_pc + 3]);
+             /* fall-through */
+         case 2:
+-            codeOp.Args[1].SetInt32(static_cast<int32_t>(codeInst->_code[_pc + 2]));
++            codeOp.Args[1].IValue = static_cast<int32_t>(codeInst->_code[_pc + 2]);
+             /* fall-through */
+         case 1:
+-            codeOp.Args[0].SetInt32(static_cast<int32_t>(codeInst->_code[_pc + 1]));
++            codeOp.Args[0].IValue = static_cast<int32_t>(codeInst->_code[_pc + 1]);
+             break;
+         default:
+             break;
+@@ -751,6 +756,7 @@ ccInstError ccInstance::Run(int32_t curpc)
+             // be only up to 4 bytes large;
+             // I guess that's an obsolete way to do WRITE, WRITEW and WRITEB
+             const auto arg_size = codeOp.Arg1i();
++            codeOp.Args[1].SetInt32(codeOp.Args[1].IValue); // patch 0293: the whole value, before its fixup
+             FixupArgument(codeOp.Args[1], codeInst->_code_fixups[_pc + 2], codeInst->_code[_pc + 2], _stackBegin, codeInst->_strings);
+             ASSERT_CC_ERROR();
+             const auto &arg_value = codeOp.Arg2();
+@@ -792,6 +798,7 @@ ccInstError ccInstance::Run(int32_t curpc)
+         case SCMD_LITTOREG:
+         {
+             auto &reg1 = _registers[codeOp.Arg1i()];
++            codeOp.Args[1].SetInt32(codeOp.Args[1].IValue); // patch 0293: the whole value, before its fixup
+             FixupArgument(codeOp.Args[1], codeInst->_code_fixups[_pc + 2], codeInst->_code[_pc + 2], _stackBegin, codeInst->_strings);
+             ASSERT_CC_ERROR();
+             const auto &arg_value = codeOp.Arg2();
+@@ -1466,7 +1473,7 @@ ccInstError ccInstance::Run(int32_t curpc)
+             auto &reg1 = _registers[codeOp.Arg1i()];
+             const int arg_elnum = reg1.IValue;
+             const uint32_t arg_elsize = static_cast<uint32_t>(codeOp.Arg2i());
+-            const bool arg_managed = codeOp.Arg3().GetAsBool();
++            const bool arg_managed = codeOp.Arg3i() != 0; // patch 0293: == Arg3().GetAsBool() on an int-set value
+             if (arg_elnum < 0)
+             {
+                 cc_error("Invalid size for dynamic array; requested: %d, range: 0..%d", arg_elnum, INT32_MAX);
+-- 
+2.47.3
+

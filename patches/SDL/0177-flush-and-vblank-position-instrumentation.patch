@@ -1,0 +1,342 @@
+From 9678ced31f643530d21b83ba4330bccafbf0b014 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 21 Sep 2026 11:17:38 -0700
+Subject: [PATCH] dos: patch 0177 -- flush and WaitForVBlank position
+ instrumentation
+
+Consolidates 0177, 0178, 0182, 0183, 0184, 0186 and 0187 in
+video/dos/SDL_dosframebuffer.c.
+
+Why. The ~250 ms present stall on BENCH8 (Mode 13h, INDEX8) and AGS Quest
+(16bpp) has the same magnitude as dossage's 243-326 ms on Cirrus at 16bpp, in
+the same function. HARDWARE.md row 59 names a one-variable test that had never
+been run; these counters settle it without a theory, and record POSITION as
+well as cost, since cost alone cannot separate one specific operation from
+contention on the bus or the card.
+- 0177/0178: which leg of the WaitForVBlank guard fires (vsync interval, or a
+  DAC update), at both call sites. 0177 covered only the banked one and read
+  all zero; a counter that never runs proves the site never executes, and
+  0178 covers the second.
+- 0184: a counter in WaitForVBlank itself, the callee, rather than
+  enumerating its callers (three attempts to enumerate them got it wrong).
+- 0182: a banked-flush position trace (cursor / guard / loop / restore, plus
+  the slowest rect), printed when a flush crosses DOSAGS_FLUSH_TRACE_MS
+  (default 100). 0183: banked versus LFB flush counters.
+- 0186/0187: a framebuffer-creation count on the function's first line, and
+  a log line per creation with the flush index, so a surface rebuild can be
+  lined up against the stalls. 0187 also adds a flushslow line to the
+  fast path, which is what this port actually executes and where 0182's
+  banked-path trace had never run.
+
+The dos_port_dbg_log lines are silent when the trace is off (patch 0189).
+Otherwise counters and timing only.
+
+Provenance of this export (2026-09-21): these edits sat uncommitted in the
+vendor tree from patch 0123 onward, which is why every gate cell since said
+build_dirty=1. They were made under one campaign-wide patch counter shared
+with vendor/SDL, and each hunk carries its number in an in-source comment.
+Intermediate states were never committed, so this patch is a hunk-level
+partition of the final tree by concern, attributed by those comments -- not a
+replay of the order the edits were made in, and its intermediate state was not
+built on its own. The numbers named below are the ones found in its hunks.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ src/video/dos/SDL_dosframebuffer.c | 191 ++++++++++++++++++++++++++++-
+ 1 file changed, 190 insertions(+), 1 deletion(-)
+
+diff --git a/src/video/dos/SDL_dosframebuffer.c b/src/video/dos/SDL_dosframebuffer.c
+index d8d882049..275b0ee36 100644
+--- a/src/video/dos/SDL_dosframebuffer.c
++++ b/src/video/dos/SDL_dosframebuffer.c
+@@ -19,6 +19,7 @@
+   3. This notice may not be removed or altered from any source distribution.
+ */
+ #include "SDL_internal.h"
++#include <time.h>   /* patch 0182: uclock/UCLOCKS_PER_SEC */
+ 
+ #ifdef SDL_VIDEO_DRIVER_DOSVESA
+ 
+@@ -42,6 +43,55 @@
+ #include <unistd.h>       // fsync -- crash-survive log writes on DOS (patch 0004)
+ #include <stdlib.h>       // qsort -- wave-20 flush instrumentation (patch 0035)
+ 
++#ifdef __DJGPP__
++/* DOS-PORT patch 0177: which leg of the WaitForVBlank guard fires. */
++long dos_port_vblank_vsync_leg = 0;
++long dos_port_vblank_dac_leg = 0;
++long dos_port_vblank_calls = 0;
++long dos_port_vblank_skipped = 0;
++long dos_port_vblank2_vsync_leg = 0;   /* patch 0178: the page-flip site */
++long dos_port_vblank2_dac_leg = 0;
++long dos_port_vblank2_calls = 0;
++long dos_port_vblank2_skipped = 0;
++
++/* DOS-PORT patch 0182: WHERE inside the banked flush the 250 ms lands.
++ *
++ * Two findings constrain this. The stalls are clocked to WALL TIME -- 3 ms
++ * of spread on an event 121 s into independent runs, gaps at 1x/2x/3x of
++ * ~20.1 s -- and the cost is incurred in present_update_window at 18.7x
++ * that path's 4.9% share of ordinary CPU time. So: a periodic external
++ * event whose cost is paid by one particular code path.
++ *
++ * Cost alone cannot separate the two remaining families, so this records
++ * POSITION as well:
++ *   always the same sub-step  -> one specific operation, named.
++ *   scattered through the copy -> contention during the transfer, i.e. the
++ *                                 bus or the card rather than a call we make.
++ *
++ * Threshold is env-tunable because the stall does not reproduce off-target:
++ * DOSAGS_FLUSH_TRACE_MS=1 proves the print path under the emulator, where
++ * nothing ever crosses 100 ms. Same reason DOSAGS_SKIPTEST exists. */
++long dos_port_flush_banked = 0;   /* patch 0183 */
++long dos_port_flush_lfb = 0;
++long dos_port_fb_created = 0;     /* patch 0186 */
++/* Flush counter. Declared up here rather than beside its first user
++ * because patch 0187 logs it from DOSVESA_CreateWindowFramebuffer,
++ * which is defined earlier in the file -- placing a rebuild in time is
++ * the point, and a bare count cannot do that. */
++static int _dos_port_dbg_call_total = 0;
++static long dos_flush_trace_ms = -1;
++static long dos_flush_trace_threshold(void)
++{
++    if (dos_flush_trace_ms < 0) {
++        const char *e = SDL_getenv("DOSAGS_FLUSH_TRACE_MS");
++        dos_flush_trace_ms = e ? SDL_atoi(e) : 100;
++        if (dos_flush_trace_ms < 1) dos_flush_trace_ms = 1;
++    }
++    return dos_flush_trace_ms;
++}
++#define DOSMS(a,b) ((long)(((long long)((b)-(a)) * 1000LL) / UCLOCKS_PER_SEC))
++#endif
++
+ // DOSKUTSU patch 0034 (Phase 9 wave 18) -- direct-VESA generation counter.
+ // Bumped whenever fb_state is invalidated (DOSVESA_InvalidateCachedFramebuffer)
+ // or successfully re-populated (populate_fb_state_for_direct_fb). Engines
+@@ -916,6 +966,29 @@ static int g_vblank_bound = 1;
+ 
+ bool DOSVESA_CreateWindowFramebuffer(SDL_VideoDevice *device, SDL_Window *window, SDL_PixelFormat *format, void **pixels, int *pitch)
+ {
++    // DOS-PORT patch 0186: framebuffer-creation count, on the function's
++    // FIRST line. The flush's own four-phase brackets cover everything from
++    // the flush's entry onward, so the one thing they cannot see is work
++    // done in a DIFFERENT function -- and SDL calls this one from outside
++    // the flush, to rebuild the window surface. If the periodic present
++    // stall is a surface rebuild, this is where it lives and no bracket in
++    // UpdateWindowFramebuffer would ever show it.
++    //
++    // First line, before the hint resolve below, because a counter placed
++    // after any branch counts that branch, not the entry (the mistake that
++    // put dos_port_flush_banked 950 lines past an early return).
++    dos_port_fb_created++;
++
++    // DOS-PORT patch 0187: a bare count cannot place a rebuild in time, and
++    // placing it in time is the whole question -- two or three creations at
++    // boot look identical to two or three creations at the stalls. Log the
++    // flush index each creation happens at, so a rebuild can be lined up
++    // against the flushslow lines and the engine's tick_stall indices.
++    // One line per creation; there are single digits of them.
++    dos_port_dbg_log("fbcreate #%ld: at flush=%d window=%p",
++                     dos_port_fb_created, _dos_port_dbg_call_total,
++                     (void *)window);
++
+     // DOSKUTSU patch 0115 (v1.6.1 public-HW): one-shot resolve + boot banner
+     // for the banked-blit granularity-fix killswitch. Emitted at surface
+     // creation (before any banked flush) so tests/run-gameplay-smoke.sh can
+@@ -1589,8 +1662,21 @@ static void BankedFramebufferCopyRect(const SDL_DisplayModeData *mdata,
+     }
+ }
+ 
++long dos_port_vblank_entered = 0;   /* patch 0184 */
++
+ static void WaitForVBlank(void)
+ {
++    /* DOS-PORT patch 0184: instrument the CALLEE, not the callers.
++     *
++     * I enumerated this function's call sites three times in one
++     * investigation and got it wrong three times -- "two sites" when there
++     * are three, and the conclusion survived only because the third
++     * happened to fall the same side of the fast path's early return. One
++     * unconditional counter here answers "is this called on our path" for
++     * every site at once, present and future, and cannot miss one.
++     * Enumerating N callers is an O(N) search with an O(1) alternative
++     * inside the function itself. */
++    dos_port_vblank_entered++;
+     if (g_vblank_bound) {
+         // DOSKUTSU patch 0116 (v1.6.1 public-HW): bounded spins (DEFAULT-ON).
+         // The original loops below spin on the VGA status port with NO
+@@ -1640,7 +1726,6 @@ static void ProgramVGADAC(SDL_Palette *palette)
+ // Output goes to /sdldbg.log via the shared dos_port_dbg_log helper from
+ // patch 0009 -- single shared FILE* so this writer can't interleave mid-line
+ // with [lifecycle] / DOSVESA-MODESET writers in other DOS-backend files.
+-static int _dos_port_dbg_call_total = 0;
+ 
+ // Build "<tag> NN NN NN ..." into a string and emit one atomic log line.
+ // Caller must NOT include a trailing newline in `tag`. Buffer sized for
+@@ -2560,6 +2645,41 @@ bool DOSVESA_UpdateWindowFramebuffer(SDL_VideoDevice *device, SDL_Window *window
+             _tb_dpmi_min_us = _tb_copy_min_us = _tb_post_min_us = _tb_total_min_us = 0xFFFFFFFF;
+         }
+ 
++        // DOS-PORT patch 0187: the same per-flush position trace patch 0182
++        // built, in the branch that actually executes.
++        //
++        // 0182 put it in the banked flush. This port takes the direct-fb
++        // fast path on every present, so 0182 has never run once.
++        //
++        // The 100-flush aggregate above is also the wrong cadence for this
++        // fixture, and for a reason worth writing down: a BENCH8 gate run
++        // does 23 real presents, not thousands (fps_basis: presents_real=23,
++        // presents_skipped=4995 -- the dirty check short-circuits before SDL
++        // is called). An instrument that reports every 100 flushes reports
++        // nothing at all in a 23-flush run. Two of those 23 cost 242 ms.
++        //
++        // So: one line per flush that crosses the threshold, naming which
++        // phase carried it. At 23 flushes and a 100 ms default, that is
++        // exactly two lines per run and no cost on any other present. The
++        // threshold is the env-tunable one 0182 already added, because the
++        // stall does not reproduce off-target and DOSAGS_FLUSH_TRACE_MS=1
++        // is how the print path gets proven under the emulator.
++        //
++        // Placed after t3 so it never appears in the span it reports.
++        if ((long)(total_us / 1000) >= dos_flush_trace_threshold()) {
++            dos_port_dbg_log("flushslow #%lu: total_us=%lu dpmi_us=%lu "
++                             "copy_us=%lu post_us=%lu "
++                             "(direct_fb=%d pitches_match=%d dosmemput=%d "
++                             "fb_created=%ld)",
++                             (unsigned long)_dos_port_dbg_call_total,
++                             (unsigned long)total_us, (unsigned long)dpmi_us,
++                             (unsigned long)copy_us, (unsigned long)post_us,
++                             (int)fb_state.direct_fb,
++                             (int)fb_state.pitches_match,
++                             (int)fb_state.use_dosmemput,
++                             dos_port_fb_created);
++        }
++
+         // DOSKUTSU patch 0035 (wave 20): record total on fast-path
+         // success return.
+         _instr_record_total_at_exit(_instr_t_entry);
+@@ -2625,7 +2745,12 @@ bool DOSVESA_UpdateWindowFramebuffer(SDL_VideoDevice *device, SDL_Window *window
+         }
+     }
+ 
++    if (vdata->banked_mode) dos_port_flush_banked++; else dos_port_flush_lfb++;  /* patch 0183 */
+     if (vdata->banked_mode) {
++        /* patch 0182 */
++        const uclock_t _dpf_entry = uclock();
++        uclock_t _dpf_cursor = 0, _dpf_guard = 0, _dpf_loop = 0;
++        long _dpf_maxrect_ms = 0; int _dpf_maxrect_i = -1;
+         // --- Banked framebuffer path (dirty-rect aware) ---
+         // We composite the cursor onto the source surface (in system RAM),
+         // then bank-copy only the dirty rectangles to the VGA window.  We
+@@ -2705,8 +2830,33 @@ bool DOSVESA_UpdateWindowFramebuffer(SDL_VideoDevice *device, SDL_Window *window
+             }
+         }
+ 
++        _dpf_cursor = uclock();   /* patch 0182: cursor composite done */
+         // Wait for vsync before the copy to reduce tearing.
+         const int vsync_interval = windata->framebuffer_vsync;
++#ifdef __DJGPP__
++        /* DOS-PORT patch 0177: settle HARDWARE.md row 59's one-variable
++         * test, which that row names and which has never been run.
++         *
++         * dosags measures 242 ms presents on BENCH8 (Mode 13h, INDEX8) and
++         * ~250 ms on AGS Quest (16bpp). dossage measured 243-326 ms on
++         * Cirrus at 16bpp. Same function, same magnitude.
++         *
++         * Two legs. dossage ruled out leg 1 for itself (16bpp can never be
++         * INDEX8) and confirmed leg 2 (vsync armed unconditionally).
++         * dosags is the opposite on both counts -- SetVsyncImpl forces
++         * vsync_res=false, and BENCH8 IS paletted -- so if the same stall
++         * appears here it cannot have the same explanation, and AGS Quest
++         * at 16bpp with vsync off should see NEITHER leg fire.
++         *
++         * Counting which leg fires, and how often, discriminates all of
++         * that without a theory. */
++        extern long dos_port_vblank_vsync_leg, dos_port_vblank_dac_leg,
++                    dos_port_vblank_calls, dos_port_vblank_skipped;
++        if (vsync_interval > 0) dos_port_vblank_vsync_leg++;
++        if (dac_needs_update)   dos_port_vblank_dac_leg++;
++        if (vsync_interval > 0 || dac_needs_update) dos_port_vblank_calls++;
++        else                                        dos_port_vblank_skipped++;
++#endif
+         if (vsync_interval > 0 || dac_needs_update) {
+             WaitForVBlank();
+         }
+@@ -2739,7 +2889,9 @@ bool DOSVESA_UpdateWindowFramebuffer(SDL_VideoDevice *device, SDL_Window *window
+         // so we don't copy it twice.
+         bool cursor_covered = false;
+ 
++        _dpf_guard = uclock();    /* patch 0182: guard + DAC done */
+         for (int r = 0; r < numrects; r++) {
++            const uclock_t _dpf_r0 = uclock();   /* patch 0182: per-rect */
+             // Clip the dirty rect to the source surface bounds.
+             SDL_Rect rect = rects[r];
+             if (rect.x < 0) {
+@@ -2773,6 +2925,13 @@ bool DOSVESA_UpdateWindowFramebuffer(SDL_VideoDevice *device, SDL_Window *window
+             BankedFramebufferCopyRect(mdata, src, &rect, dst_x, dst_y,
+                                       win_gran_bytes, win_size_bytes, win_base,
+                                       &current_bank, mdata->win_func_ptr);
++            {   /* patch 0182: which rect, and how long. There are TWO
++                 * BankedFramebufferCopyRect call sites -- this one inside
++                 * the loop and one after it for the cursor region -- and
++                 * the first attempt instrumented the wrong one. */
++                const long _dpf_rms = DOSMS(_dpf_r0, uclock());
++                if (_dpf_rms > _dpf_maxrect_ms) { _dpf_maxrect_ms = _dpf_rms; _dpf_maxrect_i = r; }
++            }
+         }
+ 
+         // If no dirty rect covered the cursor, copy the cursor region separately.
+@@ -2781,6 +2940,7 @@ bool DOSVESA_UpdateWindowFramebuffer(SDL_VideoDevice *device, SDL_Window *window
+                                       win_gran_bytes, win_size_bytes, win_base,
+                                       &current_bank, mdata->win_func_ptr);
+         }
++        _dpf_loop = uclock();     /* patch 0182: copy loop done */
+ 
+         // Restore the source surface pixels under the cursor.
+         if (cursor_save) {
+@@ -2789,6 +2949,21 @@ bool DOSVESA_UpdateWindowFramebuffer(SDL_VideoDevice *device, SDL_Window *window
+             SDL_DestroySurface(cursor_save);
+         }
+ 
++        {   /* patch 0182: report a slow flush, with POSITION */
++            const uclock_t _dpf_exit = uclock();
++            const long _dpf_total = DOSMS(_dpf_entry, _dpf_exit);
++            if (_dpf_total >= dos_flush_trace_threshold()) {
++                SDL_Log("DOS-PORT flushtrace total=%ld cursor=%ld guard=%ld loop=%ld restore=%ld "
++                        "numrects=%d maxrect_i=%d maxrect_ms=%ld",
++                        _dpf_total,
++                        DOSMS(_dpf_entry, _dpf_cursor),
++                        DOSMS(_dpf_cursor, _dpf_guard),
++                        DOSMS(_dpf_guard, _dpf_loop),
++                        DOSMS(_dpf_loop, _dpf_exit),
++                        numrects, _dpf_maxrect_i, _dpf_maxrect_ms);
++            }
++        }
++
+     } else {
+         // --- LFB path ---
+         SDL_Surface *dst = fb_state.lfb_surface;
+@@ -2864,6 +3039,20 @@ bool DOSVESA_UpdateWindowFramebuffer(SDL_VideoDevice *device, SDL_Window *window
+             int back_page = 1 - vdata->current_page;
+             Uint16 first_scanline = (Uint16)(vdata->page_offset[back_page] / mdata->pitch);
+ 
++#ifdef __DJGPP__
++            /* patch 0178: the SECOND guard site. Patch 0177 instrumented
++             * only the banked one at :2710 and every counter read zero --
++             * including `skipped`, which proves that site never executes
++             * at all rather than that the guard was simply not taken.
++             * Two call sites, and instrumenting one of them is not a
++             * measurement of the function. */
++            extern long dos_port_vblank2_vsync_leg, dos_port_vblank2_dac_leg,
++                        dos_port_vblank2_calls, dos_port_vblank2_skipped;
++            if (vsync_interval > 0) dos_port_vblank2_vsync_leg++;
++            if (dac_needs_update)   dos_port_vblank2_dac_leg++;
++            if (vsync_interval > 0 || dac_needs_update) dos_port_vblank2_calls++;
++            else                                        dos_port_vblank2_skipped++;
++#endif
+             if (vsync_interval > 0 || dac_needs_update) {
+                 // Wait for vblank so the flip and DAC update appear together.
+                 WaitForVBlank();
+-- 
+2.47.3
+

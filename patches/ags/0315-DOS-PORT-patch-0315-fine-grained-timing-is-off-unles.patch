@@ -1,0 +1,365 @@
+From 4c4a058b02f99135d19221232c4f0adca47a1855 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 25 Sep 2026 15:21:51 -0700
+Subject: [PATCH] DOS-PORT: patch 0315 -- fine-grained timing is off unless
+ DOSAGS_TICKSTATS_FINE=1
+
+WHY: this port's per-phase, event-type and render timers read uclock() -- a PIT read over port I/O --
+at every scope. On MMD that was ~89 reads a game tick on the 486, in every build, and in situ each
+scope (the read, a 64-bit multiply and divide, the stats update) costs far more than the read alone.
+A same-binary 486 ABBA (dosags LAB-MMD.md 45.3) measured turning them off: logic -0.691 ms/tick
+(N 0.031), update_game_once -0.897, the steady tick rate 35.2 -> 36.4 ticks/s. With them off, MMD's
+logic read 24.69 ms/tick in both cells, under the full-speed line. They are a measurement tool, so
+players should not pay for them.
+
+WHAT:
+- Every DosPortTickScope, the event-type scopes (event.cpp), the rep_exec/script_vm timers
+  (script.cpp) and the fast-blit timers (ali3dsw.cpp) now time only when fine timing is on.
+- DOSAGS_TICKSTATS_FINE=1 turns it on. The value is read once in ags_entry_point into a global, so
+  each scope tests one flag; the default is off.
+- Three scopes are marked coarse and always time: update_game_once_total, render_to_screen and
+  scene_construct. Logic (update_game_once minus render minus scene) is computed from them, so it is
+  reported the same way whatever the setting.
+- DosTickStallScope (the stall share), journeys' timestamps and 0220's pump stamps are unchanged.
+- The benchmark harness sets DOSAGS_TICKSTATS_FINE=1 by default (run-hw.sh, run-dosbox.sh), so every
+  existing per-phase figure keeps its meaning. A cell measuring what a player runs opts out with
+  --no-fine-timing.
+
+Checked (LAB-MMD 45.2, 46.5):
+- With fine timing off, only the coarse phases record. The harness default records all 44.
+- Game state is identical with fine timing on and off on MMD, AGS Quest and 5 Days; the perturbed
+  control differs.
+- The ratchet gives identical verdicts, except exe-bytes and code-lock-bytes, which grow by the switch's
+  ~80 gated sites (the ceilings are raised with this patch, pre-approved).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/ac/draw.cpp                 |  4 ++--
+ Engine/ac/event.cpp                | 12 ++++++------
+ Engine/gfx/ali3dsw.cpp             | 26 +++++++++++++-------------
+ Engine/main/dos_port_tick_timing.h | 27 +++++++++++++++++++++++++--
+ Engine/main/game_run.cpp           |  5 ++++-
+ Engine/main/main.cpp               |  7 +++++++
+ Engine/script/script.cpp           |  8 ++++----
+ 7 files changed, 61 insertions(+), 28 deletions(-)
+
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index 948de8f11..4ece0992b 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -1624,7 +1624,7 @@ void render_to_screen()
+     // SDL_UpdateWindowSurface(), reaching the DOS framebuffer driver's
+     // flush/bank-switch mechanism) had never been measured before this.
+ #ifdef __DJGPP__
+-    DosPortTickScope _dos_port_render_to_screen_scope(dos_port_tick_timing.render_to_screen);
++    DosPortTickScope _dos_port_render_to_screen_scope(dos_port_tick_timing.render_to_screen, true); // patch 0315: coarse
+ #endif
+     // DOS-PORT patch 0089: everything before gfxDriver->Render() below --
+     // the plugin-hook check, construct_engine_overlay(), and the
+@@ -3773,7 +3773,7 @@ void render_graphics(IDriverDependantBitmap *extraBitmap, int extraX, int extraY
+     // touches the back buffer or the video hardware.
+     {
+ #ifdef __DJGPP__
+-        DosPortTickScope _dos_port_scene_scope(dos_port_tick_timing.scene_construct);
++        DosPortTickScope _dos_port_scene_scope(dos_port_tick_timing.scene_construct, true); // patch 0315: coarse
+ #endif
+         construct_game_scene(false);
+         set_our_eip(5);
+diff --git a/Engine/ac/event.cpp b/Engine/ac/event.cpp
+index 927a10a4d..e3e356606 100644
+--- a/Engine/ac/event.cpp
++++ b/Engine/ac/event.cpp
+@@ -191,13 +191,13 @@ long long dos_port_afterfadein_nested_us = 0;   // patch 0159
+ struct DosPortNamedScope
+ {
+     uclock_t t0; long long *us; long *n;
+-    DosPortNamedScope(long long &u, long &c) : t0(uclock()), us(&u), n(&c) {}
++    DosPortNamedScope(long long &u, long &c) : t0(dos_port_fine_uclock()), us(&u), n(&c) {}
+     // patch 0157: closable, so a scope can end where the thing it measures
+     // ends rather than where the enclosing block happens to.
+     void close()
+     {
+         if (!us) return;
+-        long long d = (long long)(uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC;
++        long long d = (long long)(dos_port_fine_uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC;
+         if (d < 0) d = 0;
+         *us += d; (*n)++;
+         us = nullptr; n = nullptr;
+@@ -213,10 +213,10 @@ long      dos_port_evt_interaction_n  = 0;
+ struct DosPortEventInteractionScope
+ {
+     uclock_t t0;
+-    DosPortEventInteractionScope() : t0(uclock()) {}
++    DosPortEventInteractionScope() : t0(dos_port_fine_uclock()) {}
+     ~DosPortEventInteractionScope()
+     {
+-        long long us = (long long)(uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC;
++        long long us = (long long)(dos_port_fine_uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC;
+         if (us < 0) us = 0;
+         dos_port_evt_interaction_us += us;
+         dos_port_evt_interaction_n++;
+@@ -227,10 +227,10 @@ struct DosPortEventScope
+ {
+     uclock_t t0; int type; int sub; int roomev;
+     DosPortEventScope(int ty, int sb, int rv)
+-        : t0(uclock()), type(ty), sub(sb), roomev(rv) {}
++        : t0(dos_port_fine_uclock()), type(ty), sub(sb), roomev(rv) {}
+     ~DosPortEventScope()
+     {
+-        long long us = (long long)(uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC;
++        long long us = (long long)(dos_port_fine_uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC;
+         if (us < 0) us = 0;
+         if (type >= 0 && type < 6) { dos_port_evt_us[type] += us; dos_port_evt_n[type]++; }
+         if (sub >= 0 && sub < 8)   { dos_port_evt_obj_us[sub] += us; dos_port_evt_obj_n[sub]++; }
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index d80a30b93..a71a65a4d 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -1103,7 +1103,7 @@ static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const
+     // the remaining ~74ms/call (after patch 0087's fix) actually
+     // concentrates, per the operator's own instrument-before-guessing
+     // instruction.
+-    uclock_t _t0 = uclock();
++    uclock_t _t0 = dos_port_fine_uclock();
+     const bool src_lock = SDL_MUSTLOCK(src);
+     const bool dst_lock = SDL_MUSTLOCK(dst);
+     if (src_lock && !SDL_LockSurface(src))
+@@ -1113,7 +1113,7 @@ static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const
+         if (src_lock) SDL_UnlockSurface(src);
+         return false;
+     }
+-    uclock_t _t1 = uclock();
++    uclock_t _t1 = dos_port_fine_uclock();
+     dos_port_tick_record_us(dos_port_tick_timing.fastblit_lock, (_t1 - _t0) * 1000000LL / UCLOCKS_PER_SEC);
+ 
+     const Uint8 *src_pixels = (const Uint8 *)src->pixels;
+@@ -1128,12 +1128,12 @@ static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const
+         // through its generic scaled-blit machinery (SDL has no generated
+         // same-format INDEX8 blitter to fall into); this is one memcpy per
+         // row. Accounted under fastblit_vmemcpy -- it is the same work.
+-        uclock_t _tv0 = uclock();
++        uclock_t _tv0 = dos_port_fine_uclock();
+         for (int sy = 0; sy < src->h; ++sy)
+             std::memcpy(dst_pixels + (size_t)sy * (size_t)dst->pitch,
+                         src_pixels + (size_t)sy * (size_t)src->pitch, dst_row_bytes);
+         dos_port_tick_record_us(dos_port_tick_timing.fastblit_hreplicate, 0);
+-        dos_port_tick_record_us(dos_port_tick_timing.fastblit_vmemcpy, dos_port_tick_elapsed_us(_tv0));
++        dos_port_tick_record_us(dos_port_tick_timing.fastblit_vmemcpy, dos_port_fine_elapsed_us(_tv0) /* patch 0315 */);
+         if (dst_lock) SDL_UnlockSurface(dst);
+         if (src_lock) SDL_UnlockSurface(src);
+         return true;
+@@ -1191,21 +1191,21 @@ static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const
+         // somehow weren't.
+         for (int sy = 0; sy < src->h; sy++)
+         {
+-            _t0 = uclock();
++            _t0 = dos_port_fine_uclock();
+             const Uint8 *src_row = src_pixels + (size_t)sy * (size_t)src->pitch;
+             Uint16 *out16 = (Uint16 *)row_buf.data();
+             for (int sx = 0; sx < src->w; sx++)
+             {
+                 *out16++ = (Uint16)(src_row[sx] * 0x0101u);
+             }
+-            _t1 = uclock();
++            _t1 = dos_port_fine_uclock();
+             hrep_us += (_t1 - _t0) * 1000000LL / UCLOCKS_PER_SEC;
+             Uint8 *dst_row_base = dst_pixels + (size_t)(sy * scale_y) * (size_t)dst->pitch;
+             for (int r = 0; r < scale_y; r++)
+             {
+                 std::memcpy(dst_row_base + (size_t)r * (size_t)dst->pitch, row_buf.data(), dst_row_bytes);
+             }
+-            _t0 = uclock();
++            _t0 = dos_port_fine_uclock();
+             vmemcpy_us += (_t0 - _t1) * 1000000LL / UCLOCKS_PER_SEC;
+         }
+     }
+@@ -1213,7 +1213,7 @@ static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const
+     {
+         for (int sy = 0; sy < src->h; sy++)
+         {
+-            _t0 = uclock();
++            _t0 = dos_port_fine_uclock();
+             const Uint8 *src_row = src_pixels + (size_t)sy * (size_t)src->pitch;
+             Uint8 *out = row_buf.data();
+             for (int sx = 0; sx < src->w; sx++)
+@@ -1222,14 +1222,14 @@ static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const
+                 for (int r = 0; r < scale_x; r++)
+                     *out++ = v;
+             }
+-            _t1 = uclock();
++            _t1 = dos_port_fine_uclock();
+             hrep_us += (_t1 - _t0) * 1000000LL / UCLOCKS_PER_SEC;
+             Uint8 *dst_row_base = dst_pixels + (size_t)(sy * scale_y) * (size_t)dst->pitch;
+             for (int r = 0; r < scale_y; r++)
+             {
+                 std::memcpy(dst_row_base + (size_t)r * (size_t)dst->pitch, row_buf.data(), dst_row_bytes);
+             }
+-            _t0 = uclock();
++            _t0 = dos_port_fine_uclock();
+             vmemcpy_us += (_t0 - _t1) * 1000000LL / UCLOCKS_PER_SEC;
+         }
+     }
+@@ -1237,7 +1237,7 @@ static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const
+     {
+         for (int sy = 0; sy < src->h; sy++)
+         {
+-            _t0 = uclock();
++            _t0 = dos_port_fine_uclock();
+             const Uint8 *src_row = src_pixels + (size_t)sy * (size_t)src->pitch;
+             Uint8 *out = row_buf.data();
+             for (int sx = 0; sx < src->w; sx++)
+@@ -1249,14 +1249,14 @@ static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const
+                     out += bpp;
+                 }
+             }
+-            _t1 = uclock();
++            _t1 = dos_port_fine_uclock();
+             hrep_us += (_t1 - _t0) * 1000000LL / UCLOCKS_PER_SEC;
+             Uint8 *dst_row_base = dst_pixels + (size_t)(sy * scale_y) * (size_t)dst->pitch;
+             for (int r = 0; r < scale_y; r++)
+             {
+                 std::memcpy(dst_row_base + (size_t)r * (size_t)dst->pitch, row_buf.data(), dst_row_bytes);
+             }
+-            _t0 = uclock();
++            _t0 = dos_port_fine_uclock();
+             vmemcpy_us += (_t0 - _t1) * 1000000LL / UCLOCKS_PER_SEC;
+         }
+     }
+diff --git a/Engine/main/dos_port_tick_timing.h b/Engine/main/dos_port_tick_timing.h
+index 66b8b64ac..6eec16186 100644
+--- a/Engine/main/dos_port_tick_timing.h
++++ b/Engine/main/dos_port_tick_timing.h
+@@ -159,6 +159,7 @@
+ #define __AGS_EE_MAIN__DOS_PORT_TICK_TIMING_H
+ 
+ #ifdef __DJGPP__
++#include <time.h>   // uclock()
+ 
+ // Caller must already have <time.h> included for uclock_t/uclock()/
+ // UCLOCKS_PER_SEC -- not included here, same convention as
+@@ -490,6 +491,24 @@ static inline long long dos_port_tick_elapsed_us(uclock_t t0)
+     return (long long)(uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC;
+ }
+ 
++// DOS-PORT patch 0315: an off switch for the fine-grained timing. Every phase scope, event-type scope and render
++// timer below reads uclock() -- a PIT read over port I/O, ~4.35 us on a 486 -- and together they made ~89 reads a
++// game tick on the target (LAB-MMD 44), in every build, costing the player that time and inflating what they
++// measure. They are OFF by default -- on the target, turning them off took 0.69 ms/tick off MMD's logic
++// (LAB-MMD 45.3) -- and DOSAGS_TICKSTATS_FINE=1 turns them on (read once); the benchmark harness sets it by
++// default so its per-phase figures keep their meaning. The scopes marked coarse (the update_game_once total,
++// render_to_screen, scene_construct -- the bracket the logic figure is computed from) stay on either way, so
++// both settings report that figure the same way.
++// The setting is read once at startup (main.cpp's ags_entry_point sets the flag); every site tests one global,
++// so the switch costs a load and a branch per scope and no code per site beyond that.
++extern int dos_port_tick_fine_flag;
++static inline bool dos_port_tick_fine_on() { return dos_port_tick_fine_flag > 0; }
++static inline uclock_t dos_port_fine_uclock() { return dos_port_tick_fine_on() ? uclock() : 0; }
++static inline long long dos_port_fine_elapsed_us(uclock_t t0)
++{
++    return dos_port_tick_fine_on() ? dos_port_tick_elapsed_us(t0) : 0;
++}
++
+ static inline void dos_port_tick_record_us(DosPortTickPhaseStats &stats, long long sample_us)
+ {
+     stats.calls++;
+@@ -519,10 +538,13 @@ static inline void dos_port_tick_record_us(DosPortTickPhaseStats &stats, long lo
+ class DosPortTickScope
+ {
+ public:
+-    explicit DosPortTickScope(DosPortTickPhaseStats &stats)
+-        : _stats(stats), _t0(uclock()) {}
++    // patch 0315: coarse scopes time whatever DOSAGS_TICKSTATS_FINE says; the rest only when it is on
++    explicit DosPortTickScope(DosPortTickPhaseStats &stats, bool coarse = false)
++        : _stats(stats), _on(coarse || dos_port_tick_fine_on()), _t0(_on ? uclock() : 0) {}
+     ~DosPortTickScope()
+     {
++        if (!_on)
++            return;
+         // Microseconds, not milliseconds -- see DosPortTickPhaseStats's
+         // own total_us comment for why summing pre-truncated ms samples
+         // was silently discarding real aggregate time. uclock_t is
+@@ -532,6 +554,7 @@ public:
+     }
+ private:
+     DosPortTickPhaseStats &_stats;
++    bool _on;
+     uclock_t _t0;
+ };
+ 
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index c499d21d2..2eed8a9bf 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -26,6 +26,9 @@
+ #include <stdio.h> // FILE -- DOS-PORT patch 0093 (dos_port_yardstick_emit)
+ #include <time.h> // uclock_t/uclock()/UCLOCKS_PER_SEC -- DOS-PORT patch 0080
+ #include "main/dos_port_tick_timing.h" // DOS-PORT patch 0080
++#ifdef __DJGPP__
++int dos_port_tick_fine_flag = 0; // DOS-PORT patch 0315: set once in ags_entry_point; 0 (off) until then
++#endif
+ #include "main/dos_port_work.h"        // DOS-PORT patch 0230
+ #endif
+ #include <SDL3/SDL.h>
+@@ -1867,7 +1870,7 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+     // named sub-phases actually accounts for the whole tick.
+ #ifdef __DJGPP__
+     DosTickStallScope _dos_tick_stall_scope; // patch 0093
+-    DosPortTickScope _dos_port_update_once_scope(dos_port_tick_timing.update_game_once_total);
++    DosPortTickScope _dos_port_update_once_scope(dos_port_tick_timing.update_game_once_total, true); // patch 0315: coarse
+ #endif
+     set_our_eip(1000);
+ 
+diff --git a/Engine/main/main.cpp b/Engine/main/main.cpp
+index 86064f211..7c9521a5c 100644
+--- a/Engine/main/main.cpp
++++ b/Engine/main/main.cpp
+@@ -585,6 +585,13 @@ static int main_process_cmdline(ConfigTree &cfg, int argc, char *argv[])
+ }
+ 
+ int ags_entry_point(int argc, char *argv[]) { 
++#ifdef __DJGPP__
++    { // DOS-PORT patch 0315: fine timing is off unless DOSAGS_TICKSTATS_FINE=1 (read once, here, before any timing)
++        extern int dos_port_tick_fine_flag;
++        const char *e = getenv("DOSAGS_TICKSTATS_FINE");
++        dos_port_tick_fine_flag = (e && e[0] == '1' && e[1] == 0) ? 1 : 0;
++    }
++#endif
+     main_init(argc, argv);
+ 
+ #if AGS_PLATFORM_OS_WINDOWS && !AGS_PLATFORM_WINDOWS_MINGW
+diff --git a/Engine/script/script.cpp b/Engine/script/script.cpp
+index 834361644..f008d8ff8 100644
+--- a/Engine/script/script.cpp
++++ b/Engine/script/script.cpp
+@@ -394,11 +394,11 @@ static bool DoRunScriptFuncCantBlock(ccInstance *sci, NonBlockingScriptFunction*
+     // with every other named phase measured -- see this patch's own
+     // commit message.
+ #ifdef __DJGPP__
+-    const uclock_t _dos_port_rep_exec_t0 = uclock();
++    const uclock_t _dos_port_rep_exec_t0 = dos_port_fine_uclock(); // patch 0315
+ #endif
+     ccInstError result = sci->CallScriptFunction(funcToRun->FunctionName, funcToRun->ParamCount, funcToRun->Params);
+ #ifdef __DJGPP__
+-    dos_port_tick_record_us(dos_port_tick_timing.rep_exec_vm, dos_port_tick_elapsed_us(_dos_port_rep_exec_t0));
++    if (dos_port_tick_fine_on()) dos_port_tick_record_us(dos_port_tick_timing.rep_exec_vm, dos_port_tick_elapsed_us(_dos_port_rep_exec_t0)); // patch 0315
+ #endif
+ 
+     if (result == kInstErr_FuncNotFound)
+@@ -476,11 +476,11 @@ RunScFuncResult RunScriptFunction(ccInstance *sci, const String &tsname, size_t
+     // every tick), and counting that fast-fail lookup as "script VM
+     // execution" would swamp the real number with near-zero-cost misses.
+ #ifdef __DJGPP__
+-    const uclock_t _dos_port_script_vm_t0 = uclock();
++    const uclock_t _dos_port_script_vm_t0 = dos_port_fine_uclock(); // patch 0315
+ #endif
+     const ccInstError inst_ret = curscript->Inst->CallScriptFunction(tsname, numParam, params);
+ #ifdef __DJGPP__
+-    dos_port_tick_record_us(dos_port_tick_timing.script_vm, dos_port_tick_elapsed_us(_dos_port_script_vm_t0));
++    if (dos_port_tick_fine_on()) dos_port_tick_record_us(dos_port_tick_timing.script_vm, dos_port_tick_elapsed_us(_dos_port_script_vm_t0)); // patch 0315
+ #endif
+     if ((inst_ret != kInstErr_None) && (inst_ret != kInstErr_FuncNotFound) && (inst_ret != kInstErr_Aborted))
+     {
+-- 
+2.47.3
+

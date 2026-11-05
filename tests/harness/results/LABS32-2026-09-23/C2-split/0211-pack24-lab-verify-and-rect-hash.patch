@@ -1,0 +1,148 @@
+From ead484755c0d9d7d69145ef52af4807fe1fd0ad9 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 22:20:43 -0700
+Subject: [PATCH 211/211] dos: patch 0211 -- LAB-ONLY diagnostics for 0210:
+ pack24 read-back verifier and update-rect hash
+
+Why not just what: the lab gates for SDL_DOS_PACK24 (dosags LAB-S32.md 9, G2/G2b)
+need two witnesses that a shipping build does not:
+- SDL_DOS_PACK24_VERIFY=1 reads every packed row back from VRAM and
+  counts pixels whose B,G,R differ from the surface's. "Byte-identical
+  on screen" is then a counted fact, not an inference.
+- SDL_DOS_RECT_HASH=1 hashes (FNV-1a) the ordered sequence of
+  UpdateWindowFramebuffer calls and each rect exactly as the application
+  passed them, printed at exit. Two runs pushed the same frames iff the
+  hashes match. That is the exact frame-equality condition G2's rect
+  totals could not give.
+Both are hint-gated: unset, they cost one int test per update and per
+packed row. They are kept out of 0210 so that what ships is only the
+pack. 0211 adds lines and changes no 0210 statement except the two
+report lines, which gain the verify fields.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ src/video/dos/SDL_dosframebuffer.c | 67 ++++++++++++++++++++++++++++--
+ 1 file changed, 63 insertions(+), 4 deletions(-)
+
+diff --git a/src/video/dos/SDL_dosframebuffer.c b/src/video/dos/SDL_dosframebuffer.c
+index 2bfbda6bd..a1ede6d4d 100644
+--- a/src/video/dos/SDL_dosframebuffer.c
++++ b/src/video/dos/SDL_dosframebuffer.c
+@@ -550,12 +550,14 @@ static void dos_pack24_row(Uint8 *dst, const Uint32 *src, int n)
+ }
+ 
+ static unsigned long dos_pack24_pushed_px = 0;
++static unsigned long dos_pack24_mismatch_px = 0;
++static int dos_pack24_verify = -1;
+ static int dos_pack24_mode_id = 0;
+ 
+ static void dos_pack24_report(void)
+ {
+-    fprintf(stdout, "DOS-PORT pack24 active=1 mode=0x%04X pushed_px=%lu\n",
+-            dos_pack24_mode_id, dos_pack24_pushed_px);
++    fprintf(stdout, "DOS-PORT pack24 active=1 mode=0x%04X pushed_px=%lu verify=%d mismatch_px=%lu\n",
++            dos_pack24_mode_id, dos_pack24_pushed_px, dos_pack24_verify, dos_pack24_mismatch_px);
+     fflush(stdout);
+ }
+ 
+@@ -937,12 +939,16 @@ static bool populate_fb_state_for_direct_fb(SDL_VideoDevice *device,
+     fb_state.pack24 = dos_mode_is_pack24(mode); // patch 0210
+     if (fb_state.pack24) {
+         static bool announced = false;
++        if (dos_pack24_verify < 0) {
++            dos_pack24_verify = SDL_GetHintBoolean("SDL_DOS_PACK24_VERIFY", false) ? 1 : 0;
++        }
+         dos_pack24_mode_id = mdata->mode_id;
+         if (!announced) {
+             announced = true;
+-            fprintf(stdout, "DOS-PORT pack24 engaged mode=0x%04X %dx%d vram_pitch=%d src_pitch=%d path=%s\n",
++            fprintf(stdout, "DOS-PORT pack24 engaged mode=0x%04X %dx%d vram_pitch=%d src_pitch=%d path=%s verify=%d\n",
+                     mdata->mode_id, mdata->w, mdata->h, vram_pitch, surface->pitch,
+-                    use_lfb_path ? "lfb" : "banked");
++                    use_lfb_path ? "lfb" : "banked",
++                    dos_pack24_verify);
+             fflush(stdout);
+             atexit(dos_pack24_report);
+         }
+@@ -1821,6 +1827,7 @@ static void _dos_port_dbg_dump_first16(const char *tag, const Uint8 *src, int n)
+ // DOS-PORT patch 0210: the direct-FB push for a packed-24 mode. Same rect clipping as the
+ // other branches; each row is packed 4->3 bytes straight into the LFB (three dword stores per
+ // four pixels, at the card's 24-bpp write rate), or into a row buffer for the banked window.
++// SDL_DOS_PACK24_VERIFY=1 (lab only) reads every pushed row back and counts mismatched px.
+ static void dos_pack24_push(const SDL_Rect *rects, int numrects)
+ {
+     static Uint8 row24[4096 * 3];
+@@ -1856,6 +1863,15 @@ static void dos_pack24_push(const SDL_Rect *rects, int numrects)
+             if (!fb_state.use_dosmemput) {
+                 Uint8 *dp = fb_state.vram_ptr + dst_off;
+                 dos_pack24_row(dp, sp, rw);
++                if (dos_pack24_verify > 0) {
++                    for (int x = 0; x < rw; x++) {
++                        const Uint32 p = sp[x];
++                        if (dp[3 * x] != (Uint8)p || dp[3 * x + 1] != (Uint8)(p >> 8) ||
++                            dp[3 * x + 2] != (Uint8)(p >> 16)) {
++                            dos_pack24_mismatch_px++;
++                        }
++                    }
++                }
+             } else {
+                 dos_pack24_row(row24, sp, rw);
+                 if (!fb_state.banked_multibank) {
+@@ -1871,10 +1887,53 @@ static void dos_pack24_push(const SDL_Rect *rects, int numrects)
+     }
+ }
+ 
++// DOS-PORT patch 0211 (LAB-ONLY diagnostic): SDL_DOS_RECT_HASH=1 hashes the ordered sequence of
++// update calls and their rects exactly as the application passed them (FNV-1a over numrects and
++// each x,y,w,h), and prints it at exit. Two runs that pushed the same frames report the same hash.
++// Hint-gated; unset, it costs one int test per update.
++static int dos_recthash_enabled = -1;
++static unsigned long dos_recthash_calls = 0;
++static unsigned long dos_recthash_rects = 0;
++static Uint32 dos_recthash_fnv = 2166136261u;
++
++static void dos_recthash_mix(Uint32 v)
++{
++    for (int b = 0; b < 4; b++) {
++        dos_recthash_fnv ^= (v >> (8 * b)) & 0xFFu;
++        dos_recthash_fnv *= 16777619u;
++    }
++}
++
++static void dos_recthash_report(void)
++{
++    fprintf(stdout, "DOS-PORT recthash calls=%lu rects=%lu fnv=%08lx\n",
++            dos_recthash_calls, dos_recthash_rects, (unsigned long)dos_recthash_fnv);
++    fflush(stdout);
++}
++
+ bool DOSVESA_UpdateWindowFramebuffer(SDL_VideoDevice *device, SDL_Window *window, const SDL_Rect *rects, int numrects)
+ {
+     SDL_VideoData *vdata = device->internal;
+ 
++    if (dos_recthash_enabled != 0) {   // patch 0211 lab-only diagnostic
++        if (dos_recthash_enabled < 0) {
++            dos_recthash_enabled = SDL_GetHintBoolean("SDL_DOS_RECT_HASH", false) ? 1 : 0;
++            if (dos_recthash_enabled) {
++                atexit(dos_recthash_report);
++            }
++        }
++        if (dos_recthash_enabled > 0) {
++            dos_recthash_calls++;
++            dos_recthash_mix((Uint32)numrects);
++            for (int i = 0; i < numrects; i++) {
++                dos_recthash_mix((Uint32)rects[i].x);
++                dos_recthash_mix((Uint32)rects[i].y);
++                dos_recthash_mix((Uint32)rects[i].w);
++                dos_recthash_mix((Uint32)rects[i].h);
++            }
++            dos_recthash_rects += (unsigned long)(numrects > 0 ? numrects : 0);
++        }
++    }
+ 
+     // DOSKUTSU patch 0035 (Phase 9 wave 20) -- flush instrumentation entry.
+     // Cache the hint state on first call (default OFF; strict "1" match per
+-- 
+2.47.3
+

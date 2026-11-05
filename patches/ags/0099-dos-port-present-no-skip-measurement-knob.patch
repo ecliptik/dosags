@@ -1,0 +1,81 @@
+From 2d2910e1ecb9a67ecc91a863a29952d604de3776 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 17 Sep 2026 15:03:55 -0700
+Subject: [PATCH] DOS-PORT: patch 0099 -- DOSAGS_PRESENT_NO_SKIP=1, a
+ measurement knob
+
+Patch 0091 skips the blit and the window update when a frame is
+byte-identical to the last one presented. On an idle screen that is
+~96% of presents (23 real of ~890 on Trilby's Notes), which is the
+point of it -- and also means that a comparison of presentation paths
+(2x scaled, centred 1x, direct framebuffer, 512x384 vs 640x480) run on
+such a screen compares nothing: the cost under test is never paid.
+
+DOSAGS_PRESENT_NO_SKIP=1 turns the skip off so every render pass pays
+for a real present. Read once, off unless asked for, and added to the
+RUNMANIFEST env allowlist so a cell that ran with it can never hash the
+same as one that did not. Not a feature and not a default.
+
+The env allowlist also gains SDL_DOS_ALLOW_DIRECT_FRAMEBUFFER and
+SDL_DOS_PREFER_LFB, the backend's own presentation-path switches: the
+first cells run with them (B8A12D/B8A12L, on the binary before this
+patch) hash the same env_block_sha as cells without, which is exactly
+what the allowlist exists to prevent.
+---
+ Engine/gfx/ali3dsw.cpp | 19 ++++++++++++++++++-
+ Engine/main/quit.cpp   |  6 ++++++
+ 2 files changed, 24 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index dfd4333d3..0b43dd35c 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -1048,7 +1048,24 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+     // window) so the cache never has to reason about a flipped or
+     // partially-covered frame's own equivalence; anything else always
+     // falls through to the normal path and invalidates the cache.
+-    const bool clean_case = (flip == kFlip_None) &&
++#ifdef __DJGPP__
++    // DOS-PORT patch 0099: DOSAGS_PRESENT_NO_SKIP=1 turns the unchanged-
++    // frame skip OFF, so every render pass pays for a real present. A
++    // MEASUREMENT knob, not a feature: on an idle screen ~96% of presents
++    // are skipped, which makes every presentation-path candidate (2x,
++    // centred 1x, direct framebuffer) look identical -- the cost being
++    // compared is simply never paid. Read once; off unless asked for.
++    static int s_present_no_skip = -1;
++    if (s_present_no_skip < 0)
++    {
++        const char *e = getenv("DOSAGS_PRESENT_NO_SKIP");
++        s_present_no_skip = (e && e[0] == '1' && e[1] == 0) ? 1 : 0;
++    }
++    const bool skip_allowed = (s_present_no_skip == 0);
++#else
++    const bool skip_allowed = true;
++#endif
++    const bool clean_case = skip_allowed && (flip == kFlip_None) &&
+         (blit_src->format == win_surface->format) &&
+         (dst.x == 0 && dst.y == 0 && dst.w == win_surface->w && dst.h == win_surface->h);
+     if (clean_case)
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index feaf5fb9d..8af5b5a69 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -319,9 +319,15 @@ void quit(const char *quitmsg)
+             "DOSAGS_CLOCK_CROSSCHECK",
+             "DOSAGS_FIXED_TIMESTEP",
+             "DOSAGS_FORCE_COLOR_DEPTH",
++            "DOSAGS_PRESENT_NO_SKIP", // patch 0099: forces real presents -- changes every fps figure
+             "DOSAGS_TAS_AUTO_EXIT_TICK",
+             "DOS_PORT_ENVIRONMENT",
++            // patch 0099: the backend's presentation-path switches. They
++            // change what every present costs, so a cell run with them must
++            // not hash like one without.
++            "SDL_DOS_ALLOW_DIRECT_FRAMEBUFFER",
+             "SDL_DOS_AUDIO_SB_SKIP_DETECTION",
++            "SDL_DOS_PREFER_LFB",
+             "SDL_HINT_DOS_AUDIO_BACKEND",
+             "SDL_HINT_DOS_GUS_DIAG",
+             "SDL_HINT_DOS_GUS_PIO_AUTOINC",
+-- 
+2.47.3
+

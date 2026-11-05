@@ -1,0 +1,234 @@
+From e19cd93821a06a629c9cfd06a5354cb2fbb3f00a Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 20:06:18 -0700
+Subject: [PATCH] dos: patch 0262 -- the RTC pump re-arms from the hardware
+ each SB IRQ, and counts who turned it off
+
+On the real 486 (dosags round A, PGSB) the 0260 pump wrote its first
+seconds on time, at 2048 Hz. It then wrote nothing for the rest of the
+run: the queue filled, the planner fell behind, and a note was left
+sounding. The SB-ISR kick re-armed the periodic interrupt only when
+the pump's own flag (g_rtc_pie) said idle, and only the RTC ISR clears
+that flag, on an idle tick. So anything outside the pump that turned
+the interrupt off stranded it for good: PIE cleared (an AT BIOS does
+around the end of an INT 15h/86h wait, and DJGPP delay() and so
+SDL_Delay use that wait on this machine), the rate bits changed, IRQ 8
+or the cascade masked, or register C left unread with the
+edge-triggered line held high. DOSBox-X's BIOS does none of these
+outside its own INT 70h, which the pump replaces, so no emulator cell
+showed it.
+
+Now, on every SB IRQ with a due queue head, the kick reads register A,
+register B and both IMRs, and repairs what it finds:
+- PIE found off while the pump should run;
+- rate bits not the pump's;
+- IRQ 8 or the cascade masked;
+- PIE on and unmasked but no tick since the previous SB IRQ (about 95
+  are due), where it reads register C to release the line.
+That is a few port I/Os, 21 times a second. Each repair is counted by
+kind. The state at the first repair (registers, IMRs, the BIOS wait
+byte 0040:00A0, the pump flag, IRQ index and tick count) is kept, and
+logged at uninstall with the state then and whether IRQ 8's
+protected-mode vector is still ours. That names the agent on hardware
+instead of leaving it inferred. SDL_DOSMidiDeferRtcRearms exports the
+counts.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ include/SDL3/SDL_dosmidi_tick.h |   5 ++
+ src/audio/dos/SDL_dosaudio_sb.c | 118 +++++++++++++++++++++++++++++++-
+ 2 files changed, 120 insertions(+), 3 deletions(-)
+
+diff --git a/include/SDL3/SDL_dosmidi_tick.h b/include/SDL3/SDL_dosmidi_tick.h
+index 74fd1f3f9..97b33e5bf 100644
+--- a/include/SDL3/SDL_dosmidi_tick.h
++++ b/include/SDL3/SDL_dosmidi_tick.h
+@@ -331,6 +331,11 @@ extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferRtcStats(Uint32 *rate_hz, Uint3
+    killswitch SDL_HINT_DOS_AUDIO_WB_RUNNING_STATUS=0. Returns the status bytes
+    not sent (run total); *enabled = the setting of the current/last install. */
+ extern SDL_DECLSPEC Uint32 SDLCALL SDL_DOSMidiDeferRtcRunningStatus(bool *enabled);
++/* DOS-PORT patch 0262: repairs the SB IRQ made to the kind-3 pump's interrupt (run totals): PIE
++   found off while the pump should run, rate bits changed, IRQ 8 or the cascade masked, and "on but
++   no tick since the last SB IRQ" (register C read to release the line). Nonzero = something outside
++   the pump turned it off; the SDL log names the state at the first repair. */
++extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferRtcRearms(Uint32 *pie, Uint32 *rate, Uint32 *mask, Uint32 *stuck);
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index d1327b987..c8df5dfe0 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -1886,6 +1886,16 @@ static Uint8 g_rtc_saved_pie = 0;
+ static Uint8 g_rtc_saved_mask = 0;
+ static bool g_rtc_atexit = false;
+ static Uint32 g_rtc_rate_hz = 0;             /* rate of the last install (stats) */
++/* DOS-PORT patch 0262: repairs the SB-ISR kick made to the pump's hardware state, by kind (run
++   totals), and the state seen at the FIRST repair of any kind (the moment something else had
++   turned the periodic interrupt off), logged at uninstall. */
++enum { RTC_REARM_PIE, RTC_REARM_RATE, RTC_REARM_MASK, RTC_REARM_STUCK, RTC_REARM_N };
++static volatile Uint32 g_rtc_rearm[RTC_REARM_N];
++static volatile Uint32 g_rtc_kick_ticks = 0;  /* g_rtc_ticks at the previous kick */
++static volatile Uint8 g_rtc_snap_taken = 0;
++static volatile Uint8 g_rtc_snap[8];          /* kind, reg A, reg B, IMR slave, IMR master, BDA 0040:00A0, g_rtc_pie, 0 */
++static volatile Uint32 g_rtc_snap_irq = 0;
++static volatile Uint32 g_rtc_snap_ticks = 0;
+ static bool g_rtc_locked = false;
+ 
+ /* Interrupts must be off around every call (port 70h is shared). */
+@@ -1902,17 +1912,73 @@ static void MidiRtcWrite(Uint8 reg, Uint8 val)
+ }
+ 
+ /* SB ISR: the head is due and the pump is idle -> start the RTC ticks. */
++/* DOS-PORT patch 0262: count a repair; the first one of the run keeps a picture of the state. */
++static void MidiRtcRearmed(int kind, Uint8 a, Uint8 b, Uint8 imr_s, Uint8 imr_m, Uint32 irq_now)
++{
++    g_rtc_rearm[kind]++;
++    if (!g_rtc_snap_taken) {
++        g_rtc_snap_taken = 1;
++        g_rtc_snap[0] = (Uint8)kind;
++        g_rtc_snap[1] = a;
++        g_rtc_snap[2] = b;
++        g_rtc_snap[3] = imr_s;
++        g_rtc_snap[4] = imr_m;
++        g_rtc_snap[5] = _farpeekb(g_rtc_dos_sel, MDQ_BDA_WAIT_ACTIVE);
++        g_rtc_snap[6] = g_rtc_pie;
++        g_rtc_snap_irq = irq_now;
++        g_rtc_snap_ticks = g_rtc_ticks;
++    }
++}
++
++/* SB ISR, every IRQ while kind 3 runs. DOS-PORT patch 0262: when the queue head is due, the
++   pump's interrupt must really be on. 0260 trusted its own flag (g_rtc_pie, cleared only by the
++   RTC ISR on an idle tick), so anything else that turned the periodic interrupt off -- PIE cleared
++   (an AT BIOS does, around the end of an INT 15h/86h wait), the rate bits changed, IRQ 8 or the
++   cascade masked, or register C left unread with the edge-triggered line high -- stranded the pump
++   for the rest of the run (real hardware, round A: the pump wrote the first seconds on time, then
++   nothing). So the kick reads the hardware each time and repairs what it finds, counted by kind. */
+ static void MidiRtcKick(Uint32 irq_now)
+ {
+-    if (g_rtc_pie || g_mdq_hold || g_mdq_head == g_mdq_tail) {
++    if (g_mdq_hold || g_mdq_head == g_mdq_tail) {
++        g_rtc_kick_ticks = g_rtc_ticks;
+         return;
+     }
+     __asm__ __volatile__("" ::: "memory"); /* read the entry after seeing the tail */
+     if ((Sint32)(irq_now - g_mdq_stamp[g_mdq_head & (MIDI_DEFER_QUEUE - 1u)]) < 0) {
++        g_rtc_kick_ticks = g_rtc_ticks;
+         return;
+     }
+-    MidiRtcWrite(0x0B, (Uint8)(MidiRtcRead(0x0B) | 0x40));
+-    g_rtc_pie = 1;
++    {
++        const Uint8 a = MidiRtcRead(0x0A);
++        Uint8 b = MidiRtcRead(0x0B);
++        const Uint8 imr_s = inportb(0xA1);
++        const Uint8 imr_m = inportb(0x21);
++        if ((a & 0x0F) != MDQ_RTC_RATE_BITS) {
++            MidiRtcRearmed(RTC_REARM_RATE, a, b, imr_s, imr_m, irq_now);
++            MidiRtcWrite(0x0A, (Uint8)((a & 0xF0) | MDQ_RTC_RATE_BITS));
++        }
++        if ((imr_s & 0x01) || (imr_m & 0x04)) {
++            MidiRtcRearmed(RTC_REARM_MASK, a, b, imr_s, imr_m, irq_now);
++            if (imr_s & 0x01) outportb(0xA1, (Uint8)(imr_s & ~0x01));
++            if (imr_m & 0x04) outportb(0x21, (Uint8)(imr_m & ~0x04));
++        }
++        if (!(b & 0x40)) {
++            if (g_rtc_pie) {
++                MidiRtcRearmed(RTC_REARM_PIE, a, b, imr_s, imr_m, irq_now); /* not us: we clear the flag with PIE */
++            }
++            b = (Uint8)(b | 0x40);
++            MidiRtcWrite(0x0B, b);
++            g_rtc_pie = 1;
++        } else if (g_rtc_pie && g_rtc_ticks == g_rtc_kick_ticks) {
++            /* on and unmasked, yet not one tick since the last SB IRQ (~95 are due): a line held
++               high by an unread register C gives no new edge. Reading C releases it. */
++            MidiRtcRearmed(RTC_REARM_STUCK, a, b, imr_s, imr_m, irq_now);
++            (void)MidiRtcRead(0x0C);
++        } else {
++            g_rtc_pie = 1;
++        }
++    }
++    g_rtc_kick_ticks = g_rtc_ticks;
+ }
+ 
+ /* The tick period in us for register A's rate bits (32.768 kHz time base). */
+@@ -2051,7 +2117,22 @@ static void MidiRtcUninstall(void)
+     if (!g_rtc_installed) {
+         return;
+     }
++    /* DOS-PORT patch 0262: the state as found, before it is restored, and whether IRQ 8's
++       protected-mode vector is still ours. */
++    Uint8 now_a, now_b, now_imr_s, now_imr_m, now_bda;
++    bool vec_ours;
++    {
++        _go32_dpmi_seginfo cur;
++        _go32_dpmi_get_protected_mode_interrupt_vector(g_rtc_hook.interrupt_vector, &cur);
++        vec_ours = (cur.pm_selector == g_rtc_hook.irq_handler_seginfo.pm_selector &&
++                    cur.pm_offset == g_rtc_hook.irq_handler_seginfo.pm_offset);
++    }
+     DOS_DisableInterrupts();
++    now_a = MidiRtcRead(0x0A);
++    now_b = MidiRtcRead(0x0B);
++    now_imr_s = inportb(0xA1);
++    now_imr_m = inportb(0x21);
++    now_bda = _farpeekb(_dos_ds, MDQ_BDA_WAIT_ACTIVE);
+     {
+         const Uint8 b = MidiRtcRead(0x0B);
+         MidiRtcWrite(0x0B, (Uint8)((b & ~0x40) | g_rtc_saved_pie));
+@@ -2071,6 +2152,22 @@ static void MidiRtcUninstall(void)
+                      (unsigned)(g_rtc_saved_a & 0x0F), g_rtc_saved_pie ? "on" : "off",
+                      g_rtc_saved_mask ? "re-masked" : "left unmasked", (unsigned)g_rtc_ticks,
+                      (unsigned)g_rtc_waits, (unsigned)g_rtc_lat_max_us, (unsigned)g_rtc_rs_skipped);
++    dos_port_dbg_log("audio: patch 0262 RTC pump re-arms pie=%u rate=%u mask=%u stuck=%u; at uninstall: "
++                     "regA=0x%02x regB=0x%02x imr_slave=0x%02x imr_master=0x%02x bda_wait=0x%02x "
++                     "pie_flag=%u int70_vector=%s",
++                     (unsigned)g_rtc_rearm[RTC_REARM_PIE], (unsigned)g_rtc_rearm[RTC_REARM_RATE],
++                     (unsigned)g_rtc_rearm[RTC_REARM_MASK], (unsigned)g_rtc_rearm[RTC_REARM_STUCK],
++                     (unsigned)now_a, (unsigned)now_b, (unsigned)now_imr_s, (unsigned)now_imr_m,
++                     (unsigned)now_bda, (unsigned)g_rtc_pie, vec_ours ? "ours" : "REPLACED");
++    if (g_rtc_snap_taken) {
++        static const char *const kinds[RTC_REARM_N] = { "pie", "rate", "mask", "stuck" };
++        dos_port_dbg_log("audio: patch 0262 first re-arm (%s) at SB irq %u, rtc ticks %u: "
++                         "regA=0x%02x regB=0x%02x imr_slave=0x%02x imr_master=0x%02x bda_wait=0x%02x pie_flag=%u",
++                         (g_rtc_snap[0] < RTC_REARM_N) ? kinds[g_rtc_snap[0]] : "?",
++                         (unsigned)g_rtc_snap_irq, (unsigned)g_rtc_snap_ticks, (unsigned)g_rtc_snap[1],
++                         (unsigned)g_rtc_snap[2], (unsigned)g_rtc_snap[3], (unsigned)g_rtc_snap[4],
++                         (unsigned)g_rtc_snap[5], (unsigned)g_rtc_snap[6]);
++    }
+ }
+ 
+ static void MidiRtcAtExit(void)
+@@ -2130,6 +2227,12 @@ static bool MidiRtcInstall(Uint32 gap_us)
+         DOS_LockVariable(g_rtc_pending_status);
+         DOS_LockVariable(g_rtc_rs); /* DOS-PORT patch 0261 */
+         DOS_LockVariable(g_rtc_rs_skipped);
++        DOS_LockVariable(g_rtc_rearm); /* DOS-PORT patch 0262 */
++        DOS_LockVariable(g_rtc_kick_ticks);
++        DOS_LockVariable(g_rtc_snap_taken);
++        DOS_LockVariable(g_rtc_snap);
++        DOS_LockVariable(g_rtc_snap_irq);
++        DOS_LockVariable(g_rtc_snap_ticks);
+         g_rtc_locked = true;
+     }
+     DOS_DisableInterrupts();
+@@ -2514,6 +2617,15 @@ void SDL_DOSMidiDeferRtcStats(Uint32 *rate_hz, Uint32 *gap_us, Uint32 *ticks, Ui
+ 
+ /* DOS-PORT patch 0261: status bytes the pump did not send (running status,
+    run total), and whether running status is on for the current/last install. */
++/* DOS-PORT patch 0262: the pump's hardware repairs by kind (run totals). */
++void SDL_DOSMidiDeferRtcRearms(Uint32 *pie, Uint32 *rate, Uint32 *mask, Uint32 *stuck)
++{
++    if (pie) *pie = g_rtc_rearm[RTC_REARM_PIE];
++    if (rate) *rate = g_rtc_rearm[RTC_REARM_RATE];
++    if (mask) *mask = g_rtc_rearm[RTC_REARM_MASK];
++    if (stuck) *stuck = g_rtc_rearm[RTC_REARM_STUCK];
++}
++
+ Uint32 SDL_DOSMidiDeferRtcRunningStatus(bool *enabled)
+ {
+     if (enabled) *enabled = g_rtc_rs != 0;
+-- 
+2.47.3
+

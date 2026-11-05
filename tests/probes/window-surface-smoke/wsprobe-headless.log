@@ -1,0 +1,24 @@
+WSPROBE-BEGIN: sdl-dos-ports window-surface probe (SDL3 3.5.0)
+PALETTE-8BPP: SDL_SetHint(SDL_DOS_MAX_BPP, "8")
+PALETTE-8BPP: SDL_InitSubSystem(VIDEO) OK driver=vesa
+PALETTE-8BPP: format=SDL_PIXELFORMAT_INDEX8 w=320 h=240 pitch=320
+PALETTE-8BPP: bits_per_pixel=8 bytes_per_pixel=1 Rmask=0x00000000 Gmask=0x00000000 Bmask=0x00000000
+PALETTE-8BPP: indexed=1
+PALETTE-8BPP: SDL_CreateSurfacePalette + SDL_SetPaletteColors ok (indices 0-3)
+PALETTE-8BPP: SDL_FillSurfaceRect x4 (palette indices) ok
+PALETTE-8BPP: SDL_UpdateWindowSurface ok
+FORMAT-16BPP: SDL_SetHint(SDL_DOS_MAX_BPP, "16")
+FORMAT-16BPP: SDL_InitSubSystem(VIDEO) OK driver=vesa
+FORMAT-16BPP: format=SDL_PIXELFORMAT_RGB565 w=320 h=240 pitch=640
+FORMAT-16BPP: bits_per_pixel=16 bytes_per_pixel=2 Rmask=0x0000f800 Gmask=0x000007e0 Bmask=0x0000001f
+FORMAT-16BPP: indexed=0
+FORMAT-16BPP: SDL_FillSurfaceRect x4 (SDL_MapRGB-derived pixels) ok
+FORMAT-16BPP: SDL_UpdateWindowSurface ok
+FORMAT-32BPP: SDL_SetHint(SDL_DOS_MAX_BPP, "32")
+FORMAT-32BPP: SDL_InitSubSystem(VIDEO) OK driver=vesa
+FORMAT-32BPP: format=SDL_PIXELFORMAT_XRGB8888 w=320 h=240 pitch=1280
+FORMAT-32BPP: bits_per_pixel=32 bytes_per_pixel=4 Rmask=0x00ff0000 Gmask=0x0000ff00 Bmask=0x000000ff
+FORMAT-32BPP: indexed=0
+FORMAT-32BPP: SDL_FillSurfaceRect x4 (SDL_MapRGB-derived pixels) ok
+FORMAT-32BPP: SDL_UpdateWindowSurface ok
+WSPROBE-END: rc=0 bpp8=0 bpp16=0 bpp32=0

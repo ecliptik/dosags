@@ -1,0 +1,275 @@
+From 774c83976152c192d375aa8b85d1b3f2ad51ac34 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 17:10:27 -0700
+Subject: [PATCH 254/255] dos: patch 0254 -- OPL write pacing per backend: 4 +
+ 4 status reads on a detected PicoGUS
+
+Every OPL write is followed by 6 dummy status reads after the address and
+6 after the data: 12 of a write's 14 port operations. On a 486 each costs
+~2 us, so a write is ~29 us, and room 35's densest ISR replay burst (416
+writes) holds the SB ISR for ~11-12 ms (dosags lab CAPH-1/1I).
+
+The PicoGUS does not need that spacing (firmware v4.1.1, sw/picogus.cpp):
+an address write is a fast write, a data write holds IOCHRDY until the
+handler has queued it, and each dummy status read is itself a stretched
+cycle. It queues writes in a 256-entry buffer with no full check
+(sw/include/cmd_buffers.h), drained once per 128 samples at 49716 Hz
+(~2.57 ms), so writes must not arrive much faster: 4 + 4 reads (~20.6 us
+per write, ~125 per window) keep half the buffer free even if one drain
+is late. Zero reads would overrun it and lose writes.
+
+The pacing is chosen once, at OPL detection, only on a POSITIVE
+identification through the card's own control port, as its pgusinit reads
+it: knock 0xCC at 0x1D0, magic 0xDD, protocol 4, SB mode (5), OPL base
+0x388; an unknown register (0x80) ends control mode. Every other card --
+a Creative OPL3, the PicoGUS in another mode, anything unknown -- keeps
+6 + 6. On a detected PicoGUS the ISR replay's per-IRQ budget defaults to
+448 (448 x 20.6 us = 9.2 ms). Why the probe is safe on a machine without a PicoGUS: it is the card's
+own detection sequence, as pgusinit does it on any machine
+(pgusinit/pgusinit.c:1307-1314 at v4.1.1: knock, select magic, read
+0x1D2); the PicoGUS project chose 0x1D0 because "nothing is listed in
+Ralf Brown's Port List" (common/picogus.h:5 -- their statement, not
+verified here). On an undecoded port the ISA bus floats (0xFF), so only
+two bytes are ever written to 0x1D0 before the probe gives up; a garbage
+answer on any later register just fails the match and keeps 6 + 6.
+SDL_HINT_DOS_OPL_PICOGUS_PROBE=0 skips the probe entirely (a field escape
+if some card does decode 0x1D0). The control-mode exit (0x80) reaches
+select_picogus()'s default branch, which clears control_active
+(sw/picogus.cpp:282-283; 0x80 is not a CMD_ value in common/picogus.h).
+SDL_HINT_DOS_OPL_DELAY_READS=N (1..6) and
+SDL_HINT_DOS_MIDI_DEFER_MAX_PER_IRQ override either choice.
+SDL_DOSOplPacing() reports what was chosen.
+
+RENUMBERED 2026-09-25 from 0228 to 0254 (the coordinator's SDL block 0250-0259),
+so the series sorts after main's SDL 0240. It lands on main ahead of the RTC
+pump series (SDL 0230-0237), which re-applies on top. 0228 never landed on
+main; its slot is retired on lab/journeys.
+Re-cut onto main's SDL 0199 (the audio cost diagnostics read the clock only
+when on): in SDL_DOSOpl3WriteRegister this patch's line now sits beside 0199's
+gated uclock() diagnostic; the change itself is unchanged.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ include/SDL3/SDL_dosmidi_tick.h    |  4 ++
+ src/audio/dos/SDL_dosaudio_sb.c    | 17 +++---
+ src/core/dos/SDL_dos_audio_synth.c | 86 +++++++++++++++++++++++++++++-
+ src/core/dos/SDL_dos_audio_synth.h |  5 ++
+ 4 files changed, 104 insertions(+), 8 deletions(-)
+
+diff --git a/include/SDL3/SDL_dosmidi_tick.h b/include/SDL3/SDL_dosmidi_tick.h
+index 0114ec433..fd646c90a 100644
+--- a/include/SDL3/SDL_dosmidi_tick.h
++++ b/include/SDL3/SDL_dosmidi_tick.h
+@@ -291,6 +291,10 @@ extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferStats3(Uint32 *budget, Uint32 *
+    register are skipped (SDL_HINT_DOS_MIDI_DEFER_DEDUPE=0 turns it off; read at
+    enable, default on), and how many were skipped. */
+ extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferStats4(Uint32 *dedupe_on, Uint32 *skipped);
++/* DOS-PORT patch 0254: the OPL write pacing chosen at detection: pgdetect = 1 when a
++   PicoGUS (SB mode, OPL at 0x388, control protocol 4) answered its control port,
++   reads = dummy status reads after each address and data write. */
++extern SDL_DECLSPEC void SDLCALL SDL_DOSOplPacing(Uint32 *pgdetect, Uint32 *reads);
+ /* DOS-PORT patch 0195: pause (true) holds the replay, keeps the queue and
+    silences what it left sounding (OPL key-off / MPU All Notes Off); resume
+    (false) shifts the queued stamps by the pause's IRQs, releases the hold and
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index ceb93dfb7..b306d1071 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -1816,12 +1816,13 @@ static void MidiDeferWriteOne(Uint32 idx)
+        diagnostic uclock() calls. */
+     const Uint16 addr_port = (reg < 0x100) ? 0x388 : 0x38A;
+     const Uint16 data_port = (reg < 0x100) ? 0x389 : 0x38B;
++    const int opl_reads = g_dos_opl_delay_reads; /* DOS-PORT patch 0254 (was 6) */
+     outportb(addr_port, (Uint8)(reg & 0xFF));
+-    for (int i = 0; i < 6; i++) {
++    for (int i = 0; i < opl_reads; i++) {
+         (void)inportb(0x388);
+     }
+     outportb(data_port, val);
+-    for (int i = 0; i < 6; i++) {
++    for (int i = 0; i < opl_reads; i++) {
+         (void)inportb(0x388);
+     }
+     { /* DOS-PORT patch 0195: track key-on */
+@@ -2084,9 +2085,9 @@ bool SDL_DOSMidiDeferEnable(int kind)
+                 } else {
+                     const Uint16 reg = g_mdq_reg[idx];
+                     outportb((reg < 0x100) ? 0x388 : 0x38A, (Uint8)(reg & 0xFF));
+-                    for (int i = 0; i < 6; i++) (void)inportb(0x388);
++                    for (int i = 0; i < g_dos_opl_delay_reads; i++) (void)inportb(0x388); /* 0254 */
+                     outportb((reg < 0x100) ? 0x389 : 0x38B, g_mdq_val[idx]);
+-                    for (int i = 0; i < 6; i++) (void)inportb(0x388);
++                    for (int i = 0; i < g_dos_opl_delay_reads; i++) (void)inportb(0x388); /* 0254 */
+                     const int v = MDQ_B0_VOICE(reg); /* DOS-PORT patch 0195 */
+                     if (v >= 0) {
+                         g_mdq_b0[v] = g_mdq_val[idx];
+@@ -2114,6 +2115,9 @@ bool SDL_DOSMidiDeferEnable(int kind)
+     { /* DOS-PORT patch 0250: the per-IRQ budget, SDL_HINT_DOS_MIDI_DEFER_MAX_PER_IRQ */
+         const char *e = SDL_getenv("SDL_HINT_DOS_MIDI_DEFER_MAX_PER_IRQ");
+         Uint32 b = MIDI_DEFER_MAX_PER_IRQ;
++        if (kind == 1 && g_dos_opl_pgdetect == 1) {
++            b = 448u; /* DOS-PORT patch 0254: 4 + 4 reads on a detected PicoGUS (~20.6 us per write): 448 x 20.6 us = 9.2 ms */
++        }
+         if (e && *e) {
+             const long v = SDL_strtol(e, NULL, 10);
+             b = (v < 16) ? 16u : (v > (long)MIDI_DEFER_QUEUE) ? MIDI_DEFER_QUEUE : (Uint32)v;
+@@ -2127,6 +2131,7 @@ bool SDL_DOSMidiDeferEnable(int kind)
+     if (!g_mdq_locked) {
+         DOS_LockVariable(g_mdq_budget);   /* DOS-PORT patch 0250 */
+         DOS_LockVariable(g_mdq_drain_sti); /* DOS-PORT patch 0253 */
++        DOS_LockVariable(g_dos_opl_delay_reads); /* DOS-PORT patch 0254 */
+         DOS_LockVariable(g_mdq_draining);
+         DOS_LockVariable(g_mdq_cap_hits);
+         DOS_LockVariable(g_mdq_isr_max);
+@@ -2191,9 +2196,9 @@ Uint32 SDL_DOSMidiDeferPause(bool pause)
+                 const Uint16 reg = (Uint16)((v < 9) ? (0xB0 + v) : (0x100 + 0xB0 + (v - 9)));
+                 const Uint8 val = (Uint8)(g_mdq_b0[v] & ~0x20);
+                 outportb((reg < 0x100) ? 0x388 : 0x38A, (Uint8)(reg & 0xFF));
+-                for (int i = 0; i < 6; i++) (void)inportb(0x388);
++                for (int i = 0; i < g_dos_opl_delay_reads; i++) (void)inportb(0x388); /* 0254 */
+                 outportb((reg < 0x100) ? 0x389 : 0x38B, val);
+-                for (int i = 0; i < 6; i++) (void)inportb(0x388);
++                for (int i = 0; i < g_dos_opl_delay_reads; i++) (void)inportb(0x388); /* 0254 */
+                 g_mdq_b0[v] = val;
+             }
+             g_mdq_keys = 0;
+diff --git a/src/core/dos/SDL_dos_audio_synth.c b/src/core/dos/SDL_dos_audio_synth.c
+index 376e90ef7..5e917652d 100644
+--- a/src/core/dos/SDL_dos_audio_synth.c
++++ b/src/core/dos/SDL_dos_audio_synth.c
+@@ -970,6 +970,86 @@ static const struct {
+     { 0x112, 0x115, 0x100 + 8 },
+ };
+ 
++/* DOS-PORT patch 0254: per-backend OPL write pacing. Every OPL write here is
++   followed by dummy status reads: 6 after the address and 6 after the data.
++   That is 12 of the 14 port operations of a write, and on a 486 each costs
++   ~2 us (lab CAPH-1I: 28.8 us per write), so a dense MIDI burst holds the SB
++   ISR for >10 ms. The PicoGUS (firmware v4.1.1, sw/picogus.cpp) needs no
++   spacing: an address write is a fast write, a data write holds IOCHRDY
++   until the handler has queued it, and each dummy read is itself a
++   stretched cycle. But it queues writes in a 256-entry buffer with no full
++   check (sw/include/cmd_buffers.h), drained every 128 samples at 49716 Hz,
++   ~2.57 ms, so writes must not arrive faster than ~128 per window: 4 + 4
++   reads (~20.6 us per write, ~125 per window) keep half the buffer free.
++   Chosen only on a POSITIVE detection (the card's own control port, as its
++   pgusinit reads it: magic 0xDD, protocol 4, SB mode, OPL base 0x388);
++   every other card keeps 6 + 6. SDL_HINT_DOS_OPL_DELAY_READS=N (1..6)
++   overrides it. */
++volatile Uint8 g_dos_opl_delay_reads = 6;
++Uint8 g_dos_opl_pgdetect = 0;
++
++static void DOS_OplPacingProbe(void)
++{
++    static bool probed = false;
++    Uint8 magic, proto = 0, mode = 0;
++    Uint16 oplport = 0;
++    if (probed) {
++        return;
++    }
++    probed = true;
++    {   /* SDL_HINT_DOS_OPL_PICOGUS_PROBE=0: never touch 0x1D0-0x1D2 (a field escape if
++           another device decodes those ports); the pacing stays 6 + 6. */
++        const char *p = SDL_getenv("SDL_HINT_DOS_OPL_PICOGUS_PROBE");
++        if (p && p[0] == '0' && p[1] == 0) {
++            magic = 0;
++            goto probe_done;
++        }
++    }
++    /* The same sequence as the PicoGUS's own pgusinit initPicoGUS()
++       (pgusinit/pgusinit.c:1307-1328 at v4.1.1): knock 0xCC, select the
++       magic register, read 0xDD from 0x1D2. With no PicoGUS the ISA bus
++       floats (reads 0xFF) and nothing more is written after these two
++       bytes; only on a 0xDD answer are more registers selected. */
++    outportb(0x1D0, 0xCC); /* PicoGUS control port: knock */
++    outportb(0x1D0, 0x00); /* select the magic register */
++    magic = inportb(0x1D2);
++    if (magic == 0xDD) {
++        outportb(0x1D0, 0x01); /* protocol version */
++        proto = inportb(0x1D2);
++        outportb(0x1D0, 0x03); /* boot mode (5 = SB) */
++        mode = inportb(0x1D2);
++        outportb(0x1D0, 0x05); /* OPL base port, 16-bit */
++        oplport = inportw(0x1D1);
++        /* An unknown register ends control mode: select_picogus()'s default
++           branch clears control_active (sw/picogus.cpp:282-283; 0x80 is not a
++           CMD_ value in common/picogus.h). pgusinit leaves it set. */
++        outportb(0x1D0, 0x80);
++        if (proto == 4 && mode == 5 && oplport == 0x388) {
++            g_dos_opl_pgdetect = 1;
++            g_dos_opl_delay_reads = 4;
++        }
++    }
++probe_done:
++    {
++        const char *e = SDL_getenv("SDL_HINT_DOS_OPL_DELAY_READS");
++        if (e && *e) {
++            const long v = SDL_strtol(e, NULL, 10);
++            if (v >= 1 && v <= 6) {
++                g_dos_opl_delay_reads = (Uint8)v;
++            }
++        }
++    }
++    dos_port_dbg_log("audio: patch 0254 OPL pacing: PicoGUS magic 0x%02x proto %u mode %u oplport 0x%x -> pgdetect %u, %u + %u reads",
++                     (unsigned)magic, (unsigned)proto, (unsigned)mode, (unsigned)oplport,
++                     (unsigned)g_dos_opl_pgdetect, (unsigned)g_dos_opl_delay_reads, (unsigned)g_dos_opl_delay_reads);
++}
++
++void SDL_DOSOplPacing(Uint32 *pgdetect, Uint32 *reads)
++{
++    if (pgdetect) *pgdetect = g_dos_opl_pgdetect;
++    if (reads) *reads = g_dos_opl_delay_reads;
++}
++
+ static bool Opl3Detect_Impl(void)
+ {
+     /* Standard Adlib detection: timer-1 rollover sequence.
+@@ -1073,17 +1153,18 @@ void SDL_DOSOpl3WriteRegister(uint16_t reg, uint8_t value)
+     const bool diag = SDL_DOSAudioDiagTiming(); /* patch 0199: off by default */
+     const uclock_t t0 = diag ? uclock() : 0; /* TEMPORARY DIAGNOSTIC, see above */
+ 
++    const int opl_reads = g_dos_opl_delay_reads; /* DOS-PORT patch 0254 (was 6) */
+     outportb(addr_port, (Uint8)(reg & 0xFF));
+     /* Inter-write delay: canonical Adlib 6 dummy status reads.
+        Per YMF262 datasheet ~24 master clock cycles ~ 1.7 us at
+        14.318 MHz; six ISA-bus reads at ~1 us each = ~6 us -- well
+        past the requirement, bullet-proof on PODP83 + Cirrus 5434. */
+-    for (int i = 0; i < 6; i++) {
++    for (int i = 0; i < opl_reads; i++) {
+         (void)inportb(0x388);
+     }
+     outportb(data_port, value);
+     /* Post-data delay before next register access: another 6 reads. */
+-    for (int i = 0; i < 6; i++) {
++    for (int i = 0; i < opl_reads; i++) {
+         (void)inportb(0x388);
+     }
+ 
+@@ -2234,6 +2315,7 @@ void SDL_DOSAudioInitTimer(void)
+ bool SDL_DOSOpl3Detect(void)
+ {
+     const bool held = SDL_DOSMidiDeferHold(true);
++    DOS_OplPacingProbe(); /* DOS-PORT patch 0254 */
+     const bool r = Opl3Detect_Impl();
+     if (held) SDL_DOSMidiDeferHold(false);
+     return r;
+diff --git a/src/core/dos/SDL_dos_audio_synth.h b/src/core/dos/SDL_dos_audio_synth.h
+index 4450d435f..4716c2772 100644
+--- a/src/core/dos/SDL_dos_audio_synth.h
++++ b/src/core/dos/SDL_dos_audio_synth.h
+@@ -142,6 +142,11 @@ extern bool SDL_DOSMidiDeferHold(bool hold);
+    write primitives. */
+ extern volatile Uint8 g_mdq_kind;
+ extern volatile Uint8 g_mdq_hold;
++/* DOS-PORT patch 0254: dummy status reads after each OPL address and data write
++   (6 = the canonical AdLib figure; 4 on a positively detected PicoGUS), and
++   whether a PicoGUS in SB mode with its OPL at 0x388 was found (1) or not (0). */
++extern volatile Uint8 g_dos_opl_delay_reads;
++extern Uint8 g_dos_opl_pgdetect;
+ 
+ /* ------------------------------------------------------------------------
+  * OPL3 (YMF262) -- sec. D of design doc
+-- 
+2.47.3
+

@@ -1,0 +1,41 @@
+From 4e427658546e5f96c28d07869428961d06ca2c53 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 25 Sep 2026 06:49:45 -0700
+Subject: [PATCH] DOS-PORT: patch 0217 -- report SDL 0198's uclock() wrapper
+ counts
+
+RUNMANI.LOG gains "DOS-PORT uclockwrap first= wrapped=": calls that ran
+uclock() with the caller's interrupt flag (the one that sets up the PIT) and
+calls made with interrupts off. 0/0 means the program was linked without
+-Wl,--wrap=uclock. The witness that the wrapper is linked and that the first
+call returned.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/main/quit.cpp | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index a3331f07d..469107473 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -885,6 +885,15 @@ void quit(const char *quitmsg)
+                 (unsigned long)SDL_DOSVideoGetBankSwitchCount());
+             // patch 0216: the decoded-PCM cache's hits/misses/evictions and footprint
+             AGS::Engine::dos_pcm_cache_report(run_manifest_log);
++            // patch 0217: SDL 0198's IRQ-safe uclock() -- first = calls made with the caller's interrupt
++            // flag (the one that sets up the PIT), wrapped = calls made with interrupts off. 0/0 means the
++            // program was linked without -Wl,--wrap=uclock.
++            {
++                Uint32 uc_first = 0, uc_wrapped = 0;
++                SDL_DOSUclockWrapStats(&uc_first, &uc_wrapped);
++                fprintf(run_manifest_log, "DOS-PORT uclockwrap first=%lu wrapped=%lu\n",
++                    (unsigned long)uc_first, (unsigned long)uc_wrapped);
++            }
+ 
+             // TEMPORARY DIAGNOSTIC (S7): dump the AUDIOPRB window data
+             // (audio_core.cpp) through THIS handle rather than a separate
+-- 
+2.47.3
+

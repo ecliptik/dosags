@@ -1,0 +1,28 @@
+diff -u b/Engine/script/cc_instance.cpp b/Engine/script/cc_instance.cpp
+--- b/Engine/script/cc_instance.cpp
++++ b/Engine/script/cc_instance.cpp
+@@ -2245,6 +2245,24 @@
+         pc += 1 + argc;
+     }
+     sd.packed = true;
++#ifdef __DJGPP__
++    { // DOS-PORT probe 0303 (LAB ONLY): the load-time decode check -- decode every packed instruction both
++      // ways (packed bits vs sccmd_info) and check nothing else moved; reported per instance, must be 0
++        long instr = 0, mism = 0;
++        for (size_t pc = 0; pc < n; )
++        {
++            const int32_t w = static_cast<int32_t>(code[pc]);
++            const int32_t op = w & 0x7F;
++            const int argc_table = (op < CC_NUM_SCCMDS) ? sccmd_info[op].ArgCount : -1;
++            const int argc_packed = (w >> 7) & 3;
++            if (argc_table != argc_packed || (w & 0x3FFE00) != 0) mism++;
++            instr++;
++            pc += 1 + (argc_table < 0 ? 0 : argc_table);
++        }
++        Debug::Printf("DOS-PORT packcheck script=%s instance=%d instructions=%ld mismatches=%ld",
++            _instanceof ? _instanceof->GetScriptName().c_str() : "?", _loadedInstanceId, instr, mism);
++    }
++#endif
+ }
+ 
+ void ccInstance::CopyGlobalData(const std::vector<uint8_t> &data)

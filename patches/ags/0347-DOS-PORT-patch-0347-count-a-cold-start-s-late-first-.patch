@@ -1,0 +1,214 @@
+From 4d12957ff0c737c8e79d5bb49981f9e67c57b2f1 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 29 Sep 2026 13:28:17 -0700
+Subject: [PATCH] DOS-PORT: patch 0347 -- count a cold start's late first half
+ as start latency, not as a silent IRQ
+
+CHANGES WHAT silent_irqs COUNTS. Before this patch it also counted the
+first silent IRQ(s) of a sound starting from an idle ring, so figures
+from before it are not comparable. From this patch on it counts only
+dropouts: silent IRQs after the owed audio has started playing. The
+start latencies go to a new start_latency_irqs.
+
+Why: the 486 gate bar is "silent_irqs 0 outside room loads", and every
+in-play silent IRQ the lab probe classified on the 486 (5 of 5 in round
+CS; lab-mmd/gate/COLDSTART3.md) was the first pump after a sound
+started from an idle ring taking an SB IRQ between its mix and its first
+ring write. That is the new sound's first half arriving late, at most
+one DMA half (~46 ms); nothing audible was cut and no sample was lost.
+It counted because the pump snapshotted the silent count at its START
+but set the owed flag at its END, so an IRQ inside the pump that made
+audio owed was charged as if audio had been owed all along. Operator
+decision: keep the bar's wording and fix what the counter counts.
+
+What: counts are snapshotted at each pump's start and end. An owed
+episode starts at the pump whose end first finds audio owed, and it has
+sounded once an IRQ played ring data (dos_port_audio_sfx_active_count).
+The FIRST silent IRQ of an episode before it sounded -> start_latency_irqs,
+with a "DOS-PORT startlat tick= room= irqs= since_room=" line; at most
+one per episode (one DMA half, ~46 ms, the case every measured 486 event
+was). Any further silent IRQ before the sound starts -- a stall right at
+a cold start -- and every silent IRQ after it sounded -> silent_irqs,
+with the existing "DOS-PORT silentirq" line.
+Idle silent IRQs count nowhere, as before. In an interval holding both a
+silent and a sounded IRQ, the silent ones are taken to come first (the
+ring is empty until the first write); of those, only the episode's first
+counts as start latency. The mixer status and
+audio_vital_status gain start_latency_irqs=; g_last_status and the
+status-string buffer grow 1520 -> 1552 for it. The gate scorers read
+silent_irqs and need no change.
+---
+ Engine/platform/dos/dos_audio_mixer.cpp | 103 +++++++++++++++++++-----
+ 1 file changed, 82 insertions(+), 21 deletions(-)
+
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index 3b3e1935b..9817bdb68 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -145,6 +145,18 @@ int g_drains = 0;
+ uint32_t g_owed_silent_irqs = 0;
+ uint32_t g_silent_snap = 0;
+ bool g_owed_at_snap = false;
++// DOS-PORT patch 0347: silent_irqs counts only dropouts -- silent IRQs after the owed episode has sounded. An
++// EPISODE starts when audio becomes owed at a pump's end and ends when a pump ends with nothing owed; it has SOUNDED
++// once an IRQ played ring data (dos_port_audio_sfx_active_count rises). The FIRST silent IRQ of an episode before it
++// sounded is a start latency (the first half of a cold start arriving late, nothing audible cut) and goes to
++// start_latency_irqs; at most one per episode, so a longer silence before a sound starts (a stall right at a cold
++// start) still counts as silent_irqs beyond that first half. Counts are snapshotted at each pump's START and END,
++// so an IRQ inside the pump that first makes audio owed (between its mix and its first ring write) is classified,
++// not charged against the owed flag that pump sets at its end (the pre-0347 window: snapshot at start, owed at end).
++uint32_t g_start_latency_irqs = 0;
++static uint32_t g_silent_end = 0, g_sounded_start = 0, g_sounded_end = 0;
++static bool g_episode_sounded = false;
++static bool g_episode_latency_taken = false; // the one start-latency IRQ an episode may have
+ uint32_t g_pcm_irq_base = 0;
+ 
+ // DOS-PORT (patch 0201): ring overrun witnesses. overwrites = SDL 0190's
+@@ -170,7 +182,7 @@ uint32_t g_room_since = 0;
+ // shutdown_sound()) still reports the real final state instead of the
+ // "never opened" NA sentinel. Left at "NA" if the device was never
+ // opened at all, so that genuine case is still distinguishable.
+-char g_last_status[1520] = "NA"; // patch 0252: 512 -> 640, room for mixed=,...,inflight= beside 0213's fields; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280; patch 0341: -> 1472 (1443 B with the RTC pump's fields); patch 0346: -> 1520 (preroll=, <= 48 B)
++char g_last_status[1552] = "NA"; // patch 0252: 512 -> 640, room for mixed=,...,inflight= beside 0213's fields; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280; patch 0341: -> 1472 (1443 B with the RTC pump's fields); patch 0346: -> 1520 (preroll=, <= 48 B); patch 0347: -> 1552 (start_latency_irqs=, <= 30 B: 1522 B worst case)
+ 
+ void format_status_string(char *buf, size_t bufsize)
+ {
+@@ -183,12 +195,13 @@ void format_status_string(char *buf, size_t bufsize)
+     // "midi=<backend>,events=<n>" fragment now -- S1 hardcoded ";midi=none"
+     // here since no MIDI backend existed yet.
+     dos_midi_backend_status_fragment(midi_fragment, sizeof(midi_fragment));
+-    char irq_fragment[48];
++    char irq_fragment[96];
+     if (g_gus_backend)
+-        std::snprintf(irq_fragment, sizeof(irq_fragment), "pcm_irqs=NA,silent_irqs=NA");
++        std::snprintf(irq_fragment, sizeof(irq_fragment), "pcm_irqs=NA,silent_irqs=NA,start_latency_irqs=NA");
+     else
+-        std::snprintf(irq_fragment, sizeof(irq_fragment), "pcm_irqs=%u,silent_irqs=%u",
+-            (unsigned)(dos_port_audio_sfx_active_count - g_pcm_irq_base), (unsigned)g_owed_silent_irqs);
++        std::snprintf(irq_fragment, sizeof(irq_fragment), "pcm_irqs=%u,silent_irqs=%u,start_latency_irqs=%u",
++            (unsigned)(dos_port_audio_sfx_active_count - g_pcm_irq_base), (unsigned)g_owed_silent_irqs,
++            (unsigned)g_start_latency_irqs); // DOS-PORT patch 0347
+     char ring_fragment[160];
+     if (g_gus_backend)
+         std::snprintf(ring_fragment, sizeof(ring_fragment),
+@@ -243,6 +256,11 @@ bool dos_audio_mixer_init()
+     g_owed_silent_irqs = 0;
+     g_owed_at_snap = false;
+     g_silent_snap = dos_port_audio_silent_irq_count;
++    g_start_latency_irqs = 0; // DOS-PORT patch 0347
++    g_silent_end = g_silent_snap;
++    g_sounded_start = g_sounded_end = dos_port_audio_sfx_active_count;
++    g_episode_sounded = false;
++    g_episode_latency_taken = false;
+     g_pcm_irq_base = dos_port_audio_sfx_active_count;
+     g_overwrite_base = dos_port_audio_ring_overwrite_count;
+     g_ring_max_ms = 0;
+@@ -515,6 +533,39 @@ static bool audio_owed()
+     return false;
+ }
+ 
++// DOS-PORT patch 0347: classify one interval's silent IRQs (d) against the episode; a = IRQs that played ring data.
++// In an interval holding both, the silent ones are taken to come first (the ring is empty until the first write).
++// Before the episode sounded, only its first silent IRQ is a start latency; the rest are silent IRQs.
++static void dos_silent_classify(uint32_t d, uint32_t a)
++{
++    if (d > 0)
++    {
++        uint32_t lat = 0;
++        if (!g_episode_sounded && !g_episode_latency_taken)
++        {
++            lat = 1;
++            g_episode_latency_taken = true;
++        }
++        const uint32_t sil = d - lat;
++        const unsigned tick = (unsigned)get_loop_counter(), since = (unsigned)(get_loop_counter() - g_room_since);
++        // DOS-PORT (patch 0202): one line per interval and kind -- the loop tick, the room, how many IRQs
++        if (lat)
++        {
++            g_start_latency_irqs += lat;
++            Debug::Printf(kDbgMsg_Info, "DOS-PORT startlat tick=%u room=%d irqs=%u since_room=%u", tick, displayed_room,
++                (unsigned)lat, since);
++        }
++        if (sil)
++        {
++            g_owed_silent_irqs += sil;
++            Debug::Printf(kDbgMsg_Info, "DOS-PORT silentirq tick=%u room=%d irqs=%u since_room=%u", tick,
++                displayed_room, (unsigned)sil, since);
++        }
++    }
++    if (a > 0)
++        g_episode_sounded = true;
++}
++
+ void dos_audio_mixer_pump()
+ {
+     dos_midi_stream_sample();   // DOS-PORT patch 0253: once per tick
+@@ -573,24 +624,15 @@ void dos_audio_mixer_pump()
+             g_room_seen = displayed_room;
+             g_room_since = get_loop_counter();
+         }
+-        // DOS-PORT (patch 0199/0200): charge the silent IRQs since the last
+-        // pump only if audio was still owed to the device when that interval
+-        // began (evaluated at the end of the previous pump, below).
++        // DOS-PORT (patch 0199/0200, 0347): the interval since the previous
++        // pump's END is classified only if audio was owed when it began
++        // (the owed flag set at that pump's end, below).
+         const uint32_t silent_now = dos_port_audio_silent_irq_count;
++        const uint32_t sounded_now = dos_port_audio_sfx_active_count;
+         if (g_owed_at_snap)
+-        {
+-            const uint32_t d = silent_now - g_silent_snap;
+-            g_owed_silent_irqs += d;
+-            // DOS-PORT (patch 0202): one line per pump interval that played
+-            // silence while audio was owed -- the loop tick of the pump that
+-            // closed the interval (the first tick after any stall that caused
+-            // it), the room at that point, and how many silent IRQs.
+-            if (d > 0)
+-                Debug::Printf(kDbgMsg_Info, "DOS-PORT silentirq tick=%u room=%d irqs=%u since_room=%u",
+-                    (unsigned)get_loop_counter(), displayed_room, (unsigned)d,
+-                    (unsigned)(get_loop_counter() - g_room_since));
+-        }
++            dos_silent_classify(silent_now - g_silent_end, sounded_now - g_sounded_end);
+         g_silent_snap = silent_now;
++        g_sounded_start = sounded_now;
+ 
+         for (int iter = 0; iter < MAX_PUMP_ITERS; iter++)
+         {
+@@ -621,6 +663,25 @@ void dos_audio_mixer_pump()
+         // the sound). Evaluated after the pump so it describes the interval
+         // that starts now.
+         const bool owed = audio_owed();
++        {   // DOS-PORT patch 0347: the interval inside this pump (START -> END)
++            const uint32_t silent_end = dos_port_audio_silent_irq_count;
++            const uint32_t sounded_end = dos_port_audio_sfx_active_count;
++            if (g_owed_at_snap)
++                dos_silent_classify(silent_end - g_silent_snap, sounded_end - g_sounded_start);
++            else if (owed)
++            {   // this pump made audio owed: an episode starts, not yet sounded
++                g_episode_sounded = false;
++                g_episode_latency_taken = false;
++                dos_silent_classify(silent_end - g_silent_snap, sounded_end - g_sounded_start);
++            }
++            if (!owed)
++            {
++                g_episode_sounded = false;
++                g_episode_latency_taken = false;
++            }
++            g_silent_end = silent_end;
++            g_sounded_end = sounded_end;
++        }
+         g_owed_at_snap = owed;
+         // DOS-PORT (patch 0204): and for the background thread's iterations
+         // until the next pump.
+@@ -642,7 +703,7 @@ const char *dos_audio_mixer_status_string()
+ {
+     if (!g_stream && !g_gus_open)
+         return g_last_status; // "NA" if never opened, else the shutdown-time snapshot
+-    static char buf[1520];   // patch 0252: 512 -> 640; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280; patch 0341: -> 1472; patch 0346: -> 1520 (see g_last_status)
++    static char buf[1552];   // patch 0252: 512 -> 640; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280; patch 0341: -> 1472; patch 0346: -> 1520; patch 0347: -> 1552 (see g_last_status)
+     format_status_string(buf, sizeof(buf));
+     return buf;
+ }
+-- 
+2.47.3
+

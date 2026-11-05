@@ -1,0 +1,46 @@
+# Trilby's Notes -- source pin, confirmed 2026-09-13 via direct download
+# + hash, not re-cited from memory. Re-verify independently before bumping.
+#
+# Golden reference #2 of PLAN.md's "Golden-reference games" survey --
+# "the only loadable top-20 title at the v0.1 in-profile 8-bit depth...
+# Doubles as the in-profile sound-on/off fps workload until the
+# self-authored game exists (decision 1)". Freeware, local-testing-only,
+# never committed -- same rule as AGS Quest. Only this PIN, hashes, logs,
+# and manifest.yaml enter git; the game archive/binary itself never does.
+
+GAME_TITLE="Trilby's Notes"
+GAME_YEAR=2006
+GAME_DEVELOPER="Ben 'Yahtzee' Croshaw (fullyramblomatic.com)"
+
+# Official listing (freeware classification, file size cross-check):
+# https://www.adventuregamestudio.co.uk/play/game/736/
+# The site's own "DOWNLOAD" button is gated behind a JS-driven POST to a
+# same-origin AJAX endpoint with anti-automation cookies -- not scripted
+# around; the developer's own game-website link on that same page
+# ("Game Website", http://www.fullyramblomatic.com/notes/) leads to
+# plain, ungated mirror links instead, used here.
+SOURCE_URL="http://yahtzee.roushimsx.com/notes.zip"
+SOURCE_URL_ALTERNATE_MIRRORS="http://download.epicforge.com/mirror/fullyramblomatic.com/notes.zip (404, 2026-09-13); http://roushimsx.shackspace.com/yahtzee/notes.zip (no response, 2026-09-13)"
+DOWNLOADED_UTC="2026-09-13"
+
+# notes.zip itself
+ZIP_SIZE_BYTES=2111030
+ZIP_SHA256=b16a9219ec760644260fe14a4e4804df4d8c3f00b650be9ea9f4085467727d31
+ZIP_LAST_MODIFIED="2006-07-05T00:13:17Z"  # HTTP Last-Modified header, consistent with the
+                                          # 2006-06-27 release date the AGS database lists
+
+# notes.exe (UPX-compressed PE stub + appended CLIB game data), extracted
+# from notes.zip
+EXE_SIZE_BYTES=5736960
+EXE_SHA256=bb1ab2ffc83eebe3ef170b140f00ba0eb329fb4c502e79b039aa253e585bd8d7
+
+# Licensing: "Freeware" per the AGS database's own release-type field;
+# readme.txt (inside notes.zip, not committed) states no further
+# redistribution terms of its own beyond crediting the author. No
+# separate LICENSE/COPYING file ships with the game -- this is a
+# compiled binary from a hobbyist developer, not an open-source project,
+# so there is no source license to misattribute either. Consistent with
+# PLAN.md's own "Golden-reference games" decision (freeware,
+# local-testing-only, never committed, never redistributed) -- not a new
+# license judgment call, just recording it here per this port's own
+# licensing rules (never guess, always cite the actual read).

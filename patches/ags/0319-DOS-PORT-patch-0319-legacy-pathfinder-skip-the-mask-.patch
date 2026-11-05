@@ -1,0 +1,517 @@
+From 82307df9eb56a3d342a6d833a553424e729e1555 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sat, 26 Sep 2026 18:33:56 -0700
+Subject: [PATCH] DOS-PORT: patch 0319 -- legacy pathfinder: skip the mask
+ compare on an unchanged temp mask; flood by labels
+
+WHY: with 0317, a walk request on the S16 fixture still spends most of
+its 486 time outside the Dijkstra loop (dosags docs/lab/s8.md, PROF16:
+the lc 562 click tick is 201 ms sound off). The biggest parts are
+`__find_route` 42% (the 0211 cache's 64 KB compare) and `big_move` 17%
+(the 64 KB copy of the normalised mask, made on every request only so
+Allegro's floodfill can mark the source's region), plus the flood
+itself.
+
+WHAT, exact by construction (DOSAGS_RP_FAST=0 turns both off;
+DOSAGS_RP_VERIFY=1 also runs the old path and counts disagreements in a
+"DOS-PORT rpcache" line):
+(A) prepare_walkable_areas(), the only writer of walkable_areas_temp,
+    records its inputs: a generation of thisroom.WalkAreaMask's pixels
+    and the exact list of blocking rectangles it cut out. The generation
+    is bumped by every path that can write those pixels (room load and
+    unload, redo_walkable_areas, a drawing surface or plugin bitmap on
+    the walkable mask, a restored mask). An identical input record keeps
+    the temp mask's serial; any difference takes a new one. The whole
+    record is compared, not hashed. The pathfinder's cache stores the
+    serial it was built or verified from, and a request on the same
+    serial skips the 64 KB compare.
+(B) The copy-and-flood only answers "which pixels are 4-connected to the
+    source". That is computed once per cache build as component labels
+    over the normalised mask: every walkable pixel is 1, and Allegro's
+    scanline fill spreads left/right and to overlapping runs above and
+    below, never diagonally. The reachability test and the
+    nearest-walkable sweep read the labels, with the same clamping,
+    order and arithmetic, so they set the same suggestx/suggesty. With
+    more than 65534 components it falls back to the copy and flood.
+    The labels are built in two passes over each row's runs: union every
+    run with the runs of the row above that share a column (the flood's
+    4-connectivity). Only the runs are kept, per row (x0, x1, label); a
+    pixel's label is a binary search over its row's runs, so no 128 KB
+    pixel map is written or zero-filled.
+    A per-pixel flood with a stack, a zero-fill and a divide per pixel
+    made the first request of a mask serial ~71 ms slower on the 486
+    (RP486: 244.5 vs 173.0 ms, every later request faster). The first
+    request is also answered from the labels instead of building them
+    and then flooding too. The build time is reported as label_us.
+
+Gates: identical route hashes against the previous build on RT3's bench
+and random requests on 5 Days', Trilby's and MMD's masks, a control that
+must differ, and DOSAGS_RP_VERIFY=1 with 0 mismatches.
+---
+ Engine/ac/dynobj/scriptdrawingsurface.cpp |   5 +
+ Engine/ac/room.cpp                        |   1 +
+ Engine/ac/route_finder_impl_legacy.cpp    | 243 +++++++++++++++++++++-
+ Engine/ac/walkablearea.cpp                |  38 ++++
+ Engine/game/savegame.cpp                  |   2 +
+ Engine/main/quit.cpp                      |   2 +
+ Engine/plugin/agsplugin.cpp               |   6 +
+ 7 files changed, 294 insertions(+), 3 deletions(-)
+
+diff --git a/Engine/ac/dynobj/scriptdrawingsurface.cpp b/Engine/ac/dynobj/scriptdrawingsurface.cpp
+index cd8ec3268..dd6c56a64 100644
+--- a/Engine/ac/dynobj/scriptdrawingsurface.cpp
++++ b/Engine/ac/dynobj/scriptdrawingsurface.cpp
+@@ -52,7 +52,12 @@ Bitmap* ScriptDrawingSurface::GetBitmapSurface()
+     else if (linkedBitmapOnly != nullptr)
+         return linkedBitmapOnly;
+     else if (roomMaskType > kRoomAreaNone)
++    {
++        // DOS-PORT patch 0319: every draw on a room mask goes through here first; a walkable-mask draw may change
++        // its pixels, so the pathfinder's cache must compare them again
++        if (roomMaskType == kRoomAreaWalkable) { extern unsigned long dos_walkmask_gen; dos_walkmask_gen++; }
+         return thisroom.GetMask(roomMaskType);
++    }
+     return nullptr;
+ }
+ 
+diff --git a/Engine/ac/room.cpp b/Engine/ac/room.cpp
+index a758a56c7..04a00e54d 100644
+--- a/Engine/ac/room.cpp
++++ b/Engine/ac/room.cpp
+@@ -1184,6 +1184,7 @@ void set_room_placeholder()
+     thisroom.RegionMask = dummy_bg;
+     thisroom.WalkAreaMask = dummy_bg;
+     thisroom.WalkBehindMask = dummy_bg;
++    { extern unsigned long dos_walkmask_gen; dos_walkmask_gen++; } // DOS-PORT patch 0319: the walkable mask changed
+ 
+     reset_temp_room();
+     croom = &troom;
+diff --git a/Engine/ac/route_finder_impl_legacy.cpp b/Engine/ac/route_finder_impl_legacy.cpp
+index 222043e51..dd74cce62 100644
+--- a/Engine/ac/route_finder_impl_legacy.cpp
++++ b/Engine/ac/route_finder_impl_legacy.cpp
+@@ -25,6 +25,10 @@
+ #include "ac/route_finder_impl_legacy.h"
+ #include <string.h>
+ #include <math.h>
++#include <stdio.h> // DOS-PORT patch 0319
++#include <stdint.h>
++#include <time.h> // uclock(), DOS-PORT patch 0319 re-cut
++#include <vector>
+ #include "ac/common.h"   // quit() FIXME: don't use quit here!!
+ #include "ac/common_defines.h"
+ #include "ac/movelist.h"
+@@ -35,6 +39,10 @@
+ 
+ using namespace AGS::Common;
+ 
++// DOS-PORT patch 0319: walkablearea.cpp's temp mask and its input serial (global scope)
++extern Bitmap *walkable_areas_temp;
++extern unsigned long dos_walktemp_serial;
++
+ // #define DEBUG_PATHFINDER
+ 
+ namespace AGS
+@@ -179,6 +187,165 @@ static int rp_cache_maxgran = -1;
+ // The mask is not written during a request, so the second and later is_route_possible calls of the same request
+ // (the nearest-walkable retry) skip the 64 KB compare; FindRouteImpl clears it at the start of every request.
+ static const Bitmap *rp_req_mask = nullptr;
++
++// DOS-PORT patch 0319 (DOSAGS_RP_FAST=0 turns both parts off; DOSAGS_RP_VERIFY=1 also runs the old path and counts
++// any disagreement):
++// (A) the cache records walkable_areas_temp's input serial (walkablearea.cpp) when it is built or verified from
++//     that bitmap; a later request whose serial is the same holds the same pixels, so the 64 KB compare is skipped.
++// (B) the flood fill from the source (a 64 KB copy of the normalised mask, then an Allegro scanline fill) only
++//     answers "which pixels are 4-connected to the source"; that is computed once per cache build as component
++//     labels over the normalised mask, and the reachability test and the nearest-walkable sweep read the labels.
++static unsigned long rp_cache_serial = 0;
++// re-cut 2 (2026-09-29): the labels are kept as runs, not a pixel map -- per row, runs (x0, x1, label) in x order;
++// row y's runs are [rp_rowstart[y], rp_rowstart[y + 1]). No 128 KB map to write or zero-fill.
++static std::vector<int16_t> rp_rx0, rp_rx1;
++static std::vector<uint16_t> rp_rlab;
++static std::vector<int> rp_rowstart;
++static int rp_lab_w = 0, rp_lab_h = 0;
++
++// the label of pixel (x, y), 0 if not walkable or outside: a binary search over row y's runs
++static inline uint16_t rp_label_at(int x, int y)
++{
++  if (x < 0 || y < 0 || x >= rp_lab_w || y >= rp_lab_h)
++    return 0;
++  int lo = rp_rowstart[y], hi = rp_rowstart[y + 1] - 1;
++  while (lo <= hi)
++  {
++    const int mid = (lo + hi) >> 1;
++    if (x < rp_rx0[mid]) hi = mid - 1;
++    else if (x > rp_rx1[mid]) lo = mid + 1;
++    else return rp_rlab[mid];
++  }
++  return 0;
++}
++static bool rp_labels_ok = false;
++static unsigned long rp_label_us = 0; // DOS-PORT patch 0319 re-cut: the last label build, us
++static int rp_fast = -1, rp_verify = -1;
++static unsigned long rp_n_serial_hits = 0, rp_n_compares = 0, rp_n_label_answers = 0, rp_n_verified = 0,
++    rp_n_serial_mismatch = 0, rp_n_label_mismatch = 0;
++
++static bool rp_fast_on()
++{
++  if (rp_fast < 0)
++  {
++    const char *e = getenv("DOSAGS_RP_FAST"); rp_fast = (e && e[0] == '0') ? 0 : 1;
++    const char *v = getenv("DOSAGS_RP_VERIFY"); rp_verify = (v && v[0] == '1') ? 1 : 0;
++  }
++  return rp_fast == 1;
++}
++
++// 4-connected components of the value-1 pixels of a normalised mask (every walkable pixel is 1): exactly the set an
++// Allegro floodfill seeded on one of them fills (it spreads left/right along a row and to overlapping runs in the
++// rows above and below, never diagonally). Labels 1..n; 0 = not walkable. False if there are more than 65534.
++static bool rp_build_labels(const Bitmap *norm)
++{
++  // Two passes over the rows' runs (re-cut 2026-09-29: a pixel flood with a stack, a 64K-entry zero-fill and a
++  // divide per pixel cost ~71 ms on the 486 on a 320x200 mask). Pass 1 finds each row's runs of value-1 pixels;
++  // pass 2 unions every run with each run of the row above that shares a column -- 4-connectivity, the flood's rule.
++  // Only the runs and their labels are kept (rp_label_at() searches them).
++  const int W = norm->GetWidth(), H = norm->GetHeight();
++  rp_rx0.clear(); rp_rx1.clear();
++  rp_rowstart.assign(H + 1, 0);
++  for (int y = 0; y < H; ++y)
++  {
++    rp_rowstart[y] = (int)rp_rx0.size();
++    const uint8_t *row = norm->GetScanLine(y);
++    for (int x = 0; x < W;)
++    {
++      if (row[x] != 1) { ++x; continue; }
++      const int x0 = x;
++      while (x < W && row[x] == 1) ++x;
++      rp_rx0.push_back((int16_t)x0); rp_rx1.push_back((int16_t)(x - 1));
++    }
++  }
++  rp_rowstart[H] = (int)rp_rx0.size();
++  std::vector<int> parent(rp_rx0.size());
++  for (size_t i = 0; i < parent.size(); ++i) parent[i] = (int)i;
++  auto find = [&parent](int i) { while (parent[i] != i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
++  for (int y = 1; y < H; ++y)
++  {
++    int j = rp_rowstart[y - 1];
++    const int je = rp_rowstart[y];
++    for (int i = rp_rowstart[y]; i < rp_rowstart[y + 1]; ++i)
++    {
++      while (j < je && rp_rx1[j] < rp_rx0[i]) ++j;                // runs above that end left of this run
++      for (int k = j; k < je && rp_rx0[k] <= rp_rx1[i]; ++k)       // runs above that share a column
++      {
++        const int a = find(i), b = find(k);
++        if (a != b) parent[a > b ? a : b] = a < b ? a : b;
++      }
++    }
++  }
++  // labels 1..n by first appearance of each component (row-major)
++  std::vector<uint16_t> comp(parent.size(), 0);
++  rp_rlab.resize(parent.size());
++  unsigned next = 1;
++  for (size_t i = 0; i < parent.size(); ++i)
++  {
++    const int r = find((int)i);
++    if (comp[r] == 0)
++    {
++      if (next > 65534u)
++        return false;
++      comp[r] = (uint16_t)next++;
++    }
++    rp_rlab[i] = comp[r];
++  }
++  rp_lab_w = W; rp_lab_h = H;
++  return true;
++}
++
++// find_nearest_walkable_area() over the labels: a pixel counts where the flooded copy would read 232, i.e. where its
++// label is the source's. Same clamping, same order, same arithmetic, same suggestx/suggesty.
++static int rp_nearest_label(int fromX, int fromY, int toX, int toY, int destX, int destY, int granularity, uint16_t lab)
++{
++  if (fromX < 0) fromX = 0;
++  if (fromY < 0) fromY = 0;
++  if (toX >= rp_lab_w) toX = rp_lab_w - 1;
++  if (toY >= rp_lab_h) toY = rp_lab_h - 1;
++  int nearest = 99999, nearx = -1, neary = -1;
++  for (int ex = fromX; ex < toX; ex += granularity)
++  {
++    for (int ey = fromY; ey < toY; ey += granularity)
++    {
++      if (rp_label_at(ex, ey) != lab)
++        continue;
++      int thisis = (int)::sqrt((double)((ex - destX) * (ex - destX) + (ey - destY) * (ey - destY)));
++      if (thisis < nearest)
++      {
++        nearest = thisis;
++        nearx = ex;
++        neary = ey;
++      }
++    }
++  }
++  if (nearest < 90000) {
++    suggestx = nearx;
++    suggesty = neary;
++    return 1;
++  }
++  return 0;
++}
++
++// is_route_possible_flood() over the labels (source pixel walkable and inside the mask: checked by the caller)
++static int rp_route_possible_labels(int fromx, int fromy, int tox, int toy, const LegacyRouteFinder::PathfinderConfig &pfc)
++{
++  const uint16_t lab = rp_label_at(fromx, fromy);
++  if (tox >= 0 && toy >= 0 && tox < rp_lab_w && toy < rp_lab_h && rp_label_at(tox, toy) == lab)
++    return 1;
++  int tryFirstX = tox - pfc.ShortSweepRadius, tryToX = tox + pfc.ShortSweepRadius;
++  int tryFirstY = toy - pfc.ShortSweepRadius, tryToY = toy + pfc.ShortSweepRadius;
++  if (!rp_nearest_label(tryFirstX, tryFirstY, tryToX, tryToY, tox, toy, pfc.ShortSweepGranularity, lab))
++    rp_nearest_label(0, 0, rp_lab_w, rp_lab_h, tox, toy, pfc.FullSweepGranularity, lab);
++  return 0;
++}
++
++void dos_rp_report(FILE *log)
++{
++  if (log)
++    fprintf(log, "DOS-PORT rpcache fast=%d serial_hits=%lu compares=%lu label_answers=%lu verified=%lu serial_mismatch=%lu label_mismatch=%lu labels_ok=%d label_us=%lu\n",
++      rp_fast, rp_n_serial_hits, rp_n_compares, rp_n_label_answers, rp_n_verified, rp_n_serial_mismatch, rp_n_label_mismatch, rp_labels_ok ? 1 : 0, rp_label_us);
++}
+ static int is_route_possible_flood(Bitmap *tempw, int fromx, int fromy, int tox, int toy, const LegacyRouteFinder::PathfinderConfig &pfc);
+ 
+ static bool rp_cache_matches(const Bitmap *wallscreen, int maxgran)
+@@ -220,14 +387,54 @@ static int is_route_possible(const Bitmap *wallscreen, int fromx, int fromy, int
+   if (wallscreen->GetPixel(fromx, fromy) < 1)
+     return 0;
+ 
+-  if ((rp_req_mask == wallscreen && rp_cache_src != nullptr && rp_cache_maxgran == pfc.MaxGranularity) ||
+-      rp_cache_matches(wallscreen, pfc.MaxGranularity))
++  // DOS-PORT patch 0319 (A): the same input serial as the cache was built/verified from is the same pixels
++  const bool fast = rp_fast_on();
++  const bool serial_hit = fast && rp_cache_src != nullptr && rp_cache_maxgran == pfc.MaxGranularity &&
++      wallscreen == walkable_areas_temp && dos_walktemp_serial != 0 && dos_walktemp_serial == rp_cache_serial &&
++      rp_cache_src->GetWidth() == wallscreen->GetWidth() && rp_cache_src->GetHeight() == wallscreen->GetHeight();
++  bool hit = (rp_req_mask == wallscreen && rp_cache_src != nullptr && rp_cache_maxgran == pfc.MaxGranularity);
++  if (!hit && serial_hit)
++  {
++    hit = true;
++    rp_n_serial_hits++;
++    if (rp_verify == 1)
++    {
++      rp_n_verified++;
++      if (!rp_cache_matches(wallscreen, pfc.MaxGranularity))
++        rp_n_serial_mismatch++;
++    }
++  }
++  if (!hit)
++  {
++    rp_n_compares++;
++    hit = rp_cache_matches(wallscreen, pfc.MaxGranularity);
++    if (hit)
++      rp_cache_serial = (wallscreen == walkable_areas_temp) ? dos_walktemp_serial : 0; // 0319 (A)
++  }
++  if (hit)
+   {
+     rp_req_mask = wallscreen; // DOS-PORT patch 0317
++    memcpy(walk_area_granularity, rp_cache_gran, sizeof(walk_area_granularity));
++    if (fast && rp_labels_ok) // DOS-PORT patch 0319 (B): no copy, no flood
++    {
++      rp_n_label_answers++;
++      const int r = rp_route_possible_labels(fromx, fromy, tox, toy, pfc);
++      if (rp_verify == 1)
++      {
++        const int sx = suggestx, sy = suggesty;
++        suggestx = -1;
++        Bitmap *vw = BitmapHelper::CreateBitmapCopy(rp_cache_norm, 8);
++        const int rv = is_route_possible_flood(vw, fromx, fromy, tox, toy, pfc);
++        rp_n_verified++;
++        if (rv != r || suggestx != sx || suggesty != sy)
++          rp_n_label_mismatch++;
++        suggestx = sx; suggesty = sy;
++      }
++      return r;
++    }
+     Bitmap *tempw = BitmapHelper::CreateBitmapCopy(rp_cache_norm, 8);
+     if (tempw == nullptr)
+       quit("no memory for route calculation");
+-    memcpy(walk_area_granularity, rp_cache_gran, sizeof(walk_area_granularity));
+     return is_route_possible_flood(tempw, fromx, fromy, tox, toy, pfc);
+   }
+ 
+@@ -314,6 +521,36 @@ static int is_route_possible(const Bitmap *wallscreen, int fromx, int fromy, int
+   memcpy(rp_cache_gran, walk_area_granularity, sizeof(rp_cache_gran));
+   rp_cache_maxgran = pfc.MaxGranularity;
+   rp_req_mask = rp_cache_src ? wallscreen : nullptr; // DOS-PORT patch 0317: the cache now holds this mask
++  // DOS-PORT patch 0319: the serial the cache now holds, and the labels of its normalised mask (tempw is still the
++  // unflooded normalised copy here)
++  rp_cache_serial = (rp_cache_src && wallscreen == walkable_areas_temp) ? dos_walktemp_serial : 0;
++  {
++#ifdef __DJGPP__
++    const uclock_t l0 = uclock();
++#endif
++    rp_labels_ok = rp_fast_on() && rp_cache_norm && rp_build_labels(tempw);
++#ifdef __DJGPP__
++    rp_label_us = (unsigned long)((uclock() - l0) * 1000000.0 / UCLOCKS_PER_SEC);
++#endif
++  }
++  if (rp_labels_ok) // DOS-PORT patch 0319 re-cut: the first request of a serial is answered from the labels too
++  {
++    rp_n_label_answers++;
++    const int r = rp_route_possible_labels(fromx, fromy, tox, toy, pfc);
++    if (rp_verify == 1)
++    {
++      const int sx = suggestx, sy = suggesty;
++      suggestx = -1;
++      const int rv = is_route_possible_flood(tempw, fromx, fromy, tox, toy, pfc); // deletes tempw
++      rp_n_verified++;
++      if (rv != r || suggestx != sx || suggesty != sy)
++        rp_n_label_mismatch++;
++      suggestx = sx; suggesty = sy;
++    }
++    else
++      delete tempw;
++    return r;
++  }
+ 
+   return is_route_possible_flood(tempw, fromx, fromy, tox, toy, pfc);
+ }
+diff --git a/Engine/ac/walkablearea.cpp b/Engine/ac/walkablearea.cpp
+index e5774ad92..a2b75c292 100644
+--- a/Engine/ac/walkablearea.cpp
++++ b/Engine/ac/walkablearea.cpp
+@@ -22,6 +22,8 @@
+ #include "ac/roomobject.h"
+ #include "ac/roomstatus.h"
+ #include "ac/walkablearea.h"
++#include <algorithm> // DOS-PORT patch 0319
++#include <vector>
+ #include "game/roomstruct.h"
+ #include "gfx/bitmap.h"
+ 
+@@ -35,8 +37,38 @@ extern RoomObject*objs;
+ 
+ Bitmap *walkareabackup=nullptr, *walkable_areas_temp = nullptr;
+ 
++// DOS-PORT patch 0319: what walkable_areas_temp was built from, so the legacy pathfinder's 0211 cache can tell a
++// byte-identical mask without comparing 64 KB. prepare_walkable_areas() is the only writer of walkable_areas_temp:
++// its pixels are a function of thisroom.WalkAreaMask's pixels (tracked by dos_walkmask_gen, bumped by every path
++// that can write them: room load/unload, redo_walkable_areas, a drawing surface or plugin bitmap on the walkable
++// mask) and of the blocking rectangles it cuts out. The whole input record is compared (no hash); an identical
++// record keeps the same serial, any difference takes a new one. 0 means unknown.
++unsigned long dos_walkmask_gen = 1;
++unsigned long dos_walktemp_serial = 0;
++static unsigned long dos_walktemp_next_serial = 1;
++static unsigned long dos_walktemp_sig_gen = 0;
++static std::vector<Rect> dos_walktemp_sig_rects, dos_walktemp_new_rects;
++static const Bitmap *dos_walktemp_sig_bmp = nullptr;
++static int dos_walktemp_sig_noblock = -1;
++
++static void dos_walktemp_sig_commit(int noblock)
++{
++    if (dos_walktemp_serial != 0 && dos_walktemp_sig_gen == dos_walkmask_gen &&
++        dos_walktemp_sig_bmp == walkable_areas_temp && dos_walktemp_sig_noblock == noblock &&
++        dos_walktemp_sig_rects.size() == dos_walktemp_new_rects.size() &&
++        std::equal(dos_walktemp_new_rects.begin(), dos_walktemp_new_rects.end(), dos_walktemp_sig_rects.begin(),
++            [](const Rect &a, const Rect &b) { return a.Left == b.Left && a.Top == b.Top && a.Right == b.Right && a.Bottom == b.Bottom; }))
++        return; // the same inputs as last time: walkable_areas_temp holds the same pixels, keep the serial
++    dos_walktemp_sig_rects.swap(dos_walktemp_new_rects);
++    dos_walktemp_sig_gen = dos_walkmask_gen;
++    dos_walktemp_sig_bmp = walkable_areas_temp;
++    dos_walktemp_sig_noblock = noblock;
++    dos_walktemp_serial = dos_walktemp_next_serial++;
++}
++
+ void redo_walkable_areas()
+ {
++    dos_walkmask_gen++; // DOS-PORT patch 0319
+     thisroom.WalkAreaMask->Blit(walkareabackup, 0, 0);
+     for (int h = 0; h < walkareabackup->GetHeight(); ++h)
+     {
+@@ -115,15 +147,20 @@ void remove_walkable_areas_from_temp(const Rect &area)
+     );
+ 
+     walkable_areas_temp->FillRect(mask_area, 0);
++    dos_walktemp_new_rects.push_back(area); // DOS-PORT patch 0319: part of what the temp mask was built from
+ }
+ 
+ Bitmap *prepare_walkable_areas (int sourceChar) {
+     // copy the walkable areas to the temp bitmap
+     walkable_areas_temp->Blit(thisroom.WalkAreaMask.get(), 0,0,0,0,thisroom.WalkAreaMask->GetWidth(),thisroom.WalkAreaMask->GetHeight());
++    dos_walktemp_new_rects.clear(); // DOS-PORT patch 0319
+     // if the character who's moving doesn't block, don't bother checking
+     if (sourceChar < 0) ;
+     else if (game.chars[sourceChar].flags & CHF_NOBLOCKING)
++    {
++        dos_walktemp_sig_commit(1); // DOS-PORT patch 0319
+         return walkable_areas_temp;
++    }
+ 
+     // for each character in the current room, make the area under them unwalkable
+     for (int ww = 0; ww < game.numcharacters; ww++) {
+@@ -165,6 +202,7 @@ Bitmap *prepare_walkable_areas (int sourceChar) {
+         remove_walkable_areas_from_temp(brect);
+     }
+ 
++    dos_walktemp_sig_commit(0); // DOS-PORT patch 0319
+     return walkable_areas_temp;
+ }
+ 
+diff --git a/Engine/game/savegame.cpp b/Engine/game/savegame.cpp
+index 9f78de534..09a41122e 100644
+--- a/Engine/game/savegame.cpp
++++ b/Engine/game/savegame.cpp
+@@ -77,6 +77,7 @@ extern RoomStatus *croom;
+ extern std::vector<ViewStruct> views;
+ 
+ 
++extern unsigned long dos_walkmask_gen; // DOS-PORT patch 0319 (walkablearea.cpp)
+ namespace AGS
+ {
+ namespace Engine
+@@ -877,6 +878,7 @@ HSaveError DoAfterRestore(const PreservedParams &pp, RestoredData &r_data, SaveC
+             {
+                 // Blit, don't replace mask, in case we restored a mask of different size
+                 thisroom.CopyMask(static_cast<RoomAreaMask>(i), r_data.RoomMask[i].get());
++                ::dos_walkmask_gen++; // DOS-PORT patch 0319: a mask was restored
+             }
+         }
+ 
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 6c522aaed..8d398cf21 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -34,6 +34,7 @@
+ #include "platform/dos/dos_audio_mixer.h"
+ #include "media/audio/audio_core.h" // dos_diag_dump_audio_poll() -- TEMPORARY DIAGNOSTIC, see audio_core.cpp
+ #include "media/audio/sdldecoder.h" // dos_pcm_cache_report(), patch 0216
++namespace AGS { namespace Engine { void dos_rp_report(FILE *log); } } // DOS-PORT patch 0319 (route_finder_impl_legacy.cpp)
+ #include "main/dos_port_tick_timing.h" // DosPortTickTiming, patch 0079
+ #include <SDL3/SDL_dosident.h> // SDL_DOSVideoIsBankedMode()/SDL_DOSVideoGetBankSwitchCount(), patch 0085
+ #endif
+@@ -928,6 +929,7 @@ void quit(const char *quitmsg)
+                 (unsigned long)SDL_DOSVideoGetBankSwitchCount());
+             // patch 0216: the decoded-PCM cache's hits/misses/evictions and footprint
+             AGS::Engine::dos_pcm_cache_report(run_manifest_log);
++            AGS::Engine::dos_rp_report(run_manifest_log); // DOS-PORT patch 0319
+             // patch 0217: SDL 0198's IRQ-safe uclock() -- first = calls made with the caller's interrupt
+             // flag (the one that sets up the PIT), wrapped = calls made with interrupts off. 0/0 means the
+             // program was linked without -Wl,--wrap=uclock.
+diff --git a/Engine/plugin/agsplugin.cpp b/Engine/plugin/agsplugin.cpp
+index a91d9dcb5..75eaed3ba 100644
+--- a/Engine/plugin/agsplugin.cpp
++++ b/Engine/plugin/agsplugin.cpp
+@@ -456,7 +456,13 @@ BITMAP *IAGSEngine::GetSpriteGraphic (int32 num) {
+ }
+ BITMAP *IAGSEngine::GetRoomMask (int32 index) {
+     if (index == MASK_WALKABLE)
++    {
++        // DOS-PORT patch 0319: a plugin may write the walkable mask through this pointer at any later time, so
++        // treat every hand-out as a change (the pathfinder's cache compares pixels again after it)
++        extern unsigned long dos_walkmask_gen;
++        dos_walkmask_gen++;
+         return (BITMAP*)thisroom.WalkAreaMask->GetAllegroBitmap();
++    }
+     else if (index == MASK_WALKBEHIND)
+         return (BITMAP*)thisroom.WalkBehindMask->GetAllegroBitmap();
+     else if (index == MASK_HOTSPOT)
+-- 
+2.47.3
+

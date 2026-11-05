@@ -1,0 +1,185 @@
+From 4f12ae059ab97ece2a145e22f1d30c96a0590787 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 00:25:14 -0700
+Subject: [PATCH] dos: patch 0221 -- deliver the mouse presses the level poll
+ missed, from the driver's own count
+
+WHY: DOSVESA_PumpEvents reads the buttons as a LEVEL once per pump, so a
+press and release that both land between two pumps never reach the game.
+On the 486 the 640x480 intro runs at ~6 fps and quick clicks vanish (the
+operator had to hold the button across a poll, 2026-09-15/16); on DOSBox-X
+patch 0220's counters showed it exactly: at ~6 renders/s 17 of 21 20 ms
+clicks never arrived (JC6Q), and at fixed 40k cycles 5 Days' room 3 (~3
+fps) lost 13 of 21 80 ms clicks. Holding the button is a workaround, not a
+fix, and a player cannot be asked to know the frame rate. The mouse driver
+already counts every press (INT 33h function 5); the fix is to believe it.
+
+WHAT: every pump now reads function 5 for left and right (two real-mode
+INT 33h calls; 0220 read them every 8th pump). For each button, n =
+presses since the last pump; the level send makes one press itself only
+if the button is down now and was up last pump. Every other press is
+delivered before the level send as: an up (if SDL still has the button
+down), then (down, up) for each missed press -- so the engine receives
+exactly n presses, in order, ending in the level state. Position is the
+current one; the press time is the pump's. seen_presses (0220) now counts
+presses delivered, so lost = hw - seen reads 0 when nothing is missed and
+negative would be a phantom press; SDL_DOSMouseSynthesizedPresses() gives
+the number delivered this way. Middle button unchanged (the level only).
+Main thread only; nothing runs in an ISR.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ include/SDL3/SDL_dosinput_stats.h | 17 +++++++-
+ src/video/dos/SDL_dosevents.c     | 72 +++++++++++++++++++++++--------
+ 2 files changed, 68 insertions(+), 21 deletions(-)
+
+diff --git a/include/SDL3/SDL_dosinput_stats.h b/include/SDL3/SDL_dosinput_stats.h
+index 2394a6623..4c1bd1f4d 100644
+--- a/include/SDL3/SDL_dosinput_stats.h
++++ b/include/SDL3/SDL_dosinput_stats.h
+@@ -55,8 +55,9 @@ extern "C" {
+ 
+ /**
+  * Report left+right mouse button presses as counted by the mouse driver
+- * (hw_presses, INT 33h function 5) and as seen by SDL's level poll
+- * (seen_presses, up->down transitions between consecutive pumps). Reads
++ * (hw_presses, INT 33h function 5) and as delivered to SDL (seen_presses:
++ * up->down transitions the level poll saw, plus -- since patch 0221 -- the
++ * presses it missed that the backend delivered from the driver's count). Reads
+  * the driver's counters once more before returning, so a press made since
+  * the last periodic read is included in hw_presses.
+  *
+@@ -72,6 +73,18 @@ extern "C" {
+  */
+ extern SDL_DECLSPEC void SDLCALL SDL_DOSMouseClickStats(Uint32 *hw_presses, Uint32 *seen_presses, Uint32 *checks);
+ 
++/**
++ * dosags patch 0221: presses the level poll missed that the backend
++ * delivered anyway, from the driver's own count (a press and release both
++ * between two pumps, or a release+press while the button looked held). They
++ * are included in SDL_DOSMouseClickStats()'s seen_presses, which since 0221
++ * means presses DELIVERED to SDL: lost = hw - seen is 0 when nothing is
++ * missed, and a negative value would be a phantom press. Main thread only.
++ *
++ * \since SDL 3 -- dosags workspace-local patch 0221, 2026-09-24.
++ */
++extern SDL_DECLSPEC Uint32 SDLCALL SDL_DOSMouseSynthesizedPresses(void);
++
+ /**
+  * Upper bound, in ns, on how long an input may have waited for the poll
+  * that turned it into the event stamped event_ts (SDL's own timestamp,
+diff --git a/src/video/dos/SDL_dosevents.c b/src/video/dos/SDL_dosevents.c
+index 37848a7a4..fe49c401e 100644
+--- a/src/video/dos/SDL_dosevents.c
++++ b/src/video/dos/SDL_dosevents.c
+@@ -317,17 +317,21 @@ volatile uint32_t dos_port_kbd_pic1_mask_at_install = 0;
+ /* dosags patch 0220: presses the level poll below never saw.
+    dos_mouse_seen_presses counts up->down transitions of the left and right
+    buttons between consecutive INT 33h function 3 reads; the mouse driver's
+-   own press counters (function 5) are read every DOS_MOUSE_PRESS_CHECK_EVERY
+-   pumps into dos_mouse_hw_presses. At 40 pumps/s that is 5 reads a second,
+-   two real-mode INT 33h calls each; at 6 pumps/s one read every ~1.3 s. The
+-   counters are cumulative, so the read cadence does not change the totals.
+-   See SDL_dosinput_stats.h. Main thread only; nothing here runs in an ISR. */
+-#define DOS_MOUSE_PRESS_CHECK_EVERY 8
++   own press counters (function 5) are read into dos_mouse_hw_presses --
++   since patch 0221 on every pump (two real-mode INT 33h calls), because 0221
++   delivers the presses the level read missed and needs each pump's count.
++   The counters are cumulative, so the read cadence does not change the
++   totals. See SDL_dosinput_stats.h. Main thread only; nothing here runs in
++   an ISR. */
+ static Uint32 dos_mouse_seen_presses = 0;
+ static Uint32 dos_mouse_hw_presses = 0;
+ static Uint32 dos_mouse_press_checks = 0;
++static Uint32 dos_mouse_synth_presses = 0; /* dosags patch 0221 */
+ static Uint16 dos_mouse_prev_buttons = 0;
+-static int dos_mouse_check_div = 0;
++
++/* dosags patch 0221: presses the driver counted since the last read, per
++   button (0 = left, 1 = right), kept for the pump that reads them. */
++static Uint16 dos_mouse_new_presses[2];
+ 
+ static void DOS_ReadMousePressCounters(void)
+ {
+@@ -339,6 +343,7 @@ static void DOS_ReadMousePressCounters(void)
+         regs.x.bx = (Uint16)b;
+         __dpmi_int(0x33, &regs);
+         dos_mouse_hw_presses += (Uint32)regs.x.bx;
++        dos_mouse_new_presses[b] = (Uint16)(dos_mouse_new_presses[b] + regs.x.bx);
+     }
+     dos_mouse_press_checks++;
+ }
+@@ -370,6 +375,11 @@ Uint64 SDL_DOSInputWaitBoundNS(Uint64 event_ts)
+     return 0;
+ }
+ 
++Uint32 SDL_DOSMouseSynthesizedPresses(void) /* dosags patch 0221 */
++{
++    return dos_mouse_synth_presses;
++}
++
+ void SDL_DOSMouseClickStats(Uint32 *hw_presses, Uint32 *seen_presses, Uint32 *checks)
+ {
+     SDL_Mouse *mouse = SDL_GetMouse();
+@@ -489,21 +499,45 @@ void DOSVESA_PumpEvents(SDL_VideoDevice *device)
+         __dpmi_int(0x33, &regs);
+         const Uint16 buttons = (int)(Sint16)regs.x.bx;
+ 
+-        /* dosags patch 0220: count the down edges this poll can see, and
+-           periodically what the driver counted (see the block above). */
++        /* dosags patch 0221 (on 0220's counters): read the driver's press
++           counts on EVERY pump and deliver the presses the level read
++           cannot see. For each of left/right, n = presses since the last
++           pump. The level send below produces one press itself only if the
++           button is down now and was up at the last pump; every other press
++           -- a press AND release between two pumps, or a release+press while
++           it looked held -- is delivered here as an up (if SDL still has the
++           button down), then n' x (down, up), where n' = n minus the press
++           the level send will make. The engine then receives exactly n
++           presses, in order, ending in the level state. seen_presses counts
++           presses DELIVERED (level edges + these), so 0220's lost = hw -
++           seen reads 0 when nothing is missed, and a negative value would
++           be a phantom press. Position: the current one. */
+         {
+-            const Uint16 down_edges = (Uint16)(buttons & ~dos_mouse_prev_buttons);
+-            if (down_edges & (1 << 0)) {
+-                dos_mouse_seen_presses++;
+-            }
+-            if (down_edges & (1 << 1)) {
+-                dos_mouse_seen_presses++;
++            static const Uint8 sdl_button[2] = { SDL_BUTTON_LEFT, SDL_BUTTON_RIGHT };
++            int b;
++            DOS_ReadMousePressCounters();
++            for (b = 0; b < 2; b++) {
++                const bool now_down = (buttons & (1 << b)) != 0;
++                const bool was_down = (dos_mouse_prev_buttons & (1 << b)) != 0;
++                const int n = dos_mouse_new_presses[b];
++                const int level_press = (now_down && !was_down) ? 1 : 0;
++                int extra = n - level_press, i;
++                dos_mouse_new_presses[b] = 0;
++                dos_mouse_seen_presses += (Uint32)level_press;
++                if (extra <= 0) {
++                    continue;
++                }
++                if (was_down) {
++                    SDL_SendMouseButton(0, mouse->focus, SDL_DEFAULT_MOUSE_ID, sdl_button[b], false);
++                }
++                for (i = 0; i < extra; i++) {
++                    SDL_SendMouseButton(0, mouse->focus, SDL_DEFAULT_MOUSE_ID, sdl_button[b], true);
++                    SDL_SendMouseButton(0, mouse->focus, SDL_DEFAULT_MOUSE_ID, sdl_button[b], false);
++                }
++                dos_mouse_seen_presses += (Uint32)extra;
++                dos_mouse_synth_presses += (Uint32)extra;
+             }
+             dos_mouse_prev_buttons = buttons;
+-            if (++dos_mouse_check_div >= DOS_MOUSE_PRESS_CHECK_EVERY) {
+-                dos_mouse_check_div = 0;
+-                DOS_ReadMousePressCounters();
+-            }
+         }
+ 
+         SDL_SendMouseButton(0, mouse->focus, SDL_DEFAULT_MOUSE_ID, SDL_BUTTON_LEFT, (buttons & (1 << 0)) != 0);
+-- 
+2.47.3
+

@@ -1,0 +1,250 @@
+From e3a6891d0d5904bc8b07fc906509bfb0eaae2855 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 15 Sep 2026 06:59:56 -0700
+Subject: [PATCH] DOS-PORT: patch 0071 -- midi_sched_tick() call-site cost
+ diagnostic (S7-GUS)
+
+WHY: real hardware (tags GUST1/GUSD1) found the MIDI slot Poll() loop's
+own slots_us at a mean of ~102ms and a max of ~6.89 SECONDS, ONE single
+call, nearly identical across two independent runs (175us apart out of
+6.89s -- a deterministic mechanism, not I/O jitter). SDL patch SDL/0146
++ ags patch 0070 already bracket every individual SDL_DOSGus* voice call
+gus_sink.c's note-on/note-off/reap/on_tick paths make; this brackets
+the ONE call slots_us actually times end-to-end -- midi_sched_tick(),
+called once per real tick from AudioPlayer::MidiPoll() (itself called
+from audio_core_entry_poll()'s slot loop, the exact loop slots_us
+wraps) -- so the real-hardware run can confirm whether the five
+per-voice-call snapshots fully account for the outlier or whether a
+residual points at something else inside midi_sched_tick() itself (the
+delta_ms>10000 catch-up clamp, the dispatch for(;;) loop, or SDL_
+DOSGusAllocVoice(), none of which are separately instrumented).
+
+WHAT: audioplayer.cpp (this port's own file) brackets the midi_sched_
+tick() CALL SITE inside AudioPlayer::MidiPoll() with a uclock()-based
+accumulate-and-snapshot pair, DOSAGS_MidiTickDiagSnapshot() -- same
+idiom as every other diagnostic in this investigation. Deliberately
+does NOT instrument midi_sched_tick() itself (shared/audio/midi_sched.c,
+hub-owned code every port consumes via the .sdl-dos-ports/ subtree or
+submodule): a temporary, dosags-specific diagnostic has no business
+rippling into shared/ when bracketing the call site achieves the exact
+same measurement without touching it at all. audio_core.cpp folds the
+new accessor into the existing DOS-PORT audioprb log line as a sixth
+new field, miditick(...), alongside voicefreq/voicevol/voicepan/
+voicestart/voicestop (patch 0070) and gusscan (patch 0069).
+
+Temporary -- to be reverted once this sub-investigation concludes.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01VVzc2V3qXnVbYZC693CTWt
+---
+ Engine/media/audio/audio_core.cpp  | 54 ++++++++++++++++++++++++++++--
+ Engine/media/audio/audioplayer.cpp | 51 +++++++++++++++++++++++++++-
+ 2 files changed, 102 insertions(+), 3 deletions(-)
+
+diff --git a/Engine/media/audio/audio_core.cpp b/Engine/media/audio/audio_core.cpp
+index 4a26296a2..e0ee01be1 100644
+--- a/Engine/media/audio/audio_core.cpp
++++ b/Engine/media/audio/audio_core.cpp
+@@ -241,6 +241,19 @@ extern "C" void SDL_DOSGusStartVoiceDiagSnapshot(
+ extern "C" void SDL_DOSGusStopVoiceDiagSnapshot(
+     uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us);
+ 
++// DOS-PORT (S7-GUS, continuation): same idiom, for the midi_sched_tick()
++// CALL SITE inside AudioPlayer::MidiPoll() (audioplayer.cpp, this port's
++// own file -- deliberately NOT instrumenting midi_sched.c itself, which is
++// hub shared/ code every port consumes). slots_us times exactly the call
++// this brackets (once per real tick, via this function's own slot loop
++// below) -- if this total does not account for the whole ~6.89s outlier
++// once summed against the five SDL_DOSGus* voice-call snapshots above,
++// the residual points at something inside midi_sched_tick() itself not
++// separately measured (the delta_ms>10000 catch-up clamp, the dispatch
++// loop, or SDL_DOSGusAllocVoice()).
++extern "C" void DOSAGS_MidiTickDiagSnapshot(
++    uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us);
++
+ // TEMPORARY DIAGNOSTIC (AUDIOPRB.LOG): S7's real-hardware ABBA
+ // (2026-09-13, tests/games/trilbysnotes/results/S7-abba-2026-09-13.md)
+ // found dos_run_tick_fixed()'s catch-up loop (patch 0047, game_run.cpp)
+@@ -338,6 +351,10 @@ struct AudioPollWindow
+     uint64_t voicestart_min_us, voicestart_mean_us, voicestart_max_us;
+     uint32_t voicestop_calls;
+     uint64_t voicestop_min_us, voicestop_mean_us, voicestop_max_us;
++    // S7-GUS continuation: the midi_sched_tick() call-site bracket
++    // (audioplayer.cpp).
++    uint32_t miditick_calls;
++    uint64_t miditick_min_us, miditick_mean_us, miditick_max_us;
+ };
+ 
+ struct AudioPollDiag
+@@ -370,6 +387,9 @@ struct AudioPollDiag
+     uint64_t voicestart_us_sum = 0, voicestart_min_us = UINT64_MAX, voicestart_max_us = 0;
+     uint32_t voicestop_calls_sum = 0;
+     uint64_t voicestop_us_sum = 0, voicestop_min_us = UINT64_MAX, voicestop_max_us = 0;
++    // S7-GUS continuation: the midi_sched_tick() call-site bracket.
++    uint32_t miditick_calls_sum = 0;
++    uint64_t miditick_us_sum = 0, miditick_min_us = UINT64_MAX, miditick_max_us = 0;
+ 
+     AudioPollWindow windows[AUDIO_POLL_DIAG_MAX_WINDOWS];
+     uint32_t windows_recorded = 0;
+@@ -429,6 +449,10 @@ void dos_diag_close_window()
+         w.voicestop_min_us = (d.voicestop_min_us == UINT64_MAX ? 0 : d.voicestop_min_us);
+         w.voicestop_mean_us = (d.voicestop_calls_sum > 0) ? (d.voicestop_us_sum / d.voicestop_calls_sum) : 0;
+         w.voicestop_max_us = d.voicestop_max_us;
++        w.miditick_calls = d.miditick_calls_sum;
++        w.miditick_min_us = (d.miditick_min_us == UINT64_MAX ? 0 : d.miditick_min_us);
++        w.miditick_mean_us = (d.miditick_calls_sum > 0) ? (d.miditick_us_sum / d.miditick_calls_sum) : 0;
++        w.miditick_max_us = d.miditick_max_us;
+     }
+     else
+     {
+@@ -451,6 +475,8 @@ void dos_diag_close_window()
+     d.voicestart_us_sum = 0; d.voicestart_min_us = UINT64_MAX; d.voicestart_max_us = 0;
+     d.voicestop_calls_sum = 0;
+     d.voicestop_us_sum = 0; d.voicestop_min_us = UINT64_MAX; d.voicestop_max_us = 0;
++    d.miditick_calls_sum = 0;
++    d.miditick_us_sum = 0; d.miditick_min_us = UINT64_MAX; d.miditick_max_us = 0;
+ }
+ 
+ void dos_diag_record_audio_poll(uint64_t slots_us, uint64_t pump_us)
+@@ -555,6 +581,19 @@ void dos_diag_record_voicestop(uint32_t calls, uint32_t min_us, uint32_t mean_us
+     if ((uint64_t)max_us > d.voicestop_max_us) d.voicestop_max_us = max_us;
+ }
+ 
++// S7-GUS continuation: same shape, for the midi_sched_tick() call-site
++// bracket (audioplayer.cpp).
++void dos_diag_record_miditick(uint32_t calls, uint32_t min_us, uint32_t mean_us, uint32_t max_us)
++{
++    if (calls == 0)
++        return;
++    AudioPollDiag &d = g_audio_poll_diag;
++    d.miditick_calls_sum += calls;
++    d.miditick_us_sum += (uint64_t)mean_us * calls;
++    if ((uint64_t)min_us < d.miditick_min_us) d.miditick_min_us = min_us;
++    if ((uint64_t)max_us > d.miditick_max_us) d.miditick_max_us = max_us;
++}
++
+ } // anonymous namespace
+ 
+ // Declared in audio_core.h (DJGPP-gated); called from quit.cpp right
+@@ -585,7 +624,8 @@ void dos_diag_dump_audio_poll(FILE *fp)
+             "voicevol(calls=%lu min_us=%lu mean_us=%lu max_us=%lu) "
+             "voicepan(calls=%lu min_us=%lu mean_us=%lu max_us=%lu) "
+             "voicestart(calls=%lu min_us=%lu mean_us=%lu max_us=%lu) "
+-            "voicestop(calls=%lu min_us=%lu mean_us=%lu max_us=%lu)\n",
++            "voicestop(calls=%lu min_us=%lu mean_us=%lu max_us=%lu) "
++            "miditick(calls=%lu min_us=%lu mean_us=%lu max_us=%lu)\n",
+             (unsigned long)w.total_calls_at_close, (unsigned long)w.window_calls,
+             (unsigned long)w.slots_min_us, (unsigned long)w.slots_mean_us, (unsigned long)w.slots_max_us,
+             (unsigned long)w.pump_min_us, (unsigned long)w.pump_mean_us, (unsigned long)w.pump_max_us,
+@@ -602,7 +642,9 @@ void dos_diag_dump_audio_poll(FILE *fp)
+             (unsigned long)w.voicestart_calls, (unsigned long)w.voicestart_min_us,
+             (unsigned long)w.voicestart_mean_us, (unsigned long)w.voicestart_max_us,
+             (unsigned long)w.voicestop_calls, (unsigned long)w.voicestop_min_us,
+-            (unsigned long)w.voicestop_mean_us, (unsigned long)w.voicestop_max_us);
++            (unsigned long)w.voicestop_mean_us, (unsigned long)w.voicestop_max_us,
++            (unsigned long)w.miditick_calls, (unsigned long)w.miditick_min_us,
++            (unsigned long)w.miditick_mean_us, (unsigned long)w.miditick_max_us);
+     }
+ }
+ #endif // __DJGPP__
+@@ -638,6 +680,12 @@ void audio_core_entry_poll()
+     SDL_DOSGusSetVoicePanDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
+     SDL_DOSGusStartVoiceDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
+     SDL_DOSGusStopVoiceDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
++    // S7-GUS continuation: same discard-snapshot reasoning, for the
++    // midi_sched_tick() call-site bracket (audioplayer.cpp) -- it runs
++    // from inside this same slot loop below (AudioPlayer::Poll() ->
++    // MidiPoll()), so this reset is defensive symmetry with the others,
++    // not expected to discard anything real in practice.
++    DOSAGS_MidiTickDiagSnapshot(nullptr, nullptr, nullptr, nullptr);
+ #endif
+ 
+     for (auto &entry : g_acore.slots_) {
+@@ -674,6 +722,8 @@ void audio_core_entry_poll()
+         dos_diag_record_voicestart(c, mn, me, mx);
+         SDL_DOSGusStopVoiceDiagSnapshot(&c, &mn, &me, &mx);
+         dos_diag_record_voicestop(c, mn, me, mx);
++        DOSAGS_MidiTickDiagSnapshot(&c, &mn, &me, &mx);
++        dos_diag_record_miditick(c, mn, me, mx);
+     }
+ #endif
+ 
+diff --git a/Engine/media/audio/audioplayer.cpp b/Engine/media/audio/audioplayer.cpp
+index 383876e54..67fc9661f 100644
+--- a/Engine/media/audio/audioplayer.cpp
++++ b/Engine/media/audio/audioplayer.cpp
+@@ -12,6 +12,7 @@
+ //
+ //=============================================================================
+ #include "media/audio/audioplayer.h"
++#include <cstdint> // UINT64_MAX -- TEMPORARY DIAGNOSTIC (S7-GUS), see MidiPoll() below
+ #include <cstdio>
+ #include <cstdlib> // std::getenv -- DOS-PORT (S7) DOSAGS_MIDI_SILENT_CHIP
+ #include <time.h> // uclock(), UCLOCKS_PER_SEC -- DOS-PORT (S4) MIDI wall clock
+@@ -194,6 +195,46 @@ void AudioPlayer::Poll()
+     }
+ }
+ 
++// TEMPORARY DIAGNOSTIC (S7-GUS, continuation): brackets the midi_sched_
++// tick() call below, not the function itself (shared/audio/midi_sched.c,
++// consumed by every port via the hub subtree/submodule -- a temporary,
++// dosags-specific investigation has no business touching every port's
++// shared code when the exact same measurement is available by timing this
++// one call site instead, which is entirely this port's own file). Real
++// hardware (tags GUST1/GUSD1) found the MIDI slot Poll() loop's own
++// slots_us at a ~6.89s max, ONE single call, nearly identical across two
++// independent runs -- this is that call (AudioPlayer::Poll() ->
++// AudioPlayer::MidiPoll(), called once per real tick from audio_core_
++// entry_poll()'s slot loop, which is exactly what slots_us times). Every
++// individual SDL_DOSGus* voice call gus_sink.c's sink_note_on/note_off/
++// reap_finished_voices/sink_on_tick makes is separately bracketed too
++// (SDL patch SDL/0146) -- this outer bracket lets the real-hardware run
++// confirm whether their sum accounts for the whole outlier, or whether a
++// residual remains (pointing at something else inside midi_sched_tick()
++// itself: the delta_ms>10000 catch-up clamp, the dispatch for(;;) loop,
++// or SDL_DOSGusAllocVoice(), none of which are separately instrumented).
++// Same in-memory accumulate-and-snapshot idiom as every other diagnostic
++// in this investigation. patches/ags/0071 (audio_core.cpp) is the
++// consumer. Temporary -- revert once this sub-investigation concludes.
++static uint32_t s_miditick_calls = 0;
++static uint64_t s_miditick_sum_us = 0;
++static uint64_t s_miditick_min_us = UINT64_MAX;
++static uint64_t s_miditick_max_us = 0;
++
++extern "C" void DOSAGS_MidiTickDiagSnapshot(
++    uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us)
++{
++    if (out_calls)  *out_calls  = s_miditick_calls;
++    if (out_min_us) *out_min_us = (uint32_t)((s_miditick_calls > 0) ? s_miditick_min_us : 0);
++    if (out_mean_us) *out_mean_us = (uint32_t)((s_miditick_calls > 0) ? (s_miditick_sum_us / s_miditick_calls) : 0);
++    if (out_max_us) *out_max_us = (uint32_t)s_miditick_max_us;
++
++    s_miditick_calls = 0;
++    s_miditick_sum_us = 0;
++    s_miditick_min_us = UINT64_MAX;
++    s_miditick_max_us = 0;
++}
++
+ void AudioPlayer::MidiPoll()
+ {
+     if (_playState == PlaybackState::PlayStateInitial)
+@@ -203,7 +244,15 @@ void AudioPlayer::MidiPoll()
+     if (!_midiSched || !_midiSink)
+         return;
+ 
+-    midi_sched_tick(_midiSched, MidiNowMs());
++    {
++        const uclock_t t0 = uclock(); /* TEMPORARY DIAGNOSTIC, see above */
++        midi_sched_tick(_midiSched, MidiNowMs());
++        const uint64_t call_us = (uint64_t)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
++        s_miditick_calls++;
++        s_miditick_sum_us += call_us;
++        if (call_us < s_miditick_min_us) s_miditick_min_us = call_us;
++        if (call_us > s_miditick_max_us) s_miditick_max_us = call_us;
++    }
+ 
+     const uint64_t total = midi_sched_dispatched(_midiSched);
+     if (total > _midiLastDispatched)
+-- 
+2.47.3
+

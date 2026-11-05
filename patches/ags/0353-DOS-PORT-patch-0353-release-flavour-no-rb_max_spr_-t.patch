@@ -1,0 +1,36 @@
+From a70a651f4649c1e67774010ffb8f392ba4ef3c47 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 4 Nov 2026 13:11:48 -0800
+Subject: [PATCH 353/353] DOS-PORT: patch 0353 -- release flavour: no
+ rb_max_spr_* tracking (0351 review F2)
+
+The largest-sprite-per-frame dimensions (patch 0166) are read only by the skipframe
+attribution line, which ags 0351 compiles out of the DOSAGS_RELEASE flavour, and reset
+only there too. In release they were still updated per composited sprite with no reader
+and no reset. Gated the same way; the instrumented flavour is unchanged.
+---
+ Engine/gfx/ali3dsw.cpp | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index 6c445404f..f9af123ae 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -794,12 +794,14 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+         // every tail frame, an unchanged overlay is being recomposited --
+         // the class that produced every win that landed today. If they
+         // vary, it is real content and the answer is different.
++#ifndef DOSAGS_RELEASE   // patch 0353: only the skipframe line reads these, and 0351 compiles it out
+         if (_w * _h > dos_port_tick_timing.rb_max_spr_px)
+         {
+             dos_port_tick_timing.rb_max_spr_px = _w * _h;
+             dos_port_tick_timing.rb_max_spr_w = _w;
+             dos_port_tick_timing.rb_max_spr_h = _h;
+         }
++#endif
+     }
+ #endif
+     int drawAtX = sprite.x + surf_offx;
+-- 
+2.47.3
+

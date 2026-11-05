@@ -1,0 +1,57 @@
+From f763174bb47ce529c5fa6fdb7c5fda808f0ba05f Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 13:13:12 -0700
+Subject: [PATCH] DOS-PORT: patch 0209 -- ISR-replayed MIDI: pause is silent at
+ once, resume continues the plan
+
+WHY: in isr mode (0207) a pause only stopped planning: the up to 2 s already queued for the SB ISR
+kept playing, and then the notes that had no queued note-off hung (PLAN.md follow-up 4). On the
+main-loop poll a pause stopped dispatch at once (held notes aside).
+
+WHAT: MidiPause calls SDL_DOSMidiDeferPause(true) (SDL patch 0195): the replay holds, the queue is
+kept, and every voice the replay left sounding is keyed off (OPL) / All Notes Off (MPU). Resume from
+pause calls SDL_DOSMidiDeferPause(false), which shifts the queued stamps by the pause's IRQs, and moves
+the planner's slot position (and its last-seen IRQ) by the same count, so planning continues from the
+slot it had reached and no song time is lost or skipped. Stop and song changes already silence at
+once (0207: the planned-ahead writes are dropped and the sink's key-offs written out before the next
+song's chip detection) and are unchanged. Requires SDL 0195.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/media/audio/audioplayer.cpp | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/Engine/media/audio/audioplayer.cpp b/Engine/media/audio/audioplayer.cpp
+index 9c144a23f..368679b58 100644
+--- a/Engine/media/audio/audioplayer.cpp
++++ b/Engine/media/audio/audioplayer.cpp
+@@ -474,6 +474,14 @@ void AudioPlayer::MidiPlay()
+         }
+         _playState = PlayStatePlaying;
+         _midiResumed = true; // DOS-PORT (patch 0207): the next plan rebases, not "behind"
++        // DOS-PORT (patch 0209): the queue's stamps moved on by the pause's
++        // IRQs; move the plan with them so it continues from the same slot.
++        if (_midiIsr)
++        {
++            const uint32_t d = SDL_DOSMidiDeferPause(false);
++            _midiPlanUs += (uint64_t)d * _midiPeriodUs;
++            _midiLastIrq += d;
++        }
+         break;
+     default:
+         break;
+@@ -508,6 +516,10 @@ void AudioPlayer::MidiPause()
+     case PlayStatePlaying:
+         _playState = PlayStatePaused;
+         _midiPauseStartedMs = MidiNowMsRaw();
++        // DOS-PORT (patch 0209): isr mode -- silence at once and keep the plan
++        // (SDL patch 0195), instead of letting the ~2 s already queued play on.
++        if (_midiIsr)
++            SDL_DOSMidiDeferPause(true);
+         break;
+     default:
+         break;
+-- 
+2.47.3
+

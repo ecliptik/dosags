@@ -1,0 +1,56 @@
+# Shards of God -- source pin, confirmed 2026-09-15 via direct download
+# + hash, not re-cited from memory or from PLAN.md's own earlier web
+# survey (that survey was compiled from store/database PAGES, "nothing
+# downloaded" -- explicitly not itself a verification). Re-verify
+# independently before bumping.
+#
+# One of the two candidates PLAN.md's "Requested titles" section
+# (2026-09-11) flagged as free/NYOP and needing only the 32-bit display
+# path. Downloaded to confirm and exercise that path for real (32-bit
+# display path implementation, 2026-09-15) and to get a real 32-bit fps
+# datapoint for the 8/16/32-bit KPI comparison. Local-testing-only,
+# never committed -- same rule as AGS Quest/Trilby's Notes. Only this
+# PIN, hashes, logs, and manifest.yaml enter git; the game archive/
+# binary itself never does.
+
+GAME_TITLE="Shards of God"
+GAME_YEAR=2023
+GAME_DEVELOPER="Honza Vavra, PacoDiago"
+
+# Official listing: the developer's own itch.io page. Free / name-your-
+# own-price, $0 minimum -- confirmed by actually fetching the page and
+# its purchase/download flow (POST .../download_url then .../file/<id>,
+# the same "No thanks, just take me to the downloads" flow the site's
+# own JS performs for a free title; no payment made, no paywall bypassed).
+SOURCE_URL="https://hvavra.itch.io/shards-of-god"
+DOWNLOADED_UTC="2026-09-15"
+DOWNLOADED_PLATFORM="Linux build (upload id 13873645) -- platform choice
+    is irrelevant to the AGS data itself (same .ags/audio.vox either way);
+    Linux was smallest of the three (Windows/Mac/Linux) uploads offered."
+
+# Shards_of_God_Linux_v1.3.zip itself (gzip-compressed tar despite the
+# .zip name on the page -- confirmed by content, not the extension: `file`
+# reports gzip magic; `tar tzf` lists a real tar stream inside)
+ARCHIVE_SIZE_BYTES=142369705
+ARCHIVE_SHA256=fbecbc4eb81a0a17619d0da1b1832d2845a6862efbac678158e69dfe95896e33
+
+# "Shards of God.ags" (V30 CLIB, extracted from the archive's data/ dir)
+AGS_SIZE_BYTES=79014256
+AGS_SHA256=4ac6fba6ca689d69e6120a22547f2ca058fead356101bac9c293f83c0e3dc471
+
+# audio.vox (sibling CLIB, NOT embedded in the main .ags -- see
+# tools/port-game/README.md's 2026-09-15 "a sibling audio.vox" entry,
+# a real framework gap found and fixed while porting this game)
+AUDIO_VOX_SIZE_BYTES=99283487
+
+# Licensing: no explicit game-content license or LICENSE/COPYING file
+# ships with the download -- data/licenses/ holds only third-party
+# ENGINE dependency copyrights (ags-copyright, libogg0-copyright,
+# libSDL2-2.0-copyright, libtheora0-copyright, libvorbis0a-copyright),
+# not a license for the game's own story/art/audio. The game is
+# copyrighted by its authors and distributed free/NYOP via itch.io, with
+# no redistribution rights granted beyond "download and play" -- same
+# posture as any other freeware golden reference here (Trilby's Notes,
+# AGS Quest): local-testing-only, never committed, never redistributed.
+# Not a new license judgment call -- recording what was actually read,
+# per this port's own "never guess a license" rule.

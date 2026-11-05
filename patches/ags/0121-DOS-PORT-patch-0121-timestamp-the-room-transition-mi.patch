@@ -1,0 +1,99 @@
+From 5527a82371998451ca011c5ebdc7598e5015ac3d Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sat, 19 Sep 2026 02:23:38 -0700
+Subject: [PATCH] DOS-PORT: patch 0121 -- timestamp the room-transition
+ milestones
+
+Gate 3's whole-run is 15.85 against a 39.2 bar, and 61% of a 225 s AGS
+Quest run is stall time: 8 room transitions totalling 102.1 s, averaging
+12.77 s each. load_new_room is only 1.85 s of one, so roughly 85% of a
+transition is something else, and nothing measures what.
+
+Rather than add brackets to a per-frame path -- which this render path
+punishes at about 1 fps per addition, by cache footprint -- this stamps
+get_runtime_ms() onto four milestones the engine already logs, once per
+transition: fade-out start, load start, load end, fade-in start. The
+deltas give fade-out, load, post-load setup and fade-in as separate terms.
+
+The per-transition spread is the reason the split has to exist: 13.22,
+21.57, 12.30, 6.89, 11.95, 12.04, 11.99, 12.18 s -- a 3.1x range. A screen
+fade is fixed-cost work, the same bytes blended the same number of steps
+whichever room is entered, so a fade-dominated transition would show eight
+near-identical numbers. Five of them are; 21.57 and 6.89 are not. That
+points to a fixed component plus a content-dependent one, and measuring
+their sum would let either be mistaken for the other.
+
+The intended discriminator is the outlier pair: instrument all eight, then
+diff the 21.57 against the 6.89. Whatever accounts for most of that 14.7 s
+is the content-dependent term; whatever is equal in both is the fixed one.
+
+One figure the instrument must also explain: preloop_ms is 2022 but room 1
+reports ready at t_ms=12426, a ~10.4 s gap with no previous room to fade
+out from. If a fade-in alone cost that, out-plus-in would approach 20 s
+against a 12.77 s mean. Either room 1 carries first-time-only work, or the
+fades are asymmetric, or fades are not dominant -- the stamps distinguish
+these.
+
+Verified firing before spending a cell: 38 events with the full sequence
+under DOSBox-X.
+---
+ Engine/ac/room.cpp   | 11 +++++++++++
+ Engine/ac/screen.cpp |  6 ++++++
+ 2 files changed, 17 insertions(+)
+
+diff --git a/Engine/ac/room.cpp b/Engine/ac/room.cpp
+index 6c49d901f..5927bc9d2 100644
+--- a/Engine/ac/room.cpp
++++ b/Engine/ac/room.cpp
+@@ -572,6 +572,14 @@ HError LoadRoom(const String &filename, RoomStruct *room, AssetManager *mgr, boo
+ void load_new_room(int newnum, CharacterInfo *forchar)
+ {
+     debug_script_log("Loading room %d", newnum);
++#ifdef __DJGPP__
++    // patch 0121: timestamp the transition milestones. Gate 3's whole-run
++    // is 8 room transitions averaging 12.77 s, and load_new_room is only
++    // 1.85 s of one -- so ~85% is elsewhere in the transition. These four
++    // stamps split it into fade-out / load / setup / fade-in without
++    // adding a single bracket to a per-frame path.
++    debug_script_log("DOSAGS_XT t_ms=%u phase=load_begin room=%d", (unsigned)get_runtime_ms(), newnum);
++#endif
+ #ifdef __DJGPP__
+     // DOS-PORT patch 0109: sub-bracket load_new_room(), measurement only.
+     // Same shape as patch 0105's pre-loop brackets: uclock() deltas around
+@@ -1082,6 +1090,9 @@ void load_new_room(int newnum, CharacterInfo *forchar)
+     set_our_eip(220);
+     update_polled_stuff();
+     debug_script_log("Now in room %d", displayed_room);
++#ifdef __DJGPP__
++    debug_script_log("DOSAGS_XT t_ms=%u phase=load_end room=%d", (unsigned)get_runtime_ms(), displayed_room);
++#endif
+     cursor_gstate.MarkChanged();
+     GUIE::MarkAllGUIForUpdate(true, true);
+     pl_run_plugin_hooks(kPluginEvt_EnterRoom, displayed_room);
+diff --git a/Engine/ac/screen.cpp b/Engine/ac/screen.cpp
+index fdbd20748..89969ec05 100644
+--- a/Engine/ac/screen.cpp
++++ b/Engine/ac/screen.cpp
+@@ -789,6 +789,9 @@ void run_fade_out_effect(ScreenTransitionStyle style, int speed)
+ void current_fade_in_effect()
+ {
+     debug_script_log("Transition-in in room %d", displayed_room);
++#ifdef __DJGPP__
++    debug_script_log("DOSAGS_XT t_ms=%u phase=fadein_begin room=%d", (unsigned)get_runtime_ms(), displayed_room);
++#endif
+ 
+     // determine the transition style
+     ScreenTransitionStyle trans_style = static_cast<ScreenTransitionStyle>(play.fade_effect);
+@@ -841,6 +844,9 @@ void current_fade_in_effect()
+ void current_fade_out_effect()
+ {
+     debug_script_log("Transition-out in room %d", displayed_room);
++#ifdef __DJGPP__
++    debug_script_log("DOSAGS_XT t_ms=%u phase=fadeout_begin room=%d", (unsigned)get_runtime_ms(), displayed_room);
++#endif
+     if (pl_run_plugin_hooks(kPluginEvt_TransitionOut, 0))
+         return;
+ 
+-- 
+2.47.3
+

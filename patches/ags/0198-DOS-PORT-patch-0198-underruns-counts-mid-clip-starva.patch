@@ -1,0 +1,233 @@
+From 77a5f7981bf49aa2e57bbcbc11ec4e3264f97268 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 22 Sep 2026 15:29:10 -0700
+Subject: [PATCH] DOS-PORT: patch 0198 -- underruns counts mid-clip starvation
+ only; clip-end drain is its own field
+
+WHY: UR1 (PLAN.md step 8, 2026-09-22) showed every underrun on the Gate 3 fixture was a clip's
+normal tail. The mixer drains a voice as fast as the device side accepts data, so a clip's ring
+empties before its sound has finished playing out of the device ring; from then until
+AudioPlayer::Poll() sees EOS && IsEmpty and the slot releases the voice, each pump mixed a chunk
+from an active, empty voice and mix_one_chunk() counted it as an underrun. The counter therefore
+could not say whether any voice was ever starved mid-clip, which is the only thing an audibility
+bar wants from it, and 8.1's "underruns=0" bar had to be withdrawn for any title whose SFX end
+during a run.
+
+WHAT: the voice carries a source_done flag, set every Poll() by the one feeder
+(AudioPlayer::Poll -> OpenAlSource::SetSourceDone) as "decoder at EOS and no buffer pending", and
+cleared by voice_stop(). mix_one_chunk() now splits an empty active voice into two outcomes per
+chunk: underrun (source not done -- the feeder had more data and did not deliver it in time) or
+drain (source done -- the clip ended). A chunk with any starving voice counts as an underrun; a
+chunk with only draining voices counts as a drain, so underruns + drains equals the old count.
+audio_vital_status gains ",drains=<n>" after underruns (status buffers 160 -> 192 bytes).
+
+The flag is refreshed before the mixer runs each tick (audio_core_entry_poll polls the slots,
+then pumps), so a stale value can only exist between a Play() after Stop() and the next Poll().
+GUS path unchanged: its underruns is still the sum of each gus_pcm_stream's missed-swap count, and
+drains stays 0 there. Looping clips never set source_done (the decoder wraps, EOS stays false), so
+a looping voice that runs dry is always an underrun, which is correct.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ Engine/media/audio/audioplayer.cpp      |  3 ++
+ Engine/media/audio/openalsource.cpp     |  5 ++++
+ Engine/media/audio/openalsource.h       |  4 +++
+ Engine/platform/dos/dos_audio_mixer.cpp | 37 +++++++++++++++++++++----
+ Engine/platform/dos/dos_audio_mixer.h   | 16 ++++++++---
+ 5 files changed, 55 insertions(+), 10 deletions(-)
+
+diff --git a/Engine/media/audio/audioplayer.cpp b/Engine/media/audio/audioplayer.cpp
+index 67fc9661f..e3a305385 100644
+--- a/Engine/media/audio/audioplayer.cpp
++++ b/Engine/media/audio/audioplayer.cpp
+@@ -187,6 +187,9 @@ void AudioPlayer::Poll()
+         if (_source->PutData(_bufferPending) > 0)
+             _bufferPending = SoundBufferPtr(); // clear buffer on success
+     }
++    // DOS-PORT (patch 0198): the mixer counts an empty voice ring as an
++    // underrun only while this is false -- see dos_audio_mixer.h.
++    _source->SetSourceDone(_decoder->EOS() && !(_bufferPending.Data() && (_bufferPending.Size() > 0)));
+     _source->Poll();
+     // If both finished decoding and playing, we done here.
+     if (_decoder->EOS() && _source->IsEmpty())
+diff --git a/Engine/media/audio/openalsource.cpp b/Engine/media/audio/openalsource.cpp
+index ed34e6965..644532395 100644
+--- a/Engine/media/audio/openalsource.cpp
++++ b/Engine/media/audio/openalsource.cpp
+@@ -142,5 +142,10 @@ void OpenAlSource::SetVolume(float volume)
+     dos_audio_mixer_voice_set_volume(_voice, volume);
+ }
+ 
++void OpenAlSource::SetSourceDone(bool done)
++{
++    dos_audio_mixer_voice_set_source_done(_voice, done);
++}
++
+ } // namespace Engine
+ } // namespace AGS
+diff --git a/Engine/media/audio/openalsource.h b/Engine/media/audio/openalsource.h
+index 7040489e1..8ef52a84f 100644
+--- a/Engine/media/audio/openalsource.h
++++ b/Engine/media/audio/openalsource.h
+@@ -92,6 +92,10 @@ public:
+     void SetSpeed(float speed);
+     // Sets the playback volume (gain), applied at mixdown
+     void SetVolume(float volume);
++    // DOS-PORT (patch 0198): tells the mixer this source has handed over
++    // everything it will (decoder at end of data, nothing pending), so an
++    // empty voice ring counts as the clip's tail, not as an underrun
++    void SetSourceDone(bool done);
+ 
+ private:
+     int _voice = -1; // dos_audio_mixer.h voice id, or -1 if none acquired
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index d3bd6696f..0cd4989a2 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -57,6 +57,11 @@ struct Voice
+     float volume = 1.0f;
+     std::vector<uint8_t> ring;
+     size_t read_pos = 0;
++    // DOS-PORT (patch 0198): set by the voice's feeder when its source has
++    // nothing left to hand over (decoder at end of data, no buffer pending).
++    // An empty ring on a voice with source_done set is a clip's normal tail
++    // (drain), not starvation -- see mix_one_chunk().
++    bool source_done = false;
+     gus_pcm_stream *gus_stream = nullptr; // GUS-path only
+ };
+ 
+@@ -87,6 +92,11 @@ Voice g_voices[DOS_AUDIO_MIXER_MAX_VOICES];
+ SDL_AudioStream *g_stream = nullptr; // SB path only
+ bool g_gus_open = false;             // GUS path only -- "the mixer is open" analog to g_stream != nullptr
+ int g_underruns = 0;
++// DOS-PORT (patch 0198): chunks in which an active voice's ring was empty
++// because its clip had ended (source_done) and no voice was starving. The
++// pre-0198 counter lumped these into g_underruns (UR1: every count on the
++// Gate 3 fixture was one of these). SB path only.
++int g_drains = 0;
+ 
+ // A snapshot of the status string taken at dos_audio_mixer_shutdown(),
+ // so RUNMANIFEST's audio_vital_status (built by quit.cpp's own manifest
+@@ -95,7 +105,7 @@ int g_underruns = 0;
+ // shutdown_sound()) still reports the real final state instead of the
+ // "never opened" NA sentinel. Left at "NA" if the device was never
+ // opened at all, so that genuine case is still distinguishable.
+-char g_last_status[160] = "NA";
++char g_last_status[192] = "NA";
+ 
+ void format_status_string(char *buf, size_t bufsize)
+ {
+@@ -108,9 +118,9 @@ void format_status_string(char *buf, size_t bufsize)
+     // "midi=<backend>,events=<n>" fragment now -- S1 hardcoded ";midi=none"
+     // here since no MIDI backend existed yet.
+     dos_midi_backend_status_fragment(midi_fragment, sizeof(midi_fragment));
+-    std::snprintf(buf, bufsize, "pcm=%s@%d%c%d,voices=%d,underruns=%d;%s",
++    std::snprintf(buf, bufsize, "pcm=%s@%d%c%d,voices=%d,underruns=%d,drains=%d;%s",
+         device, DOS_AUDIO_MIXER_RATE, chan_letter, bits, DOS_AUDIO_MIXER_MAX_VOICES, g_underruns,
+-        midi_fragment);
++        g_drains, midi_fragment);
+ }
+ 
+ } // namespace
+@@ -131,6 +141,7 @@ bool dos_audio_mixer_init()
+     for (auto &v : g_voices)
+         v = Voice();
+     g_underruns = 0;
++    g_drains = 0;
+ 
+     if (g_gus_backend)
+     {
+@@ -295,6 +306,14 @@ void dos_audio_mixer_voice_stop(int voice)
+         v.read_pos = 0;
+     }
+     v.active = false;
++    v.source_done = false;
++}
++
++void dos_audio_mixer_voice_set_source_done(int voice, bool done)
++{
++    if (voice < 0 || voice >= DOS_AUDIO_MIXER_MAX_VOICES || !g_voices[voice].used)
++        return;
++    g_voices[voice].source_done = done;
+ }
+ 
+ void dos_audio_mixer_voice_set_volume(int voice, float volume)
+@@ -313,7 +332,8 @@ static void mix_one_chunk(bool &out_any_active)
+     int32_t accum[MIX_CHUNK_SAMPLES];
+     std::memset(accum, 0, sizeof(accum));
+     bool any_active = false;
+-    bool any_underrun = false;
++    bool any_underrun = false; // an active voice ran dry mid-clip
++    bool any_drain = false;    // an active voice ran dry at its clip's end
+ 
+     for (auto &v : g_voices)
+     {
+@@ -326,7 +346,10 @@ static void mix_one_chunk(bool &out_any_active)
+         const size_t take_samples = std::min<size_t>(avail_samples, static_cast<size_t>(MIX_CHUNK_SAMPLES));
+         if (take_samples == 0)
+         {
+-            any_underrun = true;
++            if (v.source_done)
++                any_drain = true;
++            else
++                any_underrun = true;
+             continue;
+         }
+ 
+@@ -347,6 +370,8 @@ static void mix_one_chunk(bool &out_any_active)
+         return;
+     if (any_underrun)
+         g_underruns++;
++    else if (any_drain)
++        g_drains++;
+ 
+     int16_t outbuf[MIX_CHUNK_SAMPLES];
+     for (int s = 0; s < MIX_CHUNK_SAMPLES; s++)
+@@ -410,7 +435,7 @@ const char *dos_audio_mixer_status_string()
+ {
+     if (!g_stream && !g_gus_open)
+         return g_last_status; // "NA" if never opened, else the shutdown-time snapshot
+-    static char buf[160];
++    static char buf[192];
+     format_status_string(buf, sizeof(buf));
+     return buf;
+ }
+diff --git a/Engine/platform/dos/dos_audio_mixer.h b/Engine/platform/dos/dos_audio_mixer.h
+index 3ef6b34f3..4afed7280 100644
+--- a/Engine/platform/dos/dos_audio_mixer.h
++++ b/Engine/platform/dos/dos_audio_mixer.h
+@@ -134,6 +134,11 @@ void dos_audio_mixer_voice_set_active(int voice, bool active);
+ void dos_audio_mixer_voice_stop(int voice);
+ // Sets per-voice linear gain (0.0 - 1.0); applied at mixdown.
+ void dos_audio_mixer_voice_set_volume(int voice, float volume);
++// Tells the mixer the voice's source has no more data to hand over (the
++// decoder reached end of data and nothing is pending). Only changes how an
++// empty ring is counted: a drain (clip ended) or an underrun (starved
++// mid-clip). Cleared by dos_audio_mixer_voice_stop().
++void dos_audio_mixer_voice_set_source_done(int voice, bool done);
+ 
+ // Services every active voice. SB: mixes every active voice's pending PCM
+ // into the shared SDL3 stream (a target-depth top-up, not run-to-cap, per
+@@ -147,12 +152,15 @@ void dos_audio_mixer_voice_set_volume(int voice, float volume);
+ // fix) update_polled_stuff(), so the fast-forward path gets serviced too.
+ void dos_audio_mixer_pump();
+ 
+-// Cumulative count of pump cycles where at least one ACTIVE voice had
+-// no data to mix (a real underrun, not merely an idle mixer with zero
+-// active voices) -- the audio_vital_status "underruns=" field.
++// Cumulative count of mix chunks where at least one ACTIVE voice had no
++// data to mix while its source had NOT reached end of data -- mid-clip
++// starvation, the audio_vital_status "underruns=" field. A voice that is
++// empty because its clip ended is counted as "drains=" instead (patch
++// 0198; before it, both were lumped here). GUS path: the sum of each
++// gus_pcm_stream's own missed-swap count, unchanged.
+ int dos_audio_mixer_underrun_count();
+ 
+-// Builds "pcm=<device>@<rate><ch><bits>,voices=<n>,underruns=<n>;midi=<backend>,
++// Builds "pcm=<device>@<rate><ch><bits>,voices=<n>,underruns=<n>,drains=<n>;midi=<backend>,
+ // events=<n>" into a static buffer -- the "midi=" fragment comes from
+ // platform/dos/dos_midi_backend.h (S4; S1 hardcoded "midi=none" here since
+ // no MIDI backend existed yet). Returns "NA" if the PCM device never opened.
+-- 
+2.47.3
+

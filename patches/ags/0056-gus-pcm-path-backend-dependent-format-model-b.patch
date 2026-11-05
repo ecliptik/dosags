@@ -1,0 +1,799 @@
+From 6db84e6ae3a9125f80845cb0868b730111a868bd Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sun, 13 Sep 2026 13:34:06 -0700
+Subject: [PATCH 1/2] DOS-PORT: GUS PCM path -- backend-dependent format +
+ model-B SDL_INIT_AUDIO skip
+
+Two of the same-session S5 GUS architecture's own findings, fixed
+together since both are the direct consequence of the rig's PGGUS
+profile having no simultaneous SB PCM device:
+
+Gap 1 fix (sys_main.cpp): sys_audio_init() used to attempt
+SDL_InitSubSystem(SDL_INIT_AUDIO) + dos_audio_mixer_init()'s SB-device
+open unconditionally, then tear the WHOLE audio subsystem back down on
+failure -- silencing dos_midi_backend_cold_init()'s own work too, not
+just PCM. GUS now takes its own branch that never attempts SDL_INIT_AUDIO
+at all (doskutsu's own "model B, out-of-band" shape). Also bridges the
+operator's real ULTRASND/ULTRADIR env vars into the SDL hints
+SDL_DOSGusInit() actually reads (mirrors doskutsu's own main.cpp bridge)
+-- without this, GF1 detection fails closed unconditionally regardless
+of whether real/emulated hardware is present, found the hard way testing
+this same patch under DOSBox-X with GUS emulation enabled.
+
+Correction #1 fix (dos_audio_mixer.{h,cpp}, sdldecoder.{h,cpp}): GUS PCM
+is hard-locked to 8-bit unsigned (the only real-hardware-confirmed-safe
+GF1 DMA upload path is 8-bit-only) while SB stays 16-bit signed -- the
+single compile-time DOS_AUDIO_MIXER_FORMAT constant becomes
+dos_audio_mixer_format(), resolved once from SDL_HINT_DOS_AUDIO_BACKEND.
+sdldecoder.cpp now converts its own always-16-bit intermediate to
+whichever format is actually active, once at Open() (dossage's own 0039
+lesson: never per-chunk); its move constructor moves the new _pcmDevice
+member too (a real gap found in review -- a moved-to decoder would
+otherwise report _opened=true against an empty buffer). Under GUS,
+dos_audio_mixer's own internal shape changes too, not just the format:
+each voice wraps a shared/audio/gus_pcm_stream instance (its own
+independent GF1 hardware voice) instead of a software ring -- no
+software mixdown loop, the GF1 mixes multiple hardware voices itself.
+The PUBLIC dos_audio_mixer API is unchanged; OpenAlSource never needs to
+know which backend is active.
+
+CMakeLists.txt: adds gus_sink.c/gus_pcm_stream.c as compiled sources
+(same target_sources treatment midi_sched.c/opl3_sink.c/
+waveblaster_sink.c already get).
+
+See dosags PLAN.md's "S5 GUS architecture" section (Gap 1, "Correction
+#1", "Correction #2") for the full research trail this rests on.
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ Engine/CMakeLists.txt                   |   5 +
+ Engine/media/audio/sdldecoder.cpp       |  50 ++++++-
+ Engine/media/audio/sdldecoder.h         |  33 ++++-
+ Engine/platform/base/sys_main.cpp       |  78 ++++++++++-
+ Engine/platform/dos/dos_audio_mixer.cpp | 166 ++++++++++++++++++++----
+ Engine/platform/dos/dos_audio_mixer.h   | 100 ++++++++++----
+ 6 files changed, 373 insertions(+), 59 deletions(-)
+
+diff --git a/Engine/CMakeLists.txt b/Engine/CMakeLists.txt
+index ab772a7e0..0ea9140cf 100644
+--- a/Engine/CMakeLists.txt
++++ b/Engine/CMakeLists.txt
+@@ -488,6 +488,11 @@ target_sources(engine
+     ${DOS_PORT_SHARED_AUDIO_DIR}/midi_sched.c
+     ${DOS_PORT_SHARED_AUDIO_DIR}/opl3_sink.c
+     ${DOS_PORT_SHARED_AUDIO_DIR}/waveblaster_sink.c
++    # DOS-PORT (S5 GUS architecture): gus_sink.c (native GF1 GM MIDI, item 1)
++    # and gus_pcm_stream.c (GF1 PCM streaming, item 2) -- same "real compiled
++    # source, not just a header" reasoning as the three above.
++    ${DOS_PORT_SHARED_AUDIO_DIR}/gus_sink.c
++    ${DOS_PORT_SHARED_AUDIO_DIR}/gus_pcm_stream.c
+ 
+     platform/windows/win_ex_handling.cpp
+     platform/windows/win_ex_handling.h
+diff --git a/Engine/media/audio/sdldecoder.cpp b/Engine/media/audio/sdldecoder.cpp
+index fdbcf3846..9fb31e7ff 100644
+--- a/Engine/media/audio/sdldecoder.cpp
++++ b/Engine/media/audio/sdldecoder.cpp
+@@ -16,6 +16,7 @@
+ #include "platform/dos/dos_audio_mixer.h"
+ #include "util/sdl2_util.h"
+ #include <algorithm>
++#include <cstring>
+ 
+ namespace AGS
+ {
+@@ -31,6 +32,34 @@ namespace
+ // (dos_audio_mixer.h, capped at 32 KB) comfortably topped up without
+ // ever holding more than a fraction of a second buffered ahead.
+ const size_t DECODED_CHUNK_SAMPLES = 2048u; // ~186 ms at 11025 Hz mono
++
++// DOS-PORT (S5 GUS, "Correction #1"): converts the decoder's own
++// always-16-bit-signed intermediate (_pcm, dos_audio_decode_pcm()'s fixed
++// output shape) into the mixer's ACTUAL active device format, ONCE --
++// dossage's own 0039 lesson (convert once at load, never per-chunk)
++// applies here exactly as it does to the WAV/VOC decode itself. SB (S16):
++// a straight byte-copy, native endianness already matches what
++// SDL_AUDIO_S16 expects on this little-endian target. GUS (U8 unsigned):
++// each sample's top 8 bits, bias-flipped to unsigned -- the exact inverse
++// of dos_audio_decode.cpp's own unsigned8->signed16 upconversion
++// (`(frame[c] - 128) * 256`), so a round-trip through both conversions
++// reproduces the original 8-bit sample exactly.
++void convert_to_device_format(const std::vector<int16_t> &pcm, SDL_AudioFormat fmt,
++    std::vector<uint8_t> &out)
++{
++    if (fmt == SDL_AUDIO_U8)
++    {
++        out.resize(pcm.size());
++        for (size_t i = 0; i < pcm.size(); i++)
++            out[i] = static_cast<uint8_t>((pcm[i] >> 8) + 128);
++        return;
++    }
++    // S16 (or anything else -- there is no other backend format today):
++    // a plain byte-copy of the already-16-bit-signed intermediate.
++    out.resize(pcm.size() * sizeof(int16_t));
++    if (!pcm.empty())
++        std::memcpy(out.data(), pcm.data(), out.size());
++}
+ } // namespace
+ 
+ //-----------------------------------------------------------------------------
+@@ -60,6 +89,11 @@ SDLDecoder::SDLDecoder(SDLDecoder &&dec)
+     _sampleExt = std::move(dec._sampleExt);
+     _repeat = dec._repeat;
+     _pcm = std::move(dec._pcm);
++    // DOS-PORT (S5 GUS, "Correction #1"): _pcmDevice must move too -- found
++    // in review. Missing this left the move target with _opened==true but
++    // an empty _pcmDevice, so GetData() would hand out an out-of-bounds
++    // slice of nothing.
++    _pcmDevice = std::move(dec._pcmDevice);
+     _readSamples = dec._readSamples;
+     _opened = dec._opened;
+     _eos = dec._eos;
+@@ -75,7 +109,7 @@ SDLDecoder::~SDLDecoder()
+ 
+ SDL_AudioFormat SDLDecoder::GetFormat() const
+ {
+-    return _opened ? DOS_AUDIO_MIXER_FORMAT : SDL_AUDIO_UNKNOWN;
++    return _opened ? dos_audio_mixer_format() : SDL_AUDIO_UNKNOWN;
+ }
+ 
+ int SDLDecoder::GetChannels() const
+@@ -135,6 +169,11 @@ bool SDLDecoder::Open(float pos_ms)
+     if (!decoded)
+         return false;
+ 
++    // DOS-PORT (S5 GUS, "Correction #1"): convert to the ACTIVE device
++    // format ONCE here, not per-chunk in GetData() -- see this file's own
++    // convert_to_device_format() comment.
++    convert_to_device_format(_pcm, dos_audio_mixer_format(), _pcmDevice);
++
+     _opened = true;
+     _readSamples = 0u;
+     _eos = false;
+@@ -185,8 +224,13 @@ SoundBufferPtr SDLDecoder::GetData()
+     const size_t take = std::min(DECODED_CHUNK_SAMPLES, total - _readSamples);
+     const float ts = 1000.f * static_cast<float>(_readSamples) / static_cast<float>(DOS_AUDIO_MIXER_RATE);
+     const float dur = 1000.f * static_cast<float>(take) / static_cast<float>(DOS_AUDIO_MIXER_RATE);
+-    const void *ptr = _pcm.data() + _readSamples;
+-    const size_t bytes = take * sizeof(int16_t);
++    // DOS-PORT (S5 GUS, "Correction #1"): slice _pcmDevice (the ACTIVE
++    // device format, converted once at Open()), not _pcm (always the
++    // 16-bit intermediate) -- bytes-per-sample must match whichever format
++    // that conversion actually produced.
++    const size_t bytes_per_sample = SoundHelper::BytesPerSample(dos_audio_mixer_format());
++    const void *ptr = _pcmDevice.data() + _readSamples * bytes_per_sample;
++    const size_t bytes = take * bytes_per_sample;
+ 
+     _readSamples += take;
+     if (_readSamples >= total && !_repeat)
+diff --git a/Engine/media/audio/sdldecoder.h b/Engine/media/audio/sdldecoder.h
+index bdcd416cb..d0f1fd22b 100644
+--- a/Engine/media/audio/sdldecoder.h
++++ b/Engine/media/audio/sdldecoder.h
+@@ -22,9 +22,11 @@
+ // it itself via platform/dos/dos_audio_decode.h (RIFF WAV + Creative VOC
+ // only -- OGG/MP3/tracker formats are host-pre-converted per PLAN.md's
+ // Sound milestone decision 2, never decoded on DOS), converting ONCE at
+-// Open() to the mixer's fixed Tier-2 device format (dos_audio_mixer.h) so
+-// GetData() is just handing out slices of an already-converted buffer,
+-// no per-chunk resampling (dossage's own 0039 lesson). SDLDecoder keeps
++// Open() to the mixer's own ACTIVE device format (dos_audio_mixer_format()
++// -- backend-dependent as of S5 GUS: S16 for SB, U8 for GUS, see that
++// header's own comment) so GetData() is just handing out slices of an
++// already-converted buffer, no per-chunk resampling (dossage's own 0039
++// lesson). SDLDecoder keeps
+ // its real public interface (audio_core.cpp/audioplayer.h call against
+ // it unchanged); Open() fails cleanly, same as before, for anything that
+ // isn't a supported PCM sub-format -- every caller already handles that
+@@ -217,7 +219,30 @@ private:
+     String _sampleExt = "";
+     bool _repeat = false;
+ 
+-    std::vector<int16_t> _pcm; // decoded, device-format (mono S16 @ mixer rate)
++    std::vector<int16_t> _pcm; // decoded intermediate, always mono S16 @ mixer rate --
++                               // dos_audio_decode_pcm()'s own fixed output shape,
++                               // backend-independent (see .cpp's own Open()).
++                               // Kept alive for the clip's whole lifetime (NOT
++                               // freed after _pcmDevice is derived from it) --
++                               // Seek()/GetPositionMs()/GetDurationMs() all key
++                               // position/total off _pcm.size() (sample count is
++                               // format-independent), so it stays the source of
++                               // truth for those regardless of which device
++                               // format _pcmDevice holds. A real, bounded (clips
++                               // are already <=1MB via MaxLoadAtOnce) memory
++                               // cost under GUS -- both representations coexist
++                               // -- accepted rather than engineered away.
++    std::vector<uint8_t> _pcmDevice; // _pcm converted ONCE (at Open()) to the
++                               // ACTIVE backend's real device format
++                               // (dos_audio_mixer_format()) -- what GetData()
++                               // actually hands out. DOS-PORT (S5 GUS,
++                               // "Correction #1"): this indirection is what
++                               // lets GUS's own 8-bit-unsigned requirement
++                               // coexist with SB's 16-bit signed format without
++                               // touching dos_audio_decode.cpp's WAV/VOC parsers
++                               // at all -- they always decode to the SAME
++                               // 16-bit intermediate; only this last conversion
++                               // step branches on the active backend.
+     size_t _readSamples = 0u;
+     bool _opened = false;
+     bool _eos = false;
+diff --git a/Engine/platform/base/sys_main.cpp b/Engine/platform/base/sys_main.cpp
+index 96b20e983..68dad6563 100644
+--- a/Engine/platform/base/sys_main.cpp
++++ b/Engine/platform/base/sys_main.cpp
+@@ -12,6 +12,7 @@
+ //
+ //=============================================================================
+ #include "platform/base/sys_main.h"
++#include <cstdlib>
+ #include <SDL3/SDL.h>
+ #if AGS_PLATFORM_OS_WINDOWS
+ // DOS-PORT: unconditional in the original SDL2-era code, but SDL3 removed
+@@ -239,11 +240,29 @@ void sys_renderer_set_output(const String &name)
+ // on failure is the same already-handled path that stub established:
+ // engine_init_audio() (Engine/main/engine.cpp) sets
+ // usetup.AudioEnabled = res and continues normally either way.
++//
++// DOS-PORT (S5 GUS architecture, Gap 1 fix): GUS takes a GENUINELY
++// DIFFERENT path here, not just a different dos_audio_mixer_init() branch
++// -- it never calls SDL_InitSubSystem(SDL_INIT_AUDIO) at all. Model B,
++// out-of-band, same shape doskutsu's own docs/internal/GUS-NATIVE-DESIGN.md
++// "AMENDMENT" section settled on for GUS (and AdLib before it): the GF1 is
++// driven entirely through its own SDL3/SDL_dosgus.h export surface, with NO
++// SDL audio device involved anywhere. This is a REAL FIX, not a style
++// choice: the rig's own PGGUS boot profile has no simultaneous SB PCM
++// device at all (no BLASTER string -- see dosags PLAN.md's "S5 GUS
++// architecture" Gap 1), so the OLD code's unconditional
++// SDL_InitSubSystem(SDL_INIT_AUDIO) + dos_audio_mixer_init() SB-open
++// sequence would fail under GUS and the old failure path
++// (SDL_QuitSubSystem(SDL_INIT_AUDIO), return false) tore the WHOLE audio
++// subsystem back down -- silencing dos_midi_backend_cold_init()'s own work
++// too, not just PCM. Attempting-and-failing-into-model-B is what this fix
++// replaces; GUS now takes its own branch that never attempts the SB/
++// SDL_INIT_AUDIO path to begin with.
+ bool sys_audio_init(const String &driver_name)
+ {
+     (void)driver_name;
+-    if ((gl_SysMainInfo.SDLSubsystems & SDL_INIT_AUDIO) != 0)
+-        return true;
++    if (dos_audio_mixer_is_open())
++        return true; // covers GUS too -- see that function's own updated contract
+ 
+     // DOS-PORT (Sound milestone, S5): MUST run before anything below opens
+     // the SB16 PCM device -- shared/audio/waveblaster_sink.h's own
+@@ -251,9 +270,49 @@ bool sys_audio_init(const String &driver_name)
+     // and dos_midi_backend_open() (called much later, per-clip, from
+     // AudioPlayer's MIDI constructor) is far too late for it. No-op unless
+     // SDL_HINT_DOS_AUDIO_BACKEND=wb is set, so every other backend/session
+-    // is unaffected. See dos_midi_backend.h's own doc comment.
++    // is unaffected. See dos_midi_backend.h's own doc comment. Harmless
++    // (and a no-op) on the GUS path too -- it only ever acts on "wb".
+     dos_midi_backend_cold_init();
+ 
++    const char *backend_hint = SDL_GetHint("SDL_HINT_DOS_AUDIO_BACKEND");
++    const bool is_gus = backend_hint && SDL_strcasecmp(backend_hint, "gus") == 0;
++
++    if (is_gus)
++    {
++        // DOS-PORT (S5 GUS architecture): bridge the operator's real
++        // ULTRASND / ULTRADIR env vars into the SDL hints SDL_DOSGusInit()
++        // actually reads (SDL is getenv-forbidden internally; it only ever
++        // calls SDL_GetHint()) -- mirrors doskutsu's own identical bridge
++        // in its main.cpp (patches/nxengine-evo/0238). Without this,
++        // gus_parse_ultrasnd() (SDL_dosaudio_gus.c) has no fallback
++        // default at all and SDL_DOSGusInit() fails closed unconditionally,
++        // real or emulated GF1 present or not -- confirmed the hard way
++        // under DOSBox-X with a `[gus]`-enabled conf before this bridge
++        // existed. Only bridged on the GUS path so every other backend/
++        // session is byte-unaffected.
++        const char *ultrasnd = std::getenv("ULTRASND");
++        if (ultrasnd && ultrasnd[0])
++            SDL_SetHint("SDL_HINT_DOS_GUS_ULTRASND", ultrasnd);
++        const char *ultradir = std::getenv("ULTRADIR");
++        if (ultradir && ultradir[0])
++            SDL_SetHint("SDL_HINT_DOS_GUS_ULTRADIR", ultradir);
++
++        // Model B, out-of-band: no SDL_INIT_AUDIO, ever, on this path. See
++        // this function's own header comment above for the full rationale.
++        if (!dos_audio_mixer_init())
++        {
++            Debug::Printf(kDbgMsg_Error, "Failed to open GUS audio device");
++            return false;
++        }
++        // Deliberately NOT setting gl_SysMainInfo.SDLSubsystems |=
++        // SDL_INIT_AUDIO -- that bit means "the SDL audio subsystem is
++        // live", which is never true under GUS. sys_audio_shutdown()'s own
++        // SDL_QuitSubSystem(SDL_INIT_AUDIO) call is correctly skipped as a
++        // result (its existing guard already keys on this same bit).
++        Debug::Printf(kDbgMsg_Info, "DOS audio device opened: %s", dos_audio_mixer_status_string());
++        return true;
++    }
++
+     if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
+     {
+         Debug::Printf(kDbgMsg_Error, "Failed to init SDL audio subsystem: %s", SDL_GetError());
+@@ -272,17 +331,22 @@ bool sys_audio_init(const String &driver_name)
+ 
+ void sys_audio_shutdown()
+ {
+-    // Close the mixer's stream/device BEFORE quitting the SDL audio
+-    // subsystem underneath it.
++    // Close the mixer's stream/device (or, under GUS, every voice's own
++    // gus_pcm_stream) BEFORE quitting the SDL audio subsystem underneath
++    // it -- a no-op quit either way if GUS never started one (see below).
+     dos_audio_mixer_shutdown();
+     // DOS-PORT (S5): true session-end teardown for the wb backend's
+     // session-lifetime singleton (a no-op if wb was never cold-inited this
+     // session -- see dos_midi_backend_cold_init()). opl3 needs no
+     // equivalent call: every opl3 AudioPlayer instance already owns and
+-    // fully closes its own handle via dos_midi_backend_end_song().
++    // fully closes its own handle via dos_midi_backend_end_song(). Also a
++    // no-op for GUS (its own cold-init only ever runs for "wb").
+     dos_midi_backend_shutdown();
+     // Note: a subsystem that failed to initialize, doesn't increment ref-count
+-    // Additionally, we may not have init it at all, see engine_init_audio
++    // Additionally, we may not have init it at all, see engine_init_audio.
++    // Also correctly never true under GUS (S5 architecture, Gap 1 fix):
++    // sys_audio_init()'s own GUS branch never sets this bit, because
++    // SDL_INIT_AUDIO is never initialized on that path to begin with.
+     if ((gl_SysMainInfo.SDLSubsystems & SDL_INIT_AUDIO) != 0)
+         SDL_QuitSubSystem(SDL_INIT_AUDIO);
+     gl_SysMainInfo.SDLSubsystems &= ~SDL_INIT_AUDIO;
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index 01d8c0fd7..d3bd6696f 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -22,17 +22,34 @@
+ #include "debug/out.h"
+ #include "platform/dos/dos_midi_backend.h"
+ 
++// gus_pcm_stream.h (shared/audio) is plain C with no extern "C" guard of
++// its own -- wrap the include here on the C++ consumer side rather than
++// editing the shared header, matching dos_midi_backend.h's own identical
++// treatment of midi_sched.h/opl3_sink.h/waveblaster_sink.h.
++extern "C" {
++#include "gus_pcm_stream.h"
++}
++
+ using namespace AGS::Common;
+ 
+ namespace
+ {
+ 
++// DOS-PORT (S5 GUS, "Correction #1"): resolved ONCE at dos_audio_mixer_init()
++// time from SDL_HINT_DOS_AUDIO_BACKEND and cached -- see dos_audio_mixer.h's
++// own header comment for why GUS PCM is hard-locked to 8-bit unsigned
++// (a real-hardware safety requirement, not a preference) and why this
++// mixer's whole internal shape (software ring-mixdown vs. independent GF1
++// hardware voices) branches on it.
++bool g_gus_backend = false;
++
+ // A voice's ring is a plain append/consume byte buffer: writes append to
+ // the back, reads advance read_pos and the backing vector is only
+ // actually shrunk once fully drained. Every voice's bytes are already in
+-// DOS_AUDIO_MIXER_FORMAT/CHANNELS/RATE by the time they arrive here --
+-// sdldecoder.cpp's DOS implementation converts once at load -- so no
+-// per-chunk resampling happens in this file.
++// the mixer's device format (dos_audio_mixer_format()) by the time they
++// arrive here -- sdldecoder.cpp's DOS implementation converts once at load
++// -- so no per-chunk resampling happens in this file. SB-path only; under
++// GUS, `gus_stream` is used instead and `ring`/`read_pos` stay empty.
+ struct Voice
+ {
+     bool used = false;
+@@ -40,23 +57,35 @@ struct Voice
+     float volume = 1.0f;
+     std::vector<uint8_t> ring;
+     size_t read_pos = 0;
++    gus_pcm_stream *gus_stream = nullptr; // GUS-path only
+ };
+ 
+ // Cap per-voice buffering so a stalled consumer (mixer not pumped) can't
+ // grow a voice's ring without bound; PutData()-equivalent callers get 0
+ // back and retry next frame once this is exceeded, same all-or-nothing
+-// contract the original mojoAL-backed PutData() had.
++// contract the original mojoAL-backed PutData() had. SB path only --
++// gus_pcm_stream owns its own, separately-sized pending buffer.
+ const size_t MAX_VOICE_RING_BYTES = 32 * 1024; // ~1.48s at 11025 Hz S16 mono
+ 
+ // Mixdown granularity and target queued depth (a top-up, not a
+-// run-to-cap fill -- hub docs/audio.md's own pump convention).
++// run-to-cap fill -- hub docs/audio.md's own pump convention). SB path
++// only.
+ const int MIX_CHUNK_SAMPLES = 512; // ~46 ms at 11025 Hz mono
+ const int MIX_CHUNK_BYTES = MIX_CHUNK_SAMPLES * static_cast<int>(sizeof(int16_t));
+ const int TARGET_QUEUED_BYTES = MIX_CHUNK_BYTES * 4; // ~186 ms ahead
+ const int MAX_PUMP_ITERS = 8; // defense-in-depth against a runaway top-up loop
+ 
++// GUS path only: half-buffer chunk size for each voice's own
++// gus_pcm_stream. Must be >= GUS_DMA_UPLOAD_MIN (4096, gus_pcm_stream.c's
++// own clamp already enforces this regardless) -- chosen here at 4096
++// exactly, matching the real-hardware-validated gusdmawedge.c configuration
++// (shared/tests/probes/GUSDMAWEDGE.md) rather than picking an untested size.
++// At 8-bit/11025 Hz mono this is ~371 ms per half.
++const size_t GUS_STREAM_CHUNK_BYTES = 4096u;
++
+ Voice g_voices[DOS_AUDIO_MIXER_MAX_VOICES];
+-SDL_AudioStream *g_stream = nullptr;
++SDL_AudioStream *g_stream = nullptr; // SB path only
++bool g_gus_open = false;             // GUS path only -- "the mixer is open" analog to g_stream != nullptr
+ int g_underruns = 0;
+ 
+ // A snapshot of the status string taken at dos_audio_mixer_shutdown(),
+@@ -70,25 +99,57 @@ char g_last_status[160] = "NA";
+ 
+ void format_status_string(char *buf, size_t bufsize)
+ {
+-    const int bits = static_cast<int>(SDL_AUDIO_BITSIZE(DOS_AUDIO_MIXER_FORMAT));
++    const SDL_AudioFormat fmt = dos_audio_mixer_format();
++    const int bits = static_cast<int>(SDL_AUDIO_BITSIZE(fmt));
+     const char chan_letter = (DOS_AUDIO_MIXER_CHANNELS == 1) ? 'm' : 's';
++    const char *device = g_gus_backend ? "gus" : "sb";
+     char midi_fragment[96];
+     // DOS-PORT (Sound milestone, S4): dos_midi_backend owns the real
+     // "midi=<backend>,events=<n>" fragment now -- S1 hardcoded ";midi=none"
+     // here since no MIDI backend existed yet.
+     dos_midi_backend_status_fragment(midi_fragment, sizeof(midi_fragment));
+-    std::snprintf(buf, bufsize, "pcm=sb@%d%c%d,voices=%d,underruns=%d;%s",
+-        DOS_AUDIO_MIXER_RATE, chan_letter, bits, DOS_AUDIO_MIXER_MAX_VOICES, g_underruns,
++    std::snprintf(buf, bufsize, "pcm=%s@%d%c%d,voices=%d,underruns=%d;%s",
++        device, DOS_AUDIO_MIXER_RATE, chan_letter, bits, DOS_AUDIO_MIXER_MAX_VOICES, g_underruns,
+         midi_fragment);
+ }
+ 
+ } // namespace
+ 
++SDL_AudioFormat dos_audio_mixer_format()
++{
++    return g_gus_backend ? SDL_AUDIO_U8 : SDL_AUDIO_S16;
++}
++
+ bool dos_audio_mixer_init()
+ {
+-    if (g_stream)
++    if (g_stream || g_gus_open)
+         return true;
+ 
++    const char *hint = SDL_GetHint("SDL_HINT_DOS_AUDIO_BACKEND");
++    g_gus_backend = (hint && SDL_strcasecmp(hint, "gus") == 0);
++
++    for (auto &v : g_voices)
++        v = Voice();
++    g_underruns = 0;
++
++    if (g_gus_backend)
++    {
++        // DOS-PORT (S5 GUS): no SDL audio device at all -- see this file's
++        // own header comment. Voices are opened lazily, per
++        // dos_audio_mixer_voice_acquire() call, each as its own
++        // shared/audio/gus_pcm_stream (its own GF1 hardware voice from the
++        // reserved SFX partition). Nothing to open eagerly here beyond
++        // marking the mixer itself "open" -- a real GF1 failure surfaces
++        // per-voice (voice_acquire returns -1), the same "gracefully do
++        // nothing" contract a missing SB device already had.
++        g_gus_open = true;
++        Debug::Printf(kDbgMsg_Info,
++            "DOSAudioMixer: GUS PCM path active (8-bit unsigned @ %d Hz mono, "
++            "up to %d voices via the reserved GF1 SFX partition, opened lazily)",
++            DOS_AUDIO_MIXER_RATE, DOS_AUDIO_MIXER_MAX_VOICES);
++        return true;
++    }
++
+     // Request the SB PCM device open at our exact content rate so SDL
+     // core's own 44100 quality floor doesn't insert a logical->physical
+     // resampler between us and the hardware (see
+@@ -98,7 +159,7 @@ bool dos_audio_mixer_init()
+ 
+     SDL_AudioSpec spec;
+     SDL_zero(spec);
+-    spec.format = DOS_AUDIO_MIXER_FORMAT;
++    spec.format = dos_audio_mixer_format();
+     spec.channels = DOS_AUDIO_MIXER_CHANNELS;
+     spec.freq = DOS_AUDIO_MIXER_RATE;
+ 
+@@ -116,10 +177,6 @@ bool dos_audio_mixer_init()
+         return false;
+     }
+ 
+-    for (auto &v : g_voices)
+-        v = Voice();
+-    g_underruns = 0;
+-
+     Debug::Printf(kDbgMsg_Info, "DOSAudioMixer: opened %d Hz mono S16, %d voices",
+         DOS_AUDIO_MIXER_RATE, DOS_AUDIO_MIXER_MAX_VOICES);
+     return true;
+@@ -127,30 +184,53 @@ bool dos_audio_mixer_init()
+ 
+ void dos_audio_mixer_shutdown()
+ {
+-    if (!g_stream)
++    if (!g_stream && !g_gus_open)
+         return;
+     format_status_string(g_last_status, sizeof(g_last_status));
+-    SDL_DestroyAudioStream(g_stream);
+-    g_stream = nullptr;
++    if (g_stream)
++    {
++        SDL_DestroyAudioStream(g_stream);
++        g_stream = nullptr;
++    }
+     for (auto &v : g_voices)
++    {
++        if (v.gus_stream)
++            gus_pcm_stream_close(v.gus_stream);
+         v = Voice();
++    }
++    g_gus_open = false;
+ }
+ 
+ bool dos_audio_mixer_is_open()
+ {
+-    return g_stream != nullptr;
++    return g_stream != nullptr || g_gus_open;
+ }
+ 
+ int dos_audio_mixer_voice_acquire()
+ {
+     for (int i = 0; i < DOS_AUDIO_MIXER_MAX_VOICES; i++)
+     {
+-        if (!g_voices[i].used)
++        if (g_voices[i].used)
++            continue;
++        if (g_gus_backend)
+         {
++            // Lazy per-voice open: each acquired voice gets its own GF1
++            // hardware voice from the reserved SFX partition. A real
++            // hardware limit here (the partition can be smaller than
++            // DOS_AUDIO_MIXER_MAX_VOICES -- see dos_audio_mixer.h's own
++            // "Voice-budget tension" comment) surfaces as acquire failure,
++            // same "every voice is in use" contract as SB's fixed 8.
++            gus_pcm_stream *gs = gus_pcm_stream_open(DOS_AUDIO_MIXER_RATE, DOS_AUDIO_MIXER_CHANNELS, GUS_STREAM_CHUNK_BYTES);
++            if (!gs)
++                return -1;
+             g_voices[i] = Voice();
+             g_voices[i].used = true;
++            g_voices[i].gus_stream = gs;
+             return i;
+         }
++        g_voices[i] = Voice();
++        g_voices[i].used = true;
++        return i;
+     }
+     return -1;
+ }
+@@ -159,6 +239,8 @@ void dos_audio_mixer_voice_release(int voice)
+ {
+     if (voice < 0 || voice >= DOS_AUDIO_MIXER_MAX_VOICES)
+         return;
++    if (g_voices[voice].gus_stream)
++        gus_pcm_stream_close(g_voices[voice].gus_stream);
+     g_voices[voice] = Voice();
+ }
+ 
+@@ -169,6 +251,8 @@ size_t dos_audio_mixer_voice_write(int voice, const void *data, size_t bytes)
+     if (!data || bytes == 0)
+         return 0u;
+     Voice &v = g_voices[voice];
++    if (v.gus_stream)
++        return gus_pcm_stream_write(v.gus_stream, data, bytes);
+     const size_t buffered = v.ring.size() - v.read_pos;
+     if (buffered + bytes > MAX_VOICE_RING_BYTES)
+         return 0u; // reject the whole chunk; caller retries next frame
+@@ -182,6 +266,8 @@ size_t dos_audio_mixer_voice_queued(int voice)
+     if (voice < 0 || voice >= DOS_AUDIO_MIXER_MAX_VOICES || !g_voices[voice].used)
+         return 0u;
+     const Voice &v = g_voices[voice];
++    if (v.gus_stream)
++        return gus_pcm_stream_queued(v.gus_stream);
+     return v.ring.size() - v.read_pos;
+ }
+ 
+@@ -190,6 +276,8 @@ void dos_audio_mixer_voice_set_active(int voice, bool active)
+     if (voice < 0 || voice >= DOS_AUDIO_MIXER_MAX_VOICES || !g_voices[voice].used)
+         return;
+     g_voices[voice].active = active;
++    if (g_voices[voice].gus_stream)
++        gus_pcm_stream_set_active(g_voices[voice].gus_stream, active);
+ }
+ 
+ void dos_audio_mixer_voice_stop(int voice)
+@@ -197,8 +285,15 @@ void dos_audio_mixer_voice_stop(int voice)
+     if (voice < 0 || voice >= DOS_AUDIO_MIXER_MAX_VOICES || !g_voices[voice].used)
+         return;
+     Voice &v = g_voices[voice];
+-    v.ring.clear();
+-    v.read_pos = 0;
++    if (v.gus_stream)
++    {
++        gus_pcm_stream_stop(v.gus_stream);
++    }
++    else
++    {
++        v.ring.clear();
++        v.read_pos = 0;
++    }
+     v.active = false;
+ }
+ 
+@@ -209,6 +304,8 @@ void dos_audio_mixer_voice_set_volume(int voice, float volume)
+     if (volume < 0.0f) volume = 0.0f;
+     if (volume > 1.0f) volume = 1.0f;
+     g_voices[voice].volume = volume;
++    if (g_voices[voice].gus_stream)
++        gus_pcm_stream_set_volume(g_voices[voice].gus_stream, volume);
+ }
+ 
+ static void mix_one_chunk(bool &out_any_active)
+@@ -264,6 +361,29 @@ static void mix_one_chunk(bool &out_any_active)
+ 
+ void dos_audio_mixer_pump()
+ {
++    if (g_gus_backend)
++    {
++        // No software mixdown: each voice's own gus_pcm_stream drives an
++        // independent GF1 hardware voice; the chip mixes them. Underruns
++        // are summed from each stream's own counter (gus_pcm_stream's
++        // precise definition: a swap missed its window -- see
++        // gus_pcm_stream.h) rather than re-derived here.
++        int total_underruns = 0;
++        for (auto &v : g_voices)
++        {
++            if (!v.used || !v.gus_stream)
++                continue;
++            gus_pcm_stream_pump(v.gus_stream);
++            total_underruns += gus_pcm_stream_underrun_count(v.gus_stream);
++        }
++        g_underruns = total_underruns;
++        // Deliberately NO SDL_DOSAudioPump() here -- that services the DOS
++        // SB ring/ISR, which does not exist under GUS (see sys_audio_init()'s
++        // own "S5 GUS architecture" Gap 1 comment: SDL_INIT_AUDIO itself is
++        // never initialized on this path).
++        return;
++    }
++
+     if (g_stream)
+     {
+         for (int iter = 0; iter < MAX_PUMP_ITERS; iter++)
+@@ -288,7 +408,7 @@ int dos_audio_mixer_underrun_count()
+ 
+ const char *dos_audio_mixer_status_string()
+ {
+-    if (!g_stream)
++    if (!g_stream && !g_gus_open)
+         return g_last_status; // "NA" if never opened, else the shutdown-time snapshot
+     static char buf[160];
+     format_status_string(buf, sizeof(buf));
+diff --git a/Engine/platform/dos/dos_audio_mixer.h b/Engine/platform/dos/dos_audio_mixer.h
+index 8eb16b388..3ef6b34f3 100644
+--- a/Engine/platform/dos/dos_audio_mixer.h
++++ b/Engine/platform/dos/dos_audio_mixer.h
+@@ -22,34 +22,87 @@
+ // is a plain byte copy into a voice ring and the mixdown itself is
+ // add-and-clip, no per-chunk resampling.
+ //
++// DOS-PORT (S5 GUS, "Correction #1"): the device FORMAT is backend-
++// dependent as of this milestone -- SB PCM stays signed 16-bit
++// (DOS_AUDIO_MIXER_FORMAT_SB), but GUS PCM is 8-bit unsigned, always
++// (DOS_AUDIO_MIXER_FORMAT_GUS) -- not a tuning choice, a hard safety
++// requirement: the only real-hardware-confirmed-safe GF1 DMA upload path
++// is 8-bit-only (SDL_dosaudio_gus.c's own `!is16bit` gate on
++// SDL_HINT_DOS_GUS_DMA_UPLOAD; see dosags PLAN.md's "S5 GUS architecture"
++// section, "Correction #1"). What used to be a single compile-time
++// DOS_AUDIO_MIXER_FORMAT constant is now dos_audio_mixer_format(), resolved
++// once at dos_audio_mixer_init() time from SDL_HINT_DOS_AUDIO_BACKEND and
++// cached -- every consumer that used to read the constant directly
++// (sdldecoder.cpp's own convert-once-at-load step, this file's own mixdown
++// + status string) now calls the accessor instead. RATE and CHANNELS do
++// NOT vary by backend (both target the same Tier-2 11025 Hz mono) and stay
++// compile-time constants.
++//
++// Under GUS, this mixer's own internal shape changes too, not just the
++// sample format: the SB path software-mixes every active voice into ONE
++// SDL3 audio stream (add-and-clip, see mix_one_chunk() in the .cpp); the
++// GF1 instead mixes multiple independent HARDWARE voices in hardware, so
++// under GUS each of this mixer's own "voices" wraps one
++// shared/audio/gus_pcm_stream instance instead of a software ring, and
++// there is no software mixdown loop or SDL audio stream involved at all --
++// dos_audio_mixer_pump() just pumps each active stream. The PUBLIC API
++// below is unchanged either way; OpenAlSource (the only real consumer)
++// never needs to know which backend is active.
++//
+ //=============================================================================
+ #ifndef __AGS_EE_PLATFORM_DOS__DOS_AUDIO_MIXER_H
+ #define __AGS_EE_PLATFORM_DOS__DOS_AUDIO_MIXER_H
+ #include <cstddef>
+ #include <SDL3/SDL.h>
+ 
+-// Tier-2 device format: 11025 Hz mono, signed 16-bit -- doskutsu/dossage's
+-// own established default (PLAN.md's "What the shared layer provides,
+-// and what it measured"). Not hint-overridable yet in S1: the golden-
+-// reference in-profile workload this milestone targets is Tier-2 only:
+-// wiring SDL_HINT_DOS_AUDIO_TIER2-equivalent selection is left for when a
+-// game actually needs a different tier.
++// Tier-2 device rate: 11025 Hz mono -- doskutsu/dossage's own established
++// default (PLAN.md's "What the shared layer provides, and what it
++// measured"), backend-independent (both SB and GUS target this same rate;
++// only the sample FORMAT differs -- see dos_audio_mixer_format() below).
++// Not hint-overridable yet in S1: the golden-reference in-profile workload
++// this milestone targets is Tier-2 only: wiring SDL_HINT_DOS_AUDIO_TIER2-
++// equivalent selection is left for when a game actually needs a different
++// tier.
+ #define DOS_AUDIO_MIXER_RATE     11025
+ #define DOS_AUDIO_MIXER_CHANNELS 1
+-#define DOS_AUDIO_MIXER_FORMAT   SDL_AUDIO_S16
+ 
+ // Voice budget: 3 reserved (speech/ambient/music, matching AGS's own
+ // SCHAN_SPEECH/SCHAN_AMBIENT/SCHAN_MUSIC reservation in audiodefines.h)
+-// + 5 normal, per PLAN.md's Architecture section.
++// + 5 normal, per PLAN.md's Architecture section. Under GUS this is an
++// UPPER BOUND, not a guarantee -- each voice needs its own GF1 hardware
++// voice from the reserved SFX partition (SDL_DOSGusAllocVoiceSfx()), whose
++// real size can be smaller than 8 (PLAN.md's own "Voice-budget tension,
++// flagged not solved" -- a real-hardware tuning question, not resolved
++// here). dos_audio_mixer_voice_acquire() already handles this gracefully:
++// it returns -1 once the underlying partition is exhausted, same as
++// "every voice is in use" under SB.
+ #define DOS_AUDIO_MIXER_MAX_VOICES 8
+ 
+-// Opens the SDL3 audio device/stream at the Tier-2 format via
+-// SDL_OpenAudioDeviceStream(), after requesting the DOS SB PCM backend
+-// open at the same frame rate (SDL_DOSAudioSetDeviceFrameRate) so no
+-// logical->physical resampler gets inserted. Idempotent: returns true
+-// immediately if already open. Returns false on failure (caller, i.e.
+-// sys_audio_init(), is expected to fall back to AudioEnabled=false, the
+-// same already-handled path this port used before this milestone).
++// The active backend's PCM sample format, resolved once at
++// dos_audio_mixer_init() time from SDL_HINT_DOS_AUDIO_BACKEND and cached --
++// SDL_AUDIO_S16 for every backend except "gus", which is ALWAYS
++// SDL_AUDIO_U8 (see this file's own header comment for why that is a
++// safety requirement, not a preference). Callers that need the device
++// format before dos_audio_mixer_init() has run get the SB default (S16) --
++// in practice nothing does; sys_audio_init() always calls
++// dos_audio_mixer_init() before any clip is ever opened.
++SDL_AudioFormat dos_audio_mixer_format();
++
++// Opens the device/stream at Tier-2 rate/channels and
++// dos_audio_mixer_format()'s own (backend-dependent) sample format.
++// Idempotent: returns true immediately if already open. Returns false on
++// failure (caller, i.e. sys_audio_init(), is expected to fall back to
++// AudioEnabled=false, the same already-handled path this port used before
++// this milestone).
++//
++// SB path: requests the DOS SB PCM backend open at our exact content rate
++// (SDL_DOSAudioSetDeviceFrameRate) so no logical->physical resampler gets
++// inserted, then opens one SDL3 audio stream via
++// SDL_OpenAudioDeviceStream() -- unchanged from S1.
++// GUS path: opens NO SDL audio device at all (there is none under GUS --
++// see sys_audio_init()'s own "S5 GUS architecture" Gap 1 comment); voices
++// are opened lazily, per dos_audio_mixer_voice_acquire() call, each as its
++// own shared/audio/gus_pcm_stream.
+ bool dos_audio_mixer_init();
+ 
+ // Closes the audio stream/device and releases all voices. Safe to call
+@@ -82,13 +135,16 @@ void dos_audio_mixer_voice_stop(int voice);
+ // Sets per-voice linear gain (0.0 - 1.0); applied at mixdown.
+ void dos_audio_mixer_voice_set_volume(int voice, float volume);
+ 
+-// Mixes every active voice's pending PCM into the shared SDL3 stream (a
+-// target-depth top-up, not run-to-cap, per the hub's docs/audio.md
+-// convention) and services the DOS SB ring via SDL_DOSAudioPump(). Call
+-// once per audio_core_entry_poll() cycle -- see audio_core.cpp -- which
+-// is itself already reached from both WaitForNextFrame() and (this
+-// milestone's own fix) update_polled_stuff(), so the fast-forward path
+-// gets serviced too.
++// Services every active voice. SB: mixes every active voice's pending PCM
++// into the shared SDL3 stream (a target-depth top-up, not run-to-cap, per
++// the hub's docs/audio.md convention) and services the DOS SB ring via
++// SDL_DOSAudioPump(). GUS: calls gus_pcm_stream_pump() on each active
++// voice's own stream -- no software mixdown, the GF1 mixes independent
++// hardware voices itself; SDL_DOSAudioPump() is never called (there is no
++// SDL audio device under GUS to service). Call once per
++// audio_core_entry_poll() cycle -- see audio_core.cpp -- which is itself
++// already reached from both WaitForNextFrame() and (this milestone's own
++// fix) update_polled_stuff(), so the fast-forward path gets serviced too.
+ void dos_audio_mixer_pump();
+ 
+ // Cumulative count of pump cycles where at least one ACTIVE voice had
+-- 
+2.47.3
+

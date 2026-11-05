@@ -1,0 +1,183 @@
+From 4606de9ab3ab0124cf4a517b726a5748b6b39e1c Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 15 Sep 2026 07:42:48 -0700
+Subject: [PATCH] dos: patch 0147 -- GUS .pat sample-upload PIO cost diagnostic
+ (S7-GUS)
+
+WHY: dosags real hardware (tags GUST1/GUSD1/GUSV1, tests/games/
+trilbysnotes/results/S7-gus-voicecalls-miditick-realhw-2026-09-15.md)
+has now exonerated SDL_DOSGusGetState(), all five SDL_DOSGus* voice-
+setup/-teardown calls, and midi_sched_tick() as a whole function
+(max=3602us, three orders of magnitude short of the ~6.89s slots_us
+outlier) -- and found the outlier must live somewhere in AudioPlayer::
+Init()'s own call chain, which runs before midi_sched_tick() ever
+starts. That chain reaches gus_sink_prepare_song() (shared/audio/
+gus_sink.c), which uploads every resident instrument's .pat sample data
+via SDL_DOSGusUploadSample() -- whose default path is gus_upload_pio(),
+a byte-wise ISA PIO transfer loop that re-selects the FULL DRAM address
+before EVERY byte when g_gus_pio_autoinc is off (its own default). This
+is the strongest candidate this sub-investigation has found: a real,
+deterministic, per-song, one-shot cost that scales with total resident
+sample bytes.
+
+WHAT: brackets both gus_upload_pio() and SDL_DOSGusUploadSample() as a
+whole, each with its own accumulate-and-snapshot accessor (same idiom
+as every diagnostic in this sub-investigation), and tracks total bytes
+transferred alongside calls/min/mean/max so a real-hardware run can
+compute effective us/byte throughput -- confirming or refuting the
+byte-wise-overhead hypothesis quantitatively, not just confirming some
+cost exists here. dosags patches/ags/0074 is the consumer.
+
+Temporary -- to be reverted once this sub-investigation concludes.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01VVzc2V3qXnVbYZC693CTWt
+---
+ src/audio/dos/SDL_dosaudio_gus.c | 100 +++++++++++++++++++++++++++++++
+ 1 file changed, 100 insertions(+)
+
+diff --git a/src/audio/dos/SDL_dosaudio_gus.c b/src/audio/dos/SDL_dosaudio_gus.c
+index baddd43bc..729a4324f 100644
+--- a/src/audio/dos/SDL_dosaudio_gus.c
++++ b/src/audio/dos/SDL_dosaudio_gus.c
+@@ -655,6 +655,53 @@ static Uint32 gus_dram_alloc(Uint32 len, int is16bit)
+     return addr;
+ }
+ 
++/* TEMPORARY DIAGNOSTIC (S7-GUS, continuation): real hardware (tags
++   GUST1/GUSD1/GUSV1, tests/games/trilbysnotes/results/
++   S7-gus-voicecalls-miditick-realhw-2026-09-15.md) has now exonerated
++   SDL_DOSGusGetState(), all five SDL_DOSGus* voice-setup/-teardown
++   calls, and midi_sched_tick() itself as a WHOLE FUNCTION (max=3602us,
++   three orders of magnitude short of the ~6.89s slots_us outlier) --
++   and found the outlier must therefore live somewhere in
++   AudioPlayer::Init()'s own call chain, which runs BEFORE midi_sched_
++   tick() ever starts on a song's first real tick. That chain reaches
++   here: gus_sink_prepare_song() (shared/audio/gus_sink.c) uploads every
++   resident instrument's .pat sample data via SDL_DOSGusUploadSample(),
++   whose DEFAULT path is exactly this function -- a byte-wise ISA PIO
++   transfer loop, re-selecting the FULL DRAM address before EVERY byte
++   when g_gus_pio_autoinc is off (its own default -- see that flag's doc
++   comment: "~6 outportb/byte" vs ~1 with autoinc on). This is the
++   strongest candidate this sub-investigation has found: a real,
++   deterministic, per-song, one-shot ISA-bus cost that scales with total
++   resident sample bytes, not previously measured. Brackets both this
++   function AND SDL_DOSGusUploadSample() as a whole (below) -- tracking
++   total bytes transferred too, so a real-hardware run can compute
++   effective us/byte throughput and confirm or refute the byte-wise-
++   overhead hypothesis quantitatively, not just confirm SOME cost exists
++   here. In-memory accumulate only. Temporary -- revert once this
++   sub-investigation concludes. */
++static Uint32 s_gus_uploadpio_calls = 0;
++static Uint64 s_gus_uploadpio_sum_us = 0;
++static Uint64 s_gus_uploadpio_min_us = ~(Uint64)0;
++static Uint64 s_gus_uploadpio_max_us = 0;
++static Uint64 s_gus_uploadpio_bytes = 0;
++
++void SDL_DOSGusUploadPioDiagSnapshot(
++    Uint32 *out_calls, Uint32 *out_min_us, Uint32 *out_mean_us, Uint32 *out_max_us,
++    Uint32 *out_bytes)
++{
++    if (out_calls)  *out_calls  = s_gus_uploadpio_calls;
++    if (out_min_us) *out_min_us = (Uint32)((s_gus_uploadpio_calls > 0) ? s_gus_uploadpio_min_us : 0);
++    if (out_mean_us) *out_mean_us = (Uint32)((s_gus_uploadpio_calls > 0) ? (s_gus_uploadpio_sum_us / s_gus_uploadpio_calls) : 0);
++    if (out_max_us) *out_max_us = (Uint32)s_gus_uploadpio_max_us;
++    if (out_bytes)  *out_bytes  = (Uint32)s_gus_uploadpio_bytes;
++
++    s_gus_uploadpio_calls = 0;
++    s_gus_uploadpio_sum_us = 0;
++    s_gus_uploadpio_min_us = ~(Uint64)0;
++    s_gus_uploadpio_max_us = 0;
++    s_gus_uploadpio_bytes = 0;
++}
++
+ /* Programmed-I/O upload: poke each byte to DRAM via port 3X7. This is the
+    DEFAULT upload path (#36) -- the same mechanism as GF1 detection's DRAM
+    poke/peek (proven on real HW) and immune to the ISA 8237 64KB-page crash
+@@ -668,6 +715,7 @@ static Uint32 gus_dram_alloc(Uint32 len, int is16bit)
+    increment assumption (matches the proven detection mechanism). */
+ static void gus_upload_pio(Uint32 dram_addr, const Uint8 *src, Uint32 len)
+ {
++    const uclock_t t0 = uclock(); /* TEMPORARY DIAGNOSTIC (S7-GUS), see SDL_DOSGusUploadSample below */
+     Uint32 i = 0;
+     const bool autoinc = g_gus_pio_autoinc;
+     /* gus-5 #41 (H2 fix, gated): with autoinc the GF1 DRAM address is programmed
+@@ -703,6 +751,16 @@ static void gus_upload_pio(Uint32 dram_addr, const Uint8 *src, Uint32 len)
+                              (unsigned)(dram_addr + i), autoinc ? 1 : 0);
+         }
+     }
++
++    /* TEMPORARY DIAGNOSTIC (S7-GUS), see SDL_DOSGusUploadSample below. */
++    {
++        const Uint64 call_us = (Uint64)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
++        s_gus_uploadpio_calls++;
++        s_gus_uploadpio_sum_us += call_us;
++        s_gus_uploadpio_bytes += len;
++        if (call_us < s_gus_uploadpio_min_us) s_gus_uploadpio_min_us = call_us;
++        if (call_us > s_gus_uploadpio_max_us) s_gus_uploadpio_max_us = call_us;
++    }
+ }
+ 
+ /* OPT-IN DMA upload (SDL_HINT_DOS_GUS_DMA_UPLOAD=1), 8-bit samples only.
+@@ -1319,9 +1377,41 @@ static void gus_upload_to(Uint32 dram_addr, const void *data, Uint32 len, int is
+     }
+ }
+ 
++/* TEMPORARY DIAGNOSTIC (S7-GUS): same idiom as gus_upload_pio() above --
++   brackets the whole call (dram_alloc + the actual transfer + diag
++   flush) so a real-hardware run can compare this total against gus_
++   upload_pio()'s own sum: if they're nearly equal, the PIO transfer
++   dominates as hypothesized; if this total is notably larger, gus_dram_
++   alloc() or the diag flush is a real separate cost worth its own look.
++   Only the real (both-guards-passed) path is measured -- same
++   reasoning as every other DiagSnapshot in this file. */
++static Uint32 s_gus_uploadsample_calls = 0;
++static Uint64 s_gus_uploadsample_sum_us = 0;
++static Uint64 s_gus_uploadsample_min_us = ~(Uint64)0;
++static Uint64 s_gus_uploadsample_max_us = 0;
++static Uint64 s_gus_uploadsample_bytes = 0;
++
++void SDL_DOSGusUploadSampleDiagSnapshot(
++    Uint32 *out_calls, Uint32 *out_min_us, Uint32 *out_mean_us, Uint32 *out_max_us,
++    Uint32 *out_bytes)
++{
++    if (out_calls)  *out_calls  = s_gus_uploadsample_calls;
++    if (out_min_us) *out_min_us = (Uint32)((s_gus_uploadsample_calls > 0) ? s_gus_uploadsample_min_us : 0);
++    if (out_mean_us) *out_mean_us = (Uint32)((s_gus_uploadsample_calls > 0) ? (s_gus_uploadsample_sum_us / s_gus_uploadsample_calls) : 0);
++    if (out_max_us) *out_max_us = (Uint32)s_gus_uploadsample_max_us;
++    if (out_bytes)  *out_bytes  = (Uint32)s_gus_uploadsample_bytes;
++
++    s_gus_uploadsample_calls = 0;
++    s_gus_uploadsample_sum_us = 0;
++    s_gus_uploadsample_min_us = ~(Uint64)0;
++    s_gus_uploadsample_max_us = 0;
++    s_gus_uploadsample_bytes = 0;
++}
++
+ Uint32 SDL_DOSGusUploadSample(const void *data, Uint32 len, int is16bit)
+ {
+     Uint32 dram_addr;
++    const uclock_t t0 = uclock(); /* TEMPORARY DIAGNOSTIC, see above */
+     if (!g_gus_active || !data || len == 0) {
+         return SDL_DOSGUS_BAD_ADDR;
+     }
+@@ -1342,6 +1432,16 @@ Uint32 SDL_DOSGusUploadSample(const void *data, Uint32 len, int is16bit)
+        settled the question (the 16-bit sample IS resident at the voice's encoded
+        read addr -> upload + #42 encode correct; silence is NOT the upload). The
+        diag is now 100% memory-only. */
++
++    /* TEMPORARY DIAGNOSTIC (S7-GUS), see above. */
++    {
++        const Uint64 call_us = (Uint64)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
++        s_gus_uploadsample_calls++;
++        s_gus_uploadsample_sum_us += call_us;
++        s_gus_uploadsample_bytes += len;
++        if (call_us < s_gus_uploadsample_min_us) s_gus_uploadsample_min_us = call_us;
++        if (call_us > s_gus_uploadsample_max_us) s_gus_uploadsample_max_us = call_us;
++    }
+     return dram_addr;
+ }
+ 
+-- 
+2.47.3
+

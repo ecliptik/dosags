@@ -1,0 +1,84 @@
+From 46f5cfd7c7c4255074623f984efbcd33dcddf5b7 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sat, 19 Sep 2026 07:07:42 -0700
+Subject: [PATCH] DOS-PORT: patch 0122 -- count fade steps
+
+Measurement only. Gate 3's whole-run is dominated by room transitions, and
+a transition is dominated by fades: fade-out measures a fixed 5.25 s across
+eight transitions while load_new_room is only 1.64 s. Nothing reported how
+many steps that 5.25 s was spread over, and the answer decides the fix.
+
+It is 13. Not the ~64 a default speed would give, which matters: reaching
+a 1 s fade by cutting steps would mean going from 13 to about 3, which is
+not a fade any more. The lever has to be the cost of a step.
+
+Applied before the patch that changes that cost, so both arms of the A/B
+carry the counter -- a metric only one arm emits cannot be compared, which
+this campaign has already learned twice.
+
+Free cross-check worth recording: 13 steps x 404 ms per step is 5.25 s,
+matching the independently measured fade-out exactly. The per-step and
+whole-fade instruments agree.
+---
+ Engine/ac/screen.cpp | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/Engine/ac/screen.cpp b/Engine/ac/screen.cpp
+index 89969ec05..22beac7bd 100644
+--- a/Engine/ac/screen.cpp
++++ b/Engine/ac/screen.cpp
+@@ -252,6 +252,10 @@ private:
+ };
+ 
+ // TODO: split further onto 256- and highcolor- software fade
++#ifdef __DJGPP__
++long dp_fade_steps = 0;   // patch 0122
++#endif
++
+ class ScreenFadeSoftware : public ScreenTransition
+ {
+ public:
+@@ -327,11 +331,21 @@ public:
+             set_palette_range(*_destPal, _rangeFrom, _rangeTo, TRUE);
+         }
+     }
++
+     // Draw the state
+     void Draw() override
+     {
+         if (game.color_depth > 1)
+         {
++#ifdef __DJGPP__
++            // patch 0122: count fade steps and time them. A 16-bit fade
++            // step is Fill(460,800) + an alpha TransBlendBlt of the same
++            // frame + a FULL render_to_screen() -- so every step pays a
++            // whole present. Measured fade-out is 5.25 s; whether the fix
++            // is fewer steps or a cheaper per-step blend depends entirely
++            // on the step COUNT, which nothing currently reports.
++            dp_fade_steps++;
++#endif
+             _bmpBuff->Fill(_clearCol);
+             set_trans_blender(0, 0, 0, _fadein ? _alpha : 255 - _alpha);
+             _bmpBuff->TransBlendBlt(_bmpFrame.get(), _view.Left, _view.Top);
+@@ -789,6 +803,9 @@ void run_fade_out_effect(ScreenTransitionStyle style, int speed)
+ void current_fade_in_effect()
+ {
+     debug_script_log("Transition-in in room %d", displayed_room);
++#ifdef __DJGPP__
++    dp_fade_steps = 0;   // reset per fade so the per-fade count is visible
++#endif
+ #ifdef __DJGPP__
+     debug_script_log("DOSAGS_XT t_ms=%u phase=fadein_begin room=%d", (unsigned)get_runtime_ms(), displayed_room);
+ #endif
+@@ -846,6 +863,8 @@ void current_fade_out_effect()
+     debug_script_log("Transition-out in room %d", displayed_room);
+ #ifdef __DJGPP__
+     debug_script_log("DOSAGS_XT t_ms=%u phase=fadeout_begin room=%d", (unsigned)get_runtime_ms(), displayed_room);
++    debug_script_log("DOSAGS_XT fade_steps=%ld", dp_fade_steps);
++    dp_fade_steps = 0;
+ #endif
+     if (pl_run_plugin_hooks(kPluginEvt_TransitionOut, 0))
+         return;
+-- 
+2.47.3
+

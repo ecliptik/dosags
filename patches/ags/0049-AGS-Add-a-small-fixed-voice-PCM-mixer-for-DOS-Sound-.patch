@@ -1,0 +1,459 @@
+From 374bc444693defb9e53ada46352d5265bd86a81f Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sat, 12 Sep 2026 09:23:18 -0700
+Subject: [PATCH] [AGS] Add a small fixed-voice PCM mixer for DOS (Sound
+ milestone S1)
+
+mojoAL/SDL2_sound stay gated out on DOS (patches 0005/0006) -- rather
+than port either for DJGPP, PLAN.md's Sound milestone plan decided to
+replace them: a small fixed-voice mixer on one SDL3 audio stream at
+Tier-2 (11025 Hz mono S16), matching doskutsu/dossage's own established
+default and dossage's own 0039 lesson (convert once at load, mix as
+add-and-clip -- no per-chunk resampling).
+
+This patch adds the mixer module standalone (platform/dos/
+dos_audio_mixer.h/.cpp): 8 voices (3 reserved + 5, matching AGS's own
+SCHAN_SPEECH/SCHAN_AMBIENT/SCHAN_MUSIC reservation), each a plain
+append/consume PCM ring capped at 32 KB; dos_audio_mixer_pump() tops up
+the shared SDL3 stream to a ~186ms target depth (a top-up, not a
+run-to-cap fill, per the hub's docs/audio.md convention) and services
+the DOS SB ring via the shared SDL_DOSAudioPump(); an underrun counter
+(a pump cycle where an ACTIVE voice had nothing to mix, not merely an
+idle mixer) and a compact status-string builder for the
+audio_vital_status vocabulary PLAN.md's Sound milestone defines
+(pcm=<device>@<rate><ch><bits>,voices=<n>,underruns=<n>;midi=<backend>).
+
+Nothing calls this yet -- wired into audio_core/openalsource/sys_main in
+a later patch, once the WAV/VOC loader (also a separate patch) exists
+for it to consume. This patch is independently buildable: the two new
+files compile and link cleanly, inert until referenced.
+---
+ Engine/CMakeLists.txt                   |   2 +
+ Engine/platform/dos/dos_audio_mixer.cpp | 289 ++++++++++++++++++++++++
+ Engine/platform/dos/dos_audio_mixer.h   | 105 +++++++++
+ 3 files changed, 396 insertions(+)
+ create mode 100644 Engine/platform/dos/dos_audio_mixer.cpp
+ create mode 100644 Engine/platform/dos/dos_audio_mixer.h
+
+diff --git a/Engine/CMakeLists.txt b/Engine/CMakeLists.txt
+index 159d82a77..fb8856844 100644
+--- a/Engine/CMakeLists.txt
++++ b/Engine/CMakeLists.txt
+@@ -469,6 +469,8 @@ target_sources(engine
+     platform/bsd/acplbsd.cpp
+ 
+     platform/dos/acpldos.cpp
++    platform/dos/dos_audio_mixer.cpp
++    platform/dos/dos_audio_mixer.h
+ 
+     platform/windows/win_ex_handling.cpp
+     platform/windows/win_ex_handling.h
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+new file mode 100644
+index 000000000..9faa6c977
+--- /dev/null
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -0,0 +1,289 @@
++//=============================================================================
++//
++// Adventure Game Studio (AGS)
++//
++// Copyright (C) 1999-2011 Chris Jones and 2011-2026 various contributors
++// The full list of copyright holders can be found in the Copyright.txt
++// file, which is part of this source code distribution.
++//
++// The AGS source code is provided under the Artistic License 2.0.
++// A copy of this license can be found in the file License.txt and at
++// https://opensource.org/license/artistic-2-0/
++//
++//=============================================================================
++#include "platform/dos/dos_audio_mixer.h"
++#include <algorithm>
++#include <cstdint>
++#include <cstdio>
++#include <cstring>
++#include <vector>
++#include <SDL3/SDL_dosaudio_devicerate.h>
++#include <SDL3/SDL_dosaudio_pump.h>
++#include "debug/out.h"
++
++using namespace AGS::Common;
++
++namespace
++{
++
++// A voice's ring is a plain append/consume byte buffer: writes append to
++// the back, reads advance read_pos and the backing vector is only
++// actually shrunk once fully drained. Every voice's bytes are already in
++// DOS_AUDIO_MIXER_FORMAT/CHANNELS/RATE by the time they arrive here --
++// sdldecoder.cpp's DOS implementation converts once at load -- so no
++// per-chunk resampling happens in this file.
++struct Voice
++{
++    bool used = false;
++    bool active = false;
++    float volume = 1.0f;
++    std::vector<uint8_t> ring;
++    size_t read_pos = 0;
++};
++
++// Cap per-voice buffering so a stalled consumer (mixer not pumped) can't
++// grow a voice's ring without bound; PutData()-equivalent callers get 0
++// back and retry next frame once this is exceeded, same all-or-nothing
++// contract the original mojoAL-backed PutData() had.
++const size_t MAX_VOICE_RING_BYTES = 32 * 1024; // ~1.48s at 11025 Hz S16 mono
++
++// Mixdown granularity and target queued depth (a top-up, not a
++// run-to-cap fill -- hub docs/audio.md's own pump convention).
++const int MIX_CHUNK_SAMPLES = 512; // ~46 ms at 11025 Hz mono
++const int MIX_CHUNK_BYTES = MIX_CHUNK_SAMPLES * static_cast<int>(sizeof(int16_t));
++const int TARGET_QUEUED_BYTES = MIX_CHUNK_BYTES * 4; // ~186 ms ahead
++const int MAX_PUMP_ITERS = 8; // defense-in-depth against a runaway top-up loop
++
++Voice g_voices[DOS_AUDIO_MIXER_MAX_VOICES];
++SDL_AudioStream *g_stream = nullptr;
++int g_underruns = 0;
++
++// A snapshot of the status string taken at dos_audio_mixer_shutdown(),
++// so RUNMANIFEST's audio_vital_status (built by quit.cpp's own manifest
++// block, well after shutdown_sound() -> sys_audio_shutdown() has already
++// torn down the device -- see Engine/media/audio/audio.cpp's own
++// shutdown_sound()) still reports the real final state instead of the
++// "never opened" NA sentinel. Left at "NA" if the device was never
++// opened at all, so that genuine case is still distinguishable.
++char g_last_status[160] = "NA";
++
++void format_status_string(char *buf, size_t bufsize)
++{
++    const int bits = static_cast<int>(SDL_AUDIO_BITSIZE(DOS_AUDIO_MIXER_FORMAT));
++    const char chan_letter = (DOS_AUDIO_MIXER_CHANNELS == 1) ? 'm' : 's';
++    std::snprintf(buf, bufsize, "pcm=sb@%d%c%d,voices=%d,underruns=%d;midi=none",
++        DOS_AUDIO_MIXER_RATE, chan_letter, bits, DOS_AUDIO_MIXER_MAX_VOICES, g_underruns);
++}
++
++} // namespace
++
++bool dos_audio_mixer_init()
++{
++    if (g_stream)
++        return true;
++
++    // Request the SB PCM device open at our exact content rate so SDL
++    // core's own 44100 quality floor doesn't insert a logical->physical
++    // resampler between us and the hardware (see
++    // SDL_dosaudio_devicerate.h's own rationale). Must be called before
++    // the device opens.
++    SDL_DOSAudioSetDeviceFrameRate(DOS_AUDIO_MIXER_RATE);
++
++    SDL_AudioSpec spec;
++    SDL_zero(spec);
++    spec.format = DOS_AUDIO_MIXER_FORMAT;
++    spec.channels = DOS_AUDIO_MIXER_CHANNELS;
++    spec.freq = DOS_AUDIO_MIXER_RATE;
++
++    g_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
++    if (!g_stream)
++    {
++        Debug::Printf(kDbgMsg_Error, "DOSAudioMixer: SDL_OpenAudioDeviceStream failed: %s", SDL_GetError());
++        return false;
++    }
++    if (!SDL_ResumeAudioStreamDevice(g_stream))
++    {
++        Debug::Printf(kDbgMsg_Error, "DOSAudioMixer: SDL_ResumeAudioStreamDevice failed: %s", SDL_GetError());
++        SDL_DestroyAudioStream(g_stream);
++        g_stream = nullptr;
++        return false;
++    }
++
++    for (auto &v : g_voices)
++        v = Voice();
++    g_underruns = 0;
++
++    Debug::Printf(kDbgMsg_Info, "DOSAudioMixer: opened %d Hz mono S16, %d voices",
++        DOS_AUDIO_MIXER_RATE, DOS_AUDIO_MIXER_MAX_VOICES);
++    return true;
++}
++
++void dos_audio_mixer_shutdown()
++{
++    if (!g_stream)
++        return;
++    format_status_string(g_last_status, sizeof(g_last_status));
++    SDL_DestroyAudioStream(g_stream);
++    g_stream = nullptr;
++    for (auto &v : g_voices)
++        v = Voice();
++}
++
++bool dos_audio_mixer_is_open()
++{
++    return g_stream != nullptr;
++}
++
++int dos_audio_mixer_voice_acquire()
++{
++    for (int i = 0; i < DOS_AUDIO_MIXER_MAX_VOICES; i++)
++    {
++        if (!g_voices[i].used)
++        {
++            g_voices[i] = Voice();
++            g_voices[i].used = true;
++            return i;
++        }
++    }
++    return -1;
++}
++
++void dos_audio_mixer_voice_release(int voice)
++{
++    if (voice < 0 || voice >= DOS_AUDIO_MIXER_MAX_VOICES)
++        return;
++    g_voices[voice] = Voice();
++}
++
++size_t dos_audio_mixer_voice_write(int voice, const void *data, size_t bytes)
++{
++    if (voice < 0 || voice >= DOS_AUDIO_MIXER_MAX_VOICES || !g_voices[voice].used)
++        return 0u;
++    if (!data || bytes == 0)
++        return 0u;
++    Voice &v = g_voices[voice];
++    const size_t buffered = v.ring.size() - v.read_pos;
++    if (buffered + bytes > MAX_VOICE_RING_BYTES)
++        return 0u; // reject the whole chunk; caller retries next frame
++    const uint8_t *bytes_in = static_cast<const uint8_t *>(data);
++    v.ring.insert(v.ring.end(), bytes_in, bytes_in + bytes);
++    return bytes;
++}
++
++size_t dos_audio_mixer_voice_queued(int voice)
++{
++    if (voice < 0 || voice >= DOS_AUDIO_MIXER_MAX_VOICES || !g_voices[voice].used)
++        return 0u;
++    const Voice &v = g_voices[voice];
++    return v.ring.size() - v.read_pos;
++}
++
++void dos_audio_mixer_voice_set_active(int voice, bool active)
++{
++    if (voice < 0 || voice >= DOS_AUDIO_MIXER_MAX_VOICES || !g_voices[voice].used)
++        return;
++    g_voices[voice].active = active;
++}
++
++void dos_audio_mixer_voice_stop(int voice)
++{
++    if (voice < 0 || voice >= DOS_AUDIO_MIXER_MAX_VOICES || !g_voices[voice].used)
++        return;
++    Voice &v = g_voices[voice];
++    v.ring.clear();
++    v.read_pos = 0;
++    v.active = false;
++}
++
++void dos_audio_mixer_voice_set_volume(int voice, float volume)
++{
++    if (voice < 0 || voice >= DOS_AUDIO_MIXER_MAX_VOICES || !g_voices[voice].used)
++        return;
++    if (volume < 0.0f) volume = 0.0f;
++    if (volume > 1.0f) volume = 1.0f;
++    g_voices[voice].volume = volume;
++}
++
++static void mix_one_chunk(bool &out_any_active)
++{
++    int32_t accum[MIX_CHUNK_SAMPLES];
++    std::memset(accum, 0, sizeof(accum));
++    bool any_active = false;
++    bool any_underrun = false;
++
++    for (auto &v : g_voices)
++    {
++        if (!v.used || !v.active)
++            continue;
++        any_active = true;
++
++        const size_t avail_bytes = v.ring.size() - v.read_pos;
++        const size_t avail_samples = avail_bytes / sizeof(int16_t);
++        const size_t take_samples = std::min<size_t>(avail_samples, static_cast<size_t>(MIX_CHUNK_SAMPLES));
++        if (take_samples == 0)
++        {
++            any_underrun = true;
++            continue;
++        }
++
++        const int16_t *src = reinterpret_cast<const int16_t *>(v.ring.data() + v.read_pos);
++        for (size_t s = 0; s < take_samples; s++)
++            accum[s] += static_cast<int32_t>(static_cast<float>(src[s]) * v.volume);
++
++        v.read_pos += take_samples * sizeof(int16_t);
++        if (v.read_pos >= v.ring.size())
++        {
++            v.ring.clear();
++            v.read_pos = 0;
++        }
++    }
++
++    out_any_active = any_active;
++    if (!any_active)
++        return;
++    if (any_underrun)
++        g_underruns++;
++
++    int16_t outbuf[MIX_CHUNK_SAMPLES];
++    for (int s = 0; s < MIX_CHUNK_SAMPLES; s++)
++    {
++        int32_t sample = accum[s];
++        if (sample > 32767) sample = 32767;
++        if (sample < -32768) sample = -32768;
++        outbuf[s] = static_cast<int16_t>(sample);
++    }
++    SDL_PutAudioStreamData(g_stream, outbuf, MIX_CHUNK_BYTES);
++}
++
++void dos_audio_mixer_pump()
++{
++    if (g_stream)
++    {
++        for (int iter = 0; iter < MAX_PUMP_ITERS; iter++)
++        {
++            if (SDL_GetAudioStreamQueued(g_stream) >= TARGET_QUEUED_BYTES)
++                break;
++            bool any_active = false;
++            mix_one_chunk(any_active);
++            if (!any_active)
++                break; // nothing playing; let the device underflow to silence
++        }
++    }
++    // Service the DOS SB ring/ISR regardless -- mandatory per frame, per
++    // the hub's own docs/audio.md convention (SDL_DOSAudioPump()).
++    SDL_DOSAudioPump();
++}
++
++int dos_audio_mixer_underrun_count()
++{
++    return g_underruns;
++}
++
++const char *dos_audio_mixer_status_string()
++{
++    if (!g_stream)
++        return g_last_status; // "NA" if never opened, else the shutdown-time snapshot
++    static char buf[160];
++    format_status_string(buf, sizeof(buf));
++    return buf;
++}
+diff --git a/Engine/platform/dos/dos_audio_mixer.h b/Engine/platform/dos/dos_audio_mixer.h
+new file mode 100644
+index 000000000..fb4432339
+--- /dev/null
++++ b/Engine/platform/dos/dos_audio_mixer.h
+@@ -0,0 +1,105 @@
++//=============================================================================
++//
++// Adventure Game Studio (AGS)
++//
++// Copyright (C) 1999-2011 Chris Jones and 2011-2026 various contributors
++// The full list of copyright holders can be found in the Copyright.txt
++// file, which is part of this source code distribution.
++//
++// The AGS source code is provided under the Artistic License 2.0.
++// A copy of this license can be found in the file License.txt and at
++// https://opensource.org/license/artistic-2-0/
++//
++//=============================================================================
++//
++// DOS-PORT (Sound milestone, S1): a small fixed-voice PCM mixer feeding one
++// SDL3 audio stream at Tier-2 (11025 Hz mono). Replaces mojoAL for DOS --
++// see PLAN.md's "Sound milestone plan" Architecture section ("Replace,
++// don't port"). Each DOS OpenAlSource acquires one voice from this mixer
++// instead of a real OpenAL source; sdldecoder.cpp's DOS implementation
++// converts every clip to this exact format ONCE at load (dossage's own
++// 0039 lesson -- converting per-chunk cost 43% of every frame), so PutData()
++// is a plain byte copy into a voice ring and the mixdown itself is
++// add-and-clip, no per-chunk resampling.
++//
++//=============================================================================
++#ifndef __AGS_EE_PLATFORM_DOS__DOS_AUDIO_MIXER_H
++#define __AGS_EE_PLATFORM_DOS__DOS_AUDIO_MIXER_H
++#include <cstddef>
++#include <SDL3/SDL.h>
++
++// Tier-2 device format: 11025 Hz mono, signed 16-bit -- doskutsu/dossage's
++// own established default (PLAN.md's "What the shared layer provides,
++// and what it measured"). Not hint-overridable yet in S1: the golden-
++// reference in-profile workload this milestone targets is Tier-2 only:
++// wiring SDL_HINT_DOS_AUDIO_TIER2-equivalent selection is left for when a
++// game actually needs a different tier.
++#define DOS_AUDIO_MIXER_RATE     11025
++#define DOS_AUDIO_MIXER_CHANNELS 1
++#define DOS_AUDIO_MIXER_FORMAT   SDL_AUDIO_S16
++
++// Voice budget: 3 reserved (speech/ambient/music, matching AGS's own
++// SCHAN_SPEECH/SCHAN_AMBIENT/SCHAN_MUSIC reservation in audiodefines.h)
++// + 5 normal, per PLAN.md's Architecture section.
++#define DOS_AUDIO_MIXER_MAX_VOICES 8
++
++// Opens the SDL3 audio device/stream at the Tier-2 format via
++// SDL_OpenAudioDeviceStream(), after requesting the DOS SB PCM backend
++// open at the same frame rate (SDL_DOSAudioSetDeviceFrameRate) so no
++// logical->physical resampler gets inserted. Idempotent: returns true
++// immediately if already open. Returns false on failure (caller, i.e.
++// sys_audio_init(), is expected to fall back to AudioEnabled=false, the
++// same already-handled path this port used before this milestone).
++bool dos_audio_mixer_init();
++
++// Closes the audio stream/device and releases all voices. Safe to call
++// even if never successfully opened.
++void dos_audio_mixer_shutdown();
++
++// Tells if the mixer currently has an open device/stream.
++bool dos_audio_mixer_is_open();
++
++// Acquires one free voice slot for a new OpenAlSource. Returns a voice
++// id in [0, DOS_AUDIO_MIXER_MAX_VOICES) or -1 if every voice is in use
++// (caller then plays back silently -- the same "gracefully do nothing"
++// contract patch 0023's stub already established for a missing device).
++int dos_audio_mixer_voice_acquire();
++// Releases a voice acquired above (called from OpenAlSource's dtor).
++void dos_audio_mixer_voice_release(int voice);
++
++// Appends already-Tier2-format PCM bytes into the given voice's ring.
++// Returns the number of bytes actually accepted (0 if voice < 0, the
++// device isn't open, or the ring has no room -- matching OpenAlSource's
++// existing "0 means try again later" PutData() contract).
++size_t dos_audio_mixer_voice_write(int voice, const void *data, size_t bytes);
++// Bytes still buffered (not yet mixed out) for the given voice.
++size_t dos_audio_mixer_voice_queued(int voice);
++// Marks the voice active (mixed into the output) or inactive (silent,
++// ring left untouched so a Pause() can Resume() without losing data).
++void dos_audio_mixer_voice_set_active(int voice, bool active);
++// Drops all buffered data and marks the voice inactive (Stop()).
++void dos_audio_mixer_voice_stop(int voice);
++// Sets per-voice linear gain (0.0 - 1.0); applied at mixdown.
++void dos_audio_mixer_voice_set_volume(int voice, float volume);
++
++// Mixes every active voice's pending PCM into the shared SDL3 stream (a
++// target-depth top-up, not run-to-cap, per the hub's docs/audio.md
++// convention) and services the DOS SB ring via SDL_DOSAudioPump(). Call
++// once per audio_core_entry_poll() cycle -- see audio_core.cpp -- which
++// is itself already reached from both WaitForNextFrame() and (this
++// milestone's own fix) update_polled_stuff(), so the fast-forward path
++// gets serviced too.
++void dos_audio_mixer_pump();
++
++// Cumulative count of pump cycles where at least one ACTIVE voice had
++// no data to mix (a real underrun, not merely an idle mixer with zero
++// active voices) -- the audio_vital_status "underruns=" field.
++int dos_audio_mixer_underrun_count();
++
++// Builds "pcm=<device>@<rate><ch><bits>,voices=<n>,underruns=<n>;midi=none"
++// into a static buffer (S1 has no MIDI backend yet -- "midi=none" is the
++// deliberate, honest placeholder PLAN.md's S1 line calls for; S4 replaces
++// it once a real backend exists). Returns "NA" if the device never opened.
++const char *dos_audio_mixer_status_string();
++
++#endif // __AGS_EE_PLATFORM_DOS__DOS_AUDIO_MIXER_H
+-- 
+2.47.3
+

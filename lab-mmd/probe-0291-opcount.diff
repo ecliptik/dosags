@@ -1,0 +1,165 @@
+diff --git a/Engine/ac/event.cpp b/Engine/ac/event.cpp
+index 927a10a4d..5b783aaef 100644
+--- a/Engine/ac/event.cpp
++++ b/Engine/ac/event.cpp
+@@ -528,6 +528,7 @@ void processallevents() {
+     // there) -- reported alongside, not summed with, script_vm.
+ #ifdef __DJGPP__
+     DosPortTickScope _dos_port_process_events_scope(dos_port_tick_timing.process_events_dispatch);
++    { extern void dp_opcount_seg_check(); if (!inside_processevent) dp_opcount_seg_check(); } // probe 0291
+ #endif
+     if (inside_processevent)
+     {
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index f0024c6b9..88a599a3c 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -593,6 +593,7 @@ void quit(const char *quitmsg)
+                     t.bg_spans, t.bg_span_lt16, t.bg_span_lt64, t.bg_span_ge64,
+                     t.bg_spans ? (long)(t.bg_px / t.bg_spans) : 0L);
+ #ifdef __DJGPP__
++                { extern void dp_opcount_quit(); dp_opcount_quit(); } // probe 0291 (LAB ONLY)
+                 {   // patch 0150: what event dispatch actually spends its time on
+                     extern long long dos_port_evt_us[6];
+                     extern long dos_port_evt_n[6];
+diff --git a/Engine/script/cc_instance.cpp b/Engine/script/cc_instance.cpp
+index 3e88d7e29..8a38d7abd 100644
+--- a/Engine/script/cc_instance.cpp
++++ b/Engine/script/cc_instance.cpp
+@@ -169,6 +169,66 @@ String cc_get_callstack(int max_lines)
+ }
+ 
+ 
++#ifdef __DJGPP__
++// DOS-PORT probe 0291 (LAB ONLY, never a gate binary; LAB-MMD.md 9.2): what the interpreter does
++// per tick -- opcode counts, stack-walk steps, fixups by type, MEMREAD/MEMWRITE by MAR type.
++// Counts only: no clock reads. Dumped per room segment and at quit.
++#include "debug/out.h"
++#include "main/game_run.h"
++long long dp_op_n[CC_NUM_SCCMDS];
++long long dp_argmat;                  // arguments materialised into RuntimeScriptValue at the loop head
++long long dp_lsp_calls, dp_lsp_steps; // GetStackPtrOffsetRw (LOADSPOFFS, SUB on MAR)
++long long dp_fw_calls, dp_fw_steps;   // GetStackPtrOffsetFw (FIXUP_STACK)
++long long dp_fix_n[8];                // FixupArgument by fixup type (0..6, 7 = other)
++long long dp_mar_rd[16], dp_mar_wr[16]; // MEMREAD*/MEMWRITE* by SREG_MAR type
++static long long dp_s_op[CC_NUM_SCCMDS], dp_s_argmat, dp_s_lsp_c, dp_s_lsp_s, dp_s_fw_c, dp_s_fw_s,
++    dp_s_fix[8], dp_s_rd[16], dp_s_wr[16];
++static int dp_oc_room = -1000; static uint32_t dp_oc_tick0 = 0;
++static void dp_oc_snap()
++{
++    for (int i = 0; i < CC_NUM_SCCMDS; ++i) dp_s_op[i] = dp_op_n[i];
++    dp_s_argmat = dp_argmat; dp_s_lsp_c = dp_lsp_calls; dp_s_lsp_s = dp_lsp_steps;
++    dp_s_fw_c = dp_fw_calls; dp_s_fw_s = dp_fw_steps;
++    for (int i = 0; i < 8; ++i) dp_s_fix[i] = dp_fix_n[i];
++    for (int i = 0; i < 16; ++i) { dp_s_rd[i] = dp_mar_rd[i]; dp_s_wr[i] = dp_mar_wr[i]; }
++    dp_oc_tick0 = get_loop_counter();
++}
++void dp_opcount_dump(int room, const char *why)
++{
++    const uint32_t ticks = get_loop_counter() - dp_oc_tick0;
++    long long tot = 0;
++    for (int i = 0; i < CC_NUM_SCCMDS; ++i) tot += dp_op_n[i] - dp_s_op[i];
++    AGS::Common::Debug::Printf("DOS-PORT opcount room=%d why=%s ticks=%lu ops=%lld argmat=%lld lsp_calls=%lld lsp_steps=%lld fw_calls=%lld fw_steps=%lld",
++        room, why, (unsigned long)ticks, tot, dp_argmat - dp_s_argmat, dp_lsp_calls - dp_s_lsp_c,
++        dp_lsp_steps - dp_s_lsp_s, dp_fw_calls - dp_s_fw_c, dp_fw_steps - dp_s_fw_s);
++    AGS::Common::Debug::Printf("DOS-PORT opcount room=%d fixups none=%lld gdata=%lld func=%lld string=%lld import=%lld datadata=%lld stack=%lld other=%lld",
++        room, dp_fix_n[0] - dp_s_fix[0], dp_fix_n[1] - dp_s_fix[1], dp_fix_n[2] - dp_s_fix[2], dp_fix_n[3] - dp_s_fix[3],
++        dp_fix_n[4] - dp_s_fix[4], dp_fix_n[5] - dp_s_fix[5], dp_fix_n[6] - dp_s_fix[6], dp_fix_n[7] - dp_s_fix[7]);
++    for (int t = 0; t < 16; ++t)
++        if (dp_mar_rd[t] - dp_s_rd[t] || dp_mar_wr[t] - dp_s_wr[t])
++            AGS::Common::Debug::Printf("DOS-PORT opcount room=%d mar_type=%d reads=%lld writes=%lld",
++                room, t, dp_mar_rd[t] - dp_s_rd[t], dp_mar_wr[t] - dp_s_wr[t]);
++    for (int i = 0; i < CC_NUM_SCCMDS; ++i)
++        if (dp_op_n[i] - dp_s_op[i])
++            AGS::Common::Debug::Printf("DOS-PORT opcount room=%d op=%s code=%d n=%lld",
++                room, sccmd_info[i].CmdName, i, dp_op_n[i] - dp_s_op[i]);
++}
++extern int displayed_room;
++void dp_opcount_seg_check()
++{
++    if (displayed_room == dp_oc_room) return;
++    if (dp_oc_room != -1000) dp_opcount_dump(dp_oc_room, "roomchange");
++    dp_oc_room = displayed_room;
++    dp_oc_snap();
++}
++void dp_opcount_quit() { dp_opcount_dump(dp_oc_room, "quit"); }
++#define DP_MAR_RD() (++dp_mar_rd[(unsigned)_registers[SREG_MAR].Type & 15])
++#define DP_MAR_WR() (++dp_mar_wr[(unsigned)_registers[SREG_MAR].Type & 15])
++#else
++#define DP_MAR_RD() ((void)0)
++#define DP_MAR_WR() ((void)0)
++#endif
++
+ // An inverted parameter stack, internally implemented as a vector,
+ // to let us pass a pointer to the parameter sequence.
+ // TODO: reorganize this as a generic container in utils.
+@@ -515,10 +575,16 @@ inline RuntimeScriptValue GetStackPtrOffsetFw(RuntimeScriptValue *stack, int32_t
+ {
+     int32_t total_off = 0;
+     RuntimeScriptValue *stack_entry = stack;
++#ifdef __DJGPP__
++    dp_fw_calls++;
++#endif
+     while (total_off < fw_offset && (stack_entry - stack) < CC_STACK_SIZE )
+     {
+         stack_entry++;
+         total_off += stack_entry->Size;
++#ifdef __DJGPP__
++        dp_fw_steps++;
++#endif
+     }
+     CC_ERROR_IF_RETVAL(total_off < fw_offset, RuntimeScriptValue, "accessing address beyond stack's tail");
+     CC_ERROR_IF_RETVAL(total_off > fw_offset, RuntimeScriptValue, "stack offset forward: trying to access stack data inside stack entry, stack corrupted?");
+@@ -534,6 +600,9 @@ inline bool FixupArgument(RuntimeScriptValue &arg, const int fixup, const uintpt
+     RuntimeScriptValue *stack, const char *strings)
+ {
+     // could be relative pointer or import address
++#ifdef __DJGPP__
++    dp_fix_n[(unsigned)fixup < 7 ? fixup : 7]++;
++#endif
+     switch (fixup)
+     {
+     case FIXUP_NOFIXUP:
+@@ -632,6 +701,9 @@ ccInstError ccInstance::Run(int32_t curpc)
+             "invalid instruction %d found in code stream", codeOp.Instruction.Code);
+ 
+         codeOp.ArgCount = sccmd_info[codeOp.Instruction.Code].ArgCount;
++#ifdef __DJGPP__
++        dp_op_n[codeOp.Instruction.Code]++; dp_argmat += codeOp.ArgCount; // probe 0291
++#endif
+ 
+         CC_ERROR_IF_RETCODE(static_cast<uint32_t>(_pc + codeOp.ArgCount) >= codeInst->_codesize,
+             "unexpected end of code data (%u; %u)", static_cast<uint32_t>(_pc + codeOp.ArgCount), codeInst->_codesize);
+@@ -802,6 +874,7 @@ ccInstError ccInstance::Run(int32_t curpc)
+         {
+             // Take the data address from reg[MAR] and copy int32_t to reg[arg1]
+             auto &reg1 = _registers[codeOp.Arg1i()];
++            DP_MAR_RD();
+             reg1 = _registers[SREG_MAR].ReadValue();
+             break;
+         }
+@@ -809,6 +882,7 @@ ccInstError ccInstance::Run(int32_t curpc)
+         {
+             // Take the data address from reg[MAR] and copy there int32_t from reg[arg1]
+             const auto &reg1 = _registers[codeOp.Arg1i()];
++            DP_MAR_WR();
+             _registers[SREG_MAR].WriteValue(reg1);
+             break;
+         }
+@@ -2331,10 +2405,16 @@ RuntimeScriptValue ccInstance::GetStackPtrOffsetRw(const int32_t rw_offset)
+ {
+     int32_t total_off = 0;
+     RuntimeScriptValue *stack_entry = _registers[SREG_SP].RValue;
++#ifdef __DJGPP__
++    dp_lsp_calls++;
++#endif
+     while (total_off < rw_offset && stack_entry > _stackBegin)
+     {
+         stack_entry--;
+         total_off += stack_entry->Size;
++#ifdef __DJGPP__
++        dp_lsp_steps++;
++#endif
+     }
+     CC_ERROR_IF_RETVAL(total_off < rw_offset, RuntimeScriptValue, "accessing address before stack's head");
+     RuntimeScriptValue stack_ptr;

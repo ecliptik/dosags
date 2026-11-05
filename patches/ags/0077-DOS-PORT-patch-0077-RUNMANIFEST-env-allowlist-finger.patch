@@ -1,0 +1,79 @@
+From 474c89e0507ddf77929d380374113eb92458465e Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 15 Sep 2026 22:07:40 -0700
+Subject: [PATCH] DOS-PORT: patch 0077 -- RUNMANIFEST env allowlist:
+ fingerprint the benchmark env vars
+
+WHY: patch 0038 wired runmanifest_emit() with an env allowlist of four
+names (BLASTER, DOS_PORT_ENVIRONMENT, SDL_DOS_AUDIO_SB_SKIP_DETECTION,
+SDL_INVALID_PARAM_CHECKS). Every measurement-affecting knob this port
+grew afterwards -- DOSAGS_FIXED_TIMESTEP (0047, decouples game speed
+from render fps: two runs differing only in it are not comparable),
+DOSAGS_FORCE_COLOR_DEPTH (0076, the 8/16/32-bit KPI lever),
+DOSAGS_TAS_AUTO_EXIT_TICK (0044, run length), SDL_HINT_DOS_AUDIO_BACKEND
+(which MIDI sink ran), SDL_HINT_DOS_GUS_PIO_AUTOINC (0074's default,
+~5x on .pat upload), SDL_HINT_DOS_GUS_DIAG (a real ~3-5x tick_rate tax
+when left on, the S7-GUS confound) -- was left out, so two runs with
+different game-speed semantics, depth, backend, or diag tax hashed to
+the SAME env_block_sha. The 2026-09-16 fixed-timestep review (PLAN.md)
+found this while making the framework enforce the fixed timestep: the
+record's only proof was the engine's own log line, not the fingerprint
+the schema exists to provide.
+
+WHAT: six names added, list kept alphabetical per runmanifest.h's own
+allowlist contract ("Build your own NULL-terminated, alphabetically-
+sorted allowlist" -- ASCII order puts DOSAGS_* before DOS_PORT_*). The
+strings are the exact names the readers use: SDL_GetHint("SDL_HINT_DOS_
+AUDIO_BACKEND") in dos_midi_backend.cpp and gus_hint_is_one("SDL_HINT_
+DOS_GUS_DIAG"/"..._PIO_AUTOINC") in SDL_dosaudio_gus.c, all of which
+fall back to getenv() of that same string. runmanifest_compute_env_
+block_sha12() only folds in names that are actually SET, so a run that
+sets none of the new ones keeps hashing exactly what it did before
+(0074's SDL_SetHint() default for PIO autoinc is not an env var and so
+is invisible here, as before); a run that sets any of them now gets a
+different env_block_sha than one that does not.
+
+CONFIRMED under DOSBox-X (2026-09-16): two otherwise-identical Trilby's
+Notes runs on this build (binary_sha12=c9ee2b121d04 for both,
+DOSAGS_TAS_AUTO_EXIT_TICK=200, exit_code=0) -- with
+DOSAGS_FIXED_TIMESTEP=1: env_block_sha=098a64e57eea, engine log
+"DOS-PORT fixed-timestep: ENABLED", tick_rate=29.37 frames_skipped=61;
+without it: env_block_sha=5ebc5417d476, "DISABLED", tick_rate=23.95
+frames_skipped=0. Same binary, different fingerprint, which is the
+whole point.
+---
+ Engine/main/quit.cpp | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 9485b11fd..4a088e1c5 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -275,8 +275,24 @@ void quit(const char *quitmsg)
+     {
+         static const char *dos_port_env_allowlist[] = {
+             "BLASTER",
++            // DOS-PORT (patch 0077): the six benchmark-facing entries in
++            // this list (DOSAGS_*, SDL_HINT_DOS_*) were added after the
++            // 2026-09-16 fixed-timestep review found runs that differ in
++            // game-speed semantics (patch 0047), color depth (0076),
++            // auto-exit length (0044), MIDI backend, GUS PIO autoinc
++            // (0074), or the GUS diag logging tax (a real ~3-5x tick_rate
++            // effect, S7-GUS) all hashing to the SAME env_block_sha.
++            // Alphabetical throughout, per runmanifest.h's own allowlist
++            // contract -- ASCII order puts DOSAGS_* before DOS_PORT_*
++            // ('A' < '_').
++            "DOSAGS_FIXED_TIMESTEP",
++            "DOSAGS_FORCE_COLOR_DEPTH",
++            "DOSAGS_TAS_AUTO_EXIT_TICK",
+             "DOS_PORT_ENVIRONMENT",
+             "SDL_DOS_AUDIO_SB_SKIP_DETECTION",
++            "SDL_HINT_DOS_AUDIO_BACKEND",
++            "SDL_HINT_DOS_GUS_DIAG",
++            "SDL_HINT_DOS_GUS_PIO_AUTOINC",
+             "SDL_INVALID_PARAM_CHECKS",
+             NULL
+         };
+-- 
+2.47.3
+

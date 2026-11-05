@@ -1,0 +1,78 @@
+diff --git a/Engine/script/cc_instance.cpp b/Engine/script/cc_instance.cpp
+index c2cb3d44d..18e134f05 100644
+--- a/Engine/script/cc_instance.cpp
++++ b/Engine/script/cc_instance.cpp
+@@ -175,6 +175,65 @@ String cc_get_callstack(int max_lines)
+ // An inverted parameter stack, internally implemented as a vector,
+ // to let us pass a pointer to the parameter sequence.
+ // TODO: reorganize this as a generic container in utils.
++#ifdef __DJGPP__
++// DOS-PORT patch 0307: the same inverted parameter stack, with its first 16 entries held inline.
++// ccInstance::Run() builds one of these on every entry -- every script function call recurses into
++// Run() -- and the vector version paid operator new + malloc, 16 value-initialisations and free on
++// each: ~250 instructions x 65 calls per tick on Maniac Mansion Deluxe (LAB-MMD.md 17). Contents are
++// kept exactly: the initial entries are value-initialised as before, and growth past the inline
++// storage doubles into the heap with the same copy and head placement as the vector version.
++struct FunctionCallStack
++{
++    FunctionCallStack(size_t initial_count = 16)
++    {
++        initial_count = std::max<size_t>(1u, initial_count);
++        if (initial_count <= kInline)
++        {
++            _begin = _inline;
++            _size = initial_count;
++        }
++        else
++        {
++            _heap.resize(initial_count);
++            _begin = _heap.data();
++            _size = initial_count;
++        }
++        _head = _begin + _size;
++    }
++
++    inline RuntimeScriptValue *GetHead() { return _head; }
++    inline const RuntimeScriptValue *GetHead() const { return _head; }
++    inline size_t GetSize() const { return _begin + _size - _head; }
++
++    inline void Push(const RuntimeScriptValue &value)
++    {
++        if (_head == _begin)
++        {
++            std::vector<RuntimeScriptValue> expansion(_size * 2);
++            std::copy(_begin, _begin + _size, expansion.begin() + _size);
++            _heap = std::move(expansion);
++            _begin = _heap.data();
++            _size = _heap.size();
++            _head = _begin + _size / 2;
++        }
++        *(--_head) = value;
++    }
++
++    inline void PopCount(size_t count)
++    {
++        count = std::min(count, static_cast<size_t>(_begin + _size - _head));
++        _head += count;
++    }
++
++private:
++    static const size_t kInline = 16;
++    RuntimeScriptValue _inline[kInline]; // value-initialised by RuntimeScriptValue(), as resize() did
++    std::vector<RuntimeScriptValue> _heap;
++    RuntimeScriptValue *_begin = nullptr;
++    size_t _size = 0;
++    RuntimeScriptValue *_head = nullptr;
++};
++#else
+ struct FunctionCallStack
+ {
+     FunctionCallStack(size_t initial_count = 16)
+@@ -210,6 +269,7 @@ private:
+     std::vector<RuntimeScriptValue> _entries;
+     RuntimeScriptValue *_head = nullptr;
+ };
++#endif
+ 
+ 
+ unsigned ccInstance::_timeoutCheckMs = 60u;

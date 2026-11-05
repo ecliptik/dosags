@@ -1,0 +1,49 @@
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index d4618d237..83c8e1412 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -1415,8 +1415,13 @@ static void render_black_borders()
+ extern volatile bool game_update_suspend;
+ extern volatile bool want_exit, abort_engine;
+ 
++#include <SDL3/SDL.h> // THROWAWAY MI probe
+ void render_to_screen()
+ {
++    { // THROWAWAY (MI throttle probe): a fixed delay per rendered frame, never lands
++        static int thr = -1; if (thr < 0) { const char *e = SDL_getenv("DOSAGS_MI_RENDER_DELAY_MS"); thr = e ? SDL_atoi(e) : 0; }
++        if (thr > 0) SDL_Delay((Uint32)thr);
++    }
+     // DOS-PORT patch 0085: whole-function bracket, first line so it
+     // covers every return path. Calls gfxDriver->Render(...), which
+     // calls RenderToBackBuffer() (already bracketed as render_backbuffer,
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index 22c45d3d2..417ea9515 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -19,6 +19,7 @@
+ #include <vector>
+ #include <SDL3/SDL_dosaudio_devicerate.h>
+ #include <SDL3/SDL_dosaudio_pump.h>
++#include <SDL3/SDL_dosmidi_tick.h> // THROWAWAY MI probe
+ #include "debug/out.h"
+ #include "platform/dos/dos_midi_backend.h"
+ 
+@@ -497,6 +498,18 @@ void dos_audio_mixer_pump()
+         return;
+     }
+ 
++    { // THROWAWAY (MI stall probe, as MT1): a forced main-loop stall every N ticks; never lands
++        static int mt = -1; static uint32_t mt_last = 0;
++        if (mt < 0) { const char *e = SDL_getenv("DOSAGS_UR3_STALL_EVERY"); mt = e ? SDL_atoi(e) : 0; }
++        const uint32_t t = get_loop_counter();
++        if (mt > 0 && t > 0 && t % (uint32_t)mt == 0 && t != mt_last) {
++            mt_last = t; Uint32 w0 = 0, w1 = 0;
++            SDL_DOSMidiDeferStats(&w0, nullptr, nullptr, nullptr, nullptr);
++            SDL_Delay(1500);
++            SDL_DOSMidiDeferStats(&w1, nullptr, nullptr, nullptr, nullptr);
++            Debug::Printf(kDbgMsg_Info, "MISTALL tick=%u isr_writes_during_stall=%u", t, (unsigned)(w1 - w0));
++        }
++    }
+     if (g_stream)
+     {
+         // DOS-PORT (patch 0203): the tick at which this pump first saw the

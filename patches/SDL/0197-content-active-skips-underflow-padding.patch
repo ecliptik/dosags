@@ -1,0 +1,165 @@
+From 1280855923fd54e9d9dc460c524cdb5cc96c98b4 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 18:13:36 -0700
+Subject: [PATCH] dos: patch 0197 -- content-active writes a clip's own
+ silence, not the core's underflow padding
+
+Patch 0192 made PlayDevice write silent buffers while the port says content
+is active (SDL_DOSAudioSetContentActive), so a clip's own quiet passages keep
+their time. But SDL_audio.c pads a short pull from the bound streams with
+silence and calls PlayDevice anyway, and 0192 could not tell that padding
+from content. After a main-thread stall longer than the ring (743 ms), the
+background thread's iterations drain the few chunks the engine had mixed
+ahead and then write one padded chunk per iteration until the engine mixes
+again: that silence lands in the middle of the sound, and the rest of the
+clip plays late by all of it (dosags lab-journeys, mi-stall-isr cell: 19
+forced 1.5 s stalls, pcm_unaccounted -156 chunks, ~7 s).
+
+The core now records, per iteration, how many bytes the bound streams
+supplied against how many it asked for (dos_pull_got / dos_pull_wanted in
+SDL_AudioDevice, SDL_PLATFORM_DOS only; on the mix path the largest single
+stream's supply). A buffer they supplied nothing to goes to the silence gate
+as if content were not active, and is dropped (counted in
+dos_port_audio_underflow_pads). A partly filled buffer is written as before
+-- its samples are content, its padded tail at most one chunk -- and counted
+in dos_port_audio_partial_pulls. Ports that never set content-active are
+unaffected.
+---
+ src/audio/SDL_audio.c              | 13 +++++++++++++
+ src/audio/SDL_sysaudio.h           |  9 +++++++++
+ src/audio/dos/SDL_dosaudio_sb.c    | 21 ++++++++++++++++++++-
+ src/core/dos/SDL_dos_audio_synth.c |  7 +++++++
+ src/core/dos/SDL_dos_audio_synth.h |  2 ++
+ 5 files changed, 51 insertions(+), 1 deletion(-)
+
+diff --git a/src/audio/SDL_audio.c b/src/audio/SDL_audio.c
+index 35d9ce698..452ea3007 100644
+--- a/src/audio/SDL_audio.c
++++ b/src/audio/SDL_audio.c
+@@ -1204,6 +1204,10 @@ bool SDL_PlaybackAudioThreadIterate(SDL_AudioDevice *device)
+             SDL_assert(stream->src_spec.format != SDL_AUDIO_UNKNOWN);
+ 
+             const int br = SDL_GetAtomicInt(&logdev->paused) ? 0 : SDL_GetAudioStreamDataAdjustGain(stream, device_buffer, buffer_size, logdev->gain);
++#ifdef SDL_PLATFORM_DOS
++            device->dos_pull_got = (br > 0) ? br : 0; /* DOS-PORT patch 0197 */
++            device->dos_pull_wanted = buffer_size;
++#endif
+             if (br < 0) {  // Probably OOM. Kill the audio device; the whole thing is likely dying soon anyhow.
+                 failed = true;
+                 SDL_memset(device_buffer, device->silence_value, buffer_size);  // just supply silence to the device before we die.
+@@ -1228,6 +1232,10 @@ bool SDL_PlaybackAudioThreadIterate(SDL_AudioDevice *device)
+             outspec.format = SDL_AUDIO_F32;
+ 
+             SDL_memset(final_mix_buffer, '\0', work_buffer_size);  // start with silence.
++#ifdef SDL_PLATFORM_DOS
++            device->dos_pull_got = 0; /* DOS-PORT patch 0197: raised below by each stream's supply */
++            device->dos_pull_wanted = work_buffer_size;
++#endif
+ 
+             for (SDL_LogicalAudioDevice *logdev = device->logical_devices; logdev; logdev = logdev->next) {
+                 if (SDL_GetAtomicInt(&logdev->paused)) {
+@@ -1256,6 +1264,11 @@ bool SDL_PlaybackAudioThreadIterate(SDL_AudioDevice *device)
+                         failed = true;
+                         break;
+                     } else if (br > 0) {  // it's okay if we get less than requested, we mix what we have.
++#ifdef SDL_PLATFORM_DOS
++                        if (br > device->dos_pull_got) {
++                            device->dos_pull_got = br; /* DOS-PORT patch 0197 */
++                        }
++#endif
+                         // generally channel maps will line up, but if the audio stream's chmap has been explicitly changed, do a final swizzle to device layout.
+                         if (!SDL_AudioChannelMapsEqual(device->spec.channels, stream->dst_chmap, device->chmap)) {
+                             ConvertAudio(br / SDL_AUDIO_FRAMESIZE(device->spec), device->work_buffer, device->spec.format, device->spec.channels, NULL,
+diff --git a/src/audio/SDL_sysaudio.h b/src/audio/SDL_sysaudio.h
+index 858354a9a..bc0787dd1 100644
+--- a/src/audio/SDL_sysaudio.h
++++ b/src/audio/SDL_sysaudio.h
+@@ -342,6 +342,15 @@ struct SDL_AudioDevice
+     // Size of work_buffer (and mix_buffer) in bytes.
+     int work_buffer_size;
+ 
++#ifdef SDL_PLATFORM_DOS
++    /* DOS-PORT patch 0197: what the bound streams actually supplied to the buffer the current
++       iteration hands PlayDevice, against what it asked for (the same units: device bytes on the
++       simple-copy path, float work bytes on the mix path; the largest single stream's supply).
++       0 supplied = the whole buffer is the core's silence padding for an underflow. */
++    int dos_pull_got;
++    int dos_pull_wanted;
++#endif
++
+     // A thread to feed the audio device
+     SDL_Thread *thread;
+ 
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index f2355e51d..32e947b68 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -4436,7 +4436,23 @@ static bool DOSSOUNDBLASTER_PlayDevice(SDL_AudioDevice *device, const Uint8 *buf
+        sound (the ring then plays the next audible chunk early). Write it like
+        any other buffer. Default false: a port that never calls the API gets
+        the gate exactly as before. */
+-    if (g_dos_silence_detect_enabled && !g_dos_audio_quiescence_gate_disabled && !g_dos_audio_content_active) {
++    /* DOS-PORT patch 0197: ...but a buffer the bound streams supplied NOTHING to is not the
++       content's silence: it is the core padding an underflow (SDL_audio.c pads a short pull and
++       still calls PlayDevice). Writing it while content is active inserts that silence into the
++       middle of the sound -- after a main-thread stall longer than the ring, one padded chunk per
++       background iteration until the engine mixes again, and the rest of the clip then plays late
++       by all of it (dosags lab-journeys: pcm_unaccounted -156, ~7 s, over 19 forced 1.5 s stalls).
++       So such a buffer goes to the gate as if content were not active. A PARTLY filled buffer is
++       written as before (its real samples are content; the padded tail is at most one chunk). */
++    bool underflow_pad = false;
++    if (g_dos_audio_content_active && device->dos_pull_wanted > 0) {
++        if (device->dos_pull_got == 0) {
++            underflow_pad = true;
++        } else if (device->dos_pull_got < device->dos_pull_wanted) {
++            dos_port_audio_partial_pulls++;
++        }
++    }
++    if (g_dos_silence_detect_enabled && !g_dos_audio_quiescence_gate_disabled && (!g_dos_audio_content_active || underflow_pad)) {
+         bool all_silence;
+         /* DOSKUTSU patch (Phase 11 patch 0057): Shape D mixer-flag
+            fast-path. When SHAPE=D is engaged, replace the Shape A
+@@ -4550,6 +4566,9 @@ static bool DOSSOUNDBLASTER_PlayDevice(SDL_AudioDevice *device, const Uint8 *buf
+         }
+         if (all_silence) {
+             dos_port_audio_skipped_silent_count++; /* DOS-PORT patch 0192 */
++            if (underflow_pad) {
++                dos_port_audio_underflow_pads++; /* DOS-PORT patch 0197 */
++            }
+             /* Skip the ring write -- ring continues to drain via IRQ ->
+                ISR increments consecutive-silent-IRQ counter -> DSP
+                auto-engage idle-pause fires when threshold met -> IRQ-5
+diff --git a/src/core/dos/SDL_dos_audio_synth.c b/src/core/dos/SDL_dos_audio_synth.c
+index 4036cd640..1120adeb3 100644
+--- a/src/core/dos/SDL_dos_audio_synth.c
++++ b/src/core/dos/SDL_dos_audio_synth.c
+@@ -1979,6 +1979,13 @@ volatile uint32_t dos_port_audio_ring_overwrite_count = 0;
+ volatile uint32_t dos_port_audio_skipped_silent_count = 0;
+ volatile uint32_t dos_port_audio_idle_pause_count = 0;
+ 
++/* DOS-PORT patch 0197: while content is active, buffers that were ENTIRELY the core's underflow
++   padding (the bound streams supplied nothing) and so went to the silence gate instead of the
++   ring; and buffers the streams only PARTLY filled, written with their padded tail. Monotonic;
++   never reset; read by the engine. */
++volatile uint32_t dos_port_audio_underflow_pads = 0;
++volatile uint32_t dos_port_audio_partial_pulls = 0;
++
+ /* DOSKUTSU patch (Phase 11 patch 0071): Lever 3 ISR-channel-pool
+    active counter. Dual-writer (engine ++ in SDL_DOSSfxSynthStart, ISR
+    -- at end-of-buffer). Atomicity required: both writers use
+diff --git a/src/core/dos/SDL_dos_audio_synth.h b/src/core/dos/SDL_dos_audio_synth.h
+index 42088451f..4450d435f 100644
+--- a/src/core/dos/SDL_dos_audio_synth.h
++++ b/src/core/dos/SDL_dos_audio_synth.h
+@@ -444,6 +444,8 @@ extern volatile uint32_t dos_port_audio_ring_overwrite_count;
+    SDL_dos_audio_synth.c. */
+ extern volatile uint32_t dos_port_audio_skipped_silent_count;
+ extern volatile uint32_t dos_port_audio_idle_pause_count;
++extern volatile uint32_t dos_port_audio_underflow_pads;  /* DOS-PORT patch 0197 */
++extern volatile uint32_t dos_port_audio_partial_pulls;
+ 
+ /* DOSKUTSU patch (SDL/0096): cumulative WaveBlaster MIDI byte-dispatch
+    counter. Incremented once per SDL_DOSMpu401WriteByte (every MIDI byte
+-- 
+2.47.3
+

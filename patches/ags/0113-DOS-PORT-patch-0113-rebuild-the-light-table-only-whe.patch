@@ -1,0 +1,107 @@
+From b4161bca82d2745c26ffc7bf7ddfc43273227a62 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 18 Sep 2026 13:42:29 -0700
+Subject: [PATCH 113/113] DOS-PORT: patch 0113 -- rebuild the light table only
+ when its inputs change
+
+create_light_table() is 1351 ms on HW-486-66 (patch 0109's brackets):
+255*256 = 65,280 bestfit_color() calls, each a scan of the palette. It
+runs on EVERY load_new_room(), because ac/room.cpp nulls color_map
+immediately before calling generate_light_table(), defeating that
+function's own guard. So it is paid at every room transition during play
+and at every save restore (game/savegame.cpp:834), not only at startup --
+a hitch the player feels at a door, not just a load cost.
+
+room.cpp's null is deliberately NOT removed: it is what discards a
+blender a script may have set, so removing it would change behaviour.
+Only the redundant rebuild is skipped. maincoltable is written by nothing
+except the create_light_table() call here, so a table built earlier is
+still intact when it is reused.
+
+The cache key is every input create_light_table() actually branches on:
+the 256-entry palette AND whether rgb_map is set. With rgb_map non-null
+it takes a different branch (libsrc/allegro/src/color.c:765) and produces
+a different table from the same palette, and ac/room.cpp:854 sets rgb_map
+for games with anti-aliased sprites -- so keying on the palette alone
+would have been a real correctness bug.
+
+Byte-identity is measured rather than argued: with patch 0111's
+DOSAGS_LIGHTTABLE_VERIFY=1, a rebuild on an unchanged palette memcmp'd
+equal across all 65,536 entries on the bench8 full scene.
+
+Scope, stated plainly: this cannot touch the FIRST build, so it does
+nothing for a single-room benchmark and nothing for Gate 1. The saving is
+entirely on the second and later calls.
+---
+ Engine/ac/region.cpp | 55 ++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 55 insertions(+)
+
+diff --git a/Engine/ac/region.cpp b/Engine/ac/region.cpp
+index e32e5fdb1..9e128b387 100644
+--- a/Engine/ac/region.cpp
++++ b/Engine/ac/region.cpp
+@@ -195,6 +195,61 @@ void generate_light_table()
+         }
+ #endif
+ #ifdef __DJGPP__
++        // DOS-PORT patch 0113: rebuild only when the inputs changed.
++        //
++        // create_light_table() is 1351 ms on HW-486-66 (patch 0109's
++        // brackets): 255*256 = 65,280 bestfit_color() calls, each a scan
++        // of the palette. It runs on EVERY load_new_room(), because
++        // ac/room.cpp nulls color_map immediately before calling this,
++        // which defeats the guard above -- so it is paid at every room
++        // transition and every save restore (game/savegame.cpp:834), not
++        // just at startup.
++        //
++        // room.cpp's null is NOT removed: it is what discards a blender a
++        // script may have set. Only the redundant rebuild is skipped, and
++        // maincoltable is written by nothing but the call below, so a
++        // table built earlier is still intact when reused.
++        //
++        // The key is every input create_light_table() branches on: the
++        // 256-entry palette AND whether rgb_map is set. With rgb_map
++        // non-null it takes a different branch
++        // (libsrc/allegro/src/color.c:765) and produces a DIFFERENT table
++        // from the same palette; ac/room.cpp:854 sets rgb_map for games
++        // with anti-aliased sprites, so keying on the palette alone would
++        // be a real correctness bug, not a theoretical one.
++        //
++        // Byte-identity is measured, not argued: with patch 0111's
++        // DOSAGS_LIGHTTABLE_VERIFY=1 a rebuild on an unchanged palette
++        // memcmp'd equal across all 65,536 entries (bench8 full scene).
++        {
++            static unsigned char dp_pal[768];
++            static bool dp_pal_valid = false;
++            static bool dp_had_rgb_map = false;
++            const uclock_t _dp_lt_skip = uclock();
++            unsigned char cur[768];
++            for (int i = 0; i < 256; i++)
++            {
++                cur[i * 3 + 0] = (unsigned char)palette[i].r;
++                cur[i * 3 + 1] = (unsigned char)palette[i].g;
++                cur[i * 3 + 2] = (unsigned char)palette[i].b;
++            }
++            const bool has_rgb_map = (rgb_map != nullptr);
++            if (dp_pal_valid && has_rgb_map == dp_had_rgb_map &&
++                memcmp(cur, dp_pal, sizeof(dp_pal)) == 0)
++            {
++                dos_port_startup_timing.lighttable_reused++;
++                debug_script_log("DOSAGS_LIGHTTABLE call=%ld action=reused ms=%ld reused_total=%ld",
++                                 dos_port_startup_timing.lighttable_rebuilt +
++                                     dos_port_startup_timing.lighttable_reused,
++                                 (long)((uclock() - _dp_lt_skip) * 1000 / UCLOCKS_PER_SEC),
++                                 dos_port_startup_timing.lighttable_reused);
++                color_map = &maincoltable;
++                return;
++            }
++            memcpy(dp_pal, cur, sizeof(dp_pal));
++            dp_pal_valid = true;
++            dp_had_rgb_map = has_rgb_map;
++        }
+         // DOS-PORT patch 0112: time EVERY generate_light_table() call.
+         // Measurement only; the table is still rebuilt unconditionally.
+         //
+-- 
+2.47.3
+

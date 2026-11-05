@@ -1,0 +1,238 @@
+From e446cb8f7206aecf96f065c63b27b66ad5e045cb Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 21 Sep 2026 13:28:38 -0700
+Subject: [PATCH] DOS-PORT: patch 0192 -- DOSAGS_PRESENT_VERIFY: count pixels
+ the engine changed but never pushed (instrument only, off by default)
+
+Instrument only. With DOSAGS_PRESENT_VERIFY unset the binary's behaviour is
+unchanged: one cached getenv per process and a not-taken branch per present.
+
+Why. The operator saw chains of whole copies of the walking character, leftover
+speech-text fragments and garbled boxes on the physical screen during the AGS Quest
+demo at 640x480x16 1:1 letterboxed with the virtual-screen alias on, on both the
+export binary and the ags 0191 binary. Every check we had passed: BENCH capture
+hashes, the AGS Quest PH01-PH03 hashes. Cause: all of them read virtualScreen, the
+engine's own RAM frame (SaveScreenShot -> create_game_screenshot ->
+GetCopyOfScreenIntoBitmap), never the pushes to the screen, so a region that
+changed in RAM and was not in any pushed rect is invisible to them. That is what a
+trail is, and it is a present-side defect by construction.
+
+What it does. A shadow copy of what has been pushed: after each present, copy into
+the shadow exactly what the push copies (the whole surface, or each rect given to
+SDL_UpdateWindowSurfaceRects), then count the window surface's pixels that differ
+from the shadow -- different in RAM, in no pushed rect, i.e. stale on the screen.
+Reports frames / stale_frames / stale_px / stale_px_max / first_stale_frame / bbox
+at shutdown (presentverify line) and logs the first six stale frames with the
+pushed-rect summary (whole / narrowed / multi / nrects). One question: are the
+pushed rects covering every change, and if not, where.
+
+It reads the whole surface twice per present, so it is a DIAGNOSTIC: never set it in
+a timed cell. It measures the engine's rect list, not the SDL backend's copy of it;
+a screen-level capture is what tests the backend, and the two together separate the
+two halves.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_017rABavUPepUfapaKZYKPvD
+---
+ Engine/gfx/ali3dsw.cpp | 128 +++++++++++++++++++++++++++++++++++++++++
+ Engine/main/quit.cpp   |  17 ++++++
+ 2 files changed, 145 insertions(+)
+
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index 6ca8d3f52..5fca92bbe 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -1266,6 +1266,117 @@ static __attribute__((noinline)) bool FramesEqualFast(const void *a, const void
+     return true;
+ }
+ 
++#ifdef __DJGPP__
++// DOS-PORT patch 0192: a shadow of what has been PUSHED to the screen, so "the
++// engine's frame differs from the screen" is a number instead of a photograph.
++//
++// Everything else that checks a frame -- SaveScreenShot, the BENCH capture hashes,
++// the AGS Quest PH01-PH03 hashes -- reads virtualScreen, the engine's own RAM
++// frame (GetCopyOfScreenIntoBitmap), and so cannot see a region that changed in RAM
++// and was never pushed. That is what a trail is.
++//
++// After each present, copy into the shadow exactly what the push copies (the whole
++// surface, or each rect handed to SDL_UpdateWindowSurfaceRects), then count the
++// pixels of the window surface that differ from the shadow: pixels that are
++// different in RAM and were not in any pushed rect, i.e. stale on the screen. Zero
++// on every frame if the pushed rects cover every change. Compares the whole
++// surface, so it is a diagnostic (a frame read twice), off unless
++// DOSAGS_PRESENT_VERIFY=1, and must not be on in a timed cell.
++struct DosPortPresentVerify
++{
++    std::vector<unsigned char> shadow;
++    long frames = 0, stale_frames = 0;
++    long long stale_px_total = 0;
++    long stale_px_max = 0;
++    long first_stale_frame = -1;
++    int  bx1 = 1 << 30, by1 = 1 << 30, bx2 = -1, by2 = -1;   // bbox of stale pixels over the run
++    int  logged = 0;
++};
++static DosPortPresentVerify dos_port_pv;
++long dos_port_pv_frames = 0, dos_port_pv_stale_frames = 0, dos_port_pv_stale_max = 0, dos_port_pv_first = -1;
++long long dos_port_pv_stale_px = 0;
++int dos_port_pv_bbox[4] = { 0, 0, -1, -1 };
++
++static void dos_port_present_verify(SDL_Surface *s, bool whole, const SDL_Rect *r, int n,
++                                    bool narrowed, bool multi)
++{
++    if (!s || !s->pixels)
++        return;
++    const int bpp = SDL_BYTESPERPIXEL(s->format);
++    const int w = s->w, h = s->h, pitch = s->pitch;
++    DosPortPresentVerify &v = dos_port_pv;
++    if (v.shadow.size() != (size_t)pitch * h)
++        v.shadow.assign((size_t)pitch * h, 0);   // a fresh mode is cleared to 0 by the mode set
++    const unsigned char *src = (const unsigned char *)s->pixels;
++    if (whole)
++    {
++        std::memcpy(v.shadow.data(), src, (size_t)pitch * h);
++    }
++    else
++    {
++        for (int i = 0; i < n; ++i)
++        {
++            int x1 = r[i].x, y1 = r[i].y, x2 = r[i].x + r[i].w, y2 = r[i].y + r[i].h;
++            if (x1 < 0) x1 = 0;
++            if (y1 < 0) y1 = 0;
++            if (x2 > w) x2 = w;
++            if (y2 > h) y2 = h;
++            if (x2 <= x1 || y2 <= y1) continue;
++            for (int y = y1; y < y2; ++y)
++                std::memcpy(&v.shadow[(size_t)y * pitch + (size_t)x1 * bpp],
++                            src + (size_t)y * pitch + (size_t)x1 * bpp, (size_t)(x2 - x1) * bpp);
++        }
++    }
++    v.frames++;
++    long stale = 0;
++    int fx1 = 1 << 30, fy1 = 1 << 30, fx2 = -1, fy2 = -1;
++    for (int y = 0; y < h; ++y)
++    {
++        const unsigned char *a = src + (size_t)y * pitch;
++        const unsigned char *b = &v.shadow[(size_t)y * pitch];
++        if (std::memcmp(a, b, (size_t)w * bpp) == 0)
++            continue;
++        for (int x = 0; x < w; ++x)
++        {
++            if (std::memcmp(a + (size_t)x * bpp, b + (size_t)x * bpp, bpp) != 0)
++            {
++                stale++;
++                if (x < fx1) fx1 = x;
++                if (x > fx2) fx2 = x;
++                if (y < fy1) fy1 = y;
++                if (y > fy2) fy2 = y;
++            }
++        }
++    }
++    if (stale > 0)
++    {
++        v.stale_frames++;
++        v.stale_px_total += stale;
++        if (stale > v.stale_px_max) v.stale_px_max = stale;
++        if (v.first_stale_frame < 0) v.first_stale_frame = v.frames;
++        if (fx1 < v.bx1) v.bx1 = fx1;
++        if (fy1 < v.by1) v.by1 = fy1;
++        if (fx2 > v.bx2) v.bx2 = fx2;
++        if (fy2 > v.by2) v.by2 = fy2;
++        if (v.logged < 12 || (v.frames % 400) == 0)
++        {
++            v.logged++;
++            // the pushed rects, so a stale sliver can be read against what missed it
++            char rl[256]; rl[0] = 0; int off = 0;
++            for (int i = 0; i < n && i < 8 && off < 200; ++i)
++                off += snprintf(rl + off, sizeof(rl) - off, " [%d,%d %dx%d]", r[i].x, r[i].y, r[i].w, r[i].h);
++            Debug::Printf("DOS-PORT presentverify STALE frame=%ld stale_px=%ld bbox=%d,%d..%d,%d "
++                          "pushed: whole=%d narrowed=%d multi=%d nrects=%d%s",
++                          v.frames, stale, fx1, fy1, fx2, fy2, (int)whole, (int)narrowed, (int)multi, n, rl);
++        }
++    }
++    dos_port_pv_frames = v.frames; dos_port_pv_stale_frames = v.stale_frames;
++    dos_port_pv_stale_px = v.stale_px_total; dos_port_pv_stale_max = v.stale_px_max;
++    dos_port_pv_first = v.first_stale_frame;
++    dos_port_pv_bbox[0] = v.bx1; dos_port_pv_bbox[1] = v.by1; dos_port_pv_bbox[2] = v.bx2; dos_port_pv_bbox[3] = v.by2;
++}
++#endif
++
+ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+ {
+     SDL_Window *window = sys_get_window();
+@@ -1796,6 +1907,23 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+         // already took a count -- this was always one argument away.
+         const SDL_Rect *push_many = _dp_nrects > 0 ? _dp_rects : &push_rect;
+         const int push_count = _dp_nrects > 0 ? _dp_nrects : 1;
++#ifdef __DJGPP__
++        {
++            // patch 0192: verify what is about to be pushed (DOSAGS_PRESENT_VERIFY=1).
++            static int _pv = -1;
++            if (_pv < 0) { const char *e = getenv("DOSAGS_PRESENT_VERIFY"); _pv = (e && e[0] == '1') ? 1 : 0; }
++            if (_pv)
++            {
++                if (palette_only_present)
++                    dos_port_present_verify(win_surface, false, &dac_rect, 1, false, false);
++                else if (full_update && !_dp_narrowed)
++                    dos_port_present_verify(win_surface, true, nullptr, 0, false, false);
++                else
++                    dos_port_present_verify(win_surface, false, push_many, push_count,
++                                            _dp_narrowed, _dp_nrects > 0);
++            }
++        }
++#endif
+         const bool pushed = palette_only_present
+                                 ? SDL_UpdateWindowSurfaceRects(window, &dac_rect, 1)
+                                 : ((full_update && !_dp_narrowed)
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 245715831..535376e09 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -90,6 +90,15 @@ extern long dos_port_fb_created;       // patch 0186: surface rebuilds
+ }
+ #endif
+ 
++#ifdef __DJGPP__
++// patch 0192: defined in gfx/ali3dsw.cpp inside namespace AGS::Engine::ALSW, so declared there.
++namespace AGS { namespace Engine { namespace ALSW {
++extern long dos_port_pv_frames, dos_port_pv_stale_frames, dos_port_pv_stale_max, dos_port_pv_first;
++extern long long dos_port_pv_stale_px;
++extern int dos_port_pv_bbox[4];
++} } }
++#endif
++
+ #if defined(__DJGPP__) && defined(DOSAGS_SPRITE_RUN_STATS)
+ extern "C" {
+ extern unsigned long dosags_spr_px;
+@@ -100,6 +109,9 @@ extern unsigned long dosags_spr_runs;
+ 
+ using namespace AGS::Common;
+ using namespace AGS::Engine;
++#ifdef __DJGPP__
++using namespace AGS::Engine::ALSW;   // patch 0192: the presentverify counters
++#endif
+ 
+ extern GameSetupStruct game;
+ extern SpriteCache spriteset;
+@@ -384,6 +396,7 @@ void quit(const char *quitmsg)
+             "DOSAGS_FORCE_COLOR_DEPTH",
+             "DOSAGS_MAX_SCALE",       // patch 0101: caps the render-frame scale (bake-off candidate c)
+             "DOSAGS_PRESENT_NO_SKIP", // patch 0099: forces real presents -- changes every fps figure
++            "DOSAGS_PRESENT_VERIFY",  // patch 0192: reads the surface twice per present -- a diagnostic, never a timed cell
+             "DOSAGS_TAS_AUTO_EXIT_TICK",
+             "DOS_PORT_ENVIRONMENT",
+             // patch 0099: the backend's presentation-path switches. They
+@@ -662,6 +675,10 @@ void quit(const char *quitmsg)
+                     extern long dos_port_gui_unchanged_tally[64];
+                     extern long dos_port_gui_skip_tally[64];    // patch 0191
+                     extern long dos_port_gui_flush_n, dos_port_gui_flush_late_n;
++                    if (dos_port_pv_frames)
++                        Debug::Printf("DOS-PORT presentverify frames=%ld stale_frames=%ld stale_px=%lld stale_px_max=%ld first_stale_frame=%ld bbox=%d,%d..%d,%d",
++                            dos_port_pv_frames, dos_port_pv_stale_frames, dos_port_pv_stale_px, dos_port_pv_stale_max,
++                            dos_port_pv_first, dos_port_pv_bbox[0], dos_port_pv_bbox[1], dos_port_pv_bbox[2], dos_port_pv_bbox[3]);
+                     extern long dos_port_gui_flush_tally[64];
+                     extern long dos_port_gui_flush_hidden_n, dos_port_gui_flush_props_n, dos_port_gui_flush_flag_n;
+                     for (int _g = 0; _g < 64; ++_g)
+-- 
+2.47.3
+

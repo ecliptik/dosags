@@ -1,0 +1,67 @@
+From c2cdfccd768756b5dc6f5b892722a061da553d43 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 13:39:59 -0700
+Subject: [PATCH] [AGS] FreeType: use the portable ANSI ftsystem.c under DJGPP,
+ not unix
+
+builds/unix/ftsystem.c (the "assume unix-y" else() branch's choice for
+any non-Windows platform, DOS included) uses mmap()/PROT_READ/
+MAP_PRIVATE for file I/O -- confirmed absent under DJGPP by
+tests/probes/djgpp-runtime/ (mmap/mprotect symbols missing;
+<sys/mman.h> exists but is a broken stub). Found build-testing patches
+0001-0009: this is the first real source-compile failure once configure
+succeeds, not a configure-time gap like Phase A's.
+
+FreeType ships its own portable "ANSI-specific" implementation,
+src/base/ftsystem.c -- plain stdio fopen/fread, no platform-specific
+I/O API, already used by the WIN32 branch. Pairs it with the same
+generic src/base/ftdebug.c the unix branch uses (not
+builds/win32/ftdebug.c, which is Windows-specific).
+
+Not in PATCH-SEQUENCE.md's original 22-patch sequence -- that document
+only analyzed CMake-configure-time blockers, not source compilation.
+Corrected in the same commit as this finding, per this repo's own
+conventions (never silently).
+---
+ Common/libsrc/freetype-2.1.3/CMakeLists.txt | 21 +++++++++++++++++----
+ 1 file changed, 17 insertions(+), 4 deletions(-)
+
+diff --git a/Common/libsrc/freetype-2.1.3/CMakeLists.txt b/Common/libsrc/freetype-2.1.3/CMakeLists.txt
+index 7cefd7f27..5cb9fbcf8 100644
+--- a/Common/libsrc/freetype-2.1.3/CMakeLists.txt
++++ b/Common/libsrc/freetype-2.1.3/CMakeLists.txt
+@@ -42,14 +42,27 @@ target_sources(freetype
+ )
+ 
+ if (WIN32)
+-    target_sources(freetype PRIVATE 
+-        src/base/ftsystem.c 
++    target_sources(freetype PRIVATE
++        src/base/ftsystem.c
+         builds/win32/ftdebug.c
+     )
++elseif (DOS)
++    # DOS-PORT: builds/unix/ftsystem.c (the "assume unix-y" else() branch
++    # below) uses mmap()/PROT_READ/MAP_PRIVATE for file I/O, none of which
++    # DJGPP provides (confirmed absent by tests/probes/djgpp-runtime/;
++    # <sys/mman.h> exists but is a broken stub). src/base/ftsystem.c is
++    # FreeType's own portable "ANSI-specific" implementation -- plain
++    # stdio fopen/fread, no platform-specific I/O API -- used here instead,
++    # paired with the same generic src/base/ftdebug.c the unix branch uses
++    # (not builds/win32/ftdebug.c, which is Windows-specific).
++    target_sources(freetype PRIVATE
++        src/base/ftsystem.c
++        src/base/ftdebug.c
++    )
+ else()
+     # Currently assume all non-windows platforms are unix-y
+-    target_sources(freetype PRIVATE 
+-        builds/unix/ftsystem.c 
++    target_sources(freetype PRIVATE
++        builds/unix/ftsystem.c
+         src/base/ftdebug.c
+     )
+ endif()
+-- 
+2.47.3
+

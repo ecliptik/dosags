@@ -1,0 +1,195 @@
+From a9602b875d4aa6257656fadff69257d1db6060b4 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 18 Sep 2026 06:55:56 -0700
+Subject: [PATCH] DOS-PORT: patch 0104 -- palette-only present on an 8-bit
+ palette change
+
+An 8-bit screen fade changes the DAC and nothing else. ScreenFadeSoftware
+renders the scene to the back buffer exactly once in Begin() and each of
+its 13 steps only interpolates the palette (ac/screen.cpp:245-251,
+:305-315); Draw() just calls render_to_screen(), and the transition's own
+Run() loop never re-renders either. So every step handed Present() pixels
+bit-identical to the ones already in the window surface, and Present()
+re-blitted and re-pushed all of them because `unchanged` required
+!palette_changed.
+
+Measured cost of that: present_blit 33.72 ms + present_update_window
+22.74 ms per step, and TNFADE1's stall tick 1 is 739 ms = 13 x 56.8 ms --
+the step count from source and the per-step cost from the log agreeing to
+within 1%.
+
+Present() now splits the test into pixels_same and palette_changed:
+identical pixels with an unchanged palette still return early, while
+identical pixels with a CHANGED palette skip the cache memcpy and the
+blit and push a 1x1 rect. That rect is enough because both backend flush
+paths decide the DAC reprogram from the palette version alone and call
+ProgramVGADAC() independently of the rect list (SDL_dosframebuffer.c
+~:1901 direct, ~:2597-2625 normal/banked), so the new palette still
+reaches the hardware while essentially no pixels move.
+
+Gated inside the existing clean_case, so it already requires
+margins_clean, dst_inside, matching formats, no flip and a frame under
+100,000 bytes -- in particular a present that still owes a margin fill
+takes the full path, since that one does change pixels.
+
+presents_palette_only counts them; it is a SUBSET of presents_real (they
+do reach the flush) and it pulls present_update_window's mean down.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hnodGZ6cg8CWuFXEDTsUq
+---
+ Engine/gfx/ali3dsw.cpp             | 71 ++++++++++++++++++++++++------
+ Engine/main/dos_port_tick_timing.h |  8 ++++
+ Engine/main/game_run.cpp           |  5 ++-
+ 3 files changed, 68 insertions(+), 16 deletions(-)
+
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index 6d3a3a341..88237d841 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -1127,6 +1127,24 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+     const bool small_enough_to_check = frame_bytes_for_skip <= 100000u;
+     const bool clean_case = skip_allowed && small_enough_to_check && (flip == kFlip_None) &&
+         (blit_src->format == win_surface->format) && dst_inside && margins_clean;
++    // DOS-PORT patch 0104: a palette-only present. On an 8-bit game a
++    // screen fade changes the DAC and nothing else -- ScreenFadeSoftware
++    // renders the scene to the back buffer ONCE in Begin() and each of its
++    // 13 steps only interpolates the palette (ac/screen.cpp), and the
++    // transition's own Run() loop never re-renders either. So the pixels
++    // handed to us are bit-identical to the ones already sitting in the
++    // window surface from the previous present, and re-blitting them and
++    // re-pushing the whole window is pure waste: measured 33.72 ms blit +
++    // 22.74 ms push per step, and stall tick 1 of TNFADE1 is 739 ms =
++    // 13 x 56.8 ms, matching the source's step count to within 1%.
++    //
++    // What still has to happen is the DAC reprogram. That is safe to
++    // reach with a minimal rect: both backend flush paths decide it from
++    // the palette VERSION alone and call ProgramVGADAC() independently of
++    // the rect list (SDL_dosframebuffer.c, the direct path at ~:1901 and
++    // the normal/banked one at ~:2597-2625), so a 1x1 push still lands the
++    // new palette on the hardware while copying essentially nothing.
++    bool palette_only_present = false;
+     if (clean_case)
+     {
+         const size_t frame_bytes = (size_t)blit_src->pitch * (size_t)blit_src->h;
+@@ -1137,9 +1155,9 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+             _lastPresentedPixels.size() == frame_bytes &&
+             _lastPresentedXoff == xoff && _lastPresentedYoff == yoff &&
+             _lastPresentedFlip == flip;
+-        const bool unchanged = same_geometry && !palette_changed &&
++        const bool pixels_same = same_geometry &&
+             FramesEqualFast(blit_src->pixels, _lastPresentedPixels.data(), frame_bytes);
+-        if (unchanged)
++        if (pixels_same && !palette_changed)
+         {
+ #ifdef __DJGPP__
+             dos_port_tick_record_us(dos_port_tick_timing.present_skip_unchanged, 0);
+@@ -1147,16 +1165,29 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+ #endif
+             return;
+         }
+-        // About to render a real change (or this is the first call ever) --
+-        // update the cache to what's about to be presented, so the NEXT
+-        // call can compare against it.
+-        if (_lastPresentedPixels.size() != frame_bytes)
+-            _lastPresentedPixels.resize(frame_bytes);
+-        std::memcpy(_lastPresentedPixels.data(), blit_src->pixels, frame_bytes);
+-        _lastPresentedValid = true;
+-        _lastPresentedXoff = xoff;
+-        _lastPresentedYoff = yoff;
+-        _lastPresentedFlip = flip;
++        if (pixels_same)
++        {
++            // Palette changed, pixels did not: skip the blit and the cache
++            // memcpy below (the cache already holds exactly these bytes),
++            // and fall through to push a minimal rect for the DAC.
++            palette_only_present = true;
++#ifdef __DJGPP__
++            dos_port_tick_timing.presents_palette_only++; // patch 0104
++#endif
++        }
++        else
++        {
++            // About to render a real change (or this is the first call ever) --
++            // update the cache to what's about to be presented, so the NEXT
++            // call can compare against it.
++            if (_lastPresentedPixels.size() != frame_bytes)
++                _lastPresentedPixels.resize(frame_bytes);
++            std::memcpy(_lastPresentedPixels.data(), blit_src->pixels, frame_bytes);
++            _lastPresentedValid = true;
++            _lastPresentedXoff = xoff;
++            _lastPresentedYoff = yoff;
++            _lastPresentedFlip = flip;
++        }
+     }
+     else
+     {
+@@ -1203,6 +1234,12 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+     // to the generic, always-correct SDL_BlitSurfaceScaled() for any
+     // case it does not specifically handle.
+     bool blitted = false;
++    if (palette_only_present)
++    {
++        // patch 0104: the window surface already holds these exact pixels.
++        blitted = true;
++    }
++    else
+     {
+ #ifdef __DJGPP__
+         DosPortTickScope _dos_port_blit_scope(dos_port_tick_timing.present_blit);
+@@ -1231,8 +1268,14 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+         // NORMAL LFB path ignores the rect list and copies the whole
+         // surface regardless -- this is free there and only pays off on its
+         // direct-framebuffer path, SDL_DOS_ALLOW_DIRECT_FRAMEBUFFER=1.)
+-        const bool pushed = full_update ? SDL_UpdateWindowSurface(window)
+-                                        : SDL_UpdateWindowSurfaceRects(window, &dst, 1);
++        // patch 0104: a palette-only present needs the flush to RUN (that
++        // is where ProgramVGADAC() lives) but has no pixels to move, so it
++        // asks for the smallest legal rect instead of dst or the window.
++        const SDL_Rect dac_rect = { dst.x, dst.y, 1, 1 };
++        const bool pushed = palette_only_present
++                                ? SDL_UpdateWindowSurfaceRects(window, &dac_rect, 1)
++                                : (full_update ? SDL_UpdateWindowSurface(window)
++                                               : SDL_UpdateWindowSurfaceRects(window, &dst, 1));
+         if (!pushed)
+             Debug::Printf(kDbgMsg_Warn, "SDLRenderer: SDL_UpdateWindowSurface failed: %s", SDL_GetError());
+     }
+diff --git a/Engine/main/dos_port_tick_timing.h b/Engine/main/dos_port_tick_timing.h
+index 001919d68..3d288487e 100644
+--- a/Engine/main/dos_port_tick_timing.h
++++ b/Engine/main/dos_port_tick_timing.h
+@@ -367,6 +367,14 @@ struct DosPortTickTiming
+     // Present(), so any fps figure can state what it measured.
+     long presents_real = 0;    // reached SDL_UpdateWindowSurface()
+     long presents_skipped = 0; // returned early: frame byte-identical to the last one presented
++    // patch 0104: pixels byte-identical but the palette changed (an 8-bit
++    // fade step) -- no blit, no cache copy, a 1x1 push so the backend
++    // still reprograms the DAC. Counted separately from both of the
++    // above: these presents DID reach the flush, so they are a SUBSET of
++    // presents_real (real + skipped still equals render_passes), and they
++    // also pull present_update_window's mean down, since a 1x1 push is
++    // nearly free next to a full-window one.
++    long presents_palette_only = 0;
+ 
+     // patch 0093 (P0 item 4): which blit a real present actually took --
+     // patch 0087's TryFastIntegerNearestBlit() vs the generic
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 407d6da57..669c3bbf5 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1583,9 +1583,10 @@ static void dos_persec_sample()
+ void dos_port_yardstick_emit(FILE *log)
+ {
+     // What fps_p50/fps_p95 actually counted, stated next to them.
+-    fprintf(log, "DOS-PORT fps_basis counts=render_passes render_passes=%lu presents_real=%ld presents_skipped=%ld\n",
++    fprintf(log, "DOS-PORT fps_basis counts=render_passes render_passes=%lu presents_real=%ld presents_skipped=%ld presents_palette_only=%ld\n",
+         (unsigned long)GameTimer.RenderCounter,
+-        dos_port_tick_timing.presents_real, dos_port_tick_timing.presents_skipped);
++        dos_port_tick_timing.presents_real, dos_port_tick_timing.presents_skipped,
++        dos_port_tick_timing.presents_palette_only);
+     fprintf(log, "DOS-PORT blit_path fast=%ld generic=%ld src_bytes_per_pixel=%d unscaled=%ld\n",
+         dos_port_tick_timing.blits_fast, dos_port_tick_timing.blits_generic,
+         dos_port_tick_timing.blit_src_bytes_per_pixel, dos_port_tick_timing.blits_unscaled);
+-- 
+2.47.3
+

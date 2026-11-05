@@ -1,0 +1,213 @@
+From d04ab1986340e04183e5880f7825f932aa2bcf32 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 18 Sep 2026 12:16:04 -0700
+Subject: [PATCH] DOS-PORT: patch 0109 -- sub-bracket load_new_room(),
+ measurement only
+
+load_new_room() is ~1800 ms of the pre-loop on HW-486-66 and is now the
+largest single term left, but nothing said which part of it. This splits
+it the same way patch 0105 split the pre-loop and 0107 split
+SetRestartPoint(): uclock() deltas around each phase, written into
+dos_port_startup_timing and emitted with the rest of the startup report.
+No behaviour change.
+
+Eight brackets, in source order: LoadRoom() (CLIB read, LZW background
+decompression, RLE masks, the RoomStruct deep copy), per-frame background
+PrepareSpriteForUse(), the walkable/walk-behind mask preparation,
+object/hotspot/region setup, compile_room_script(), generate_light_table(),
+the pathfinder/drawdata init, and the whole call so the remainder is
+visible rather than assumed.
+
+Set on every room load, not only the first, so in-game room transitions
+can be read with the same instrument -- the pre-loop is merely where the
+cost was noticed.
+
+Accounting checked under DOSBox-X before going near hardware: the seven
+phases sum to 319 of a 322 ms roomload_total_ms, and roomload_total_ms
+matches game_start.cpp's independently measured preloop_room_load_ms
+exactly.
+---
+ Engine/ac/event.cpp                   |  9 +++++
+ Engine/ac/room.cpp                    | 54 +++++++++++++++++++++++++++
+ Engine/main/dos_port_startup_timing.h | 14 +++++++
+ 3 files changed, 77 insertions(+)
+
+diff --git a/Engine/ac/event.cpp b/Engine/ac/event.cpp
+index cade44f12..f94e1db7c 100644
+--- a/Engine/ac/event.cpp
++++ b/Engine/ac/event.cpp
+@@ -286,6 +286,15 @@ void process_event(const AGSEvent *evp)
+                         debug_script_log("restart_screenshot_ms=%ld", st.restart_screenshot_ms);
+                         debug_script_log("restart_savegame_ms=%ld", st.restart_savegame_ms);
+                         debug_script_log("restart_total_ms=%ld", st.restart_total_ms);
++                        // patch 0109: what load_new_room()'s ~1800 ms actually is
++                        debug_script_log("roomload_loadroom_ms=%ld", st.roomload_loadroom_ms);
++                        debug_script_log("roomload_bgprep_ms=%ld", st.roomload_bgprep_ms);
++                        debug_script_log("roomload_maskprep_ms=%ld", st.roomload_maskprep_ms);
++                        debug_script_log("roomload_objsetup_ms=%ld", st.roomload_objsetup_ms);
++                        debug_script_log("roomload_script_ms=%ld", st.roomload_script_ms);
++                        debug_script_log("roomload_lighttable_ms=%ld", st.roomload_lighttable_ms);
++                        debug_script_log("roomload_drawdata_ms=%ld", st.roomload_drawdata_ms);
++                        debug_script_log("roomload_total_ms=%ld", st.roomload_total_ms);
+                         debug_script_log("total_to_first_frame_ms=%ld", t_ms);
+                         debug_script_log("[DOS-PORT-STARTUP-END]");
+                     }
+diff --git a/Engine/ac/room.cpp b/Engine/ac/room.cpp
+index da77c65de..6c49d901f 100644
+--- a/Engine/ac/room.cpp
++++ b/Engine/ac/room.cpp
+@@ -572,6 +572,17 @@ HError LoadRoom(const String &filename, RoomStruct *room, AssetManager *mgr, boo
+ void load_new_room(int newnum, CharacterInfo *forchar)
+ {
+     debug_script_log("Loading room %d", newnum);
++#ifdef __DJGPP__
++    // DOS-PORT patch 0109: sub-bracket load_new_room(), measurement only.
++    // Same shape as patch 0105's pre-loop brackets: uclock() deltas around
++    // each phase, written into dos_port_startup_timing. No behaviour change.
++#define DOS_PORT_RL_T0() (uclock())
++#define DOS_PORT_RL_MS(t0) \
++    ((long)((uclock() - (t0)) * 1000 / UCLOCKS_PER_SEC))
++    const uclock_t _dp_rl_all = DOS_PORT_RL_T0();
++    uclock_t _dp_rl = 0;
++    (void)_dp_rl;
++#endif
+ #ifdef __DJGPP__
+     // DOS-PORT patch 0078: the TRUE first-room-load entry point -- the
+     // very first room is set via game_start.cpp's own direct
+@@ -613,7 +624,13 @@ void load_new_room(int newnum, CharacterInfo *forchar)
+     // load the room from disk
+     set_our_eip(200);
+     thisroom.GameID = NO_GAME_ID_IN_ROOM_FILE;
++#ifdef __DJGPP__
++    _dp_rl = DOS_PORT_RL_T0();
++#endif
+     HError err = LoadRoom(room_filename, &thisroom, AssetMgr.get(), game.IsLegacyHiRes(), game.SpriteInfos);
++#ifdef __DJGPP__
++    dos_port_startup_timing.roomload_loadroom_ms = DOS_PORT_RL_MS(_dp_rl);
++#endif
+     if (!err)
+     {
+         quitprintf("Unable to load the room file '%s'. Error: %s", room_filename.GetCStr(), err->FullMessage().GetCStr());
+@@ -656,11 +673,17 @@ void load_new_room(int newnum, CharacterInfo *forchar)
+         }
+     }
+ 
++#ifdef __DJGPP__
++    _dp_rl = DOS_PORT_RL_T0();
++#endif
+     for (size_t i = 0; i < thisroom.BgFrameCount; ++i)
+     {
+         thisroom.BgImages[i] = PrepareSpriteForUse(
+             thisroom.BgImages[i], false /* no alpha */, false /* no keep mask */, thisroom.BgFrames[i].Palette);
+     }
++#ifdef __DJGPP__
++    dos_port_startup_timing.roomload_bgprep_ms = DOS_PORT_RL_MS(_dp_rl);
++#endif
+ 
+     set_our_eip(202);
+     // Update game viewports
+@@ -674,6 +697,9 @@ void load_new_room(int newnum, CharacterInfo *forchar)
+     // Make sure the room gfx and masks are matching game's native res
+     convert_room_background_to_game_res();
+ 
++#ifdef __DJGPP__
++    _dp_rl = DOS_PORT_RL_T0();
++#endif
+     // walkable_areas_temp is used by the pathfinder to generate a
+     // copy of the walkable areas - allocate it here to save time later
+     delete walkable_areas_temp;
+@@ -688,6 +714,10 @@ void load_new_room(int newnum, CharacterInfo *forchar)
+     set_our_eip(204);
+     redo_walkable_areas();
+     walkbehinds_recalc();
++#ifdef __DJGPP__
++    dos_port_startup_timing.roomload_maskprep_ms = DOS_PORT_RL_MS(_dp_rl);
++    _dp_rl = DOS_PORT_RL_T0();
++#endif
+ 
+     set_our_eip(205);
+     // setup objects
+@@ -852,7 +882,14 @@ void load_new_room(int newnum, CharacterInfo *forchar)
+     if (debug_flags & DBG_NOSCRIPT) ;
+     else if (thisroom.CompiledScript)
+     {
++#ifdef __DJGPP__
++        dos_port_startup_timing.roomload_objsetup_ms = DOS_PORT_RL_MS(_dp_rl);
++        _dp_rl = DOS_PORT_RL_T0();
++#endif
+         compile_room_script();
++#ifdef __DJGPP__
++        dos_port_startup_timing.roomload_script_ms = DOS_PORT_RL_MS(_dp_rl);
++#endif
+         if (been_here)
+         {
+             const auto &globaldata = roominst->GetGlobalData();
+@@ -998,7 +1035,13 @@ void load_new_room(int newnum, CharacterInfo *forchar)
+     color_map = nullptr;
+ 
+     set_our_eip(209);
++#ifdef __DJGPP__
++    _dp_rl = DOS_PORT_RL_T0();
++#endif
+     generate_light_table();
++#ifdef __DJGPP__
++    dos_port_startup_timing.roomload_lighttable_ms = DOS_PORT_RL_MS(_dp_rl);
++#endif
+     update_music_volume();
+ 
+     // If we are not restoring a save, update cameras to accomodate for this
+@@ -1011,8 +1054,14 @@ void load_new_room(int newnum, CharacterInfo *forchar)
+         play.UpdateRoomCameras(); // update auto tracking
+     }
+ 
++#ifdef __DJGPP__
++    _dp_rl = DOS_PORT_RL_T0();
++#endif
+     init_room_pathfinder();
+     init_room_drawdata();
++#ifdef __DJGPP__
++    dos_port_startup_timing.roomload_drawdata_ms = DOS_PORT_RL_MS(_dp_rl);
++#endif
+ 
+     set_our_eip(212);
+     invalidate_screen();
+@@ -1036,6 +1085,11 @@ void load_new_room(int newnum, CharacterInfo *forchar)
+     cursor_gstate.MarkChanged();
+     GUIE::MarkAllGUIForUpdate(true, true);
+     pl_run_plugin_hooks(kPluginEvt_EnterRoom, displayed_room);
++#ifdef __DJGPP__
++    dos_port_startup_timing.roomload_total_ms = DOS_PORT_RL_MS(_dp_rl_all);
++#undef DOS_PORT_RL_T0
++#undef DOS_PORT_RL_MS
++#endif
+ }
+ 
+ // new_room: changes the current room number, and loads the new room from disk
+diff --git a/Engine/main/dos_port_startup_timing.h b/Engine/main/dos_port_startup_timing.h
+index a9a5a0404..31917350b 100644
+--- a/Engine/main/dos_port_startup_timing.h
++++ b/Engine/main/dos_port_startup_timing.h
+@@ -77,6 +77,20 @@ struct DosPortStartupTiming
+     long restart_screenshot_ms = -1;  // create_savegame_screenshot(), if OPT_SAVESCREENSHOT
+     long restart_savegame_ms = -1;    // SaveGame(): serialise + optional compress + write
+     long restart_total_ms = -1;       // whole save_game() call, for the remainder
++    // patch 0109: load_new_room()'s own internal split, MEASUREMENT ONLY.
++    // It is ~1800 ms of the pre-loop and is now the largest single term
++    // left. Bracketed at their call sites in ac/room.cpp's
++    // load_new_room(), in source order. Set on EVERY room load, not just
++    // the first, so in-game room transitions can be read too -- the
++    // pre-loop is only where it was noticed.
++    long roomload_loadroom_ms = -1;   // LoadRoom(): CLIB read + LZW backgrounds + RLE masks + RoomStruct deep copy
++    long roomload_bgprep_ms = -1;     // PrepareSpriteForUse() per background frame (colour-depth convert)
++    long roomload_maskprep_ms = -1;   // walkable_areas_temp/walkareabackup alloc+copy, redo_walkable_areas, walkbehinds_recalc
++    long roomload_objsetup_ms = -1;   // object/hotspot/region state + script object registration
++    long roomload_script_ms = -1;     // compile_room_script(): ccInstance create + import fixups (NOT a compiler)
++    long roomload_lighttable_ms = -1; // generate_light_table(): 8-bit only, 255*256 bestfit_color scans
++    long roomload_drawdata_ms = -1;   // init_room_pathfinder() + init_room_drawdata()
++    long roomload_total_ms = -1;      // whole load_new_room(), so the remainder is visible
+     long first_room_load_start_ms = -1;    // room.cpp load_new_room()'s own t_ms, first call only (temp holding value)
+     long first_room_load_ms = -1;          // room.cpp load_new_room() start .. event.cpp AfterFadein ready (final)
+     bool reported = false;            // report emitted once, at the first room-ready event
+-- 
+2.47.3
+

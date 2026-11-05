@@ -1,0 +1,75 @@
+{
+  "sound_off": {
+    "tag": "TNFI1",
+    "run_dir": "/tmp/tnfi1-rundir",
+    "runmanifest_log": "/tmp/tnfi1-rundir/RUNMANI.LOG",
+    "runmanifest": {
+      "schema_version": "1",
+      "environment": "realhw",
+      "binary_sha12": "c4cfbebf6f85",
+      "wave_tag": "TNFI1",
+      "scene": "boot",
+      "env_block_sha": "aa0172bb39a4",
+      "started_utc": "2064-02-01T15:59:45Z",
+      "duration_s": "81",
+      "exit_code": "0",
+      "fps_p50": "0.57",
+      "fps_p95": "0.59",
+      "audio_vital_status": "NA",
+      "regime": "NA",
+      "banner_required_hit": "0",
+      "banner_required_total": "0",
+      "banner_forbidden_hit": "0",
+      "banner_optional_hit": "0",
+      "critical_count": "0",
+      "warn_count": "0",
+      "tick_rate": "2.91",
+      "frames_skipped": "168",
+      "memory_min_free_kb": "155008"
+    },
+    "expected": {
+      "audio_vital_status": "NA",
+      "exit_code": 0
+    },
+    "checks": {
+      "runmanifest_present": {
+        "ok": true
+      },
+      "exit_code": {
+        "ok": true,
+        "expected": 0,
+        "actual": "0"
+      },
+      "critical_count": {
+        "ok": true,
+        "expected": "0",
+        "actual": "0"
+      },
+      "warn_count": {
+        "ok": true,
+        "expected": "0",
+        "actual": "0"
+      },
+      "audio_vital_status": {
+        "ok": true,
+        "expected": "NA",
+        "actual": "NA"
+      },
+      "stdout_present": {
+        "ok": true
+      },
+      "fixed_timestep": {
+        "ok": true,
+        "expected_line": "DOS-PORT fixed-timestep: ENABLED"
+      },
+      "game_speed_40hz": {
+        "ok": false,
+        "gating": false,
+        "tick_rate": 2.91,
+        "band": "40.0 +/- 2%"
+      }
+    },
+    "pass": true,
+    "capture_hash": null
+  }
+}

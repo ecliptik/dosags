@@ -1,0 +1,118 @@
+From d87f44252c59babe4008b4d9d7a6bac77b2df0fe Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 09:42:33 -0700
+Subject: [PATCH] DOS-PORT: patch 0305 -- SetButtonPic: skip the redundant
+ image update when the slot is unchanged
+
+WHY: old verb-template scripts re-assert their buttons' pictures every tick. Maniac Mansion Deluxe
+calls SetButtonPic 20 times a tick, every time with the slot the button already has (11 normal, 9
+mouse-over). Each call still ran Set*Image -> GUIButton::UpdateCurrentImage, which recomputes the
+current image and colours from the button's state. On a 486 the whole post-check body of those calls
+was measured at 0.69 ms/tick (LAB-MMD.md 13.5).
+
+WHAT: in Button_SetNormalGraphic, Button_SetMouseOverGraphic and Button_SetPushedGraphic, Set*Image
+is called only when the slot differs from the stored one. Everything else still runs, in the same
+order: the sprite-size read and SetSize (script may have resized the button), the dynamic-sprite
+callback (a same-slot call is what registers it once sprite n becomes dynamic), and the button
+animation stop.
+
+Exact because UpdateCurrentImage is a pure function of the button's members. Every engine-reachable
+writer of those members already calls it: the image setters, mouse enter/leave and push/release, the
+colour setters (directly or via OnColorsChanged/OnTextColorChanged), SetDynamicColors,
+SetFlatStyle, ReadFromFile and ReadFromSavegame. The one exception, GUIButton::SetButtonFlags, has
+no caller; a comment there now names the dependency. So on an unchanged slot the recomputation writes
+nothing. __DJGPP__-gated, so host builds keep upstream behaviour.
+
+Measured at fixed 40000 cycles on MMD's character select: script event 9.387 -> 9.353 ms/tick
+(-0.034; band -0.01 to -0.06). Determinism guard (state digests every 25 ticks, script events,
+AutoPilot log, PH*.BMP) EQUAL on MMD, AGS Quest and 5 Days (seeded), with baseline-twice and
+perturbation controls. Screen gate pixel-equal at every freeze tick; the controls differ on AGS Quest
+and 5 Days (LAB-MMD.md 15, 16.7).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Common/gui/guibutton.cpp |  4 ++++
+ Engine/ac/button.cpp     | 31 +++++++++++++++++++++++++++----
+ 2 files changed, 31 insertions(+), 4 deletions(-)
+
+diff --git a/Common/gui/guibutton.cpp b/Common/gui/guibutton.cpp
+index 971880406..d1d598f6c 100644
+--- a/Common/gui/guibutton.cpp
++++ b/Common/gui/guibutton.cpp
+@@ -72,6 +72,10 @@ GUIButton::GUIButton()
+     _clickData[kGUIClickRight] = 0;
+ }
+ 
++// DOS-PORT patch 0305: this setter does NOT call UpdateCurrentImage(), although the dynamic-colors
++// and flat-style bits feed it. Engine ac/button.cpp now skips Set*Image on an unchanged slot, relying on
++// every writer of UpdateCurrentImage's inputs having called it; that holds because nothing calls
++// SetButtonFlags. A future caller must call UpdateCurrentImage() here.
+ void GUIButton::SetButtonFlags(int flags)
+ {
+     if (_buttonFlags != flags)
+diff --git a/Engine/ac/button.cpp b/Engine/ac/button.cpp
+index 0db4e600d..e973b2928 100644
+--- a/Engine/ac/button.cpp
++++ b/Engine/ac/button.cpp
+@@ -241,7 +241,12 @@ void Button_SetMouseOverGraphic(GUIButton *butt, int slotn)
+         debug_script_log("GUI %d Button %d mouseover set to slot %d", butt->GetParentID(), butt->GetID(), slotn);
+ 
+     const int old_slotn = butt->GetMouseOverImage();
+-    butt->SetMouseOverImage(slotn);
++#ifdef __DJGPP__
++    if (old_slotn != slotn) // DOS-PORT patch 0305 (see Button_SetNormalGraphic)
++#endif
++    {
++        butt->SetMouseOverImage(slotn);
++    }
+     // NOTE: GUIs currently cannot react to a dynamic sprite change without a direct notification
+     replace_sprite_changed_callback(old_slotn, slotn, butt);
+ 
+@@ -262,14 +267,27 @@ void Button_SetNormalGraphic(GUIButton *butt, int slotn)
+     // NormalGraphic = 0 will turn the Button into a standard colored button
+     if (slotn == 0)
+     {
+-        butt->SetNormalImage(slotn);
++#ifdef __DJGPP__
++        // DOS-PORT patch 0305: an unchanged slot skips only Set*Image, whose UpdateCurrentImage would
++        // recompute exactly the current image and colours (every writer of its inputs already calls it;
++        // see GUIButton::SetButtonFlags). The size sync, sprite callback and animation stop still run.
++        if (old_slotn != slotn)
++#endif
++        {
++            butt->SetNormalImage(slotn);
++        }
+     }
+     // Any other sprite - update the clickable area to the same size as the graphic
+     else
+     {
+         const int width = static_cast<size_t>(slotn) < game.SpriteInfos.size() ? game.SpriteInfos[slotn].Width : 0;
+         const int height = static_cast<size_t>(slotn) < game.SpriteInfos.size() ? game.SpriteInfos[slotn].Height : 0;
+-        butt->SetNormalImage(slotn);
++#ifdef __DJGPP__
++        if (old_slotn != slotn) // DOS-PORT patch 0305 (see the slot-0 branch above)
++#endif
++        {
++            butt->SetNormalImage(slotn);
++        }
+         butt->SetSize(width, height);
+     }
+ 
+@@ -290,7 +308,12 @@ void Button_SetPushedGraphic(GUIButton *butt, int slotn)
+         debug_script_log("GUI %d Button %d pushed set to slot %d", butt->GetParentID(), butt->GetID(), slotn);
+ 
+     const int old_slotn = butt->GetPushedImage();
+-    butt->SetPushedImage(slotn);
++#ifdef __DJGPP__
++    if (old_slotn != slotn) // DOS-PORT patch 0305 (see Button_SetNormalGraphic)
++#endif
++    {
++        butt->SetPushedImage(slotn);
++    }
+     // NOTE: GUIs currently cannot react to a dynamic sprite change without a direct notification
+     replace_sprite_changed_callback(old_slotn, slotn, butt);
+ 
+-- 
+2.47.3
+

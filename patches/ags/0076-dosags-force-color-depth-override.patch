@@ -1,0 +1,144 @@
+From 9b9894069a9d11b6ce865203eee301aadad61386 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 15 Sep 2026 15:26:56 -0700
+Subject: [PATCH] DOS-PORT: patch 0076 -- DOSAGS_FORCE_COLOR_DEPTH benchmarking
+ override
+
+WHY: PLAN.md's 32-bit display path KPI work (2026-09-15) needs same-
+content fps numbers across color depths for two real 32-bit games
+(Shards of God, IOAWN4T) to compare against a 40fps push target. Neither
+game has an 8/16-bit-authored variant, and building a full "convert
+32-bit assets to 16-bit at load" feature (Option 2 from PLAN.md's
+"32-bit display path -- design comparison" section, explicitly NOT the
+chosen production path when Option 1 was picked) turned out to need far
+less new code than that section estimated once actually traced through
+this pinned engine version.
+
+WHAT: a single DOS-guarded (__DJGPP__) hook in engine_load_game_data(),
+reading DOSAGS_FORCE_COLOR_DEPTH (8/16/32, in bits) and overwriting
+game.color_depth (bytes-per-pixel: 1/2/4) immediately after
+load_game_file() succeeds, before Bitmap::SetColorDepth() or any sprite/
+room background is first touched. This one field flip is sufficient
+because sprites already convert to game.GetColorDepth() generically on
+every load (PrepareSpriteForUseImpl, Engine/ac/draw.cpp) via the sprite
+cache, and -- a real correction to PLAN.md's own design-comparison
+session, which only checked Common/game/roomstruct.cpp's FixBitmap()/
+UpscaleRoomBackground() (width/height only, no depth) and concluded room
+backgrounds needed a NEW conversion-at-load hook -- room backgrounds
+ALREADY get the exact same treatment: load_new_room() (Engine/ac/
+room.cpp) calls that same PrepareSpriteForUse() on every
+thisroom.BgImages[i] right after the room file loads, a one-time
+load-time cost already, not a per-frame one. No new conversion code was
+needed for either sprites or backgrounds -- confirmed by reading both
+call sites directly, not assumed from the earlier design session's own
+conclusion (docs/patch-conventions.md's "a patch series' own stated
+rationale is not evidence" applies here to a design DOC's rationale, not
+just a patch series, but the same discipline).
+
+VALIDATED on DOSBox-X against a real game (Shards of God, this session's
+own local test copy): DOSAGS_FORCE_COLOR_DEPTH=16 renders the real title
+screen correctly end to end (screenshot). DOSAGS_FORCE_COLOR_DEPTH=8
+does NOT render correctly -- a real, separate, expected limitation, not
+a bug in this patch: RoomBgFrame::Palette (Common/game/roomdata.h) is
+"only valid in 8-bit games", so a 32-bit-authored room has no real
+256-color palette for the existing depth-conversion code to quantize
+against, and the result is a flat, wrong-color background. Operator
+decision, same session: use Trilby's Notes (a real natively-8-bit game,
+already a golden reference in this repo) for the 8-bit KPI datapoint
+instead of building a color quantizer -- a materially bigger feature,
+out of scope here.
+
+NOT a shipped rendering path: this is a benchmarking/diagnostic-only
+override, gated behind an env var nothing sets by default. The real
+native 32-bit present path is ali3dsw.cpp's own support (patch 0075).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Kwnh5s6CDW7FKaod1cMR9Q
+---
+ Engine/main/engine.cpp | 56 ++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 56 insertions(+)
+
+diff --git a/Engine/main/engine.cpp b/Engine/main/engine.cpp
+index 041af5b36..f08bf7076 100644
+--- a/Engine/main/engine.cpp
++++ b/Engine/main/engine.cpp
+@@ -20,6 +20,7 @@
+ 
+ #include <errno.h>
+ #include <stdio.h>
++#include <stdlib.h>
+ #include <stdexcept>
+ #if AGS_PLATFORM_OS_WINDOWS
+ #include <process.h>  // _spawnl
+@@ -453,6 +454,58 @@ void engine_init_exit_handler()
+     atexit(atexit_handler);
+ }
+ 
++#ifdef __DJGPP__
++// DOS-PORT (patch 0076): DOSAGS_FORCE_COLOR_DEPTH forces game.color_depth
++// to a value other than what the game was authored at, immediately after
++// load and before Bitmap::SetColorDepth() (below) -- i.e. before any
++// sprite or room background is first touched. Exists for same-content
++// fps comparison across depths (PLAN.md's 32-bit display path KPI work,
++// 2026-09-15); it is NOT a shipped rendering path -- the real native
++// 32-bit path is ali3dsw.cpp's own support (patch 0075). Values are in
++// BITS (8/16/32), matching how the rest of this port already talks about
++// depth (DisplayMode::ColorDepth), not game.color_depth's own
++// bytes-per-pixel storage unit -- converted here so the env var's
++// contract doesn't leak that internal representation detail.
++//
++// Why this one field flip is enough, with no further engine changes:
++// sprites already convert to game.GetColorDepth() generically on every
++// load (PrepareSpriteForUseImpl, Engine/ac/draw.cpp) via the sprite
++// cache, and room backgrounds do too -- confirmed by reading
++// load_new_room() (Engine/ac/room.cpp) directly, which calls that exact
++// same PrepareSpriteForUse() on every thisroom.BgImages[i] right after
++// the room file loads, a one-time load-time cost, not a per-frame one.
++// This corrects a real gap in PLAN.md's own design-comparison session
++// (2026-09-15): it read Common/game/roomstruct.cpp's FixBitmap()/
++// UpscaleRoomBackground() (which indeed only fixes width/height, never
++// depth) and concluded backgrounds had no load-time conversion step,
++// without also checking room.cpp's own separate background-preparation
++// call, which already does exactly this generically for any game --
++// the room-background gap that session flagged as still needed does not
++// actually exist in this pinned engine version.
++//
++// No RUNMANIFEST field added for this -- the existing DOSAGS_SCENE tag
++// already covers "what was this run" (e.g. DOSAGS_SCENE=depth32); adding
++// a second, narrower mechanism for the same purpose would be redundant.
++static void dos_apply_color_depth_override()
++{
++    const char *env = getenv("DOSAGS_FORCE_COLOR_DEPTH");
++    if (!env || !env[0])
++        return;
++    const int bits = atoi(env);
++    if (bits != 8 && bits != 16 && bits != 32)
++    {
++        Debug::Printf(kDbgMsg_Warn,
++            "DOS-PORT: DOSAGS_FORCE_COLOR_DEPTH=%s ignored (must be 8, 16, or 32)", env);
++        return;
++    }
++    const int native_bits = game.GetColorDepth();
++    Debug::Printf(kDbgMsg_Info,
++        "DOS-PORT: DOSAGS_FORCE_COLOR_DEPTH forcing game color depth %d -> %d bit (benchmarking override, not a shipped path)",
++        native_bits, bits);
++    game.color_depth = bits / 8;
++}
++#endif
++
+ int engine_load_game_data()
+ {
+     Debug::Printf("Load game data");
+@@ -464,6 +517,9 @@ int engine_load_game_data()
+         display_game_file_error(err);
+         return EXIT_ERROR;
+     }
++#ifdef __DJGPP__
++    dos_apply_color_depth_override();
++#endif
+     // Assign the default bitmap color depth, equals this game's color depth
+     Bitmap::SetColorDepth(game.GetColorDepth());
+     return 0;
+-- 
+2.47.3
+

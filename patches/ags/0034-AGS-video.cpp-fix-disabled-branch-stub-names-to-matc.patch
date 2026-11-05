@@ -1,0 +1,57 @@
+From 40a85caf8df1dca1bf63d06635dd6d705c2f0ae3 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 17:23:54 -0700
+Subject: [PATCH 34/36] [AGS] video.cpp: fix disabled-branch stub names to
+ match video.h
+
+The AGS_NO_VIDEO_PLAYER-disabled branch (matching patch 0025's own
+finding about this same branch: "almost certainly never been compiled
+on any upstream AGS platform before this port") defined video_pause()/
+video_resume(), but video.h only ever declares video_single_pause()/
+video_single_resume()/video_single_stop() -- outside this #ifndef/#else,
+so those two names never matched anything callable through the header
+at all, and video_single_stop() was simply missing outright. A full
+cmake --build build/ags -j$(nproc) -- -k pass reached this once
+Engine/ac/game.cpp's real calls to video_single_pause()/
+video_single_resume() finally got linked against the rest of a
+completing build, surfacing the undefined references directly.
+
+Renamed the two stubs to match their header's real names and added the
+previously entirely-missing video_single_stop() stub, so this disabled
+branch's defined surface now actually matches what video.h declares.
+
+Verified: the undefined video_single_pause()/video_single_resume()
+references are gone from a full build.
+---
+ Engine/media/video/video.cpp | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/Engine/media/video/video.cpp b/Engine/media/video/video.cpp
+index 664e32cd8..2d6e64e08 100644
+--- a/Engine/media/video/video.cpp
++++ b/Engine/media/video/video.cpp
+@@ -526,8 +526,19 @@ void video_shutdown()
+ 
+ HError play_theora_video(const String &name, int video_flags, int state_flags, AGS::Engine::VideoSkipType skip) { return HError::None(); }
+ HError play_flc_video(int numb, int video_flags, int state_flags, AGS::Engine::VideoSkipType skip) { return HError::None(); }
+-void video_pause() {}
+-void video_resume() {}
++// DOS-PORT: this branch defined video_pause()/video_resume() -- video.h
++// (outside this #ifndef/#else) only ever declares video_single_pause()/
++// video_single_resume()/video_single_stop(), so those two names matched
++// nothing callable through the header at all; only video_single_stop()
++// was also simply missing here outright. Almost certainly never compiled
++// on any upstream AGS platform before this port (matching patch 0025's
++// own finding about this same disabled branch), confirmed by the real
++// link error this produced (undefined reference to video_single_pause()/
++// video_single_resume()) once a full build finally reached these two
++// call sites in Engine/ac/game.cpp.
++void video_single_pause() {}
++void video_single_resume() {}
++void video_single_stop() {}
+ void video_shutdown() {}
+ 
+ #endif
+-- 
+2.47.3
+

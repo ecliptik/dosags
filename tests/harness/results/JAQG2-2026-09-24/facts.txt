@@ -1,0 +1,64 @@
+RATCHET stale_frames=0
+RATCHET pcm_irqs=0
+RATCHET overwrites=0
+RATCHET underruns=0
+RATCHET silent_irqs=0
+RATCHET underflow_pads=0
+RATCHET partial_pulls=0
+RATCHET pcm_mixed=20
+RATCHET pcm_mixed_zero=0
+RATCHET pcm_mixed_quiet=0
+RATCHET pcm_inflight=20
+RATCHET pcm_unaccounted=0
+RATCHET pcm_unaccounted_abs=0
+RATCHET midi_late_writes=25
+RATCHET midi_late_max_ms=164
+RATCHET midi_events=29
+RATCHET mistall_n=0
+RATCHET code_lock_bytes=NA
+RATCHET exe_bytes=8490979
+kind                   n     p50     p95     max p95_upper  failed/unfinished/superseded/rerequested/cleared
+boot                   1    7746    7746    7746      7746  0/0/0/0/0
+room                   8    8517   12052   12052     12052  0/0/0/0/0
+save                   1     892     892     892       892  0/0/0/0/0
+save_restartpoint      0      -1      -1      -1        -1  0/0/0/0/0
+load                   1   10714   10714   10714     10714  0/0/0/0/0
+click                  0      -1      -1      -1        -1  0/0/0/0/0
+click_sim              1    1162    1162    1162      1163  0/0/0/0/0
+key                    0      -1      -1      -1        -1  0/0/0/0/0
+
+  kind=boot room=1 t_ms=0 ms=7746 to_fadein_end_ms=7479 fadein_end_to_present_ms=267 ended_in_fade=0
+  kind=room from=1 to=2 t_ms=10443 ms=8703 to_fadein_end_ms=8715 fadein_end_to_present_ms=0 retargeted=0 ended_in_fade=1
+  kind=room from=2 to=3 t_ms=19205 ms=8533 to_fadein_end_ms=8277 fadein_end_to_present_ms=255 retargeted=0 ended_in_fade=0
+  kind=room from=3 to=4 t_ms=91778 ms=12052 to_fadein_end_ms=8200 fadein_end_to_present_ms=3851 retargeted=0 ended_in_fade=0
+  kind=save slot=1 room=4 t_ms=126209 ms=892 write_ms=566 done_to_present_ms=326 failed=0
+  kind=room from=4 to=3 t_ms=132616 ms=4906 to_fadein_end_ms=4676 fadein_end_to_present_ms=230 retargeted=0 ended_in_fade=0
+  kind=load slot=1 room=3 t_ms=126808 ms=10714 restore_ms=4773 done_to_present_ms=5940 room_changed=1 failed=0
+  kind=room from=3 to=4 t_ms=138307 ms=8477 to_fadein_end_ms=8170 fadein_end_to_present_ms=307 retargeted=0 ended_in_fade=0
+  kind=room from=4 to=3 t_ms=153406 ms=11978 to_fadein_end_ms=8239 fadein_end_to_present_ms=3739 retargeted=0 ended_in_fade=0
+  kind=room from=3 to=4 t_ms=185221 ms=8517 to_fadein_end_ms=8173 fadein_end_to_present_ms=344 retargeted=0 ended_in_fade=0
+  kind=room from=4 to=3 t_ms=199774 ms=8474 to_fadein_end_ms=8231 fadein_end_to_present_ms=242 retargeted=0 ended_in_fade=0
+
+room 1->2 journey t_ms=10443  0042 start t_ms=10444  diff=1 ms
+room 2->3 journey t_ms=19205  0042 start t_ms=19206  diff=1 ms
+room 3->4 journey t_ms=91778  0042 start t_ms=91779  diff=1 ms
+room 4->3 journey t_ms=132616  0042 start t_ms=132617  diff=1 ms
+room 3->4 journey t_ms=138307  0042 start t_ms=138308  diff=1 ms
+room 4->3 journey t_ms=153406  0042 start t_ms=153407  diff=1 ms
+room 3->4 journey t_ms=185221  0042 start t_ms=185222  diff=1 ms
+room 4->3 journey t_ms=199774  0042 start t_ms=199775  diff=1 ms
+stallshare engine: 233 of 233 windows below 39 (share 1.0000; nojourney 1.0000)
+stallshare persec witness (render passes, time-weighted): 0.9730 over 229 s
+stalls>100ms: n=1039 per_min=267.25 max_ms=3862 nojourney n=806 per_min=207.32 tail_ms=570
+input: driver presses=0 seen=0 lost=0; kbd irq=0 drained=0
+
+RATCHET boot_n=1 boot_p95_ms=7746 boot_p95_upper_ms=7746 boot_failed=0 boot_unfinished=0
+RATCHET room_n=8 room_p95_ms=12052 room_p95_upper_ms=12052 room_failed=0 room_unfinished=0
+RATCHET save_n=1 save_p95_ms=892 save_p95_upper_ms=892 save_failed=0 save_unfinished=0
+RATCHET save_restartpoint_n=0 save_restartpoint_p95_ms=-1 save_restartpoint_p95_upper_ms=-1 save_restartpoint_failed=0 save_restartpoint_unfinished=0
+RATCHET load_n=1 load_p95_ms=10714 load_p95_upper_ms=10714 load_failed=0 load_unfinished=0
+RATCHET click_n=0 click_p95_ms=-1 click_p95_upper_ms=-1 click_failed=0 click_unfinished=0
+RATCHET click_sim_n=1 click_sim_p95_ms=1162 click_sim_p95_upper_ms=1163 click_sim_failed=0 click_sim_unfinished=0
+RATCHET key_n=0 key_p95_ms=-1 key_p95_upper_ms=-1 key_failed=0 key_unfinished=0
+RATCHET journeys_unfinished=0 journeys_failed=0
+RATCHET lost_clicks=0 hw_checks=11588 kbd_undrained=0

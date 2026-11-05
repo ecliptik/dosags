@@ -1,0 +1,351 @@
+From 096c7ec108cd7e0ef720c79b3b4381681c698b56 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 21 Sep 2026 11:17:30 -0700
+Subject: [PATCH] DOS-PORT: patch 0127 -- run-based masked sprite blit,
+ PIXEL_PTR as a typedef
+
+Consolidates 0127, 0160, 0161.
+
+Why. The masked blit ran at 19.4 cycles/pixel against a measured 7.8 copy
+ceiling, paying pointer increments, a bounds test and a branch per pixel.
+Bulk-copying opaque runs amortises that, but only if runs are long, so the
+run length was measured first:
+- 0127: opaque-run statistics, compiled only under DOSAGS_SPRITE_RUN_STATS
+  because it puts three adds and a branch in the hottest loop in the engine.
+  Result recorded in the source: mean opaque run 57.0 px (1,309,835 runs over
+  74.6M opaque pixels) against a decision rule of 16 written before the data.
+- 0160: the run-based blit. One memcpy per opaque run. Default ON;
+  DOSAGS_RUNBLIT=0 falls back to the per-pixel loop so both arms live in one
+  binary. The run's byte length comes from pointer difference, not sizeof,
+  because cspr.h is instantiated at 8/15/16/24/32 bpp and at 24 bpp a pixel
+  is three bytes.
+- 0161: PIXEL_PTR becomes a typedef in each cdefs header. As a macro,
+  "PIXEL_PTR a = x, b = y;" declares b as a plain integer; a typedef
+  distributes across declarators. Safe because each translation unit includes
+  exactly one cdefs header.
+
+Behaviour change: the run-based blit is ON by default. The record puts its
+real gain at 0.48 ms per tick, not the 2.44 ms first modelled, because the
+sprites are speckled.
+
+Provenance of this export (2026-09-21): these edits sat uncommitted in the
+vendor tree from patch 0123 onward, which is why every gate cell since said
+build_dirty=1. They were made under one campaign-wide patch counter shared
+with vendor/SDL, and each hunk carries its number in an in-source comment.
+Intermediate states were never committed, so this patch is a hunk-level
+partition of the final tree by concern, attributed by those comments -- not a
+replay of the order the edits were made in, and its intermediate state was not
+built on its own. The numbers named below are the ones found in its hunks.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ libsrc/allegro/src/c/cdefs15.h | 17 ++++++-
+ libsrc/allegro/src/c/cdefs16.h | 17 ++++++-
+ libsrc/allegro/src/c/cdefs24.h | 17 ++++++-
+ libsrc/allegro/src/c/cdefs32.h | 17 ++++++-
+ libsrc/allegro/src/c/cdefs8.h  | 17 ++++++-
+ libsrc/allegro/src/c/cmisc.c   | 34 +++++++++++++
+ libsrc/allegro/src/c/cspr.h    | 92 ++++++++++++++++++++++++++++++++++
+ 7 files changed, 206 insertions(+), 5 deletions(-)
+
+diff --git a/libsrc/allegro/src/c/cdefs15.h b/libsrc/allegro/src/c/cdefs15.h
+index c55facd02..56554b8b3 100644
+--- a/libsrc/allegro/src/c/cdefs15.h
++++ b/libsrc/allegro/src/c/cdefs15.h
+@@ -20,7 +20,22 @@
+ 
+ #define PP_DEPTH               15
+ 
+-#define PIXEL_PTR              unsigned short*
++/* DOS-PORT patch 0161: a typedef, not a macro.
++ *
++ * As "#define PIXEL_PTR unsigned short*", the declaration
++ *     PIXEL_PTR a = x, b = y;
++ * declares b as a plain unsigned short holding a truncated address,
++ * because C binds the * to the first declarator only. That happened while
++ * writing patch 0160 and the compiler caught it -- but only because the
++ * types were incompatible; the same shape with a compatible type compiles
++ * clean and corrupts memory rather than producing a wrong number.
++ *
++ * A typedef distributes across declarators and removes the class. Safe
++ * here because each translation unit includes exactly one cdefs header
++ * (checked across every .c in this directory), so there is no depth where
++ * two definitions of the name could collide.
++ */
++typedef unsigned short *PIXEL_PTR;
+ #define OFFSET_PIXEL_PTR(p,x)  ((PIXEL_PTR) (p) + (x))
+ #define INC_PIXEL_PTR(p)       ((p)++)
+ #define INC_PIXEL_PTR_N(p,d)   ((p) += d)
+diff --git a/libsrc/allegro/src/c/cdefs16.h b/libsrc/allegro/src/c/cdefs16.h
+index 4d3220fbe..84cd46ef2 100644
+--- a/libsrc/allegro/src/c/cdefs16.h
++++ b/libsrc/allegro/src/c/cdefs16.h
+@@ -20,7 +20,22 @@
+ 
+ #define PP_DEPTH               16
+ 
+-#define PIXEL_PTR              unsigned short*
++/* DOS-PORT patch 0161: a typedef, not a macro.
++ *
++ * As "#define PIXEL_PTR unsigned short*", the declaration
++ *     PIXEL_PTR a = x, b = y;
++ * declares b as a plain unsigned short holding a truncated address,
++ * because C binds the * to the first declarator only. That happened while
++ * writing patch 0160 and the compiler caught it -- but only because the
++ * types were incompatible; the same shape with a compatible type compiles
++ * clean and corrupts memory rather than producing a wrong number.
++ *
++ * A typedef distributes across declarators and removes the class. Safe
++ * here because each translation unit includes exactly one cdefs header
++ * (checked across every .c in this directory), so there is no depth where
++ * two definitions of the name could collide.
++ */
++typedef unsigned short *PIXEL_PTR;
+ #define PTR_PER_PIXEL          1
+ #define OFFSET_PIXEL_PTR(p,x)  ((PIXEL_PTR) (p) + (x))
+ #define INC_PIXEL_PTR(p)       ((p)++)
+diff --git a/libsrc/allegro/src/c/cdefs24.h b/libsrc/allegro/src/c/cdefs24.h
+index 6270febba..355d8642e 100644
+--- a/libsrc/allegro/src/c/cdefs24.h
++++ b/libsrc/allegro/src/c/cdefs24.h
+@@ -20,7 +20,22 @@
+ 
+ #define PP_DEPTH               24
+ 
+-#define PIXEL_PTR              unsigned char*
++/* DOS-PORT patch 0161: a typedef, not a macro.
++ *
++ * As "#define PIXEL_PTR unsigned short*", the declaration
++ *     PIXEL_PTR a = x, b = y;
++ * declares b as a plain unsigned short holding a truncated address,
++ * because C binds the * to the first declarator only. That happened while
++ * writing patch 0160 and the compiler caught it -- but only because the
++ * types were incompatible; the same shape with a compatible type compiles
++ * clean and corrupts memory rather than producing a wrong number.
++ *
++ * A typedef distributes across declarators and removes the class. Safe
++ * here because each translation unit includes exactly one cdefs header
++ * (checked across every .c in this directory), so there is no depth where
++ * two definitions of the name could collide.
++ */
++typedef unsigned char *PIXEL_PTR;
+ #define PTR_PER_PIXEL          3
+ #define OFFSET_PIXEL_PTR(p,x)  ((PIXEL_PTR) (p) + 3 * (x))
+ #define INC_PIXEL_PTR(p)       ((p) += 3)
+diff --git a/libsrc/allegro/src/c/cdefs32.h b/libsrc/allegro/src/c/cdefs32.h
+index 2ae52200f..0d3565578 100644
+--- a/libsrc/allegro/src/c/cdefs32.h
++++ b/libsrc/allegro/src/c/cdefs32.h
+@@ -20,7 +20,22 @@
+ 
+ #define PP_DEPTH               32
+ 
+-#define PIXEL_PTR              uint32_t*
++/* DOS-PORT patch 0161: a typedef, not a macro.
++ *
++ * As "#define PIXEL_PTR unsigned short*", the declaration
++ *     PIXEL_PTR a = x, b = y;
++ * declares b as a plain unsigned short holding a truncated address,
++ * because C binds the * to the first declarator only. That happened while
++ * writing patch 0160 and the compiler caught it -- but only because the
++ * types were incompatible; the same shape with a compatible type compiles
++ * clean and corrupts memory rather than producing a wrong number.
++ *
++ * A typedef distributes across declarators and removes the class. Safe
++ * here because each translation unit includes exactly one cdefs header
++ * (checked across every .c in this directory), so there is no depth where
++ * two definitions of the name could collide.
++ */
++typedef uint32_t *PIXEL_PTR;
+ #define PTR_PER_PIXEL          1
+ #define OFFSET_PIXEL_PTR(p,x)  ((PIXEL_PTR) (p) + (x))
+ #define INC_PIXEL_PTR(p)       ((p)++)
+diff --git a/libsrc/allegro/src/c/cdefs8.h b/libsrc/allegro/src/c/cdefs8.h
+index 248983821..142e1ad77 100644
+--- a/libsrc/allegro/src/c/cdefs8.h
++++ b/libsrc/allegro/src/c/cdefs8.h
+@@ -20,7 +20,22 @@
+ 
+ #define PP_DEPTH               8
+ 
+-#define PIXEL_PTR              unsigned char*
++/* DOS-PORT patch 0161: a typedef, not a macro.
++ *
++ * As "#define PIXEL_PTR unsigned short*", the declaration
++ *     PIXEL_PTR a = x, b = y;
++ * declares b as a plain unsigned short holding a truncated address,
++ * because C binds the * to the first declarator only. That happened while
++ * writing patch 0160 and the compiler caught it -- but only because the
++ * types were incompatible; the same shape with a compatible type compiles
++ * clean and corrupts memory rather than producing a wrong number.
++ *
++ * A typedef distributes across declarators and removes the class. Safe
++ * here because each translation unit includes exactly one cdefs header
++ * (checked across every .c in this directory), so there is no depth where
++ * two definitions of the name could collide.
++ */
++typedef unsigned char *PIXEL_PTR;
+ #define PTR_PER_PIXEL          1
+ #define OFFSET_PIXEL_PTR(p,x)  ((PIXEL_PTR) (p) + (x))
+ #define INC_PIXEL_PTR(p)       ((p)++)
+diff --git a/libsrc/allegro/src/c/cmisc.c b/libsrc/allegro/src/c/cmisc.c
+index 88f52c8cb..ab9db3229 100644
+--- a/libsrc/allegro/src/c/cmisc.c
++++ b/libsrc/allegro/src/c/cmisc.c
+@@ -34,3 +34,37 @@
+ #endif
+ 
+ 
++
++/* DOS-PORT patch 0127: masked-sprite run-length statistics.
++ *
++ * Measured BEFORE writing a run-based blit, not after, because the whole
++ * case for `rep movsd` over opaque runs depends on the runs being long.
++ * The bandwidth probe (2026-09-19) priced a read at 2.27 cycles/byte and
++ * a write at 1.61, so skipping the write on a transparent pixel saves
++ * only 41% of it -- all the win is in opaque spans, and if the sprites
++ * turn out to be speckled, run detection costs more than it saves.
++ *
++ * Deliberately NOT compiled unless DOSAGS_SPRITE_RUN_STATS is defined:
++ * this is three adds and a branch inside the hottest loop in the engine,
++ * which is exactly the kind of thing the cache-footprint observations
++ * say costs ~1 fps. The stats build is a separate build.
++ */
++#ifdef DOSAGS_SPRITE_RUN_STATS
++unsigned long dosags_spr_px = 0;
++unsigned long dosags_spr_opaque_px = 0;
++unsigned long dosags_spr_runs = 0;
++#endif
++
++/* DOS-PORT patch 0160: run-based masked blit switch.
++ *
++ * -1 = not yet read. DOSAGS_RUNBLIT=0 disables and falls back to the
++ * original per-pixel loop, so both arms live in ONE binary and a
++ * comparison carries no layout or code-size difference -- the same
++ * discipline the virtual-screen alias and the narrowed present used.
++ *
++ * Default ON. The measurement that justifies it: mean opaque run is 57.0
++ * pixels (patch 0127, 1,309,835 runs over 74.6M opaque pixels), against a
++ * decision rule of 16 written before the data existed. The current loop
++ * runs at 19.4 cycles/pixel against a measured copy ceiling of 7.8.
++ */
++int dosags_runblit = -1;
+diff --git a/libsrc/allegro/src/c/cspr.h b/libsrc/allegro/src/c/cspr.h
+index 6d6b48014..10add589f 100644
+--- a/libsrc/allegro/src/c/cspr.h
++++ b/libsrc/allegro/src/c/cspr.h
+@@ -18,6 +18,20 @@
+ #ifndef __bma_cspr_h
+ #define __bma_cspr_h
+ 
++#ifdef DOSAGS_SPRITE_RUN_STATS
++/* DOS-PORT patch 0127 -- defined in cmisc.c, see the comment there for
++ * why this is a separate build rather than always on. */
++extern unsigned long dosags_spr_px;
++extern unsigned long dosags_spr_opaque_px;
++extern unsigned long dosags_spr_runs;
++#endif
++
++#ifdef __DJGPP__
++#include <stdlib.h>
++#include <string.h>
++extern int dosags_runblit;   /* DOS-PORT patch 0160, defined in cmisc.c */
++#endif
++
+ /* _linear_draw_sprite:
+  *  Draws a sprite onto a linear bitmap at the specified x, y position,
+  *  using a masked drawing mode where zero pixels are not output.
+@@ -66,12 +80,90 @@ void FUNC_LINEAR_DRAW_SPRITE(BITMAP *dst, BITMAP *src, int dx, int dy)
+ 	 PIXEL_PTR s = OFFSET_PIXEL_PTR(src->line[sybeg + y], sxbeg);
+ 	 PIXEL_PTR d = OFFSET_PIXEL_PTR(dst->line[dybeg + y], dxbeg);
+ 
++#ifdef DOSAGS_SPRITE_RUN_STATS
++	 /* patch 0127: count opaque RUNS, not just opaque pixels -- a run
++	  * is a transparent-to-opaque transition, so runs and opaque
++	  * pixels together give the mean run length, which is the number
++	  * that decides whether a run-based blit is worth writing. */
++	 {
++	    int dosags_in_run = 0;
++	    dosags_spr_px += (unsigned long)w;
++	    for (x = w - 1; x >= 0; INC_PIXEL_PTR(s), INC_PIXEL_PTR(d), x--) {
++	       uint32_t c = GET_MEMORY_PIXEL(s);
++	       if (!IS_SPRITE_MASK(src, c)) {
++		  PUT_MEMORY_PIXEL(d, c);
++		  dosags_spr_opaque_px++;
++		  if (!dosags_in_run) { dosags_spr_runs++; dosags_in_run = 1; }
++	       }
++	       else {
++		  dosags_in_run = 0;
++	       }
++	    }
++	 }
++#elif defined(__DJGPP__)
++	 /* DOS-PORT patch 0160: copy opaque RUNS in bulk.
++	  *
++	  * The read is unavoidable -- it IS the mask test, and the bandwidth
++	  * probe priced a read at 2.27 cycles/byte against a write's 1.61,
++	  * so skipping a write saves only 41% of a transparent pixel. The
++	  * win is not in skipping work, it is in amortising the loop: the
++	  * original pays pointer increments, a bounds test and a branch for
++	  * every pixel, 19.4 cycles/pixel against a 7.8 copy ceiling. With a
++	  * mean opaque run of 57 pixels (measured, patch 0127), one memcpy
++	  * replaces 57 individual stores and their bookkeeping.
++	  *
++	  * The run's byte length comes from POINTER DIFFERENCE, not from
++	  * sizeof: this header is instantiated at 8/15/16/24/32 bpp, and at
++	  * 24 bpp PIXEL_PTR is unsigned char* while a pixel is three bytes,
++	  * so sizeof would silently copy a third of each run. Pointer
++	  * difference is correct at every depth by construction.
++	  */
++	 if (dosags_runblit < 0) {
++	    const char *_h = getenv("DOSAGS_RUNBLIT");
++	    dosags_runblit = (_h && _h[0] == '0') ? 0 : 1;
++	 }
++	 if (dosags_runblit) {
++	    x = 0;
++	    while (x < w) {
++	       while (x < w && IS_SPRITE_MASK(src, GET_MEMORY_PIXEL(s))) {
++		  INC_PIXEL_PTR(s); INC_PIXEL_PTR(d); x++;
++	       }
++	       if (x >= w)
++		  break;
++	       {
++		  /* Declared separately, NOT "PIXEL_PTR rs = s, rd = d;".
++		   * PIXEL_PTR is a macro expanding to "unsigned short*", so
++		   * that form declares rd as a plain unsigned short and the
++		   * memcpy destination becomes a truncated integer cast back
++		   * to a pointer. The compiler caught it; the C declarator
++		   * rule binds the * to the first declarator only, and a
++		   * pointer spelled as a macro hides that completely. */
++		  PIXEL_PTR rs = s;
++		  PIXEL_PTR rd = d;
++		  while (x < w && !IS_SPRITE_MASK(src, GET_MEMORY_PIXEL(s))) {
++		     INC_PIXEL_PTR(s); INC_PIXEL_PTR(d); x++;
++		  }
++		  memcpy((void *)rd, (const void *)rs,
++			 (size_t)((const char *)s - (const char *)rs));
++	       }
++	    }
++	 }
++	 else {
++	    for (x = w - 1; x >= 0; INC_PIXEL_PTR(s), INC_PIXEL_PTR(d), x--) {
++	       uint32_t c = GET_MEMORY_PIXEL(s);
++	       if (!IS_SPRITE_MASK(src, c)) {
++		  PUT_MEMORY_PIXEL(d, c);
++	       }
++	    }
++	 }
++#else
+ 	 for (x = w - 1; x >= 0; INC_PIXEL_PTR(s), INC_PIXEL_PTR(d), x--) {
+ 	    uint32_t c = GET_MEMORY_PIXEL(s);
+ 	    if (!IS_SPRITE_MASK(src, c)) {
+ 	       PUT_MEMORY_PIXEL(d, c);
+ 	    }
+ 	 }
++#endif
+       }
+    }
+ }
+-- 
+2.47.3
+

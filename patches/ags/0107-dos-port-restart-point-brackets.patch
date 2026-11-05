@@ -1,0 +1,151 @@
+From c909cbf639e97a9fe6ee12e46ba5a3eb4766647b Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 18 Sep 2026 10:26:09 -0700
+Subject: [PATCH] DOS-PORT: patch 0107 -- sub-bracket SetRestartPoint(),
+ measurement only
+
+The operator asked what SetRestartPoint()'s 690 ms actually IS --
+serialisation, compression or file I/O -- before any design rests on it.
+Brackets the disk-space check, the optional savegame screenshot, and
+SaveGame() itself, set only for slot 999 so ordinary saves are untouched.
+
+HW-486-66, Trilby's Notes: diskcheck 0 ms, screenshot 0 ms (this game has
+OPT_SAVESCREENSHOT off), SaveGame 686 of 688 -- 99.7% of the cost is
+inside SaveGame.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hnodGZ6cg8CWuFXEDTsUq
+---
+ Engine/ac/event.cpp                   |  5 +++++
+ Engine/ac/game.cpp                    | 20 ++++++++++++++++++++
+ Engine/ac/global_game.cpp             | 23 ++++++++++++++++++++++-
+ Engine/main/dos_port_startup_timing.h |  9 +++++++++
+ 4 files changed, 56 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/ac/event.cpp b/Engine/ac/event.cpp
+index 83a740e02..cade44f12 100644
+--- a/Engine/ac/event.cpp
++++ b/Engine/ac/event.cpp
+@@ -281,6 +281,11 @@ void process_event(const AGSEvent *evp)
+                         debug_script_log("preloop_placeholder_fade_ms=%ld", st.preloop_placeholder_fade_ms);
+                         debug_script_log("preloop_room_load_ms=%ld", st.preloop_room_load_ms);
+                         debug_script_log("preloop_first_room_init_ms=%ld", st.preloop_first_room_init_ms);
++                        // patch 0107: what SetRestartPoint()'s time actually is
++                        debug_script_log("restart_diskcheck_ms=%ld", st.restart_diskcheck_ms);
++                        debug_script_log("restart_screenshot_ms=%ld", st.restart_screenshot_ms);
++                        debug_script_log("restart_savegame_ms=%ld", st.restart_savegame_ms);
++                        debug_script_log("restart_total_ms=%ld", st.restart_total_ms);
+                         debug_script_log("total_to_first_frame_ms=%ld", t_ms);
+                         debug_script_log("[DOS-PORT-STARTUP-END]");
+                     }
+diff --git a/Engine/ac/game.cpp b/Engine/ac/game.cpp
+index b71f51d3e..7f1690a09 100644
+--- a/Engine/ac/game.cpp
++++ b/Engine/ac/game.cpp
+@@ -1307,8 +1307,22 @@ void save_game(int slotn, const String &descript, std::unique_ptr<Bitmap> &&imag
+     pl_run_plugin_hooks(kPluginEvt_PreSaveGame, 0);
+ 
+     String nametouse = get_save_game_path(slotn);
++#ifdef __DJGPP__
++    // patch 0107: split the restart-point save into screenshot vs
++    // serialise+write. Slot 999 only, so ordinary saves are untouched.
++    const bool _dp_rp = (slotn == RESTART_POINT_SAVE_GAME_NUMBER);
++    uclock_t _dp_t = _dp_rp ? uclock() : 0;
++#endif
+     if (!image && (game.options[OPT_SAVESCREENSHOT] != 0))
+         image = create_savegame_screenshot();
++#ifdef __DJGPP__
++    if (_dp_rp)
++    {
++        dos_port_startup_timing.restart_screenshot_ms =
++            (long)((uclock() - _dp_t) * 1000 / UCLOCKS_PER_SEC);
++        _dp_t = uclock();
++    }
++#endif
+ 
+     HSaveError err = SaveGame(nametouse, descript, image.get(),
+              (SaveCmpSelection)(kSaveCmp_All & ~(game.options[OPT_SAVECOMPONENTSIGNORE] & kSaveCmp_ScriptIgnoreMask)),
+@@ -1323,6 +1337,12 @@ void save_game(int slotn, const String &descript, std::unique_ptr<Bitmap> &&imag
+         return;
+     }
+ 
++#ifdef __DJGPP__
++    if (_dp_rp)
++        dos_port_startup_timing.restart_savegame_ms =
++            (long)((uclock() - _dp_t) * 1000 / UCLOCKS_PER_SEC);
++#endif
++
+     // call "After Save" event callback
+     run_on_event(kScriptEvent_GameSaved, slotn);
+ }
+diff --git a/Engine/ac/global_game.cpp b/Engine/ac/global_game.cpp
+index 8a035f621..f9a327f1c 100644
+--- a/Engine/ac/global_game.cpp
++++ b/Engine/ac/global_game.cpp
+@@ -12,6 +12,10 @@
+ //
+ //=============================================================================
+ #include "ac/global_game.h"
++#ifdef __DJGPP__
++#include <time.h>
++#include "main/dos_port_startup_timing.h"
++#endif
+ #include <SDL3/SDL.h>
+ #include <algorithm>
+ #include <math.h>
+@@ -149,7 +153,19 @@ void SaveGameSlot(int slotn, const char *descript, int spritenum)
+ {
+     VALIDATE_STRING(descript);
+ 
+-    if (platform->GetDiskFreeSpaceMB(get_save_game_directory()) < 2)
++#ifdef __DJGPP__
++    // patch 0107: the restart-point save's own internals, slot 999 only.
++    const bool _dp_rp = (slotn == RESTART_POINT_SAVE_GAME_NUMBER);
++    const uclock_t _dp_all = _dp_rp ? uclock() : 0;
++    uclock_t _dp_t = _dp_all;
++#endif
++    const int _dp_free = platform->GetDiskFreeSpaceMB(get_save_game_directory());
++#ifdef __DJGPP__
++    if (_dp_rp)
++        dos_port_startup_timing.restart_diskcheck_ms =
++            (long)((uclock() - _dp_t) * 1000 / UCLOCKS_PER_SEC);
++#endif
++    if (_dp_free < 2)
+     {
+         Display("ERROR: There is not enough disk space free to save the game. Clear some disk space and try again.");
+         return;
+@@ -171,6 +187,11 @@ void SaveGameSlot(int slotn, const char *descript, int spritenum)
+     }
+ 
+     save_game(slotn, descript, std::move(image));
++#ifdef __DJGPP__
++    if (_dp_rp)
++        dos_port_startup_timing.restart_total_ms =
++            (long)((uclock() - _dp_all) * 1000 / UCLOCKS_PER_SEC);
++#endif
+ }
+ 
+ void SaveGameSlot2(int slnum, const char *descript)
+diff --git a/Engine/main/dos_port_startup_timing.h b/Engine/main/dos_port_startup_timing.h
+index b65c79d5b..a9a5a0404 100644
+--- a/Engine/main/dos_port_startup_timing.h
++++ b/Engine/main/dos_port_startup_timing.h
+@@ -68,6 +68,15 @@ struct DosPortStartupTiming
+     long preloop_placeholder_fade_ms = -1;  // current_fade_out_effect() on the PLACEHOLDER room
+     long preloop_room_load_ms = -1;         // load_new_room() as called from start_game()
+     long preloop_first_room_init_ms = -1;   // first_room_initialization()
++    // patch 0107: SetRestartPoint()'s own internals. It is 690 ms of the
++    // pre-loop on HW-486-66 and the operator asked what that time IS --
++    // serialisation, compression or file I/O -- before any design rests
++    // on it. Set only on the restart-point save (slot 999), so a normal
++    // in-game save does not overwrite them.
++    long restart_diskcheck_ms = -1;   // platform->GetDiskFreeSpaceMB() -- a statfs on DOS
++    long restart_screenshot_ms = -1;  // create_savegame_screenshot(), if OPT_SAVESCREENSHOT
++    long restart_savegame_ms = -1;    // SaveGame(): serialise + optional compress + write
++    long restart_total_ms = -1;       // whole save_game() call, for the remainder
+     long first_room_load_start_ms = -1;    // room.cpp load_new_room()'s own t_ms, first call only (temp holding value)
+     long first_room_load_ms = -1;          // room.cpp load_new_room() start .. event.cpp AfterFadein ready (final)
+     bool reported = false;            // report emitted once, at the first room-ready event
+-- 
+2.47.3
+

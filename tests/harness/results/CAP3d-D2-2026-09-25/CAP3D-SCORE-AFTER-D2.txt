@@ -1,0 +1,31 @@
+PASS       D1     binary             c3c81b632b85
+PASS       D1     choice             pgdetect=1 opl_reads=4 budget=448 (need 1 / 4 / 448)
+PASS       D1     tpit_witness       uclockwrap first=1 wrapped=5362702
+REPORT     D1     timer              isr_max_us 6124 vs burst 390 x 16493 ns = 6432 us (+-10%)
+PASS       D1     late_writes        0
+PASS       D1     cap_hits           0
+PASS       D1     underruns          0
+PASS       D1     overwrites         0
+PASS       D1     sb_alive_clock     0.960 (>= 0.90)
+PASS       D1     sb_alive_pcm       2139 (>= 1961)
+PASS       D1     silent             3 at ticks 1095 (<= 3)
+PASS       D1     isr_max_10ms       6124 us (<= 10000)
+FAIL       D1     mechanism          156 arrivals per 2.57 ms window (<= 128)
+REPORT     D1     clicks             mouse_presses_hw=42 seen=42 lost_clicks=0
+PASS       D2     binary             c3c81b632b85
+PASS       D2     choice             pgdetect=1 opl_reads=4 budget=448 (need 1 / 4 / 448)
+PASS       D2     tpit_witness       uclockwrap first=1 wrapped=5314847
+REPORT     D2     timer              isr_max_us 6124 vs burst 390 x 16496 ns = 6433 us (+-10%)
+PASS       D2     late_writes        0
+PASS       D2     cap_hits           0
+PASS       D2     underruns          0
+PASS       D2     overwrites         0
+PASS       D2     sb_alive_clock     0.959 (>= 0.90)
+PASS       D2     sb_alive_pcm       2115 (>= 1961)
+PASS       D2     silent             3 at ticks 1138 (<= 3)
+FLAG       D2     silent_elsewhere   [1138]
+PASS       D2     isr_max_10ms       6124 us (<= 10000)
+FAIL       D2     mechanism          156 arrivals per 2.57 ms window (<= 128)
+REPORT     D2     clicks             mouse_presses_hw=15 seen=15 lost_clicks=0
+DERIVE     D      budget             pw 16496 ns (larger of 16493 / 16496) -> B = floor(10 ms / pw) = 606; natural burst 390
+VERDICT CAP3d FAIL, 1 FLAG(s)

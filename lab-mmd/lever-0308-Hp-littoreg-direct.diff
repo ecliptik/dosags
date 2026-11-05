@@ -1,0 +1,26 @@
+diff --git a/Engine/script/cc_instance.cpp b/Engine/script/cc_instance.cpp
+index c2cb3d44d..a9bb5f607 100644
+--- a/Engine/script/cc_instance.cpp
++++ b/Engine/script/cc_instance.cpp
+@@ -838,11 +838,21 @@ ccInstError ccInstance::Run(int32_t curpc)
+         case SCMD_LITTOREG:
+         {
+             auto &reg1 = _registers[op_arg1];
++#ifdef __DJGPP__
++            // DOS-PORT patch 0308: build the literal and apply its fixup IN the register, not in
++            // codeOp.Args[1] followed by a 20-byte copy into it. FixupArgument reads only the code
++            // word, the fixup tables and the stack, never the registers, and sets the value's
++            // fields exactly as before; so the register ends up with the same five fields.
++            reg1.SetInt32(op_arg2);
++            FixupArgument(reg1, codeInst->_code_fixups[_pc + 2], codeInst->_code[_pc + 2], _stackBegin, codeInst->_strings);
++            ASSERT_CC_ERROR();
++#else
+             codeOp.Args[1].SetInt32(op_arg2); // patch 0293/0295: the whole value, before its fixup
+             FixupArgument(codeOp.Args[1], codeInst->_code_fixups[_pc + 2], codeInst->_code[_pc + 2], _stackBegin, codeInst->_strings);
+             ASSERT_CC_ERROR();
+             const auto &arg_value = codeOp.Arg2();
+             reg1 = arg_value;
++#endif
+             break;
+         }
+         case SCMD_MEMREAD:

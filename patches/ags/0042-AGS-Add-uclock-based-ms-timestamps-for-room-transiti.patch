@@ -1,0 +1,142 @@
+From 33945166244f4e79eafe57d165f904c5516af774 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 11 Sep 2026 00:06:12 -0700
+Subject: [PATCH] [AGS] Add uclock()-based ms timestamps for room-transition
+ latency
+
+RUNMANIFEST's fps_p50/fps_p95 (patch 0041) use Game.TickCounter-derived
+timing, fine for fps but too coarse (~25ms/tick at the default 40fps
+game speed) for measuring room-transition latency or boot-to-first-
+frame load time -- both need real elapsed-time resolution.
+
+dos_port_engine_start_uclock (main.cpp) is a second anchor alongside
+the existing dos_port_engine_start_time, captured at the same point
+(main_init(), the first call ags_entry_point() makes) but using
+DJGPP's own uclock() (PIT-driven, UCLOCKS_PER_SEC=1193180) instead of
+the one-second-resolution real-time clock the RUNMANIFEST duration_s
+field reads.
+
+Two paired log lines, both "DOS-PORT room_transition t_ms=<ms>
+event=<start|ready> room=<n>":
+- event=start: room.cpp's new_room(), the actual start of loading the
+  new room (not global_room.cpp's earlier NewRoom(), which only logs
+  that the *request* was accepted -- new_room() is where real work
+  begins).
+- event=ready: event.cpp's kRoomEvent_AfterFadein handler, the exact
+  point run_on_event(kScriptEvent_RoomAfterFadein, ...) fires -- the
+  same event the tests/harness AGS Quest package's own autopilot module
+  keys its own phase transitions on, not current_fade_in_effect()'s
+  fade-in-BEGINS point (screen.cpp), which would measure the wrong
+  span.
+
+For room 1 (the very first room loaded after boot), this same pair
+doubles as the boot-to-first-frame load-time metric -- no separate
+instrumentation point was needed for that.
+
+Confirmed by a real DOSBox-X run against the tests/harness AGS Quest
+package: real t_ms pairs appear in captured stdout for every room
+transition the autopilot's phase sequence drives (menu->room3,
+room3->room4, the save/restore round trip, and the gem phase's full
+balcony round trip).
+---
+ Engine/ac/event.cpp  | 17 +++++++++++++++++
+ Engine/ac/room.cpp   | 15 +++++++++++++++
+ Engine/main/main.cpp |  7 +++++++
+ 3 files changed, 39 insertions(+)
+
+diff --git a/Engine/ac/event.cpp b/Engine/ac/event.cpp
+index d1eeb4939..22ea0f14a 100644
+--- a/Engine/ac/event.cpp
++++ b/Engine/ac/event.cpp
+@@ -13,6 +13,9 @@
+ //=============================================================================
+ 
+ #include "event.h"
++#ifdef __DJGPP__
++#include <time.h> // uclock(), UCLOCKS_PER_SEC -- DOS-PORT room-transition timestamps
++#endif
+ #include "ac/common.h"
+ #include "ac/draw.h"
+ #include "ac/gamesetupstruct.h"
+@@ -226,6 +229,20 @@ void process_event(const AGSEvent *evp)
+             {
+                 in_room_transition = false;
+                 GUIE::MarkSpecialLabelsForUpdate(kLabelMacro_Overhotspot);
++#ifdef __DJGPP__
++                // DOS-PORT: paired with new_room()'s own "start" timestamp
++                // (room.cpp) for room-transition-latency instrumentation --
++                // this is the real "first presented frame after fade-in"
++                // point (the same event the AGS Quest test harness's own
++                // autopilot module keys its own phase transitions on), not
++                // current_fade_in_effect()'s fade-in-BEGINS point. See
++                // PLAN.md's "Test harness (AGS Quest)" section.
++                {
++                    extern uclock_t dos_port_engine_start_uclock;
++                    long t_ms = (long)((uclock() - dos_port_engine_start_uclock) * 1000 / UCLOCKS_PER_SEC);
++                    debug_script_log("DOS-PORT room_transition t_ms=%ld event=ready room=%d", t_ms, displayed_room);
++                }
++#endif
+                 run_on_event(kScriptEvent_RoomAfterFadein, displayed_room);
+             }
+             //Debug::Printf("Running room interaction, event %d", evp->data3);
+diff --git a/Engine/ac/room.cpp b/Engine/ac/room.cpp
+index 1a7066793..619ef90ba 100644
+--- a/Engine/ac/room.cpp
++++ b/Engine/ac/room.cpp
+@@ -13,6 +13,9 @@
+ //=============================================================================
+ 
+ #include <ctype.h> // for toupper
++#ifdef __DJGPP__
++#include <time.h> // uclock(), UCLOCKS_PER_SEC -- DOS-PORT room-transition timestamps
++#endif
+ 
+ #include "platform/platform.h"
+ #include "util/string_utils.h" //strlwr()
+@@ -1018,6 +1021,18 @@ void new_room(int newnum,CharacterInfo*forchar) {
+     EndSkippingUntilCharStops();
+ 
+     debug_script_log("Room change requested to room %d", newnum);
++#ifdef __DJGPP__
++    // DOS-PORT: paired with current_fade_in_effect()'s own "ready"
++    // timestamp (screen.cpp) for room-transition-latency instrumentation
++    // -- see PLAN.md's "Test harness (AGS Quest)" section. Real ms
++    // resolution (uclock(), DJGPP's PIT-driven clock), unlike
++    // Game.TickCounter's fixed ~25ms-per-tick granularity.
++    {
++        extern uclock_t dos_port_engine_start_uclock;
++        long t_ms = (long)((uclock() - dos_port_engine_start_uclock) * 1000 / UCLOCKS_PER_SEC);
++        debug_script_log("DOS-PORT room_transition t_ms=%ld event=start room=%d", t_ms, newnum);
++    }
++#endif
+ 
+     // we are currently running Leaves Screen scripts
+     in_leaves_screen = newnum;
+diff --git a/Engine/main/main.cpp b/Engine/main/main.cpp
+index f7afe2e3e..89fc5cd2b 100644
+--- a/Engine/main/main.cpp
++++ b/Engine/main/main.cpp
+@@ -69,6 +69,12 @@ extern char editor_debugger_instance_token[100];
+ // quit.cpp only knows the time at shutdown. See quit.cpp's own
+ // RUNMANIFEST block for where this is read.
+ time_t dos_port_engine_start_time = 0;
++// DOS-PORT: a second, millisecond-precision anchor alongside the one
++// above -- time_t only has one-second resolution, not enough for
++// room-transition-latency/boot-to-first-frame instrumentation.
++// uclock() is DJGPP's own PIT-driven clock (UCLOCKS_PER_SEC=1193180),
++// unrelated to the real-time clock dos_port_engine_start_time reads.
++uclock_t dos_port_engine_start_uclock = 0;
+ #endif
+ 
+ 
+@@ -90,6 +96,7 @@ void main_init(int argc, char*argv[])
+ {
+ #ifdef __DJGPP__
+     dos_port_engine_start_time = time(nullptr);
++    dos_port_engine_start_uclock = uclock();
+ #endif
+ 
+     set_our_eip(-999);
+-- 
+2.47.3
+

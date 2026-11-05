@@ -1,0 +1,258 @@
+From 538072854cc3e9672bd4f63c163423bf5a805d08 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 25 Sep 2026 18:55:50 -0700
+Subject: [PATCH] DOS-PORT: patch 0316 -- an opt-in per-tick log of the coarse
+ timing scopes
+
+WHY: the port's coarse scopes (update_game_once, render_to_screen,
+scene_construct) report whole-run totals only, so no figure can leave a
+tick out. A benchmark that must exclude the room-entry tick (dosags
+LAB-MMD 47.2: the room-50 fade-in tick can inflate the character-select
+logic mean by up to 0.92 ms/tick) or a click's pathfinding hitch (the
+in-play cell, LAB-MMD 50.2) could only be bounded, never computed.
+
+WHAT: DOSAGS_TICKLOG=<ticks>, read once at startup, allocates a record
+buffer (4 records a tick plus 256). Every close of the three coarse
+scopes then appends (loop counter, kind, us). The us is the same clamped
+value the run totals add, so the log sums to the totals. "Now in room" and
+each dequeued click or key append an event record. At exit the buffer
+goes to TICKS.BIN ("TLOG", version 1, records, dropped, capacity, then
+two 32-bit words a record: the loop counter, then kind << 28 | value),
+and RUNMANI.LOG gets a "ticklog" line. Records are in time order. A
+tick's render, scene, room and input records come before its
+update_game_once close, because the loop counter advances between
+render and that close.
+
+COST when unset: the buffer pointer stays null, so each coarse-scope
+close pays one byte test and one pointer test. There is no allocation,
+no file and no clock read. The scope's kind rides in the padding after
+its existing bool, so the scope object does not grow. Fine scopes
+(kind 0) pay the byte test only when fine timing is on.
+
+Removal: none planned. It is a measurement switch like 0315's, off
+unless asked for.
+---
+ Engine/ac/draw.cpp                   |  4 +-
+ Engine/ac/room.cpp                   |  4 ++
+ Engine/main/dos_port_tick_timing.h   | 29 ++++++++++++--
+ Engine/main/game_run.cpp             | 56 +++++++++++++++++++++++++++-
+ Engine/main/main.cpp                 |  2 +
+ Engine/main/quit.cpp                 |  4 ++
+ Engine/platform/dos/dos_journeys.cpp |  4 ++
+ 7 files changed, 97 insertions(+), 6 deletions(-)
+
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index 4ece0992b..31ef48371 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -1624,7 +1624,7 @@ void render_to_screen()
+     // SDL_UpdateWindowSurface(), reaching the DOS framebuffer driver's
+     // flush/bank-switch mechanism) had never been measured before this.
+ #ifdef __DJGPP__
+-    DosPortTickScope _dos_port_render_to_screen_scope(dos_port_tick_timing.render_to_screen, true); // patch 0315: coarse
++    DosPortTickScope _dos_port_render_to_screen_scope(dos_port_tick_timing.render_to_screen, kDosTickLogRender); // patch 0315: coarse; 0316: logged
+ #endif
+     // DOS-PORT patch 0089: everything before gfxDriver->Render() below --
+     // the plugin-hook check, construct_engine_overlay(), and the
+@@ -3773,7 +3773,7 @@ void render_graphics(IDriverDependantBitmap *extraBitmap, int extraX, int extraY
+     // touches the back buffer or the video hardware.
+     {
+ #ifdef __DJGPP__
+-        DosPortTickScope _dos_port_scene_scope(dos_port_tick_timing.scene_construct, true); // patch 0315: coarse
++        DosPortTickScope _dos_port_scene_scope(dos_port_tick_timing.scene_construct, kDosTickLogScene); // patch 0315: coarse; 0316: logged
+ #endif
+         construct_game_scene(false);
+         set_our_eip(5);
+diff --git a/Engine/ac/room.cpp b/Engine/ac/room.cpp
+index fc7d9187a..a758a56c7 100644
+--- a/Engine/ac/room.cpp
++++ b/Engine/ac/room.cpp
+@@ -1092,6 +1092,10 @@ void load_new_room(int newnum, CharacterInfo *forchar)
+     update_polled_stuff();
+     debug_script_log("Now in room %d", displayed_room);
+ #ifdef __DJGPP__
++    {
++        extern void dos_port_ticklog_add(unsigned kind, unsigned long value);
++        dos_port_ticklog_add(4 /* kDosTickLogRoom, patch 0316 */, (unsigned long)(displayed_room < 0 ? 0 : displayed_room));
++    }
+     debug_script_log("DOSAGS_XT t_ms=%u phase=load_end room=%d", (unsigned)get_runtime_ms(), displayed_room);
+ #endif
+     cursor_gstate.MarkChanged();
+diff --git a/Engine/main/dos_port_tick_timing.h b/Engine/main/dos_port_tick_timing.h
+index 6eec16186..6ae23f96e 100644
+--- a/Engine/main/dos_port_tick_timing.h
++++ b/Engine/main/dos_port_tick_timing.h
+@@ -509,6 +509,23 @@ static inline long long dos_port_fine_elapsed_us(uclock_t t0)
+     return dos_port_tick_fine_on() ? dos_port_tick_elapsed_us(t0) : 0;
+ }
+ 
++// DOS-PORT patch 0316: an opt-in per-tick log of the coarse scopes. The run totals above cannot say which tick
++// a cost fell in, so a figure that must leave out a room-entry tick or a click's hitch could not be computed
++// (LAB-MMD 47.2, 50.2). DOSAGS_TICKLOG=<ticks> (read once at startup) allocates a record buffer; every close
++// of the three coarse scopes then appends (loop counter, kind, us) -- the SAME clamped us the totals add, so
++// the log sums to the totals -- and room entries and dequeued inputs append an event record. Unset, the
++// buffer pointer stays null: one test per coarse-scope close, no allocation, no extra clock read. The buffer
++// is written to TICKS.BIN at exit. Records are in time order; a tick's render/scene/room/input records come
++// before its update_game_once close (the loop counter itself advances between render and that close).
++enum
++{
++    kDosTickLogUgo = 1, kDosTickLogRender = 2, kDosTickLogScene = 3,   // coarse scope closes, value = us
++    kDosTickLogRoom = 4,                                                 // "Now in room", value = room
++    kDosTickLogClick = 5, kDosTickLogKey = 6                             // input dequeued, value = 1 if dropped
++};
++extern unsigned long *dos_port_ticklog_buf;   // null unless DOSAGS_TICKLOG is set
++void dos_port_ticklog_add(unsigned kind, unsigned long value);
++
+ static inline void dos_port_tick_record_us(DosPortTickPhaseStats &stats, long long sample_us)
+ {
+     stats.calls++;
+@@ -539,8 +556,10 @@ class DosPortTickScope
+ {
+ public:
+     // patch 0315: coarse scopes time whatever DOSAGS_TICKSTATS_FINE says; the rest only when it is on
+-    explicit DosPortTickScope(DosPortTickPhaseStats &stats, bool coarse = false)
+-        : _stats(stats), _on(coarse || dos_port_tick_fine_on()), _t0(_on ? uclock() : 0) {}
++    // patch 0316: `coarse` is the scope's per-tick log kind (kDosTickLog*), 0 for a fine scope
++    explicit DosPortTickScope(DosPortTickPhaseStats &stats, int coarse = 0)
++        : _stats(stats), _on(coarse != 0 || dos_port_tick_fine_on()), _log((unsigned char)coarse),
++          _t0(_on ? uclock() : 0) {}
+     ~DosPortTickScope()
+     {
+         if (!_on)
+@@ -550,11 +569,15 @@ public:
+         // was silently discarding real aggregate time. uclock_t is
+         // already `long long` (time.h), so this multiply cannot
+         // overflow within any real per-call duration this engine sees.
+-        dos_port_tick_record_us(_stats, dos_port_tick_elapsed_us(_t0));
++        long long us = dos_port_tick_elapsed_us(_t0);
++        dos_port_tick_record_us(_stats, us);
++        if (_log && dos_port_ticklog_buf)   // patch 0316
++            dos_port_ticklog_add(_log, us < 0 ? 0UL : (unsigned long)(us > 0x0FFFFFFFLL ? 0x0FFFFFFFLL : us));
+     }
+ private:
+     DosPortTickPhaseStats &_stats;
+     bool _on;
++    unsigned char _log;   // patch 0316
+     uclock_t _t0;
+ };
+ 
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 2eed8a9bf..313a8a97b 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -28,6 +28,60 @@
+ #include "main/dos_port_tick_timing.h" // DOS-PORT patch 0080
+ #ifdef __DJGPP__
+ int dos_port_tick_fine_flag = 0; // DOS-PORT patch 0315: set once in ags_entry_point; 0 (off) until then
++
++// DOS-PORT patch 0316: the per-tick coarse log (see dos_port_tick_timing.h). Two 32-bit words a record:
++// the loop counter, then kind << 28 | value (value capped at 28 bits: 268 s of us, or a room number).
++unsigned long *dos_port_ticklog_buf = nullptr;
++static unsigned long dos_port_ticklog_cap = 0, dos_port_ticklog_n = 0, dos_port_ticklog_dropped = 0;
++uint32_t get_loop_counter();   // game_run.h, included further down
++
++void dos_port_ticklog_init(const char *env)
++{
++    const long ticks = (env && env[0]) ? atol(env) : 0;
++    if (ticks <= 0 || ticks > 1000000L)
++        return;
++    // ~1.6 coarse closes a tick in play; 4 records a tick plus room for events leaves margin, and an
++    // overflow is counted, never silent
++    dos_port_ticklog_cap = (unsigned long)ticks * 4UL + 256UL;
++    dos_port_ticklog_buf = (unsigned long *)malloc(dos_port_ticklog_cap * 2UL * sizeof(unsigned long));
++    if (!dos_port_ticklog_buf)
++        dos_port_ticklog_cap = 0;
++}
++
++void dos_port_ticklog_add(unsigned kind, unsigned long value)
++{
++    if (!dos_port_ticklog_buf)
++        return;
++    if (dos_port_ticklog_n >= dos_port_ticklog_cap)
++    {
++        dos_port_ticklog_dropped++;
++        return;
++    }
++    if (value > 0x0FFFFFFFUL)
++        value = 0x0FFFFFFFUL;
++    unsigned long *r = dos_port_ticklog_buf + 2UL * dos_port_ticklog_n++;
++    r[0] = (unsigned long)get_loop_counter();
++    r[1] = ((unsigned long)kind << 28) | value;
++}
++
++void dos_port_ticklog_dump(FILE *log)
++{
++    if (!dos_port_ticklog_buf)
++        return;
++    FILE *f = fopen("TICKS.BIN", "wb");
++    bool ok = false;
++    if (f)
++    {
++        const unsigned long hdr[5] = { 0x474F4C54UL /* 'TLOG' */, 1UL, dos_port_ticklog_n, dos_port_ticklog_dropped,
++                                       dos_port_ticklog_cap };
++        ok = fwrite(hdr, sizeof(hdr), 1, f) == 1 &&
++             fwrite(dos_port_ticklog_buf, 2UL * sizeof(unsigned long), dos_port_ticklog_n, f) == dos_port_ticklog_n;
++        ok = (fclose(f) == 0) && ok;
++    }
++    if (log)
++        fprintf(log, "DOS-PORT ticklog records=%lu dropped=%lu cap=%lu file=TICKS.BIN written=%d\n",
++                dos_port_ticklog_n, dos_port_ticklog_dropped, dos_port_ticklog_cap, ok ? 1 : 0);
++}
+ #endif
+ #include "main/dos_port_work.h"        // DOS-PORT patch 0230
+ #endif
+@@ -1870,7 +1924,7 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+     // named sub-phases actually accounts for the whole tick.
+ #ifdef __DJGPP__
+     DosTickStallScope _dos_tick_stall_scope; // patch 0093
+-    DosPortTickScope _dos_port_update_once_scope(dos_port_tick_timing.update_game_once_total, true); // patch 0315: coarse
++    DosPortTickScope _dos_port_update_once_scope(dos_port_tick_timing.update_game_once_total, kDosTickLogUgo); // patch 0315: coarse; 0316: logged
+ #endif
+     set_our_eip(1000);
+ 
+diff --git a/Engine/main/main.cpp b/Engine/main/main.cpp
+index 7c9521a5c..d7ee610fd 100644
+--- a/Engine/main/main.cpp
++++ b/Engine/main/main.cpp
+@@ -590,6 +590,8 @@ int ags_entry_point(int argc, char *argv[]) {
+         extern int dos_port_tick_fine_flag;
+         const char *e = getenv("DOSAGS_TICKSTATS_FINE");
+         dos_port_tick_fine_flag = (e && e[0] == '1' && e[1] == 0) ? 1 : 0;
++        extern void dos_port_ticklog_init(const char *env);   // patch 0316: DOSAGS_TICKLOG=<ticks>, opt-in
++        dos_port_ticklog_init(getenv("DOSAGS_TICKLOG"));
+     }
+ #endif
+     main_init(argc, argv);
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 550f380dd..97cdbe217 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -811,6 +811,10 @@ void quit(const char *quitmsg)
+             // rather than leaving it an assumption.
+             dos_port_yardstick_emit(run_manifest_log); // patch 0093
+             dos_journey_emit(run_manifest_log);        // patch 0250
++            {
++                extern void dos_port_ticklog_dump(FILE *log);
++                dos_port_ticklog_dump(run_manifest_log);   // patch 0316: TICKS.BIN when DOSAGS_TICKLOG is set
++            }
+             dos_midi_stream_emit(run_manifest_log);    // patch 0253
+ 
+             // DOS-PORT patch 0095: the cross-check's end edge and verdict.
+diff --git a/Engine/platform/dos/dos_journeys.cpp b/Engine/platform/dos/dos_journeys.cpp
+index 3d9039a55..f2e31a41e 100644
+--- a/Engine/platform/dos/dos_journeys.cpp
++++ b/Engine/platform/dos/dos_journeys.cpp
+@@ -521,6 +521,10 @@ void dos_journey_input_dequeued(const SDL_Event &evt, bool dropped)
+     const int kind = input_kind(evt);
+     if (kind < 0)
+         return;
++    {
++        extern void dos_port_ticklog_add(unsigned kind, unsigned long value);
++        dos_port_ticklog_add(kind == kJ_Key ? 6U : 5U /* kDosTickLogKey / kDosTickLogClick, patch 0316 */, dropped ? 1UL : 0UL);
++    }
+     if (p_in_n >= kPendInCap)
+     {
+         g_in_pend_overflow++;
+-- 
+2.47.3
+

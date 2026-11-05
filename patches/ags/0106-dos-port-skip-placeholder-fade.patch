@@ -1,0 +1,211 @@
+From 4442de9d668864b008b2ff8b5c04c5b86a1c864b Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 18 Sep 2026 09:27:08 -0700
+Subject: [PATCH] DOS-PORT: patch 0106 -- skip the placeholder room's fade-out;
+ trace fades
+
+start_game() fades OUT the placeholder room before loading the first real
+one. set_room_placeholder() (ac/room.cpp:1107-1119) installs a
+Bitmap(1, 1, 8) dummy as background and every mask, and the call sits
+inside `if (displayed_room < 0)`, so no real room has ever been
+displayed. Measured at 611 ms on HW-486-66 -- 20% of everything the
+whole-run tick_rate gate can see -- to animate something invisible.
+
+current_fade_out_effect_no_animation() reaches the same end state without
+animating. It is deliberately not a reimplementation: it mirrors
+current_fade_out_effect()'s OWN fast-forward early return, which upstream
+already treats as the correct way to reach the faded-out state without
+animating -- same plugin hook, same style resolution, same
+`|= !instant_transition`. It likewise does not clear
+play.next_screen_transition, because the fade-OUT path does not either
+(current_fade_in_effect() consumes and clears it). Only the placeholder
+call site changes; the restore-save fade-out in the same file is left
+alone, since there a real room may be on screen.
+
+Also adds a fade trace (DOSAGS_FADE_TRACE=1, off by default, one cached
+getenv): an FNV-1a hash of the 256-entry palette at each transition step.
+A fade's visible output is fully determined by its palette sequence --
+ScreenFadeSoftware renders the scene to the back buffer once in Begin()
+and never touches those pixels again -- so matching per-step palettes
+mean the identical animation. That makes it a stronger equivalence check
+than screenshots sampled at a few ticks. Kept rather than removed because
+Gate 3's fixture spends most of its loop in stall ticks that are largely
+fades.
+
+EVIDENCE (DOSBox-X, same binary, the only difference being the call site,
+via a temporary no-skip comparison arm that was reverted afterwards):
+- The placeholder fade-out's 13 steps produce exactly ONE distinct
+  palette hash. It was fading black to black: the animation provably
+  changed nothing on screen, measured rather than argued.
+- The first REAL room's fade-in is IDENTICAL step-for-step, all 13
+  palette hashes matching between arms -- the correctness requirement.
+- Trace count 33 -> 20, exactly the 13 placeholder steps and nothing
+  else.
+
+Gate: Trilby's Notes validate PASS (placeholder fade 311 -> 0 ms under
+DOSBox-X), BENCH8 all seven arms PASS with unchanged capture hashes, AGS
+Quest AutoPilot 18/18 with PH01-PH03 matching the committed baseline.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hnodGZ6cg8CWuFXEDTsUq
+---
+ Engine/ac/screen.cpp       | 88 ++++++++++++++++++++++++++++++++++++++
+ Engine/ac/screen.h         |  6 +++
+ Engine/main/game_start.cpp | 11 ++++-
+ 3 files changed, 104 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/ac/screen.cpp b/Engine/ac/screen.cpp
+index 9df021980..fdbd20748 100644
+--- a/Engine/ac/screen.cpp
++++ b/Engine/ac/screen.cpp
+@@ -117,6 +117,51 @@ public:
+         if (!RunImpl())
+             return false;
+ 
++#ifdef __DJGPP__
++        // DOS-PORT patch 0106: optional fade trace, off unless
++        // DOSAGS_FADE_TRACE=1 (one getenv at first use, then a cached
++        // bool -- zero cost when unset, like this port's other
++        // hint-gated diagnostics).
++        //
++        // What it is FOR: a fade's visible output is fully determined by
++        // its palette sequence. ScreenFadeSoftware renders the scene to
++        // the back buffer exactly once in Begin() and never touches those
++        // pixels again, so two runs whose per-step palettes match are
++        // showing the identical animation. That makes this a stronger
++        // equivalence check than screenshots sampled at a few ticks, and
++        // it is the check patch 0106 needed: proving that skipping the
++        // PLACEHOLDER room's fade-out leaves the first REAL room's
++        // fade-in unchanged. Kept rather than removed because Gate 3's
++        // fixture spends most of its loop in stall ticks that are largely
++        // fades, so the next fade question will want it too.
++        {
++            static int trace = -1;
++            if (trace < 0)
++            {
++                const char *e = getenv("DOSAGS_FADE_TRACE");
++                trace = (e && e[0] == '1' && e[1] == 0) ? 1 : 0;
++            }
++            if (trace)
++            {
++                PALETTE cur;
++                get_palette(cur);
++                // FNV-1a over the 256 RGB triples: order-sensitive, so a
++                // swapped or shifted palette cannot collide with a match.
++                unsigned long h = 2166136261UL;
++                for (int i = 0; i < PAL_SIZE; ++i)
++                {
++                    const unsigned char rgb[3] = { (unsigned char)cur[i].r,
++                                                   (unsigned char)cur[i].g,
++                                                   (unsigned char)cur[i].b };
++                    for (int b = 0; b < 3; ++b)
++                    { h ^= rgb[b]; h *= 16777619UL; }
++                }
++                Debug::Printf(kDbgMsg_Info, "DOS-PORT fade_trace step=%d style=%d fadein=%d pal_fnv=%08lx",
++                              _traceStep++, (int)_style, _fadein ? 1 : 0, h);
++            }
++        }
++#endif
++
+         Draw();
+ 
+         sys_evt_process_pending();
+@@ -131,6 +176,9 @@ protected:
+     ScreenTransitionStyle _style = kScrTran_Instant;
+     bool _fadein = false;
+     int _speed = 0;
++#ifdef __DJGPP__
++    int _traceStep = 0; // patch 0106's fade trace, see Run()
++#endif
+ };
+ 
+ class ScreenFade : public ScreenTransition
+@@ -822,6 +870,46 @@ void current_fade_out_effect()
+     run_fade_out_effect(trans_style, def_speed);
+ }
+ 
++#ifdef __DJGPP__
++// DOS-PORT patch 0106: establish the faded-out END STATE without running
++// the animation.
++//
++// Only one caller, and only one case: start_game()'s fade-out of the
++// PLACEHOLDER room, guarded by `displayed_room < 0`. That guard proves no
++// real room has ever been displayed, and set_room_placeholder()
++// (ac/room.cpp) installs a Bitmap(1, 1, 8) dummy as the background and
++// every mask -- so the animation renders 13 steps of a 1x1 image that no
++// player can see. Measured at 611 ms on HW-486-66, 20% of everything the
++// whole-run tick_rate gate can see.
++//
++// This is deliberately NOT a reimplementation of the fade's end state: it
++// mirrors current_fade_out_effect()'s OWN fast-forward early return
++// (just above), which upstream already treats as the correct way to reach
++// the faded-out state without animating. Same plugin hook, same style
++// resolution, same `|= !instant` assignment. It likewise does not reset
++// play.next_screen_transition, because the fade-OUT path does not either
++// -- current_fade_in_effect() is what consumes and clears it.
++//
++// The palette is left alone, as the fast-forward path also leaves it: the
++// following fade-IN does not read the current palette, it interpolates
++// from its own _fadePal built in Begin(), so the first real room's
++// appearance cannot depend on what this call left behind. That is an
++// argument from source, and the DOSBox-X gate captures the first room's
++// fade-in frame by frame to prove it rather than trust it.
++void current_fade_out_effect_no_animation()
++{
++    debug_script_log("Transition-out in room %d (DOS-PORT 0106: placeholder, animation skipped)", displayed_room);
++    if (pl_run_plugin_hooks(kPluginEvt_TransitionOut, 0))
++        return;
++
++    const ScreenTransitionStyle trans_style = (play.next_screen_transition >= 0) ?
++        static_cast<ScreenTransitionStyle>(play.next_screen_transition) :
++        static_cast<ScreenTransitionStyle>(play.fade_effect);
++
++    play.screen_is_faded_out |= !(should_instant_transition(trans_style)); // mark screen as faded
++}
++#endif
++
+ //=============================================================================
+ //
+ // Screen script API.
+diff --git a/Engine/ac/screen.h b/Engine/ac/screen.h
+index 1ccc53f7d..d6c9e779a 100644
+--- a/Engine/ac/screen.h
++++ b/Engine/ac/screen.h
+@@ -31,5 +31,11 @@ void run_fade_out_effect(ScreenTransitionStyle style, int speed);
+ void current_fade_in_effect();
+ // Runs fade-out transition using default settings
+ void current_fade_out_effect();
++#ifdef __DJGPP__
++// DOS-PORT patch 0106: the faded-out end state with no animation, for
++// start_game()'s provably-invisible placeholder fade-out. See the
++// definition in screen.cpp for why this is equivalent.
++void current_fade_out_effect_no_animation();
++#endif
+ 
+ #endif // __AGS_EE_AC__SCREEN_H
+diff --git a/Engine/main/game_start.cpp b/Engine/main/game_start.cpp
+index e7277f765..9d6e26042 100644
+--- a/Engine/main/game_start.cpp
++++ b/Engine/main/game_start.cpp
+@@ -119,8 +119,17 @@ void start_game()
+     if (displayed_room < 0) {
+ #ifdef __DJGPP__
+         _dp_t0 = DOS_PORT_PRELOOP_T0();
+-#endif
++        // patch 0106: this fade-out is of the 1x1 PLACEHOLDER room -- the
++        // `displayed_room < 0` guard above proves nothing real has ever
++        // been shown -- so it animates something invisible for ~611 ms on
++        // HW-486-66. Reach the same end state without animating. NOTE the
++        // other current_fade_out_effect() call in this file (the
++        // restore-save path) is deliberately untouched: there a real room
++        // may well be on screen.
++        current_fade_out_effect_no_animation();
++#else
+         current_fade_out_effect();
++#endif
+ #ifdef __DJGPP__
+         dos_port_startup_timing.preloop_placeholder_fade_ms = DOS_PORT_PRELOOP_MS(_dp_t0);
+         _dp_t0 = DOS_PORT_PRELOOP_T0();
+-- 
+2.47.3
+

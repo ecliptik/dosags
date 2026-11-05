@@ -1,0 +1,42 @@
+From dd79f0e80bc42aec1a5cfe66420018aaedf4570e Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 15:27:15 -0700
+Subject: [PATCH] dos: patch 0196 -- releasing a nested hold keeps a paused
+ MIDI replay held
+
+SDL_DOSMidiDeferHold(false) cleared g_mdq_hold unconditionally. The
+Opl3Detect/InitChip/Shutdown wrappers hold around their own chip writes
+and release after, so if one ran while SDL_DOSMidiDeferPause(true) held
+the replay -- a second OPL sink opened during a music pause -- the release
+lifted the pause's hold and the SB ISR played the paused song's queued
+writes (up to the ~2 s planned ahead) while the port believed it was
+paused, then resume shifted stamps that had already played. Releasing to
+g_mdq_paused keeps the pause's hold; SDL_DOSMidiDeferPause(false) and
+SDL_DOSMidiDeferEnable(0) remain the only ways out of a pause.
+
+Found by the /sdldos:review of 0195 (dosags PLAN.md, 2026-09-23); no
+fixture hit it.
+---
+ src/audio/dos/SDL_dosaudio_sb.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index 780b901ee..f2355e51d 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -1861,7 +1861,11 @@ bool SDL_DOSMidiDeferHold(bool hold)
+         g_mdq_hold = 1;
+         return true;
+     }
+-    g_mdq_hold = 0;
++    /* DOS-PORT patch 0196: a paused replay stays held. The Detect/InitChip/
++       Shutdown wrappers hold around their own chip writes and release after;
++       releasing to 0 lifted SDL_DOSMidiDeferPause's hold too, and the ISR
++       played the paused song's queued writes (~2 s) while the port was paused. */
++    g_mdq_hold = g_mdq_paused ? 1 : 0;
+     return true;
+ }
+ 
+-- 
+2.47.3
+

@@ -1,0 +1,77 @@
+diff --git a/Common/gui/guibutton.cpp b/Common/gui/guibutton.cpp
+index 971880406..d1d598f6c 100644
+--- a/Common/gui/guibutton.cpp
++++ b/Common/gui/guibutton.cpp
+@@ -72,6 +72,10 @@ GUIButton::GUIButton()
+     _clickData[kGUIClickRight] = 0;
+ }
+ 
++// DOS-PORT patch 0305: this setter does NOT call UpdateCurrentImage(), although the dynamic-colors
++// and flat-style bits feed it. Engine ac/button.cpp now skips Set*Image on an unchanged slot, relying on
++// every writer of UpdateCurrentImage's inputs having called it; that holds because nothing calls
++// SetButtonFlags. A future caller must call UpdateCurrentImage() here.
+ void GUIButton::SetButtonFlags(int flags)
+ {
+     if (_buttonFlags != flags)
+diff --git a/Engine/ac/button.cpp b/Engine/ac/button.cpp
+index 0db4e600d..e973b2928 100644
+--- a/Engine/ac/button.cpp
++++ b/Engine/ac/button.cpp
+@@ -241,7 +241,12 @@ void Button_SetMouseOverGraphic(GUIButton *butt, int slotn)
+         debug_script_log("GUI %d Button %d mouseover set to slot %d", butt->GetParentID(), butt->GetID(), slotn);
+ 
+     const int old_slotn = butt->GetMouseOverImage();
+-    butt->SetMouseOverImage(slotn);
++#ifdef __DJGPP__
++    if (old_slotn != slotn) // DOS-PORT patch 0305 (see Button_SetNormalGraphic)
++#endif
++    {
++        butt->SetMouseOverImage(slotn);
++    }
+     // NOTE: GUIs currently cannot react to a dynamic sprite change without a direct notification
+     replace_sprite_changed_callback(old_slotn, slotn, butt);
+ 
+@@ -262,14 +267,27 @@ void Button_SetNormalGraphic(GUIButton *butt, int slotn)
+     // NormalGraphic = 0 will turn the Button into a standard colored button
+     if (slotn == 0)
+     {
+-        butt->SetNormalImage(slotn);
++#ifdef __DJGPP__
++        // DOS-PORT patch 0305: an unchanged slot skips only Set*Image, whose UpdateCurrentImage would
++        // recompute exactly the current image and colours (every writer of its inputs already calls it;
++        // see GUIButton::SetButtonFlags). The size sync, sprite callback and animation stop still run.
++        if (old_slotn != slotn)
++#endif
++        {
++            butt->SetNormalImage(slotn);
++        }
+     }
+     // Any other sprite - update the clickable area to the same size as the graphic
+     else
+     {
+         const int width = static_cast<size_t>(slotn) < game.SpriteInfos.size() ? game.SpriteInfos[slotn].Width : 0;
+         const int height = static_cast<size_t>(slotn) < game.SpriteInfos.size() ? game.SpriteInfos[slotn].Height : 0;
+-        butt->SetNormalImage(slotn);
++#ifdef __DJGPP__
++        if (old_slotn != slotn) // DOS-PORT patch 0305 (see the slot-0 branch above)
++#endif
++        {
++            butt->SetNormalImage(slotn);
++        }
+         butt->SetSize(width, height);
+     }
+ 
+@@ -290,7 +308,12 @@ void Button_SetPushedGraphic(GUIButton *butt, int slotn)
+         debug_script_log("GUI %d Button %d pushed set to slot %d", butt->GetParentID(), butt->GetID(), slotn);
+ 
+     const int old_slotn = butt->GetPushedImage();
+-    butt->SetPushedImage(slotn);
++#ifdef __DJGPP__
++    if (old_slotn != slotn) // DOS-PORT patch 0305 (see Button_SetNormalGraphic)
++#endif
++    {
++        butt->SetPushedImage(slotn);
++    }
+     // NOTE: GUIs currently cannot react to a dynamic sprite change without a direct notification
+     replace_sprite_changed_callback(old_slotn, slotn, butt);
+ 

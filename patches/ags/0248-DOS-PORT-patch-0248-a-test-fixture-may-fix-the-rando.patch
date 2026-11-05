@@ -1,0 +1,42 @@
+From 09cc80b77cb5139e13908a34f5bc2c9204a3f24c Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 28 Sep 2026 16:04:05 -0700
+Subject: [PATCH] DOS-PORT: patch 0248 -- a test fixture may fix the random
+ seed (DOSAGS_RANDSEED=n, default: time as before)
+
+engine_init_game_settings() seeds the script and engine randomizer from
+time(nullptr), so two runs of the same fixture diverge as soon as a
+script calls Random(). A tick-keyed input fixture (S32PT, lab-s32) needs
+two runs of the same arm to make the same game, so that an arm which
+only moves time -- a faster fade, a faster read -- can be compared on
+whole-run without comparing different games.
+
+With DOSAGS_RANDSEED unset the seed is time(nullptr), exactly as before:
+the assignment is unchanged and only overridden when the variable is
+set. The manifest says which: "DOS-PORT randseed mode=time|fixed value=".
+---
+ Engine/main/engine.cpp | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/Engine/main/engine.cpp b/Engine/main/engine.cpp
+index 3a4a4c235..82c358eff 100644
+--- a/Engine/main/engine.cpp
++++ b/Engine/main/engine.cpp
+@@ -700,6 +700,14 @@ void engine_init_game_settings()
+ 
+     // Initialize randomizer
+     play.randseed = time(nullptr);
++#ifdef __DJGPP__
++    {   // DOS-PORT patch 0248: a test fixture may fix the seed (DOSAGS_RANDSEED=n); unset keeps time(nullptr) above
++        const char *e = getenv("DOSAGS_RANDSEED");
++        if (e != nullptr && e[0] != 0)
++            play.randseed = (int)strtol(e, nullptr, 10);
++        Debug::Printf("DOS-PORT randseed mode=%s value=%d", (e != nullptr && e[0] != 0) ? "fixed" : "time", play.randseed);
++    }
++#endif
+     srand(play.randseed);
+ 
+     if (usetup.AudioEnabled)
+-- 
+2.47.3
+

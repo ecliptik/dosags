@@ -1,0 +1,151 @@
+From d431e4d4478bd4000a3bfc95da13192c8c67d942 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 30 Sep 2026 00:29:03 -0700
+Subject: [PATCH] DOS-PORT: patch 0349 -- hold the top-up after a prime rather
+ than mix a hole into the primed voice
+
+0348 wrote a cold start's first chunk at its first PutData. That PutData
+is one decoder buffer, 2,048 samples = 4 mix chunks, and the pump that
+follows in the same entry poll still topped the stream up toward its
+4-chunk target. It took chunks 2-4, found the voice empty while its
+source was not done, and mixed a chunk with that voice silent: a ~46 ms
+hole ~186 ms into every cold-started sound. The SB plays it as ring
+data, so silent_irqs cannot see it; underruns counted it (underruns ==
+primes on every 0348 build; lab-mmd/gate/UNDERRUN.md). 0348 was
+reverted on main for it.
+
+Now the prime marks its voice, and the next pump's top-up stops before
+a chunk would hold that hole: the primed voice has less than one chunk
+buffered while its source is not done, and the device still has at
+least one chunk queued (SDL stream + SB ring). Its next PutData brings
+the data and the pump after that continues. The mark lasts one pump
+only, so a voice that truly starves later still gets today's zero-fill.
+A first cut held for any sounding voice and turned such a starvation
+into dry SB halves counted as silent_irqs (lab test T6, T6d); this one
+does not. The mixer status gains topup_holds=; g_last_status and the
+status-string buffer grow 1600 -> 1632 for it.
+---
+ Engine/platform/dos/dos_audio_mixer.cpp | 42 ++++++++++++++++++++++---
+ 1 file changed, 37 insertions(+), 5 deletions(-)
+
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index df53f0279..af6bd8a5c 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -89,6 +89,9 @@ struct Voice
+     // (drain), not starvation -- see mix_one_chunk().
+     bool source_done = false;
+     gus_pcm_stream *gus_stream = nullptr; // GUS-path only
++    // DOS-PORT patch 0349: set by the 0348 prime when it wrote this voice's first chunk, cleared at the end of the
++    // next pump. Only that pump's top-up may hold for this voice (see dos_topup_would_hole()).
++    bool prime_hold = false;
+ };
+ 
+ // Cap per-voice buffering so a stalled consumer (mixer not pumped) can't
+@@ -160,6 +163,7 @@ static bool g_episode_latency_taken = false; // the one start-latency IRQ an epi
+ // DOS-PORT patch 0348: cold-start primes (a sound's first chunk written to the SB ring on its first PutData into an
+ // idle device) and the retries a prime needed because SDL_DOSAudioPump returned without writing.
+ uint32_t g_primes = 0, g_prime_retries = 0;
++uint32_t g_topup_holds = 0; // DOS-PORT patch 0349: post-prime top-ups stopped to avoid a hole
+ uint32_t g_pcm_irq_base = 0;
+ 
+ // DOS-PORT (patch 0201): ring overrun witnesses. overwrites = SDL 0190's
+@@ -185,7 +189,7 @@ uint32_t g_room_since = 0;
+ // shutdown_sound()) still reports the real final state instead of the
+ // "never opened" NA sentinel. Left at "NA" if the device was never
+ // opened at all, so that genuine case is still distinguishable.
+-char g_last_status[1600] = "NA"; // patch 0252: 512 -> 640, room for mixed=,...,inflight= beside 0213's fields; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280; patch 0341: -> 1472 (1443 B with the RTC pump's fields); patch 0346: -> 1520 (preroll=, <= 48 B); patch 0347: -> 1552 (start_latency_irqs=, <= 30 B: 1522 B worst case); patch 0348: -> 1600 (primes=,prime_retries=, <= 43 B: 1565 B worst case)
++char g_last_status[1632] = "NA"; // patch 0252: 512 -> 640, room for mixed=,...,inflight= beside 0213's fields; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280; patch 0341: -> 1472 (1443 B with the RTC pump's fields); patch 0346: -> 1520 (preroll=, <= 48 B); patch 0347: -> 1552 (start_latency_irqs=, <= 30 B: 1522 B worst case); patch 0348: -> 1600 (primes=,prime_retries=, <= 43 B: 1565 B worst case); patch 0349: -> 1632 (topup_holds=, <= 23 B: 1588 B worst case)
+ 
+ void format_status_string(char *buf, size_t bufsize)
+ {
+@@ -201,13 +205,13 @@ void format_status_string(char *buf, size_t bufsize)
+     char irq_fragment[128];
+     if (g_gus_backend)
+         std::snprintf(irq_fragment, sizeof(irq_fragment),
+-            "pcm_irqs=NA,silent_irqs=NA,start_latency_irqs=NA,primes=NA,prime_retries=NA");
++            "pcm_irqs=NA,silent_irqs=NA,start_latency_irqs=NA,primes=NA,prime_retries=NA,topup_holds=NA");
+     else
+         std::snprintf(irq_fragment, sizeof(irq_fragment),
+-            "pcm_irqs=%u,silent_irqs=%u,start_latency_irqs=%u,primes=%u,prime_retries=%u",
++            "pcm_irqs=%u,silent_irqs=%u,start_latency_irqs=%u,primes=%u,prime_retries=%u,topup_holds=%u",
+             (unsigned)(dos_port_audio_sfx_active_count - g_pcm_irq_base), (unsigned)g_owed_silent_irqs,
+             (unsigned)g_start_latency_irqs, (unsigned)g_primes,
+-            (unsigned)g_prime_retries); // DOS-PORT patches 0347, 0348
++            (unsigned)g_prime_retries, (unsigned)g_topup_holds); // DOS-PORT patches 0347, 0348, 0349
+     char ring_fragment[160];
+     if (g_gus_backend)
+         std::snprintf(ring_fragment, sizeof(ring_fragment),
+@@ -264,6 +268,7 @@ bool dos_audio_mixer_init()
+     g_silent_snap = dos_port_audio_silent_irq_count;
+     g_start_latency_irqs = 0; // DOS-PORT patch 0347
+     g_primes = g_prime_retries = 0; // DOS-PORT patch 0348
++    g_topup_holds = 0; // DOS-PORT patch 0349
+     g_silent_end = g_silent_snap;
+     g_sounded_start = g_sounded_end = dos_port_audio_sfx_active_count;
+     g_episode_sounded = false;
+@@ -604,6 +609,7 @@ static void dos_prime_cold_start(int voice)
+     SDL_DOSAudioSetContentActive(true);
+     SDL_DOSAudioPump();
+     g_primes++;
++    g_voices[voice].prime_hold = true; // DOS-PORT patch 0349: the next pump must not top up past this voice's data
+     if (SDL_GetAudioStreamQueued(g_stream) > 0)
+     {
+         SDL_DOSAudioPump();
+@@ -626,6 +632,25 @@ static void dos_prime_cold_start(int voice)
+     g_owed_at_snap = true;
+ }
+ 
++// DOS-PORT patch 0349: the prime (0348) takes a cold start's first chunk out of its first PutData (one decoder buffer,
++// 4 mix chunks). The next pump's top-up toward TARGET_QUEUED_BYTES would then run that voice dry and mix a chunk with
++// it silent: a ~46 ms hole ~186 ms into the sound. True when a voice primed since the last pump has less than one
++// chunk buffered while its source is not done, and the device still has at least one chunk queued (so waiting for
++// its next PutData costs nothing audible). Starvation of any other voice keeps today's zero-fill.
++static bool dos_topup_would_hole()
++{
++    const int queued = SDL_GetAudioStreamQueued(g_stream) + SDL_DOSAudioRingFillFrames() * (int)sizeof(int16_t);
++    if (queued < MIX_CHUNK_BYTES)
++        return false;
++    for (const auto &v : g_voices)
++    {
++        if (v.used && v.active && v.prime_hold && !v.source_done
++            && v.ring.size() - v.read_pos < (size_t)MIX_CHUNK_BYTES)
++            return true;
++    }
++    return false;
++}
++
+ void dos_audio_mixer_pump()
+ {
+     dos_midi_stream_sample();   // DOS-PORT patch 0253: once per tick
+@@ -698,11 +723,18 @@ void dos_audio_mixer_pump()
+         {
+             if (SDL_GetAudioStreamQueued(g_stream) >= TARGET_QUEUED_BYTES)
+                 break;
++            if (dos_topup_would_hole()) // DOS-PORT patch 0349: wait for the primed voice's next data, not mix a hole
++            {
++                g_topup_holds++;
++                break;
++            }
+             bool any_active = false;
+             mix_one_chunk(any_active);
+             if (!any_active)
+                 break; // nothing playing; let the device underflow to silence
+         }
++        for (auto &v : g_voices) // DOS-PORT patch 0349: the hold covers only the first pump after a prime
++            v.prime_hold = false;
+     }
+     // DOS-PORT (patch 0204): while content is owed, the driver must write a
+     // silent chunk rather than drop it -- dropping it removes that silence's
+@@ -763,7 +795,7 @@ const char *dos_audio_mixer_status_string()
+ {
+     if (!g_stream && !g_gus_open)
+         return g_last_status; // "NA" if never opened, else the shutdown-time snapshot
+-    static char buf[1600];   // patch 0252: 512 -> 640; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280; patch 0341: -> 1472; patch 0346: -> 1520; patch 0347: -> 1552; patch 0348: -> 1600 (see g_last_status)
++    static char buf[1632];   // patch 0252: 512 -> 640; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280; patch 0341: -> 1472; patch 0346: -> 1520; patch 0347: -> 1552; patch 0348: -> 1600; patch 0349: -> 1632 (see g_last_status)
+     format_status_string(buf, sizeof(buf));
+     return buf;
+ }
+-- 
+2.47.3
+

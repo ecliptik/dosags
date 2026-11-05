@@ -1,0 +1,95 @@
+From 0e696de2106274cd27a56e48f15a36e8e5f81f6b Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 17 Sep 2026 13:38:19 -0700
+Subject: [PATCH] DOS-PORT: patch 0097 -- set TZ before libc invents a timezone
+
+With TZ unset, DJGPP's tzset() looks for a default zone file
+(/dev/env/DJDIR/etc/localtime, then zoneinfo fallbacks). On a machine
+with no DJGPP install all of those opens fail (errno 22 on the 486
+rig), and the state that failure leaves behind there is not a clean
+GMT: a probe with TZ unset read tm_gmtoff = -1024 s in one process and
+-675288 s in the next, localtime() still correct. It behaves like
+uninitialised state inside libc. DOSBox-X does not reproduce it.
+
+In this engine the offset has come out as +11896 days -- RUNMANIFEST
+started_utc=2059-04-13 -- and in that state every gettimeofday(), which
+runs mktime() through the broken zone state, cost ~42 ms instead of
+1.3 ms. CPU-bound brackets stayed normal; every bracket holding a clock
+read went ~31x (end_of_tick 127.6 ms vs 4.04), tick_rate 4.03 vs 33.5.
+Twenty real-hardware cells, back to 2026-09-13, carry a 2059-2071 date,
+and they are exactly the ones that ran 8-100x slow. Whether a cell was
+hit varied with the binary and the SET lines it ran under, which makes
+it a confound under A/B comparisons, not just noise.
+
+Fix: main_init() sets TZ=UTC0 when the user has not set one. A TZ that
+is set is parsed, never loaded from a file; the probe confirmed on the
+rig that after setenv("TZ","UTC0") the same process reads gmtoff=0 and
+the right date. UTC0 is what the fallback was meant to produce (DOS
+local time taken as-is), so game-visible time does not move.
+skipMissedTicks() re-anchors the frame timestamps static initialisers
+may already have taken through the broken state.
+---
+ Engine/main/main.cpp | 40 ++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 40 insertions(+)
+
+diff --git a/Engine/main/main.cpp b/Engine/main/main.cpp
+index 65676f19e..86064f211 100644
+--- a/Engine/main/main.cpp
++++ b/Engine/main/main.cpp
+@@ -46,6 +46,7 @@
+ #include <pc.h> // outportb()/inportb() -- RTC cross-check, patch 0095
+ #include "main/dos_port_startup_timing.h" // DosPortStartupTiming, patch 0078
+ #include "main/dos_port_tick_timing.h" // DosPortTickTiming, patch 0079
++#include "ac/timer.h" // skipMissedTicks() -- patch 0097
+ #endif
+ 
+ #if AGS_PLATFORM_OS_WINDOWS
+@@ -196,6 +197,45 @@ AGS::Common::Version EngineVersion;
+ void main_init(int argc, char*argv[])
+ {
+ #ifdef __DJGPP__
++    // DOS-PORT patch 0097: give libc a timezone before it invents one.
++    //
++    // With TZ unset, DJGPP's tzset() goes looking for a default zone file
++    // (/dev/env/DJDIR/etc/localtime, then its zoneinfo fallbacks). On a
++    // machine with no DJGPP install every one of those opens fails -- and
++    // on the 486 rig the state that failure path leaves behind is NOT a
++    // clean "GMT": measured there with TZ unset, the same program's
++    // tm_gmtoff came out -1024 s in one process and -675288 s in the
++    // next, with localtime() still right -- it behaves like
++    // uninitialised state inside libc. In this engine the offset has
++    // come out as +11896 days (RUNMANIFEST started_utc in 2059), and with
++    // it every gettimeofday() -- each one runs mktime() through that
++    // state -- cost ~42 ms instead of 1.3 ms: tick_rate 4 instead of 33.
++    // Twenty real-hardware cells, back to 2026-09-13, carry a 2059-2071
++    // date, and they are exactly the ones that ran 8-100x slow. Whether
++    // a cell was hit varied with the binary and the SET lines it ran
++    // under (same recipe, one more SET line and one more patch: hit
++    // twice running; without them: never) -- a confound sitting under
++    // A/B comparisons. DOSBox-X does not show it (same binary, same
++    // environment: 2026).
++    //
++    // A TZ that is SET never takes that path: tzset() parses the string
++    // and loads nothing. Measured on the rig: after setenv("TZ","UTC0")
++    // the same process reads gmtoff=0 and the right date, and tzset()
++    // re-evaluates on the next time call because the variable changed.
++    // UTC0 is what the broken fallback was trying to be (DOS local time
++    // taken as-is), so game-visible time does not move. A TZ the user set
++    // themselves is left alone.
++    //
++    // Static initialisers have already read the clock by now (timer.cpp's
++    // frame timestamps), possibly through the garbage state, so re-anchor
++    // them: a next-frame time 32 years out must not survive to the first
++    // WaitForNextFrame().
++    if (!getenv("TZ"))
++    {
++        setenv("TZ", "UTC0", 1);
++        tzset();
++        skipMissedTicks();
++    }
+     // DOS-PORT patch 0095: the cross-check's start edge, deliberately
+     // BEFORE the two engine-start anchors below so the up-to-one-second
+     // sync is outside duration_s and every startup/t_ms figure.
+-- 
+2.47.3
+

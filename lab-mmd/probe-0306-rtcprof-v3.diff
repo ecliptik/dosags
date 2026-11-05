@@ -1,0 +1,383 @@
+diff --git a/Engine/CMakeLists.txt b/Engine/CMakeLists.txt
+index 399962195..aec56b118 100644
+--- a/Engine/CMakeLists.txt
++++ b/Engine/CMakeLists.txt
+@@ -475,6 +475,8 @@ target_sources(engine
+     platform/dos/dos_audio_mixer.h
+     platform/dos/dos_journeys.cpp
+     platform/dos/dos_journeys.h
++    platform/dos/dos_prof.cpp
++    platform/dos/dos_prof.h
+     platform/dos/dos_midi_backend.cpp
+     platform/dos/dos_midi_backend.h
+ 
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index dd09e9fe2..d4518c1be 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -11,6 +11,9 @@
+ // https://opensource.org/license/artistic-2-0/
+ //
+ //=============================================================================
++#ifdef __DJGPP__
++#include "platform/dos/dos_prof.h" // probe 0306 (LAB ONLY)
++#endif
+ #include <stdio.h>
+ #ifdef __DJGPP__
+ #include <stdlib.h>   // getenv/atoi, patch 0251 probe
+@@ -3558,6 +3561,7 @@ void render_graphics(IDriverDependantBitmap *extraBitmap, int extraX, int extraY
+     {
+ #ifdef __DJGPP__
+         DosPortTickScope _dos_port_scene_scope(dos_port_tick_timing.scene_construct);
++        DpProfPhaseScope _dp_prof_render_1(kDpPhRender); // probe 0306 (LAB ONLY)
+ #endif
+         construct_game_scene(false);
+         set_our_eip(5);
+@@ -3591,6 +3595,7 @@ void render_graphics(IDriverDependantBitmap *extraBitmap, int extraX, int extraY
+     // so it CAN be compared cleanly against update_game_once_total.
+ #ifdef __DJGPP__
+     DosPortTickScope _dos_port_render_to_screen_pertick_scope(dos_port_tick_timing.render_to_screen_pertick);
++    DpProfPhaseScope _dp_prof_render_2(kDpPhRender); // probe 0306 (LAB ONLY)
+ #endif
+     render_to_screen();
+ 
+diff --git a/Engine/ac/event.cpp b/Engine/ac/event.cpp
+index 927a10a4d..91f28d31b 100644
+--- a/Engine/ac/event.cpp
++++ b/Engine/ac/event.cpp
+@@ -223,13 +223,15 @@ struct DosPortEventInteractionScope
+     }
+ };
+ 
++#include "platform/dos/dos_prof.h" // probe 0306 (LAB ONLY)
+ struct DosPortEventScope
+ {
+     uclock_t t0; int type; int sub; int roomev;
+     DosPortEventScope(int ty, int sb, int rv)
+-        : t0(uclock()), type(ty), sub(sb), roomev(rv) {}
++        : t0(uclock()), type(ty), sub(sb), roomev(rv) { if (ty == 1) dp_prof_phase_enter(kDpPhScript); } // probe 0306
+     ~DosPortEventScope()
+     {
++        if (type == 1) dp_prof_phase_leave(kDpPhScript); // probe 0306
+         long long us = (long long)(uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC;
+         if (us < 0) us = 0;
+         if (type >= 0 && type < 6) { dos_port_evt_us[type] += us; dos_port_evt_n[type]++; }
+diff --git a/Engine/main/engine.cpp b/Engine/main/engine.cpp
+index fe227ae54..85e789fa0 100644
+--- a/Engine/main/engine.cpp
++++ b/Engine/main/engine.cpp
+@@ -1472,6 +1472,9 @@ int initialize_engine(const ConfigTree &startup_opts)
+     // TODO: move *init_game_settings to game init code unit
+     engine_init_game_settings();
+     engine_prepare_to_start_game();
++#ifdef __DJGPP__
++    { extern void dp_prof_start(); dp_prof_start(); } // probe 0306 (LAB ONLY): after all init, before the game
++#endif
+ 
+     initialize_start_and_play_game(override_start_room, loadSaveGameOnStartup);
+ 
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index c499d21d2..a27f742db 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -16,6 +16,9 @@
+ // Game loop
+ //
+ 
++#ifdef __DJGPP__
++#include "platform/dos/dos_prof.h" // probe 0306 (LAB ONLY)
++#endif
+ #include <algorithm>
+ #include <cmath>
+ #include <cstdlib>
+@@ -1217,6 +1220,9 @@ static void game_loop_update_background_animation()
+ static void game_loop_update_loop_counter()
+ {
+     GameTimer.LoopCounter++;
++#ifdef __DJGPP__
++    { extern void dp_prof_mark_tick(unsigned); dp_prof_mark_tick(GameTimer.LoopCounter); } // probe 0306
++#endif
+ 
+     if (play.wait_counter > 0) play.wait_counter--;
+     if (play.shakesc_length > 0) play.shakesc_length--;
+@@ -1868,6 +1874,7 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+ #ifdef __DJGPP__
+     DosTickStallScope _dos_tick_stall_scope; // patch 0093
+     DosPortTickScope _dos_port_update_once_scope(dos_port_tick_timing.update_game_once_total);
++    DpProfPhaseScope _dp_prof_ugo(kDpPhUgo); // probe 0306 (LAB ONLY)
+ #endif
+     set_our_eip(1000);
+ 
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index b309b043c..ecd28c849 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -595,6 +595,7 @@ void quit(const char *quitmsg)
+                     t.bg_spans, t.bg_span_lt16, t.bg_span_lt64, t.bg_span_ge64,
+                     t.bg_spans ? (long)(t.bg_px / t.bg_spans) : 0L);
+ #ifdef __DJGPP__
++                { extern void dp_prof_stop_and_dump(); dp_prof_stop_and_dump(); } // probe 0306 (LAB ONLY)
+                 {   // patch 0150: what event dispatch actually spends its time on
+                     extern long long dos_port_evt_us[6];
+                     extern long dos_port_evt_n[6];
+diff --git a/Engine/platform/dos/dos_prof.h b/Engine/platform/dos/dos_prof.h
+new file mode 100644
+index 000000000..8ee24943b
+--- /dev/null
++++ b/Engine/platform/dos/dos_prof.h
+@@ -0,0 +1,22 @@
++// DOS-PORT probe 0306 (LAB ONLY, never in patches/): RTC (IRQ8) sampling profiler. LAB-MMD.md 22.
++#ifndef __AGS_EE_PLATFORM__DOS_PROF_H
++#define __AGS_EE_PLATFORM__DOS_PROF_H
++#ifdef __DJGPP__
++#include <stdint.h>
++extern "C" volatile uint32_t dp_prof_flagbit;   // phase bits OR-ed into each sample (see below)
++// Phase bits, kept by depth so nested scopes stay right: 31 = inside a kAGSEvent_Script dispatch,
++// 30 = inside update_game_once, 29 = inside a render/scene pass. Sample EIPs use bits 0-28.
++enum { kDpPhScript = 0, kDpPhUgo = 1, kDpPhRender = 2 };
++void dp_prof_phase_enter(int ph);
++void dp_prof_phase_leave(int ph);
++struct DpProfPhaseScope
++{
++    int ph;
++    explicit DpProfPhaseScope(int p) : ph(p) { dp_prof_phase_enter(ph); }
++    ~DpProfPhaseScope() { dp_prof_phase_leave(ph); }
++};
++void dp_prof_start();                             // reads DOSAGS_PROF=<hz>; validates, installs
++void dp_prof_mark_tick(unsigned loop_counter);    // sample count at each game loop tick
++void dp_prof_stop_and_dump();                     // restores the vectors, writes PROF.BIN
++#endif
++#endif
+diff --git a/Engine/platform/dos/dos_prof.cpp b/Engine/platform/dos/dos_prof.cpp
+new file mode 100644
+index 000000000..c3dcfe5f8
+--- /dev/null
++++ b/Engine/platform/dos/dos_prof.cpp
+@@ -0,0 +1,227 @@
++// DOS-PORT probe 0306 (LAB ONLY, never in patches/): RTC (IRQ8) sampling profiler. LAB-MMD.md 22.
++//
++// The CMOS RTC's periodic interrupt (IRQ8, vector 70h) samples the interrupted CS:EIP from the
++// handler's iret frame. The PIT is not touched (uclock() reads it). Every RTC tick is a sample: the
++// EIP when the interrupted CS is this program's code selector, else the marker EIP 1 (real mode, V86,
++// DOS/BIOS, the DPMI host; also counted in "other"), both with the phase bits. Before any profiling, a validation loop at a known address
++// must receive >= 90% of its window's samples, or the profiler restores everything and the program
++// exits (HARD STOP). It refuses to start if IRQ8 is already hooked by anything but the BIOS.
++#ifdef __DJGPP__
++#include "platform/dos/dos_prof.h"
++#include <dpmi.h>
++#include <go32.h>
++#include <pc.h>
++#include <dos.h>
++#include <sys/exceptn.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include "debug/out.h"
++
++extern "C" {
++volatile uint32_t dp_prof_flagbit = 0;
++volatile uint32_t dp_prof_rtc_ticks = 0, dp_prof_other = 0, dp_prof_dropped = 0, dp_prof_n = 0;
++uint32_t dp_prof_cap = 0;
++uint16_t dp_prof_app_cs = 0;
++enum { kProfBuf = 1u << 19 };                     // 512k samples, 2 MB
++uint32_t dp_prof_buf[kProfBuf];
++void dp_prof_isr();
++void dp_prof_isr_end();
++void dp_prof_busy_start(int iters);
++void dp_prof_busy_end();
++}
++
++asm(
++    ".text\n"
++    ".globl _dp_prof_isr\n"
++    "_dp_prof_isr:\n"
++    "  pushl %eax\n"
++    "  pushl %ebx\n"
++    "  pushl %ds\n"
++    "  movw %cs:___djgpp_ds_alias, %ax\n"
++    "  movw %ax, %ds\n"
++    "  incl _dp_prof_rtc_ticks\n"
++    "  movl 16(%esp), %ebx\n"            // interrupted CS (frame: ds, ebx, eax, EIP, CS, EFLAGS)
++    "  movl $1, %eax\n"                  // marker EIP 1: not in PM app code (real mode, V86, host)
++    "  cmpw _dp_prof_app_cs, %bx\n"
++    "  jne 5f\n"
++    "  movl 12(%esp), %eax\n"            // interrupted EIP
++    "  jmp 6f\n"
++    "5: incl _dp_prof_other\n"
++    "6: orl _dp_prof_flagbit, %eax\n"
++    "  movl _dp_prof_n, %ebx\n"
++    "  cmpl _dp_prof_cap, %ebx\n"
++    "  jae 2f\n"
++    "  movl %eax, _dp_prof_buf(,%ebx,4)\n"
++    "  incl %ebx\n"
++    "  movl %ebx, _dp_prof_n\n"
++    "  jmp 3f\n"
++    "2: incl _dp_prof_dropped\n"
++    "3: movb $0x0C, %al\n"               // ack the RTC: read register C
++    "  outb %al, $0x70\n"
++    "  inb $0x71, %al\n"
++    "  movb $0x20, %al\n"                // EOI: slave, then master
++    "  outb %al, $0xA0\n"
++    "  outb %al, $0x20\n"
++    "  popl %ds\n"
++    "  popl %ebx\n"
++    "  popl %eax\n"
++    "  iret\n"
++    ".globl _dp_prof_isr_end\n"
++    "_dp_prof_isr_end:\n"
++    "  ret\n"
++    ".globl _dp_prof_busy_start\n"       // the validation loop: a known address range
++    "_dp_prof_busy_start:\n"
++    "  movl 4(%esp), %ecx\n"
++    "4: decl %ecx\n"
++    "  jnz 4b\n"
++    "  ret\n"
++    ".globl _dp_prof_busy_end\n"
++    "_dp_prof_busy_end:\n"
++    "  ret\n"
++);
++
++static int dp_ph_depth[3] = {0, 0, 0};
++static void dp_ph_update()
++{
++    dp_prof_flagbit = (dp_ph_depth[kDpPhScript] > 0 ? 0x80000000u : 0u) |
++                      (dp_ph_depth[kDpPhUgo] > 0 ? 0x40000000u : 0u) |
++                      (dp_ph_depth[kDpPhRender] > 0 ? 0x20000000u : 0u);
++}
++void dp_prof_phase_enter(int ph) { dp_ph_depth[ph]++; dp_ph_update(); }
++void dp_prof_phase_leave(int ph) { if (dp_ph_depth[ph] > 0) dp_ph_depth[ph]--; dp_ph_update(); }
++static bool dp_prof_on = false;
++static __dpmi_paddr dp_old_pm;
++static unsigned char dp_old_a = 0, dp_old_b = 0, dp_old_mask_s = 0, dp_old_mask_m = 0;
++static int dp_hz = 0;
++static uint32_t dp_val_in = 0, dp_val_total = 0;
++enum { kMaxTicks = 8192 };
++static uint32_t dp_tickmark[kMaxTicks];
++static unsigned dp_tick_hi = 0;
++
++static unsigned char cmos_rd(unsigned char r) { outportb(0x70, r); return inportb(0x71); }
++static void cmos_wr(unsigned char r, unsigned char v) { outportb(0x70, r); outportb(0x71, v); }
++
++static void dp_prof_uninstall()
++{
++    if (!dp_prof_on) return;
++    disable();
++    cmos_wr(0x8B, dp_old_b);
++    cmos_wr(0x8A, dp_old_a);
++    (void)cmos_rd(0x0C);
++    outportb(0xA1, dp_old_mask_s);
++    outportb(0x21, dp_old_mask_m);
++    __dpmi_set_protected_mode_interrupt_vector(0x70, &dp_old_pm);
++    enable();
++    dp_prof_on = false;
++}
++
++static void dp_prof_atexit() { dp_prof_uninstall(); }
++
++void dp_prof_start()
++{
++    const char *e = getenv("DOSAGS_PROF");
++    if (!e || atoi(e) <= 0) return;
++    dp_hz = atoi(e);
++    int rate = 4;                                       // 32768 >> (rate - 1): 6=1024, 5=2048, 4=4096 Hz
++    if (dp_hz <= 1024) rate = 6; else if (dp_hz <= 2048) rate = 5; else rate = 4;
++    dp_hz = 32768 >> (rate - 1);
++
++    // condition 1: refuse if IRQ8 is already hooked by anything but the BIOS
++    __dpmi_raddr old_rm;
++    __dpmi_get_real_mode_interrupt_vector(0x70, &old_rm);
++    __dpmi_get_protected_mode_interrupt_vector(0x70, &dp_old_pm);
++    dp_prof_app_cs = (uint16_t)_my_cs();
++    if (old_rm.segment != 0xF000 || dp_old_pm.selector == dp_prof_app_cs)
++    {
++        AGS::Common::Debug::Printf(AGS::Common::kDbgMsg_Error,
++            "DOS-PORT prof REFUSED: IRQ8 already hooked (rm %04x:%04x, pm sel %04x, our cs %04x)",
++            old_rm.segment, old_rm.offset16, dp_old_pm.selector, dp_prof_app_cs);
++        exit(3);
++    }
++
++    _go32_dpmi_lock_code((void *)dp_prof_isr, (char *)dp_prof_isr_end - (char *)dp_prof_isr + 16);
++    _go32_dpmi_lock_data((void *)&dp_prof_buf, sizeof(dp_prof_buf));
++    _go32_dpmi_lock_data((void *)&dp_prof_n, sizeof(dp_prof_n));
++    _go32_dpmi_lock_data((void *)&dp_prof_rtc_ticks, sizeof(dp_prof_rtc_ticks));
++    _go32_dpmi_lock_data((void *)&dp_prof_other, sizeof(dp_prof_other));
++    _go32_dpmi_lock_data((void *)&dp_prof_dropped, sizeof(dp_prof_dropped));
++    _go32_dpmi_lock_data((void *)&dp_prof_flagbit, sizeof(dp_prof_flagbit));
++    _go32_dpmi_lock_data((void *)&dp_prof_cap, sizeof(dp_prof_cap));
++    _go32_dpmi_lock_data((void *)&dp_prof_app_cs, sizeof(dp_prof_app_cs));
++    dp_prof_cap = kProfBuf;
++
++    __dpmi_paddr nw;
++    nw.offset32 = (unsigned long)dp_prof_isr;
++    nw.selector = dp_prof_app_cs;
++    disable();
++    dp_old_a = cmos_rd(0x8A);
++    dp_old_b = cmos_rd(0x8B);
++    dp_old_mask_s = inportb(0xA1);
++    dp_old_mask_m = inportb(0x21);
++    __dpmi_set_protected_mode_interrupt_vector(0x70, &nw);
++    cmos_wr(0x8A, (unsigned char)((dp_old_a & 0xF0) | rate));
++    cmos_wr(0x8B, (unsigned char)(dp_old_b | 0x40));
++    (void)cmos_rd(0x0C);
++    outportb(0xA1, (unsigned char)(dp_old_mask_s & ~0x01));
++    outportb(0x21, (unsigned char)(dp_old_mask_m & ~0x04));
++    enable();
++    dp_prof_on = true;
++    atexit(dp_prof_atexit);
++
++    // condition 3: HARD STOP unless the known loop receives >= 90% of its window's samples
++    const uint32_t n0 = dp_prof_n;
++    dp_prof_busy_start(20000000);
++    const uint32_t n1 = dp_prof_n;
++    const uint32_t lo = (uint32_t)dp_prof_busy_start, hi = (uint32_t)dp_prof_busy_end;
++    dp_val_total = n1 - n0;
++    for (uint32_t i = n0; i < n1; ++i)
++    {
++        const uint32_t eip = dp_prof_buf[i] & 0x1FFFFFFFu;
++        if (eip >= lo && eip < hi) dp_val_in++;
++    }
++    AGS::Common::Debug::Printf(AGS::Common::kDbgMsg_Info,
++        "DOS-PORT prof validation hz=%d samples=%lu in_loop=%lu other=%lu ticks=%lu loop=[%08lx,%08lx)",
++        dp_hz, (unsigned long)dp_val_total, (unsigned long)dp_val_in, (unsigned long)dp_prof_other,
++        (unsigned long)dp_prof_rtc_ticks, (unsigned long)lo, (unsigned long)hi);
++    if (dp_val_total < 50 || dp_val_in * 10 < dp_val_total * 9)
++    {
++        dp_prof_uninstall();
++        AGS::Common::Debug::Printf(AGS::Common::kDbgMsg_Error,
++            "DOS-PORT prof HARD STOP: the frame EIP is not the client's (in_loop %lu of %lu)",
++            (unsigned long)dp_val_in, (unsigned long)dp_val_total);
++        exit(4);
++    }
++    // the profile proper starts empty after the validation window
++    disable();
++    dp_prof_n = 0; dp_prof_other = 0; dp_prof_dropped = 0; dp_prof_rtc_ticks = 0;
++    enable();
++}
++
++void dp_prof_mark_tick(unsigned lc)
++{
++    if (!dp_prof_on || lc >= kMaxTicks) return;
++    dp_tickmark[lc] = dp_prof_n;
++    if (lc + 1 > dp_tick_hi) dp_tick_hi = lc + 1;
++}
++
++void dp_prof_stop_and_dump()
++{
++    if (!dp_prof_on) return;
++    disable();
++    const uint32_t n = dp_prof_n, ticks = dp_prof_rtc_ticks, other = dp_prof_other, dropped = dp_prof_dropped;
++    enable();
++    dp_prof_uninstall();
++    AGS::Common::Debug::Printf(AGS::Common::kDbgMsg_Info,
++        "DOS-PORT prof hz=%d rtc_ticks=%lu pm_samples=%lu other=%lu dropped=%lu marked_ticks=%u val=%lu/%lu",
++        dp_hz, (unsigned long)ticks, (unsigned long)n, (unsigned long)other, (unsigned long)dropped,
++        dp_tick_hi, (unsigned long)dp_val_in, (unsigned long)dp_val_total);
++    FILE *f = fopen("PROF.BIN", "wb");
++    if (!f) return;
++    const uint32_t hdr[8] = { 0x464F5250u /*'PROF'*/, 3u, (uint32_t)dp_hz, ticks, n, other, dropped, dp_tick_hi };
++    fwrite(hdr, sizeof(hdr), 1, f);
++    fwrite(dp_tickmark, sizeof(uint32_t), dp_tick_hi, f);
++    fwrite(dp_prof_buf, sizeof(uint32_t), n, f);
++    fclose(f);
++}
++#endif

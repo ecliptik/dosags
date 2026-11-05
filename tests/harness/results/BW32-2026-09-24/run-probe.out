@@ -1,0 +1,161 @@
+== run-probe-hw.sh: BWPRB32.EXE dest=C:\DOSAGS wait=180s ==
+-- staging --
+{
+  "bytes": 187995,
+  "complete": true,
+  "count": 1,
+  "name": "BWPRB32.EXE",
+  "notes": [],
+  "ok": true,
+  "queue": [
+    {
+      "bytes": 187995,
+      "name": "BWPRB32.EXE",
+      "sha256": "37fc42255a4a792f74fa42d760ef3cf20d6f48da95d3efe299c7be677ab3a577",
+      "source": "BWPRB32.EXE",
+      "staged_at": 1790216776.078638
+    }
+  ],
+  "sha256": "37fc42255a4a792f74fa42d760ef3cf20d6f48da95d3efe299c7be677ab3a577",
+  "size": {
+    "ok": true,
+    "reason": null,
+    "total": 187995,
+    "why": null
+  }
+}
+{
+  "bytes": 21325,
+  "complete": true,
+  "count": 2,
+  "name": "CWSDPMI.EXE",
+  "notes": [],
+  "ok": true,
+  "queue": [
+    {
+      "bytes": 187995,
+      "name": "BWPRB32.EXE",
+      "sha256": "37fc42255a4a792f74fa42d760ef3cf20d6f48da95d3efe299c7be677ab3a577",
+      "source": "BWPRB32.EXE",
+      "staged_at": 1790216776.078638
+    },
+    {
+      "bytes": 21325,
+      "name": "CWSDPMI.EXE",
+      "sha256": "2de899fecaa90632b8b9bdfc0305cb0375e59ae252c37e32d06c1ed3f98a8f44",
+      "source": "CWSDPMI.EXE",
+      "staged_at": 1790216776.1820922
+    }
+  ],
+  "sha256": "2de899fecaa90632b8b9bdfc0305cb0375e59ae252c37e32d06c1ed3f98a8f44",
+  "size": {
+    "ok": true,
+    "reason": null,
+    "total": 209320,
+    "why": null
+  }
+}
+{
+  "bytes": 139,
+  "complete": true,
+  "count": 3,
+  "name": "PRUN.BAT",
+  "notes": [],
+  "ok": true,
+  "queue": [
+    {
+      "bytes": 187995,
+      "name": "BWPRB32.EXE",
+      "sha256": "37fc42255a4a792f74fa42d760ef3cf20d6f48da95d3efe299c7be677ab3a577",
+      "source": "BWPRB32.EXE",
+      "staged_at": 1790216776.078638
+    },
+    {
+      "bytes": 21325,
+      "name": "CWSDPMI.EXE",
+      "sha256": "2de899fecaa90632b8b9bdfc0305cb0375e59ae252c37e32d06c1ed3f98a8f44",
+      "source": "CWSDPMI.EXE",
+      "staged_at": 1790216776.1820922
+    },
+    {
+      "bytes": 139,
+      "name": "PRUN.BAT",
+      "sha256": "5b36d51fd119a33b31dd25c846494819cb57b7bad8e2a0ebd811effd33e5f6ac",
+      "source": "PRUN.BAT",
+      "staged_at": 1790216776.2890644
+    }
+  ],
+  "sha256": "5b36d51fd119a33b31dd25c846494819cb57b7bad8e2a0ebd811effd33e5f6ac",
+  "size": {
+    "ok": true,
+    "reason": null,
+    "total": 209459,
+    "why": null
+  }
+}
+-- sending to C:\DOSAGS (reboot x2) --
+{
+  "ok": true,
+  "started": true,
+  "status": {
+    "dest": "C:\\DOSAGS",
+    "files": [],
+    "kind": "send",
+    "log": [],
+    "ok": null,
+    "reason": null,
+    "return": true,
+    "running": true,
+    "started_at": 1790216776.5050418,
+    "why": null
+  }
+}
+   all files verified byte-for-byte
+-- reboot witness (send): 2 completed boots since LED seq 753 --
+   witnessed: {"witness": true, "forced": false, "step": "send", "post_edges": 2, "ready_edges": 2, "need": 2, "screen": "ready-prompt", "waited_s": 1.6}
+-- launching PRUN.BAT --
+{
+  "ok": true,
+  "owner": "run-probe-1543345"
+}
+{
+  "ok": true,
+  "owner": null,
+  "was": "run-probe-1543345"
+}
+-- waiting 180s for the probe to finish --
+-- collecting PRBOUT.TXT --
+{
+  "ok": true,
+  "started": true,
+  "status": {
+    "all": false,
+    "already_net": false,
+    "files": [],
+    "kind": "pull",
+    "log": [],
+    "names": [
+      "PRBOUT.TXT"
+    ],
+    "ok": null,
+    "out_dir": "C:\\DOSAGS",
+    "paranoid": false,
+    "reason": null,
+    "refresh": false,
+    "return": true,
+    "running": true,
+    "started_at": 1790217061.9559946,
+    "why": null
+  }
+}
+{
+  "bytes": 5478,
+  "name": "PRBOUT.TXT",
+  "ok": true,
+  "out": "/tmp/tmp.Dd4gfukybQ/PRBOUT.TXT",
+  "sha256": "57a1ee7e7b2e1ebb91b079079b3e90047e43e4f653480389d8061e0676be65aa"
+}
+-- reboot witness (collect): 2 completed boots since LED seq 757 --
+   witnessed: {"witness": true, "forced": false, "step": "collect", "post_edges": 2, "ready_edges": 2, "need": 2, "screen": "ready-prompt", "waited_s": 1.8}
+/tmp/tmp.Dd4gfukybQ/PRBOUT.TXT
+run-probe exit=0

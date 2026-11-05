@@ -1,0 +1,134 @@
+From 723236d7b6888e18eb9dde30bcbaad2ce65f967a Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 22 Sep 2026 16:49:19 -0700
+Subject: [PATCH] DOS-PORT: patch 0201 -- audio_vital_status reports ring
+ overwrites and the ring's peak fill
+
+WHY: PLAN.md (c), 2026-09-22: the SB driver's ring can be overwritten before it is played --
+SDL_DOSAudioPump() iterates without a room check and this mixer calls it on every pump -- and UR1
+saw the fill reach 4086 ms against a 743 ms ring. The fix (an SDL patch) needs a before/after
+signature that the run manifest records, not a one-off probe: the count of writes that overran
+unplayed audio, and the peak fill against capacity (a fill above capacity is only possible by
+overwriting).
+
+WHAT: reads SDL patch 0190's dos_port_audio_ring_overwrite_count (extern "C", like the other driver
+counters here) as a delta since the mixer opened, and samples SDL_DOSAudioRingFillMs() after every
+pump, keeping the maximum. audio_vital_status gains ",overwrites=<n>,ring_max_ms=<max>/<cap>" after
+silent_irqs, cap from SDL_DOSAudioRingCapacityMs(); NA under GUS. Status buffers 256 -> 320 bytes.
+Requires SDL patch 0190.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/platform/dos/dos_audio_mixer.cpp | 32 +++++++++++++++++++++----
+ Engine/platform/dos/dos_audio_mixer.h   |  7 ++++--
+ 2 files changed, 33 insertions(+), 6 deletions(-)
+
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index 4a183d5d0..62125974d 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -39,6 +39,9 @@ extern "C" {
+ // 0200) counts the IRQs that found at least one and played it.
+ extern "C" volatile uint32_t dos_port_audio_silent_irq_count;
+ extern "C" volatile uint32_t dos_port_audio_sfx_active_count;
++// DOS-PORT (patch 0201): SDL patch 0190's count of PlayDevice writes that
++// landed on ring bytes the IRQ handler had not played yet.
++extern "C" volatile uint32_t dos_port_audio_ring_overwrite_count;
+ 
+ using namespace AGS::Common;
+ 
+@@ -122,6 +125,13 @@ uint32_t g_silent_snap = 0;
+ bool g_owed_at_snap = false;
+ uint32_t g_pcm_irq_base = 0;
+ 
++// DOS-PORT (patch 0201): ring overrun witnesses. overwrites = SDL 0190's
++// counter since the mixer opened; ring_max_ms = the highest driver-ring fill
++// seen after any pump, against ring_cap_ms (SDL_DOSAudioRingCapacityMs()).
++// A fill above capacity is only possible by overwriting. SB path only.
++uint32_t g_overwrite_base = 0;
++int g_ring_max_ms = 0;
++
+ // A snapshot of the status string taken at dos_audio_mixer_shutdown(),
+ // so RUNMANIFEST's audio_vital_status (built by quit.cpp's own manifest
+ // block, well after shutdown_sound() -> sys_audio_shutdown() has already
+@@ -129,7 +139,7 @@ uint32_t g_pcm_irq_base = 0;
+ // shutdown_sound()) still reports the real final state instead of the
+ // "never opened" NA sentinel. Left at "NA" if the device was never
+ // opened at all, so that genuine case is still distinguishable.
+-char g_last_status[256] = "NA";
++char g_last_status[320] = "NA";
+ 
+ void format_status_string(char *buf, size_t bufsize)
+ {
+@@ -148,9 +158,16 @@ void format_status_string(char *buf, size_t bufsize)
+     else
+         std::snprintf(irq_fragment, sizeof(irq_fragment), "pcm_irqs=%u,silent_irqs=%u",
+             (unsigned)(dos_port_audio_sfx_active_count - g_pcm_irq_base), (unsigned)g_owed_silent_irqs);
+-    std::snprintf(buf, bufsize, "pcm=%s@%d%c%d,voices=%d,underruns=%d,drains=%d,%s;%s",
++    char ring_fragment[64];
++    if (g_gus_backend)
++        std::snprintf(ring_fragment, sizeof(ring_fragment), "overwrites=NA,ring_max_ms=NA");
++    else
++        std::snprintf(ring_fragment, sizeof(ring_fragment), "overwrites=%u,ring_max_ms=%d/%d",
++            (unsigned)(dos_port_audio_ring_overwrite_count - g_overwrite_base), g_ring_max_ms,
++            SDL_DOSAudioRingCapacityMs());
++    std::snprintf(buf, bufsize, "pcm=%s@%d%c%d,voices=%d,underruns=%d,drains=%d,%s,%s;%s",
+         device, DOS_AUDIO_MIXER_RATE, chan_letter, bits, DOS_AUDIO_MIXER_MAX_VOICES, g_underruns,
+-        g_drains, irq_fragment, midi_fragment);
++        g_drains, irq_fragment, ring_fragment, midi_fragment);
+ }
+ 
+ } // namespace
+@@ -176,6 +193,8 @@ bool dos_audio_mixer_init()
+     g_owed_at_snap = false;
+     g_silent_snap = dos_port_audio_silent_irq_count;
+     g_pcm_irq_base = dos_port_audio_sfx_active_count;
++    g_overwrite_base = dos_port_audio_ring_overwrite_count;
++    g_ring_max_ms = 0;
+ 
+     if (g_gus_backend)
+     {
+@@ -484,6 +503,11 @@ void dos_audio_mixer_pump()
+                 owed = true;
+         }
+         g_owed_at_snap = owed;
++
++        // DOS-PORT (patch 0201)
++        const int fill_ms = SDL_DOSAudioRingFillMs();
++        if (fill_ms > g_ring_max_ms)
++            g_ring_max_ms = fill_ms;
+     }
+ }
+ 
+@@ -496,7 +520,7 @@ const char *dos_audio_mixer_status_string()
+ {
+     if (!g_stream && !g_gus_open)
+         return g_last_status; // "NA" if never opened, else the shutdown-time snapshot
+-    static char buf[256];
++    static char buf[320];
+     format_status_string(buf, sizeof(buf));
+     return buf;
+ }
+diff --git a/Engine/platform/dos/dos_audio_mixer.h b/Engine/platform/dos/dos_audio_mixer.h
+index c025cf7db..95e53b7e4 100644
+--- a/Engine/platform/dos/dos_audio_mixer.h
++++ b/Engine/platform/dos/dos_audio_mixer.h
+@@ -165,9 +165,12 @@ int dos_audio_mixer_underrun_count();
+ // consumed PCM at all. silent_irqs is its silent-IRQ count (ring short of one
+ // DMA half-buffer, silence played) over pump intervals that began with audio
+ // still owed to the device (mixed PCM in the SDL stream, or a voice not yet
+-// fully mixed out) -- a dropout. NA under GUS.
++// fully mixed out) -- a dropout. overwrites (patch 0201) counts driver-ring
++// writes that landed on audio not yet played (SDL patch 0190); ring_max_ms is
++// the highest ring fill seen after a pump, over the ring's capacity -- above
++// capacity is only possible by overwriting. NA under GUS.
+ // Builds "pcm=<device>@<rate><ch><bits>,voices=<n>,underruns=<n>,drains=<n>,
+-// pcm_irqs=<n>,silent_irqs=<n>;midi=<backend>,
++// pcm_irqs=<n>,silent_irqs=<n>,overwrites=<n>,ring_max_ms=<n>/<cap>;midi=<backend>,
+ // events=<n>" into a static buffer -- the "midi=" fragment comes from
+ // platform/dos/dos_midi_backend.h (S4; S1 hardcoded "midi=none" here since
+ // no MIDI backend existed yet). Returns "NA" if the PCM device never opened.
+-- 
+2.47.3
+

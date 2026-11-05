@@ -1,0 +1,14 @@
+int13p: threshold 20000 us
+int13p: REGISTER TRANSPARENCY GATE
+int13p: stub at 1C01:0000  handler +0x0058  ring +0x0130 x 64
+int13p: old INT 13h vector F000:CF40
+  AH=08 -> MISMATCH
+    un-hooked AX=075A BX=B1B2 CX=C1C2 DX=D180 SI=5151 DI=D1D1 ES=0040 DS=0040 FL=0001
+    hooked    AX=075A BX=B1B2 CX=C1C2 DX=D180 SI=5151 DI=D1D1 ES=0040 DS=0040 FL=0015
+  AH=15 -> MISMATCH
+    un-hooked AX=035A BX=B1B2 CX=0003 DX=4800 SI=5151 DI=D1D1 ES=0040 DS=0040 FL=0000
+    hooked    AX=035A BX=B1B2 CX=0003 DX=4800 SI=5151 DI=D1D1 ES=0040 DS=0040 FL=0010
+  AH=FE -> MISMATCH
+    un-hooked AX=FF5A BX=B1B2 CX=C1C2 DX=D180 SI=5151 DI=D1D1 ES=0040 DS=0040 FL=0001
+    hooked    AX=FF5A BX=B1B2 CX=C1C2 DX=D180 SI=5151 DI=D1D1 ES=0040 DS=0040 FL=0011
+int13p: REFUSED -- the hook is NOT register-transparent on 3 of 3 calls. Removing it and running nothing: a hook that corrupts a register in the write path corrupts the disk.

@@ -1,0 +1,452 @@
+From d1bafc98aea455e84909b9a7390a1b5533f5f14c Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 18 Sep 2026 15:43:25 -0700
+Subject: [PATCH 117/117] DOS-PORT: patch 0117 -- don't build the light table
+ when nothing can darken
+
+create_light_table() costs 1351 ms on Trilby's Notes and 4699 ms on
+BENCH8 (HW-486-66, patch 0109's brackets): 65,280 bestfit_color() calls,
+each a palette scan. It ran on every load_new_room(), because ac/room.cpp
+nulls color_map immediately before calling generate_light_table() and so
+defeats that function's own guard.
+
+Patch 0114's counters showed the table is usually never read at all. Over
+Trilby's entire 5000-tick benchmark on real hardware:
+"colormap_consumers transblend=0 litblend=0". The engine computed it and
+never looked at it.
+
+SAFETY IS THE LOAD-BEARING PART, not the optimisation, and it is built
+first for that reason. Once "never built" is the common case, every
+consumer path becomes one that has never executed in testing -- and our
+correctness gate is DOSBox-X, which is structurally blind to a missed
+hook because the path will not execute there either. A miss is also not a
+glitch: libsrc/allegro/src/c/cspr.h:545 dereferences color_map BEFORE the
+pixel loop, so it faults even where the blit would have drawn nothing.
+So color_map is never left null once this has run: it points either at a
+real table or at an identity table whose data[light][colour] = colour.
+A missed hook renders one blend unblended instead of crashing.
+
+Three cases:
+  - room declares no darkening: table never built (the common case, and
+    Gate 1's);
+  - room declares darkening: built eagerly at load exactly as before, so
+    no mid-game hitch is introduced for a game that uses it;
+  - a script enables darkening later: the lazy hook builds it on the
+    first blend.
+
+"Declares darkening" is only a negative light level: 8-bit cannot tint or
+lighten (ac/draw.cpp:1737-1748, whose own comment says so), so no tint
+test is needed. Both sources are checked -- a region's Light and the
+ambient play.rtint_light.
+
+Hooked at Bitmap::TransBlendBlt AND Bitmap::LitBlendBlt, the only two
+routes from AGS into Allegro's 8-bit blenders. Both, not just the lit one:
+Engine/ac/draw.cpp:1447 reaches the trans path on
+"src_has_alpha && alpha == 0xFF" with no colour-depth test. The hook is a
+function pointer installed by the Engine, because Common/ must not depend
+on Engine/ where the table and palette state live.
+
+Retains patch 0113's reuse cache for the case where the table IS needed,
+keyed on the palette AND rgb_map's state, since rgb_map non-null selects a
+different branch in create_light_table() and yields a different table from
+the same palette.
+---
+ Common/gfx/allegrobitmap.cpp |  29 ++++
+ Common/gfx/allegrobitmap.h   |   4 +
+ Engine/ac/region.cpp         | 294 +++++++++++++++++++----------------
+ 3 files changed, 194 insertions(+), 133 deletions(-)
+
+diff --git a/Common/gfx/allegrobitmap.cpp b/Common/gfx/allegrobitmap.cpp
+index 7c073f142..053534b06 100644
+--- a/Common/gfx/allegrobitmap.cpp
++++ b/Common/gfx/allegrobitmap.cpp
+@@ -379,6 +379,26 @@ void Bitmap::AAStretchBlt(const Bitmap *src, const Rect &src_rc, const Rect &dst
+ // pixel loop), not a visual glitch.
+ long dos_port_transblend_calls = 0;
+ long dos_port_litblend_calls = 0;
++
++// DOS-PORT patch 0116: the lazy hook for the light table.
++//
++// These two methods are the ONLY route from AGS into Allegro's 8-bit
++// blenders, and so the only way the global color_map is ever
++// dereferenced (libsrc/allegro/src/c/cdefs8.h, reached via vtable8.c).
++// Patch 0116 stops building that table when nothing in the room can
++// darken, so if a SCRIPT enables darkening later the table has to be
++// built before the first blend -- here.
++//
++// A function pointer rather than a direct call because Common/ must not
++// depend on Engine/, where the table and the palette state live. Engine
++// installs it in generate_light_table() (Engine/ac/region.cpp).
++//
++// If it is null the blend still proceeds: color_map is never left null
++// once the engine has run, it points at an identity table, so a missed
++// or uninstalled hook renders one blend unblended instead of faulting.
++// That matters because cspr.h:545 dereferences color_map before the pixel
++// loop -- there is no graceful degradation available at the Allegro end.
++void (*dos_port_ensure_color_map)(void) = nullptr;
+ #endif
+ 
+ void Bitmap::TransBlendBlt(const Bitmap *src, int dst_x, int dst_y)
+@@ -386,6 +406,13 @@ void Bitmap::TransBlendBlt(const Bitmap *src, int dst_x, int dst_y)
+ 	BITMAP *al_src_bmp = src->_alBitmap;
+ #ifdef __DJGPP__
+ 	dos_port_transblend_calls++;
++	// Hooked as well as LitBlendBlt: Engine/ac/draw.cpp:1447 reaches this
++	// path on `src_has_alpha && alpha == 0xFF` with NO colour-depth test,
++	// so an 8-bit game with SPF_ALPHACHANNEL set on a sprite can land in
++	// _linear_draw_trans_sprite8. Pathological but not impossible, and
++	// hooking only the lit path would leave it as the crash.
++	if (dos_port_ensure_color_map != nullptr)
++		dos_port_ensure_color_map();
+ #endif
+ 	draw_trans_sprite(_alBitmap, al_src_bmp, dst_x, dst_y);
+ }
+@@ -395,6 +422,8 @@ void Bitmap::LitBlendBlt(const Bitmap *src, int dst_x, int dst_y, int light_amou
+ 	BITMAP *al_src_bmp = src->_alBitmap;
+ #ifdef __DJGPP__
+ 	dos_port_litblend_calls++;
++	if (dos_port_ensure_color_map != nullptr)
++		dos_port_ensure_color_map();
+ #endif
+ 	draw_lit_sprite(_alBitmap, al_src_bmp, dst_x, dst_y, light_amount);
+ }
+diff --git a/Common/gfx/allegrobitmap.h b/Common/gfx/allegrobitmap.h
+index d16b38f7f..2689a2044 100644
+--- a/Common/gfx/allegrobitmap.h
++++ b/Common/gfx/allegrobitmap.h
+@@ -38,6 +38,10 @@ namespace Common
+ // the only ways the global color_map is ever dereferenced.
+ extern long dos_port_transblend_calls;
+ extern long dos_port_litblend_calls;
++// patch 0116: installed by Engine/ac/region.cpp so the two blend entry
++// points can build the light table on demand without Common depending on
++// Engine. Null is safe -- see allegrobitmap.cpp.
++extern void (*dos_port_ensure_color_map)(void);
+ #endif
+ 
+ class Bitmap
+diff --git a/Engine/ac/region.cpp b/Engine/ac/region.cpp
+index 9e128b387..1d36d4de2 100644
+--- a/Engine/ac/region.cpp
++++ b/Engine/ac/region.cpp
+@@ -26,6 +26,7 @@
+ #ifdef __DJGPP__
+ #include "debug/debug_log.h"   // patch 0111: debug_script_log() for the palette-change counter
+ #include "main/dos_port_startup_timing.h"  // patch 0112: per-call light-table counters
++#include "gfx/allegrobitmap.h"   // patch 0116: dos_port_ensure_color_map hook
+ #endif
+ 
+ using namespace AGS::Common;
+@@ -132,149 +133,176 @@ void Region_RunInteraction(ScriptRegion *ssr, int mood) {
+ 
+ //=============================================================================
+ 
+-void generate_light_table()
++#ifdef __DJGPP__
++// DOS-PORT patch 0116 -- avoid building the light table at all.
++//
++// create_light_table() costs 1351 ms on Trilby's Notes and 4699 ms on
++// BENCH8 (HW-486-66, patch 0109's brackets): 255*256 = 65,280
++// bestfit_color() calls, each a scan of the palette. It runs on EVERY
++// load_new_room() because ac/room.cpp nulls color_map immediately before
++// calling generate_light_table(), defeating that function's own guard.
++//
++// Patch 0114's counters showed the table is usually never READ at all:
++// over Trilby's whole 5000-tick benchmark, on real hardware,
++// "colormap_consumers transblend=0 litblend=0". The engine computed it
++// and never looked at it once.
++//
++// ---------------------------------------------------------------------
++// SAFETY FIRST -- this is the load-bearing part, not the optimisation.
++//
++// If the common case becomes "never built", then every consumer path
++// becomes a path that has NEVER EXECUTED in testing. Our correctness gate
++// is DOSBox-X, which is structurally blind to a hook we missed, because
++// the path will not execute there either. And a miss is not a glitch:
++// libsrc/allegro/src/c/cspr.h:545 dereferences color_map BEFORE the pixel
++// loop and after the clip early-outs, so it faults even when the blit
++// would have drawn nothing.
++//
++// So color_map is NEVER left null once this has run. It points either at
++// a real table or at an identity table, and the identity table turns "we
++// forgot a hook" into "that one blend renders unblended" instead of a
++// hard fault on the operator's machine.
++// ---------------------------------------------------------------------
++static COLOR_MAP dp_identity_coltable;
++static bool dp_identity_ready = false;
++static bool dp_realtable_valid = false;   // maincoltable holds a real table
++
++// data[light][colour] = colour: a blend that returns its source pixel
++// unchanged. Visually wrong for a real blend, which is the point -- it is
++// what a missed hook looks like instead of a crash.
++static void dp_ensure_identity_table()
+ {
+-    if (game.color_depth == 1 && color_map == nullptr)
++    if (dp_identity_ready)
++        return;
++    for (int x = 0; x < PAL_SIZE; x++)
++        for (int y = 0; y < PAL_SIZE; y++)
++            dp_identity_coltable.data[x][y] = (unsigned char)y;
++    dp_identity_ready = true;
++}
++
++// Does anything in the CURRENT room state call for the real table?
++//
++// 8-bit can only darken. ac/draw.cpp:1737-1741 returns early for
++// light_level > 0 or any tint, and :1746-1748 zeroes tint_level outright
++// at color_depth == 1 -- the engine's own comment is "In a 256-colour
++// game, we cannot do tinting or lightening (but we can do darkening, if
++// light_level < 0)". So no separate tint test is needed; only a negative
++// light level matters.
++//
++// The two sources of light_level in get_local_tint() (ac/draw.cpp:1735):
++// a region's own Light, and the script-set ambient play.rtint_light.
++static bool dp_needs_light_table()
++{
++    for (int i = 0; i < MAX_ROOM_REGIONS; i++)
+     {
++        if (thisroom.Regions[i].Light < 0)
++            return true;
++    }
++    if (play.rtint_enabled && play.rtint_level <= 0 && play.rtint_light < 0)
++        return true;
++    return false;
++}
++
++// Build the real table, reusing it when its inputs are unchanged (patch
++// 0113). Called eagerly when the room declares darkening, and lazily from
++// the blend entry points when a script turns darkening on later.
++void dos_port_build_light_table()
++{
++    if (game.color_depth != 1)
++        return;
++    dp_ensure_identity_table();
++
++    // Cache key is every input create_light_table() branches on: the
++    // palette AND whether rgb_map is set. With rgb_map non-null it takes a
++    // different branch (libsrc/allegro/src/color.c:765) and produces a
++    // DIFFERENT table from the same palette (ac/room.cpp:854 sets it for
++    // games with anti-aliased sprites), so keying on the palette alone
++    // would be a real correctness bug.
++    static unsigned char dp_pal[768];
++    static bool dp_pal_valid = false;
++    static bool dp_had_rgb_map = false;
++    const uclock_t t0 = uclock();
++    unsigned char cur[768];
++    for (int i = 0; i < 256; i++)
++    {
++        cur[i * 3 + 0] = (unsigned char)palette[i].r;
++        cur[i * 3 + 1] = (unsigned char)palette[i].g;
++        cur[i * 3 + 2] = (unsigned char)palette[i].b;
++    }
++    const bool has_rgb_map = (rgb_map != nullptr);
++    if (dp_realtable_valid && dp_pal_valid && has_rgb_map == dp_had_rgb_map &&
++        memcmp(cur, dp_pal, sizeof(dp_pal)) == 0)
++    {
++        dos_port_startup_timing.lighttable_reused++;
++        debug_script_log("DOSAGS_LIGHTTABLE call=%ld action=reused ms=%ld reused_total=%ld",
++                         dos_port_startup_timing.lighttable_rebuilt +
++                             dos_port_startup_timing.lighttable_reused,
++                         (long)((uclock() - t0) * 1000 / UCLOCKS_PER_SEC),
++                         dos_port_startup_timing.lighttable_reused);
++        color_map = &maincoltable;
++        return;
++    }
++    memcpy(dp_pal, cur, sizeof(dp_pal));
++    dp_pal_valid = true;
++    dp_had_rgb_map = has_rgb_map;
++    dos_port_startup_timing.lighttable_rebuilt++;
++
++    create_light_table(&maincoltable, palette, 0, 0, 0, nullptr);
++    dp_realtable_valid = true;
++    color_map = &maincoltable;
++    debug_script_log("DOSAGS_LIGHTTABLE call=%ld action=rebuilt ms=%ld rebuilt_total=%ld",
++                     dos_port_startup_timing.lighttable_rebuilt +
++                         dos_port_startup_timing.lighttable_reused,
++                     (long)((uclock() - t0) * 1000 / UCLOCKS_PER_SEC),
++                     dos_port_startup_timing.lighttable_rebuilt);
++}
++#endif // __DJGPP__
++
++void generate_light_table()
++{
+ #ifdef __DJGPP__
+-        // DOS-PORT patch 0111: MEASUREMENT ONLY -- does the palette
+-        // actually stay the same across room transitions?
+-        //
+-        // create_light_table() is 1351 ms on HW-486-66 (patch 0109's
+-        // brackets) and runs on EVERY room load, because room.cpp nulls
+-        // color_map immediately before calling this. The proposed fix is
+-        // to rebuild only when the palette really changed -- which is
+-        // worth exactly nothing on a game that sets a per-room palette.
+-        // So count it before predicting anything: log a hash of the
+-        // palette this table is being built from, and whether it differs
+-        // from the previous build. No behaviour change; the table is
+-        // still rebuilt unconditionally here.
+-        {
+-            static unsigned long dp_prev_hash = 0;
+-            static bool dp_have_prev = false;
+-            static long dp_builds = 0, dp_same = 0;
+-            unsigned long h = 2166136261UL;
+-            for (int i = 0; i < 256; i++)
+-            {
+-                const unsigned char comps[3] = {
+-                    (unsigned char)palette[i].r,
+-                    (unsigned char)palette[i].g,
+-                    (unsigned char)palette[i].b };
+-                for (int c = 0; c < 3; c++)
+-                { h ^= comps[c]; h *= 16777619UL; }
+-            }
+-            dp_builds++;
+-            const bool same = dp_have_prev && (h == dp_prev_hash);
+-            if (same) dp_same++;
+-            debug_script_log("DOSAGS_LIGHTTABLE build=%ld pal_hash=%08lx same_as_prev=%d cumulative_same=%ld",
+-                             dp_builds, h, same ? 1 : 0, dp_same);
+-            dp_prev_hash = h;
+-            dp_have_prev = true;
+-        }
+-#endif
+-#ifdef __DJGPP__
+-        // patch 0111 gate, opt-in (DOSAGS_LIGHTTABLE_VERIFY=1): the whole
+-        // correctness argument for the proposed fix is "on an unchanged
+-        // palette the rebuilt table is byte-identical, so skipping the
+-        // rebuild preserves observable state". That is an argument, not a
+-        // measurement, until the two tables are actually compared. Build
+-        // it a second time into a scratch COLOR_MAP and memcmp all 65,536
+-        // entries. Doubles the cost, hence opt-in and emulator-only.
+-        if (getenv("DOSAGS_LIGHTTABLE_VERIFY") != nullptr)
++    if (game.color_depth != 1)
++        return;
++
++    // Install the lazy hook. Common/ cannot call into Engine/, so the
++    // blend entry points reach us through a function pointer rather than
++    // a direct call. Installed here because this runs at every room load,
++    // before any drawing can happen.
++    dos_port_ensure_color_map = &dos_port_build_light_table;
++
++    dp_ensure_identity_table();
++
++    // room.cpp nulls color_map before calling us, which is how a
++    // script-set blender gets discarded -- that behaviour is preserved.
++    // We only decide what to put back.
++    if (color_map == nullptr || color_map == &dp_identity_coltable)
++    {
++        if (dp_needs_light_table())
+         {
+-            static COLOR_MAP dp_verify_tbl;
+-            static bool dp_verify_have = false;
+-            create_light_table(&dp_verify_tbl, palette, 0, 0, 0, nullptr);
+-            if (dp_verify_have)
+-            {
+-                const int diff = memcmp(&dp_verify_tbl, &maincoltable, sizeof(COLOR_MAP));
+-                debug_script_log("DOSAGS_LIGHTTABLE_VERIFY rebuilt_vs_previous memcmp=%d bytes=%u",
+-                                 diff, (unsigned)sizeof(COLOR_MAP));
+-            }
+-            dp_verify_have = true;
++            // Room declares darkening: build eagerly, exactly as before.
++            // No mid-game hitch is introduced for a game that uses this.
++            dos_port_build_light_table();
+         }
+-#endif
+-#ifdef __DJGPP__
+-        // DOS-PORT patch 0113: rebuild only when the inputs changed.
+-        //
+-        // create_light_table() is 1351 ms on HW-486-66 (patch 0109's
+-        // brackets): 255*256 = 65,280 bestfit_color() calls, each a scan
+-        // of the palette. It runs on EVERY load_new_room(), because
+-        // ac/room.cpp nulls color_map immediately before calling this,
+-        // which defeats the guard above -- so it is paid at every room
+-        // transition and every save restore (game/savegame.cpp:834), not
+-        // just at startup.
+-        //
+-        // room.cpp's null is NOT removed: it is what discards a blender a
+-        // script may have set. Only the redundant rebuild is skipped, and
+-        // maincoltable is written by nothing but the call below, so a
+-        // table built earlier is still intact when reused.
+-        //
+-        // The key is every input create_light_table() branches on: the
+-        // 256-entry palette AND whether rgb_map is set. With rgb_map
+-        // non-null it takes a different branch
+-        // (libsrc/allegro/src/color.c:765) and produces a DIFFERENT table
+-        // from the same palette; ac/room.cpp:854 sets rgb_map for games
+-        // with anti-aliased sprites, so keying on the palette alone would
+-        // be a real correctness bug, not a theoretical one.
+-        //
+-        // Byte-identity is measured, not argued: with patch 0111's
+-        // DOSAGS_LIGHTTABLE_VERIFY=1 a rebuild on an unchanged palette
+-        // memcmp'd equal across all 65,536 entries (bench8 full scene).
++        else
+         {
+-            static unsigned char dp_pal[768];
+-            static bool dp_pal_valid = false;
+-            static bool dp_had_rgb_map = false;
+-            const uclock_t _dp_lt_skip = uclock();
+-            unsigned char cur[768];
+-            for (int i = 0; i < 256; i++)
+-            {
+-                cur[i * 3 + 0] = (unsigned char)palette[i].r;
+-                cur[i * 3 + 1] = (unsigned char)palette[i].g;
+-                cur[i * 3 + 2] = (unsigned char)palette[i].b;
+-            }
+-            const bool has_rgb_map = (rgb_map != nullptr);
+-            if (dp_pal_valid && has_rgb_map == dp_had_rgb_map &&
+-                memcmp(cur, dp_pal, sizeof(dp_pal)) == 0)
+-            {
+-                dos_port_startup_timing.lighttable_reused++;
+-                debug_script_log("DOSAGS_LIGHTTABLE call=%ld action=reused ms=%ld reused_total=%ld",
+-                                 dos_port_startup_timing.lighttable_rebuilt +
+-                                     dos_port_startup_timing.lighttable_reused,
+-                                 (long)((uclock() - _dp_lt_skip) * 1000 / UCLOCKS_PER_SEC),
+-                                 dos_port_startup_timing.lighttable_reused);
+-                color_map = &maincoltable;
+-                return;
+-            }
+-            memcpy(dp_pal, cur, sizeof(dp_pal));
+-            dp_pal_valid = true;
+-            dp_had_rgb_map = has_rgb_map;
++            // Nothing in this room can darken. Skip the build entirely and
++            // leave a SAFE non-null table behind. If a script enables
++            // darkening later, the lazy hook builds the real one on the
++            // first blend.
++            color_map = &dp_identity_coltable;
++            debug_script_log("DOSAGS_LIGHTTABLE call=%ld action=skipped ms=0 rebuilt_total=%ld",
++                             dos_port_startup_timing.lighttable_rebuilt +
++                                 dos_port_startup_timing.lighttable_reused + 1,
++                             dos_port_startup_timing.lighttable_rebuilt);
+         }
+-        // DOS-PORT patch 0112: time EVERY generate_light_table() call.
+-        // Measurement only; the table is still rebuilt unconditionally.
+-        //
+-        // This is deliberately its own patch, applied before the fix that
+-        // uses it. The startup report fires once at first-room-ready and
+-        // so reports only the FIRST load, which makes a recurring cost
+-        // look like a one-off. A per-call line with a sequence number is
+-        // what makes the recurrence visible.
+-        //
+-        // It has to live HERE, in the arm WITHOUT the fix, or an A/B
+-        // cannot be scored: a metric emitted by only one arm cannot be
+-        // compared. Same control rule as measuring in both states.
+-        const uclock_t _dp_lt0 = uclock();
+-        dos_port_startup_timing.lighttable_rebuilt++;
+-#endif
++    }
++#else
++    if (game.color_depth == 1 && color_map == nullptr)
++    {
+         create_light_table(&maincoltable, palette, 0, 0, 0, nullptr);
+         color_map = &maincoltable;
+-#ifdef __DJGPP__
+-        debug_script_log("DOSAGS_LIGHTTABLE call=%ld action=rebuilt ms=%ld rebuilt_total=%ld",
+-                         dos_port_startup_timing.lighttable_rebuilt +
+-                             dos_port_startup_timing.lighttable_reused,
+-                         (long)((uclock() - _dp_lt0) * 1000 / UCLOCKS_PER_SEC),
+-                         dos_port_startup_timing.lighttable_rebuilt);
+-#endif
+     }
++#endif
+ }
+ 
+ //=============================================================================
+-- 
+2.47.3
+

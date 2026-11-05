@@ -1,0 +1,125 @@
+{
+  "sound_on": {
+    "tag": "RCHKV_ON",
+    "env": {
+      "DOSAGS_TAS_AUTO_EXIT_TICK": "200",
+      "DOSAGS_LOG_TAG": "RCHKV_ON",
+      "SDL_HINT_DOS_AUDIO_BACKEND": "opl3"
+    },
+    "stage_dir": "/tmp/dos-port-dosbox.NN0tC4",
+    "runmanifest_log": "/tmp/dos-port-dosbox.NN0tC4/RCHKV_ON.LOG",
+    "runmanifest": {
+      "schema_version": "1",
+      "environment": "dosbox-x",
+      "binary_sha12": "29214ed50a66",
+      "wave_tag": "RCHKV_ON",
+      "scene": "boot",
+      "env_block_sha": "46c9aaec20ba",
+      "started_utc": "2026-11-30T20:08:35Z",
+      "duration_s": "11",
+      "exit_code": "0",
+      "fps_p50": "32.38",
+      "fps_p95": "35.24",
+      "audio_vital_status": "pcm=sb@11025m16,voices=8,underruns=0;midi=none,events=0",
+      "regime": "NA",
+      "banner_required_hit": "0",
+      "banner_required_total": "0",
+      "banner_forbidden_hit": "0",
+      "banner_optional_hit": "0",
+      "critical_count": "0",
+      "warn_count": "0"
+    },
+    "expected": {
+      "audio_vital_status_prefix": "pcm=sb@11025m16,voices=8,underruns=0;midi=opl3,events=",
+      "exit_code": 0
+    },
+    "checks": {
+      "runmanifest_present": {
+        "ok": true
+      },
+      "exit_code": {
+        "ok": true,
+        "expected": 0,
+        "actual": "0"
+      },
+      "critical_count": {
+        "ok": true,
+        "expected": "0",
+        "actual": "0"
+      },
+      "warn_count": {
+        "ok": true,
+        "expected": "0",
+        "actual": "0"
+      },
+      "audio_vital_status": {
+        "ok": false,
+        "expected_prefix": "pcm=sb@11025m16,voices=8,underruns=0;midi=opl3,events=",
+        "actual": "pcm=sb@11025m16,voices=8,underruns=0;midi=none,events=0"
+      }
+    },
+    "pass": false,
+    "capture_hash": null
+  },
+  "sound_off": {
+    "tag": "RCHKVOFF",
+    "env": {
+      "DOSAGS_TAS_AUTO_EXIT_TICK": "200",
+      "DOSAGS_LOG_TAG": "RCHKVOFF"
+    },
+    "stage_dir": "/tmp/dos-port-dosbox.GwPz6w",
+    "runmanifest_log": "/tmp/dos-port-dosbox.GwPz6w/RCHKVOFF.LOG",
+    "runmanifest": {
+      "schema_version": "1",
+      "environment": "dosbox-x",
+      "binary_sha12": "29214ed50a66",
+      "wave_tag": "RCHKVOFF",
+      "scene": "boot",
+      "env_block_sha": "46c9aaec20ba",
+      "started_utc": "2026-09-15T13:28:32Z",
+      "duration_s": "8",
+      "exit_code": "0",
+      "fps_p50": "35.24",
+      "fps_p95": "40.38",
+      "audio_vital_status": "NA",
+      "regime": "NA",
+      "banner_required_hit": "0",
+      "banner_required_total": "0",
+      "banner_forbidden_hit": "0",
+      "banner_optional_hit": "0",
+      "critical_count": "0",
+      "warn_count": "0"
+    },
+    "expected": {
+      "audio_vital_status": "NA",
+      "exit_code": 0
+    },
+    "checks": {
+      "runmanifest_present": {
+        "ok": true
+      },
+      "exit_code": {
+        "ok": true,
+        "expected": 0,
+        "actual": "0"
+      },
+      "critical_count": {
+        "ok": true,
+        "expected": "0",
+        "actual": "0"
+      },
+      "warn_count": {
+        "ok": true,
+        "expected": "0",
+        "actual": "0"
+      },
+      "audio_vital_status": {
+        "ok": true,
+        "expected": "NA",
+        "actual": "NA"
+      }
+    },
+    "pass": true,
+    "capture_hash": null
+  }
+}

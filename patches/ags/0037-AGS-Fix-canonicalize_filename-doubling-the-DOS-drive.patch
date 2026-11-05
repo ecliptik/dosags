@@ -1,0 +1,123 @@
+From 8134d8936ed3047aece80ef463af770b918ecfa9 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 18:17:13 -0700
+Subject: [PATCH] [AGS] Fix canonicalize_filename() doubling the DOS drive
+ prefix
+
+DEVICE_SEPARATOR was left '\0' for the __DJGPP__/ALLEGRO_UNIX branch
+alconfig.h already takes (patch 0002), since DJGPP is not Unix but
+routes through the same generic non-Windows platform config. That
+made canonicalize_filename() (libsrc/allegro/src/file.c) unable to
+recognize an already drive-qualified absolute path -- DJGPP hands
+argv[0] back as one, e.g. "c:/build/ags/ags.exe", and
+Common/util/path.cpp's MakeAbsolutePath() re-canonicalizes it (used
+on Engine/main/main.cpp's appPath, and on a successfully located
+game-data path in Engine/main/engine.cpp's
+define_gamedata_location_checkall(), not just the no-game-data error
+message a prior session noticed this in). With DEVICE_SEPARATOR '\0',
+canonicalize_filename()'s drive-stripping logic never runs, so it
+falls through to its "make relative path absolute" branch and
+prepends the current drive+cwd in front of the already-qualified
+path, doubling the prefix to "c:/c:/build/ags/ags.exe" -- a path DJGPP's
+own file APIs cannot open. This would have surfaced as a confusing
+"game data not found" failure on the very first synthetic game
+package built for the TITLE_SCREEN milestone, since the success path
+(not just the error path) re-canonicalizes an already-absolute path.
+
+Confirmed by a standalone probe (tests/probes/getcwd-probe/, plus a
+scratch canonicalize_filename() harness linked against this tree's
+own liballeg.a) run under DOSBox-X, both before and after this fix,
+from two different real cwds.
+
+Restoring real DOS separators (DEVICE_SEPARATOR ':', matching the
+existing ALLEGRO_DOS branch, keeping OTHER_PATH_SEPARATOR as '/' since
+that's what this whole DJGPP port already uses) re-enables
+canonicalize_filename()'s existing correct logic rather than adding a
+new one. That logic's "driveless relative path" branch also calls
+_al_getdrive(), previously only implemented by the Windows backend
+(win/wfile.c) and therefore unreferenced dead code under
+DEVICE_SEPARATOR=='\0' -- now reachable, so it needed a real DJGPP
+implementation too. Added to unix/ufile.c (the file already providing
+_al_getdcwd() for this same ALLEGRO_UNIX branch) rather than a new
+DOS-specific file, deriving the drive from getcwd() to match
+_al_getdcwd()'s own approach instead of a raw DOS/INT21 call.
+---
+ .../include/allegro/internal/alconfig.h       | 20 ++++++++++++++
+ libsrc/allegro/src/unix/ufile.c               | 26 +++++++++++++++++++
+ 2 files changed, 46 insertions(+)
+
+diff --git a/libsrc/allegro/include/allegro/internal/alconfig.h b/libsrc/allegro/include/allegro/internal/alconfig.h
+index 11d0694e5..f67b177ed 100644
+--- a/libsrc/allegro/include/allegro/internal/alconfig.h
++++ b/libsrc/allegro/include/allegro/internal/alconfig.h
+@@ -313,6 +313,26 @@
+ #if (defined ALLEGRO_DOS) || (defined ALLEGRO_WINDOWS)
+    #define OTHER_PATH_SEPARATOR  '\\'
+    #define DEVICE_SEPARATOR      ':'
++#elif defined(__DJGPP__)
++   /* DOS-PORT: DJGPP takes the ALLEGRO_UNIX branch above (see that
++    * #elif's own comment), but the underlying filesystem is still
++    * DOS's drive-letter scheme, not driveless Unix. With
++    * DEVICE_SEPARATOR left '\0', canonicalize_filename() (file.c)
++    * cannot recognize an already drive-qualified absolute path (e.g.
++    * "c:/foo/bar.exe", which DJGPP hands back verbatim as argv[0] and
++    * which Path::MakeAbsolutePath() re-canonicalizes) and falls through
++    * to its "make relative path absolute" branch, prepending the
++    * current drive+cwd in front of the already-qualified path --
++    * doubling the drive prefix to "c:/c:/foo/bar.exe". Confirmed via a
++    * standalone probe linked against this tree's own liballeg.a under
++    * DOSBox-X (see PLAN.md's Measured constants). Restoring the real
++    * DOS separators here (matching the ALLEGRO_DOS branch, forward
++    * slash only since that's what this whole DJGPP port already uses
++    * elsewhere) re-enables canonicalize_filename()'s existing correct
++    * drive-stripping logic instead of adding a new one.
++    */
++   #define OTHER_PATH_SEPARATOR  '/'
++   #define DEVICE_SEPARATOR      ':'
+ #else
+    #define OTHER_PATH_SEPARATOR  '/'
+    #define DEVICE_SEPARATOR      '\0'
+diff --git a/libsrc/allegro/src/unix/ufile.c b/libsrc/allegro/src/unix/ufile.c
+index 8e48a78e7..caa138ec2 100644
+--- a/libsrc/allegro/src/unix/ufile.c
++++ b/libsrc/allegro/src/unix/ufile.c
+@@ -20,6 +20,7 @@
+ 
+ #include <stdio.h>
+ #include <string.h>
++#include <ctype.h>
+ 
+ #include "allegro.h"
+ #include "allegro/internal/aintern.h"
+@@ -84,3 +85,28 @@ void _al_getdcwd(int drive, char *buf, int size)
+    else
+       usetc(buf, 0);
+ }
++
++
++
++#ifdef __DJGPP__
++/* _al_getdrive: (DOS-PORT)
++ *  Unlike other ALLEGRO_UNIX targets, DJGPP's underlying filesystem
++ *  has real DOS drive letters (see alconfig.h's own DEVICE_SEPARATOR
++ *  override for __DJGPP__, which makes canonicalize_filename() in
++ *  file.c reachable via this call whenever it's asked to absolutize a
++ *  driveless relative path). Only the Windows backend (win/wfile.c)
++ *  previously implemented this function, so it was unreferenced dead
++ *  code on this platform until that DEVICE_SEPARATOR fix made it
++ *  reachable, and the build failed to link with it missing. Derive the
++ *  drive from getcwd() rather than a raw DOS/INT21 call, matching
++ *  _al_getdcwd() just above.
++ */
++int _al_getdrive(void)
++{
++   char buf[8];
++
++   if (getcwd(buf, sizeof(buf)) && buf[0] && buf[1] == ':')
++      return tolower((unsigned char)buf[0]) - 'a';
++   return 2; /* fall back to C: if getcwd() ever fails */
++}
++#endif
+-- 
+2.47.3
+

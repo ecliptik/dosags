@@ -1,0 +1,59 @@
+From 9d99a611e1b3ba411b56c6dd9e11273f6a8dc269 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 18 Sep 2026 17:07:25 -0700
+Subject: [PATCH] DOS-PORT: patch 0118 -- test hook to simulate a MISSED
+ color_map hook
+
+DOSAGS_DISABLE_COLORMAP_HOOK=1 deliberately does not install patch 0117's
+lazy hook, so a blend reaches Allegro with color_map pointing at the
+identity table instead of a real one.
+
+This exists because patch 0117's safety property was untestable by any
+other means. Once "table never built" is the common case, every consumer
+path becomes one that has never executed in testing, and DOSBox-X cannot
+catch a hook we missed because the path will not execute there either.
+The failure mode is not a glitch: libsrc/allegro/src/c/cspr.h:545
+dereferences color_map before the pixel loop and after the clip
+early-outs, so without the identity table a missed hook is a hard fault on
+real hardware.
+
+Proven with the new bench8 `dark` scene, all three states:
+  - table built eagerly and used:      PH01 7e0a277e3d4758c8 (reference)
+  - table skipped, lazy hook fires:    PH01 7e0a277e3d4758c8 (IDENTICAL)
+  - table skipped, hook MISSING:       PH01 94b0d885d8ebca78, exit_code=0
+
+The third is the one that had never run. It renders instead of faulting,
+and the degradation is confined to the blended sprite: the character draws
+unblended at full colour rather than darkened. Cosmetic, localised, alive.
+---
+ Engine/ac/region.cpp | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/ac/region.cpp b/Engine/ac/region.cpp
+index 1d36d4de2..258b8601d 100644
+--- a/Engine/ac/region.cpp
++++ b/Engine/ac/region.cpp
+@@ -268,7 +268,19 @@ void generate_light_table()
+     // blend entry points reach us through a function pointer rather than
+     // a direct call. Installed here because this runs at every room load,
+     // before any drawing can happen.
+-    dos_port_ensure_color_map = &dos_port_build_light_table;
++    //
++    // DOS-PORT patch 0118, TEST HOOK: DOSAGS_DISABLE_COLORMAP_HOOK=1
++    // deliberately does NOT install it, to simulate a hook we missed.
++    //
++    // That is the case the identity table exists for, and the only way to
++    // exercise it: with the table skipped and no hook, a blend reaches
++    // Allegro with color_map pointing at the identity table instead of a
++    // real one. It must RENDER -- wrongly is fine -- rather than fault.
++    // libsrc/allegro/src/c/cspr.h:545 dereferences color_map before the
++    // pixel loop, so without the fallback this is a hard crash, and the
++    // point of the test is that it is not.
++    if (getenv("DOSAGS_DISABLE_COLORMAP_HOOK") == nullptr)
++        dos_port_ensure_color_map = &dos_port_build_light_table;
+ 
+     dp_ensure_identity_table();
+ 
+-- 
+2.47.3
+

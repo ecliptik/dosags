@@ -1,0 +1,402 @@
+From f0885769cf409e498d43ea99cd50eed4d9114e76 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 18:15:24 -0700
+Subject: [PATCH] DOS-PORT: patch 0216 -- keep a played clip's decoded PCM, not
+ only its bytes
+
+The sound cache keeps a clip's file bytes, so every play of a clip -- a
+looping ambient, a repeated footstep or chime -- decoded, resampled and
+converted it again on the main thread. Room 35 of the S8 fixture re-decodes
+one clip every ~0.85 s: 107 decodes of ~14 ms in ~90 s (LAB-JOURNEYS 9b.2),
+each one a hitch in play.
+
+A decoded clip is now one immutable object (device-format samples, their
+count, their format), shared by every decoder playing it and by a cache.
+The cache is keyed by the sound cache's own byte buffer, which every play
+of a cached clip receives as the same shared_ptr: an entry holds it by a
+weak reference and hits only while that buffer is alive and is the one
+asked about, so it can never answer for other bytes and it lapses with
+the sound cache's entry -- no asset names needed. Streamed clips (no
+buffer) are never cached. LRU under DOSAGS_PCM_CACHE_KB (default 2048, the
+sound cache's size; 0 = off); a clip larger than the cap is not cached.
+DOSAGS_PCM_CACHE_VERIFY=1 also decodes every hit afresh and counts
+differences, for a witness cell. RUNMANI.LOG gets "DOS-PORT pcmcache
+hits= misses= evictions= uncacheable= lapsed= entries= bytes= peak_bytes=
+cap_kb= verify= verify_mismatches=".
+
+The shared object replaces _pcm (the 16-bit intermediate, kept after the
+device conversion only for its sample count) and _pcmDevice, so a playing
+clip is also held once instead of twice.
+---
+ Engine/main/quit.cpp              |   3 +
+ Engine/media/audio/sdldecoder.cpp | 200 ++++++++++++++++++++++++++----
+ Engine/media/audio/sdldecoder.h   |  46 ++++---
+ 3 files changed, 203 insertions(+), 46 deletions(-)
+
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index b309b043c..2f9290097 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -32,6 +32,7 @@
+ #include "runmanifest.h"
+ #include "platform/dos/dos_audio_mixer.h"
+ #include "media/audio/audio_core.h" // dos_diag_dump_audio_poll() -- TEMPORARY DIAGNOSTIC, see audio_core.cpp
++#include "media/audio/sdldecoder.h" // dos_pcm_cache_report(), patch 0216
+ #include "main/dos_port_tick_timing.h" // DosPortTickTiming, patch 0079
+ #include <SDL3/SDL_dosident.h> // SDL_DOSVideoIsBankedMode()/SDL_DOSVideoGetBankSwitchCount(), patch 0085
+ #endif
+@@ -872,6 +873,8 @@ void quit(const char *quitmsg)
+             fprintf(run_manifest_log, "DOS-PORT video_banked_mode=%d bank_switches=%lu\n",
+                 (int)SDL_DOSVideoIsBankedMode(),
+                 (unsigned long)SDL_DOSVideoGetBankSwitchCount());
++            // patch 0216: the decoded-PCM cache's hits/misses/evictions and footprint
++            AGS::Engine::dos_pcm_cache_report(run_manifest_log);
+ 
+             // TEMPORARY DIAGNOSTIC (S7): dump the AUDIOPRB window data
+             // (audio_core.cpp) through THIS handle rather than a separate
+diff --git a/Engine/media/audio/sdldecoder.cpp b/Engine/media/audio/sdldecoder.cpp
+index a7a9f6f17..058b63669 100644
+--- a/Engine/media/audio/sdldecoder.cpp
++++ b/Engine/media/audio/sdldecoder.cpp
+@@ -34,7 +34,7 @@ namespace
+ const size_t DECODED_CHUNK_SAMPLES = 2048u; // ~186 ms at 11025 Hz mono
+ 
+ // DOS-PORT (S5 GUS, "Correction #1"): converts the decoder's own
+-// always-16-bit-signed intermediate (_pcm, dos_audio_decode_pcm()'s fixed
++// always-16-bit-signed intermediate (dos_audio_decode_pcm()'s fixed
+ // output shape) into the mixer's ACTUAL active device format, ONCE --
+ // dossage's own 0039 lesson (convert once at load, never per-chunk)
+ // applies here exactly as it does to the WAV/VOC decode itself. SB (S16):
+@@ -60,8 +60,143 @@ void convert_to_device_format(const std::vector<int16_t> &pcm, SDL_AudioFormat f
+     if (!pcm.empty())
+         std::memcpy(out.data(), pcm.data(), out.size());
+ }
++
++// DOS-PORT patch 0216: the decoded-PCM cache. The sound cache (sound.cpp) keeps a clip's FILE BYTES,
++// so every play of a clip -- a looping ambient, a footstep, a repeating chime -- decoded, resampled and
++// converted it again on the main thread (room 35: one ~14 ms decode every ~0.85 s, 107 of them in
++// ~90 s; LAB-JOURNEYS 9b.2). This keeps the result.
++//
++// Key: the sound cache's byte buffer itself. Every play of a cached clip is handed the SAME
++// shared_ptr, so an entry remembers that buffer by a weak reference: a hit needs the buffer to be
++// alive and to be that buffer (two live buffers cannot share an address), so an entry can never
++// answer for different bytes, and it lapses when the sound cache drops the bytes. No asset names are
++// plumbed through. A clip that is streamed (too big to load at once) has no such buffer and is never
++// cached. Held: the device-format samples, shared and immutable -- the cache and every decoder
++// playing the clip point at one copy. Bounded: least-recently-used entries are evicted to stay under
++// DOSAGS_PCM_CACHE_KB (default 2048, as the sound cache; 0 turns the cache off); a clip bigger than
++// the cap is not cached. DOSAGS_PCM_CACHE_VERIFY=1 decodes every hit afresh as well and counts any
++// difference (a witness setting: it spends what the cache saves). Main thread only, as Open() is.
++struct PcmCacheEntry
++{
++    std::weak_ptr<std::vector<uint8_t>> src;
++    const std::vector<uint8_t> *src_addr = nullptr;
++    std::shared_ptr<const DosDecodedPcm> pcm;
++    uint32_t last_use = 0u;
++};
++std::vector<PcmCacheEntry> g_pcm_cache;
++size_t g_pcm_cache_bytes = 0u, g_pcm_cache_peak = 0u;
++uint32_t g_pcm_cache_clock = 0u;
++unsigned long g_pcm_hits = 0u, g_pcm_misses = 0u, g_pcm_evictions = 0u, g_pcm_uncacheable = 0u,
++    g_pcm_lapsed = 0u, g_pcm_verified = 0u, g_pcm_verify_mismatches = 0u;
++
++size_t pcm_cache_cap()
++{
++    static long cap_kb = -1;
++    if (cap_kb < 0)
++    {
++        const char *e = SDL_getenv("DOSAGS_PCM_CACHE_KB");
++        cap_kb = (e && *e) ? SDL_atoi(e) : 2048;
++        if (cap_kb < 0)
++            cap_kb = 0;
++    }
++    return static_cast<size_t>(cap_kb) * 1024u;
++}
++
++bool pcm_cache_verify()
++{
++    static int verify = -1;
++    if (verify < 0)
++    {
++        const char *e = SDL_getenv("DOSAGS_PCM_CACHE_VERIFY");
++        verify = (e && e[0] == '1' && e[1] == 0) ? 1 : 0;
++    }
++    return verify == 1;
++}
++
++void pcm_cache_drop(size_t k)
++{
++    g_pcm_cache_bytes -= g_pcm_cache[k].pcm->device.size();
++    g_pcm_cache.erase(g_pcm_cache.begin() + k);
++}
++
++std::shared_ptr<const DosDecodedPcm> pcm_cache_find(const std::shared_ptr<std::vector<uint8_t>> &src,
++    SDL_AudioFormat fmt)
++{
++    for (size_t k = 0; k < g_pcm_cache.size();)
++    {
++        PcmCacheEntry &e = g_pcm_cache[k];
++        if (e.src.expired())
++        {
++            pcm_cache_drop(k); // the sound cache let the bytes go; so do we
++            g_pcm_lapsed++;
++            continue;
++        }
++        if (e.src_addr == src.get() && e.pcm->fmt == fmt && e.src.lock() == src)
++        {
++            e.last_use = ++g_pcm_cache_clock;
++            return e.pcm;
++        }
++        k++;
++    }
++    return nullptr;
++}
++
++void pcm_cache_put(const std::shared_ptr<std::vector<uint8_t>> &src, const std::shared_ptr<const DosDecodedPcm> &pcm)
++{
++    const size_t cap = pcm_cache_cap();
++    const size_t sz = pcm->device.size();
++    if (sz == 0u || sz > cap)
++    {
++        g_pcm_uncacheable++;
++        return;
++    }
++    while (g_pcm_cache_bytes + sz > cap && !g_pcm_cache.empty())
++    {
++        size_t lru = 0;
++        for (size_t k = 1; k < g_pcm_cache.size(); k++)
++            if (g_pcm_cache[k].last_use < g_pcm_cache[lru].last_use)
++                lru = k;
++        pcm_cache_drop(lru);
++        g_pcm_evictions++;
++    }
++    PcmCacheEntry e;
++    e.src = src;
++    e.src_addr = src.get();
++    e.pcm = pcm;
++    e.last_use = ++g_pcm_cache_clock;
++    g_pcm_cache.push_back(e);
++    g_pcm_cache_bytes += sz;
++    if (g_pcm_cache_bytes > g_pcm_cache_peak)
++        g_pcm_cache_peak = g_pcm_cache_bytes;
++}
++
++// Decodes a whole clip into a new DosDecodedPcm in the given device format; nullptr if it is not a
++// clip dos_audio_decode_pcm() understands.
++std::shared_ptr<const DosDecodedPcm> decode_clip(const uint8_t *src, size_t src_size, SDL_AudioFormat fmt)
++{
++    std::vector<int16_t> pcm16;
++    if (!dos_audio_decode_pcm(src, src_size, pcm16))
++        return nullptr;
++    std::shared_ptr<DosDecodedPcm> dec = std::make_shared<DosDecodedPcm>();
++    // DOS-PORT (S5 GUS, "Correction #1"): convert to the ACTIVE device
++    // format ONCE here, not per-chunk in GetData() -- see this file's own
++    // convert_to_device_format() comment.
++    convert_to_device_format(pcm16, fmt, dec->device);
++    dec->samples = pcm16.size();
++    dec->fmt = fmt;
++    return dec;
++}
+ } // namespace
+ 
++void dos_pcm_cache_report(FILE *log)
++{
++    std::fprintf(log, "DOS-PORT pcmcache hits=%lu misses=%lu evictions=%lu uncacheable=%lu lapsed=%lu"
++        " entries=%lu bytes=%lu peak_bytes=%lu cap_kb=%lu verify=%lu verify_mismatches=%lu\n",
++        g_pcm_hits, g_pcm_misses, g_pcm_evictions, g_pcm_uncacheable, g_pcm_lapsed,
++        (unsigned long)g_pcm_cache.size(), (unsigned long)g_pcm_cache_bytes, (unsigned long)g_pcm_cache_peak,
++        (unsigned long)(pcm_cache_cap() / 1024u), g_pcm_verified, g_pcm_verify_mismatches);
++}
++
+ //-----------------------------------------------------------------------------
+ // SDLDecoder
+ //-----------------------------------------------------------------------------
+@@ -88,12 +223,9 @@ SDLDecoder::SDLDecoder(SDLDecoder &&dec)
+     dec._rwops = nullptr;
+     _sampleExt = std::move(dec._sampleExt);
+     _repeat = dec._repeat;
++    // DOS-PORT patch 0216: one shared decode now (it replaced _pcm + _pcmDevice, which had to move
++    // together -- a missed _pcmDevice move once left GetData() slicing an empty buffer).
+     _pcm = std::move(dec._pcm);
+-    // DOS-PORT (S5 GUS, "Correction #1"): _pcmDevice must move too -- found
+-    // in review. Missing this left the move target with _opened==true but
+-    // an empty _pcmDevice, so GetData() would hand out an out-of-bounds
+-    // slice of nothing.
+-    _pcmDevice = std::move(dec._pcmDevice);
+     _readSamples = dec._readSamples;
+     _opened = dec._opened;
+     _eos = dec._eos;
+@@ -133,7 +265,7 @@ float SDLDecoder::GetDurationMs() const
+ {
+     if (!_opened)
+         return 0.f;
+-    return 1000.f * static_cast<float>(_pcm.size()) / static_cast<float>(DOS_AUDIO_MIXER_RATE);
++    return 1000.f * static_cast<float>(_pcm->samples) / static_cast<float>(DOS_AUDIO_MIXER_RATE);
+ }
+ 
+ bool SDLDecoder::Open(float pos_ms)
+@@ -147,6 +279,34 @@ bool SDLDecoder::Open(float pos_ms)
+         return true;
+     }
+ 
++    // DOS-PORT patch 0216: a clip played before, still in the sound cache, is not decoded again.
++    const SDL_AudioFormat fmt = dos_audio_mixer_format();
++    std::shared_ptr<std::vector<uint8_t>> src_bytes; // the sound cache's buffer, if we were given one
++    if (_sampleData && !_sampleData->empty() && pcm_cache_cap() > 0u)
++    {
++        src_bytes = _sampleData;
++        _pcm = pcm_cache_find(src_bytes, fmt);
++        if (_pcm)
++        {
++            g_pcm_hits++;
++            if (pcm_cache_verify())
++            {
++                const std::shared_ptr<const DosDecodedPcm> fresh = decode_clip(src_bytes->data(), src_bytes->size(), fmt);
++                g_pcm_verified++;
++                if (!fresh || fresh->samples != _pcm->samples || fresh->device != _pcm->device)
++                    g_pcm_verify_mismatches++;
++            }
++            Close();
++            _opened = true;
++            _readSamples = 0u;
++            _eos = false;
++            if (pos_ms > 0.f)
++                Seek(pos_ms);
++            return true;
++        }
++        g_pcm_misses++;
++    }
++
+     std::vector<uint8_t> raw;
+     // DOS-PORT patch 0210: a clip already fully in memory (the sound cache's bytes) is decoded where
+     // it is, not copied first -- the copy was a whole-clip memcpy on every play.
+@@ -171,15 +331,12 @@ bool SDLDecoder::Open(float pos_ms)
+         src_size = raw.size();
+     }
+ 
+-    const bool decoded = dos_audio_decode_pcm(src, src_size, _pcm);
++    _pcm = decode_clip(src, src_size, fmt);
+     Close(); // release whatever we were handed, decoded or not
+-    if (!decoded)
++    if (!_pcm)
+         return false;
+-
+-    // DOS-PORT (S5 GUS, "Correction #1"): convert to the ACTIVE device
+-    // format ONCE here, not per-chunk in GetData() -- see this file's own
+-    // convert_to_device_format() comment.
+-    convert_to_device_format(_pcm, dos_audio_mixer_format(), _pcmDevice);
++    if (src_bytes)
++        pcm_cache_put(src_bytes, _pcm); // DOS-PORT patch 0216
+ 
+     _opened = true;
+     _readSamples = 0u;
+@@ -203,7 +360,7 @@ float SDLDecoder::Seek(float pos_ms)
+ {
+     if (!_opened || pos_ms < 0.f)
+         return GetPositionMs();
+-    const size_t total = _pcm.size();
++    const size_t total = _pcm->samples;
+     size_t target = static_cast<size_t>(
+         (static_cast<double>(pos_ms) / 1000.0) * DOS_AUDIO_MIXER_RATE);
+     target = std::min(target, total);
+@@ -217,7 +374,7 @@ SoundBufferPtr SDLDecoder::GetData()
+     if (!_opened || _eos)
+         return SoundBufferPtr();
+ 
+-    const size_t total = _pcm.size();
++    const size_t total = _pcm->samples;
+     if (_readSamples >= total)
+     {
+         if (!_repeat)
+@@ -231,12 +388,11 @@ SoundBufferPtr SDLDecoder::GetData()
+     const size_t take = std::min(DECODED_CHUNK_SAMPLES, total - _readSamples);
+     const float ts = 1000.f * static_cast<float>(_readSamples) / static_cast<float>(DOS_AUDIO_MIXER_RATE);
+     const float dur = 1000.f * static_cast<float>(take) / static_cast<float>(DOS_AUDIO_MIXER_RATE);
+-    // DOS-PORT (S5 GUS, "Correction #1"): slice _pcmDevice (the ACTIVE
+-    // device format, converted once at Open()), not _pcm (always the
+-    // 16-bit intermediate) -- bytes-per-sample must match whichever format
+-    // that conversion actually produced.
+-    const size_t bytes_per_sample = SoundHelper::BytesPerSample(dos_audio_mixer_format());
+-    const void *ptr = _pcmDevice.data() + _readSamples * bytes_per_sample;
++    // DOS-PORT (S5 GUS, "Correction #1"): slice the device-format samples (converted once at Open()),
++    // never the 16-bit intermediate -- bytes-per-sample must match the format that conversion
++    // produced (patch 0216: the decode's own recorded format).
++    const size_t bytes_per_sample = SoundHelper::BytesPerSample(_pcm->fmt);
++    const void *ptr = _pcm->device.data() + _readSamples * bytes_per_sample;
+     const size_t bytes = take * bytes_per_sample;
+ 
+     _readSamples += take;
+diff --git a/Engine/media/audio/sdldecoder.h b/Engine/media/audio/sdldecoder.h
+index d0f1fd22b..eb2a74f6a 100644
+--- a/Engine/media/audio/sdldecoder.h
++++ b/Engine/media/audio/sdldecoder.h
+@@ -35,6 +35,7 @@
+ //=============================================================================
+ #ifndef __AGS_EE_MEDIA__SDLDECODER_H
+ #define __AGS_EE_MEDIA__SDLDECODER_H
++#include <cstdio> // FILE, dos_pcm_cache_report() -- DOS-PORT patch 0216
+ #include <memory>
+ #include <vector>
+ #include <SDL3/SDL.h>
+@@ -168,6 +169,20 @@ public:
+     }
+ };
+ 
++// DOS-PORT patch 0216: one decoded clip -- its samples already in the mixer's device format, their
++// count, and that format. Built once per decode and never changed after, so every play of the clip
++// can share it (the PCM cache in sdldecoder.cpp) instead of decoding it again.
++struct DosDecodedPcm
++{
++    std::vector<uint8_t> device; // what GetData() hands out
++    size_t samples = 0u;         // mono samples at the mixer rate; position/duration key off this
++    SDL_AudioFormat fmt = SDL_AUDIO_UNKNOWN;
++};
++
++// DOS-PORT patch 0216: writes the PCM cache's counters as one "DOS-PORT pcmcache ..." line (quit.cpp,
++// RUNMANI.LOG).
++void dos_pcm_cache_report(FILE *log);
++
+ class SDLDecoder
+ {
+ public:
+@@ -219,30 +234,13 @@ private:
+     String _sampleExt = "";
+     bool _repeat = false;
+ 
+-    std::vector<int16_t> _pcm; // decoded intermediate, always mono S16 @ mixer rate --
+-                               // dos_audio_decode_pcm()'s own fixed output shape,
+-                               // backend-independent (see .cpp's own Open()).
+-                               // Kept alive for the clip's whole lifetime (NOT
+-                               // freed after _pcmDevice is derived from it) --
+-                               // Seek()/GetPositionMs()/GetDurationMs() all key
+-                               // position/total off _pcm.size() (sample count is
+-                               // format-independent), so it stays the source of
+-                               // truth for those regardless of which device
+-                               // format _pcmDevice holds. A real, bounded (clips
+-                               // are already <=1MB via MaxLoadAtOnce) memory
+-                               // cost under GUS -- both representations coexist
+-                               // -- accepted rather than engineered away.
+-    std::vector<uint8_t> _pcmDevice; // _pcm converted ONCE (at Open()) to the
+-                               // ACTIVE backend's real device format
+-                               // (dos_audio_mixer_format()) -- what GetData()
+-                               // actually hands out. DOS-PORT (S5 GUS,
+-                               // "Correction #1"): this indirection is what
+-                               // lets GUS's own 8-bit-unsigned requirement
+-                               // coexist with SB's 16-bit signed format without
+-                               // touching dos_audio_decode.cpp's WAV/VOC parsers
+-                               // at all -- they always decode to the SAME
+-                               // 16-bit intermediate; only this last conversion
+-                               // step branches on the active backend.
++    // DOS-PORT patch 0216: the decoded clip, shared and immutable (see DosDecodedPcm). It replaces
++    // _pcm (the 16-bit intermediate, which after the device conversion was kept only for its sample
++    // count) and _pcmDevice (the device-format copy); a cached clip is now held once, not twice per
++    // playing decoder. The format split this preserves: the WAV/VOC decode always produces the same
++    // 16-bit intermediate, and only the conversion to DosDecodedPcm::device branches on the backend
++    // (SB 16-bit signed, GUS 8-bit unsigned).
++    std::shared_ptr<const DosDecodedPcm> _pcm;
+     size_t _readSamples = 0u;
+     bool _opened = false;
+     bool _eos = false;
+-- 
+2.47.3
+

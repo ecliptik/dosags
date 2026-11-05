@@ -1,0 +1,99 @@
+diff --git a/Engine/media/audio/sdldecoder.cpp b/Engine/media/audio/sdldecoder.cpp
+index 9fb31e7ff..cdcc20771 100644
+--- a/Engine/media/audio/sdldecoder.cpp
++++ b/Engine/media/audio/sdldecoder.cpp
+@@ -12,6 +12,10 @@
+ //
+ //=============================================================================
+ #include "media/audio/sdldecoder.h"
++#include <time.h> // THROWAWAY UR5
++#include "debug/out.h" // THROWAWAY UR5
++extern uint32_t get_loop_counter(); // THROWAWAY UR5
++using namespace AGS::Common; // THROWAWAY UR5
+ #include "platform/dos/dos_audio_decode.h"
+ #include "platform/dos/dos_audio_mixer.h"
+ #include "util/sdl2_util.h"
+@@ -164,6 +168,7 @@ bool SDLDecoder::Open(float pos_ms)
+         }
+     }
+ 
++    const uclock_t ur5_t0 = uclock(); // THROWAWAY UR5
+     const bool decoded = dos_audio_decode_pcm(raw.data(), raw.size(), _pcm);
+     Close(); // release whatever we were handed, decoded or not
+     if (!decoded)
+@@ -174,6 +179,10 @@ bool SDLDecoder::Open(float pos_ms)
+     // convert_to_device_format() comment.
+     convert_to_device_format(_pcm, dos_audio_mixer_format(), _pcmDevice);
+ 
++    unsigned ur5_zero = 0, ur5_win = 0; // THROWAWAY UR5b: 512-sample windows that are all zero
++    for (size_t w = 0; w + 512 <= _pcm.size(); w += 512) { ur5_win++; bool z = true; for (size_t k = w; k < w + 512; k++) if (_pcm[k] != 0) { z = false; break; } if (z) ur5_zero++; }
++    Debug::Printf(kDbgMsg_Info, "UR5 zerowin %u of %u", ur5_zero, ur5_win);
++    Debug::Printf(kDbgMsg_Info, "UR5 open tick=%u ext=%s raw=%u samples=%u repeat=%d open_ms=%u", (unsigned)get_loop_counter(), _sampleExt.GetCStr(), (unsigned)raw.size(), (unsigned)_pcm.size(), (int)_repeat, (unsigned)((uclock() - ur5_t0) * 1000 / UCLOCKS_PER_SEC)); // THROWAWAY UR5
+     _opened = true;
+     _readSamples = 0u;
+     _eos = false;
+diff --git a/Engine/platform/dos/dos_audio_decode.cpp b/Engine/platform/dos/dos_audio_decode.cpp
+index b64986181..40f15c4aa 100644
+--- a/Engine/platform/dos/dos_audio_decode.cpp
++++ b/Engine/platform/dos/dos_audio_decode.cpp
+@@ -15,6 +15,7 @@
+ #include "platform/dos/dos_audio_mixer.h" // DOS_AUDIO_MIXER_RATE
+ #include <cstring>
+ 
++void ur5_log_fmt(const char *, int, int, int, unsigned); // THROWAWAY UR5
+ namespace
+ {
+ 
+@@ -126,6 +127,7 @@ bool decode_wav(const uint8_t *data, size_t size, std::vector<int16_t> &out_pcm)
+             if (!have_fmt)
+                 return false; // fmt must precede data; also rejects non-PCM formats
+             decode_pcm_block(data + body, chunk_size, static_cast<int>(fmt_rate), fmt_channels, fmt_bits, out_pcm);
++            { ::ur5_log_fmt("wav", (int)fmt_rate, (int)fmt_channels, (int)fmt_bits, (unsigned)chunk_size); } // THROWAWAY UR5
+             return !out_pcm.empty();
+         }
+         pos = body + chunk_size + (chunk_size & 1u); // chunks are word-aligned
+@@ -251,3 +253,10 @@ bool dos_audio_decode_pcm(const uint8_t *data, size_t size, std::vector<int16_t>
+         return decode_voc(data, size, out_pcm);
+     return false;
+ }
++
++// THROWAWAY UR5
++#include "debug/out.h"
++void ur5_log_fmt(const char *kind, int rate, int ch, int bits, unsigned bytes)
++{
++    AGS::Common::Debug::Printf(AGS::Common::kDbgMsg_Info, "UR5 fmt %s rate=%d ch=%d bits=%d bytes=%u", kind, rate, ch, bits, bytes);
++}
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index d11af2cfb..97f4f4ff4 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -17,6 +17,7 @@
+ #include <cstdio>
+ #include <cstring>
+ #include <vector>
++#include <time.h> // THROWAWAY UR5
+ #include <SDL3/SDL_dosaudio_devicerate.h>
+ #include <SDL3/SDL_dosaudio_pump.h>
+ #include "debug/out.h"
+@@ -509,6 +510,21 @@ void dos_audio_mixer_pump()
+                 break; // nothing playing; let the device underflow to silence
+         }
+     }
++    if (g_stream) { // THROWAWAY UR5: per-pump state while anything is playing
++        bool any = false; char vb[128]; int o = 0;
++        for (int i = 0; i < DOS_AUDIO_MIXER_MAX_VOICES; i++) {
++            const Voice &v = g_voices[i];
++            if (!v.used || !v.active) continue;
++            any = true;
++            o += std::snprintf(vb + o, sizeof(vb) - o, " v%d=%u%s", i, (unsigned)(v.ring.size() - v.read_pos), v.source_done ? "d" : "");
++            if (o >= (int)sizeof(vb) - 16) break;
++        }
++        const int q = SDL_GetAudioStreamQueued(g_stream);
++        if (any || q > 0)
++            Debug::Printf(kDbgMsg_Info, "UR5 pump tick=%u ms=%u fill_ms=%d q=%d silent=%u pcm=%u%s", (unsigned)get_loop_counter(),
++                (unsigned)(uclock() * 1000 / UCLOCKS_PER_SEC), SDL_DOSAudioRingFillMs(), q,
++                (unsigned)dos_port_audio_silent_irq_count, (unsigned)dos_port_audio_sfx_active_count, vb);
++    }
+     // Service the DOS SB ring/ISR regardless -- mandatory per frame, per
+     // the hub's own docs/audio.md convention (SDL_DOSAudioPump()).
+     SDL_DOSAudioPump();

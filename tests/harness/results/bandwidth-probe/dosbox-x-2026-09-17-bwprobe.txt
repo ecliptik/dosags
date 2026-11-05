@@ -1,0 +1,36 @@
+bwprobe UCLOCKS_PER_SEC=1193180
+CONTROL sysram->sysram movsl    bytes= 64000 reps= 400 ms_per_copy=   0.123 MB_per_s= 496.39 fps_ceiling=8132.8
+CONTROL sysram->sysram memcpy   bytes= 64000 reps= 400 ms_per_copy=   0.123 MB_per_s= 495.41 fps_ceiling=8116.9
+CONTROL sysram->sysram movsl    bytes= 76800 reps= 400 ms_per_copy=   0.147 MB_per_s= 498.62 fps_ceiling=6807.9
+CONTROL sysram->sysram memcpy   bytes= 76800 reps= 400 ms_per_copy=   0.122 MB_per_s= 598.83 fps_ceiling=8176.0
+CONTROL sysram->sysram movsl    bytes=307200 reps= 400 ms_per_copy=   0.374 MB_per_s= 783.27 fps_ceiling=2673.6
+CONTROL sysram->sysram memcpy   bytes=307200 reps= 400 ms_per_copy=   0.332 MB_per_s= 882.54 fps_ceiling=3012.4
+CONTROL sysram->sysram movsl    bytes=460800 reps= 400 ms_per_copy=   0.418 MB_per_s=1051.46 fps_ceiling=2392.7
+CONTROL sysram->sysram memcpy   bytes=460800 reps= 400 ms_per_copy=   0.359 MB_per_s=1223.70 fps_ceiling=2784.6
+CONTROL sysram->sysram movsl    bytes=614400 reps= 400 ms_per_copy=   0.449 MB_per_s=1305.25 fps_ceiling=2227.6
+CONTROL sysram->sysram memcpy   bytes=614400 reps= 400 ms_per_copy=   0.417 MB_per_s=1404.25 fps_ceiling=2396.6
+verify movsl sysram copy: ok
+mode 0x101 640x480x8: 640x480 bpp=8 physbase=0xE0000000 win_gran=64KB
+0x101 banked A000+4F05 dosmemput bytes= 64000 reps= 400 ms_per_copy=   0.048 MB_per_s=1269.91 fps_ceiling=20806.1
+0x101 banked A000+4F05 dosmemput bytes= 76800 reps= 400 ms_per_copy=   0.056 MB_per_s=1310.41 fps_ceiling=17891.4
+0x101 banked A000+4F05 dosmemput bytes=307200 reps= 400 ms_per_copy=   0.203 MB_per_s=1439.81 fps_ceiling=4914.6
+0x101 LFB nearptr      movsl    bytes= 64000 reps= 400 ms_per_copy=   0.043 MB_per_s=1421.55 fps_ceiling=23290.7
+0x101 LFB nearptr      memcpy   bytes= 64000 reps= 400 ms_per_copy=   0.043 MB_per_s=1419.06 fps_ceiling=23249.8
+0x101 LFB nearptr      movsl    bytes= 76800 reps= 400 ms_per_copy=   0.051 MB_per_s=1438.30 fps_ceiling=19637.6
+0x101 LFB nearptr      memcpy   bytes= 76800 reps= 400 ms_per_copy=   0.051 MB_per_s=1436.35 fps_ceiling=19611.0
+0x101 LFB nearptr      movsl    bytes=307200 reps= 400 ms_per_copy=   0.195 MB_per_s=1504.57 fps_ceiling=5135.6
+0x101 LFB nearptr      memcpy   bytes=307200 reps= 400 ms_per_copy=   0.198 MB_per_s=1483.31 fps_ceiling=5063.0
+verify 0x101 LFB readback: ok
+mode 0x111 640x480x16: 640x480 bpp=16 physbase=0xE0000000 win_gran=64KB
+0x111 banked A000+4F05 dosmemput bytes=460800 reps= 400 ms_per_copy=   0.309 MB_per_s=1422.73 fps_ceiling=3237.5
+0x111 banked A000+4F05 dosmemput bytes=614400 reps= 400 ms_per_copy=   0.417 MB_per_s=1406.02 fps_ceiling=2399.6
+0x111 LFB nearptr      movsl    bytes=460800 reps= 400 ms_per_copy=   0.302 MB_per_s=1456.50 fps_ceiling=3314.3
+0x111 LFB nearptr      memcpy   bytes=460800 reps= 400 ms_per_copy=   0.296 MB_per_s=1483.12 fps_ceiling=3374.9
+0x111 LFB nearptr      movsl    bytes=614400 reps= 400 ms_per_copy=   0.390 MB_per_s=1500.71 fps_ceiling=2561.2
+0x111 LFB nearptr      memcpy   bytes=614400 reps= 400 ms_per_copy=   0.366 MB_per_s=1600.75 fps_ceiling=2732.0
+verify 0x111 LFB readback: ok
+mode 0x1F3 (512x384x8 (UniVBE)): VBE mode info call failed -- skipped
+mode13h A000           dosmemput bytes= 64000 reps= 400 ms_per_copy=   0.042 MB_per_s=1466.86 fps_ceiling=24033.0
+mode13h A000 nearptr   movsl    bytes= 64000 reps= 400 ms_per_copy=   0.057 MB_per_s=1078.70 fps_ceiling=17673.5
+mode13h A000 nearptr   memcpy   bytes= 64000 reps= 400 ms_per_copy=   0.088 MB_per_s= 693.07 fps_ceiling=11355.2
+done

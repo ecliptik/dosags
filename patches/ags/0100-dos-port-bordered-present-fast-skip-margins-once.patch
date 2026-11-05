@@ -1,0 +1,259 @@
+From 5b974aafc76b595f5693d3e114a9df6621023573 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 17 Sep 2026 16:08:23 -0700
+Subject: [PATCH] DOS-PORT: patch 0100 -- a bordered present keeps the fast
+ blit, the skip, and clears its margins once
+
+Present() treated "the picture does not fill the window" as the slow
+case in three separate places, and on this port that is almost every
+game: AGS Quest is 640x360 in a 640x480 mode; a true 320x200 game at 2x
+is 640x400 in 640x480; a centred unscaled picture is bordered by
+definition. Only Trilby's Notes, which is 320x240 by its compiled
+letterbox option, ever filled the window. For everything else:
+
+ - the fast integer blit (0087/0090) refused any dst that was not the
+   whole window, so the generic SDL_BlitSurfaceScaled ran -- even at 1:1;
+ - the unchanged-frame skip (0091/0092) required dst == window, so every
+   render pass paid a real present (AGS Quest: presents_skipped=0);
+ - a full-window SDL_FillSurfaceRect ran on EVERY present to keep the
+   margins black (AGS Quest: 614,400 bytes, ~15 ms, 1231 times a run).
+
+Now: the fast blit takes any dst that lies wholly inside the window
+surface (row addresses are simply based at the rectangle's corner) and
+gains a 1x branch, one memcpy per row; the skip's precondition becomes
+"dst inside the window and its margins known clean"; and the margins
+are cleared once per (window surface, size, dst rectangle) -- tracked
+in _marginsClean*, invalidated by ReleaseDisplayMode() since a new
+surface can come back at the same address. A shake-screen offset moves
+dst, which fails the comparison and re-clears, as before. The present
+that clears pushes the whole window; every other one calls
+SDL_UpdateWindowSurfaceRects(window, &dst, 1). On the DOS backend's
+normal LFB path that is free (it ignores the rect list and copies the
+whole surface); it pays on the direct-framebuffer path. Anything
+clipped or format-converting still takes the generic path.
+
+blit_path gains unscaled=N (the 1x subset of fast).
+
+DOSBox-X: BENCH8 idle window screenshot byte-identical before/after
+(640x400 letterboxed, margins black); all seven BENCH8 arms pass their
+capture hashes and now skip (idle 2 real / 1039 skipped) on the fast
+path; AGS Quest AutoPilot 18/18, capture hashes PASS, presents 950 real
+/ 2933 skipped, fast=950 unscaled=950, fps_p50 35.99 -> 39.92; Trilby's
+Notes unchanged (fast=23 unscaled=0).
+---
+ Engine/gfx/ali3dsw.cpp             | 100 +++++++++++++++++++++++++----
+ Engine/gfx/ali3dsw.h               |   5 ++
+ Engine/main/dos_port_tick_timing.h |   1 +
+ Engine/main/game_run.cpp           |   4 +-
+ 4 files changed, 97 insertions(+), 13 deletions(-)
+
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index 0b43dd35c..0045dd854 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -258,6 +258,10 @@ void SDLRendererGraphicsDriver::DestroyVirtualScreen()
+ 
+ void SDLRendererGraphicsDriver::ReleaseDisplayMode()
+ {
++  // DOS-PORT patch 0100: whatever Present() knew about the old window
++  // surface is void -- a new surface can come back at the same address.
++  _marginsCleanSurface = nullptr;
++  _lastPresentedValid = false;
+   OnModeReleased();
+   ClearDrawLists();
+ 
+@@ -747,18 +751,25 @@ static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const
+         return false;
+     if (src->format != dst->format)
+         return false; // needs a format-converting blit -- not this path
+-    if (dst_rect.x != 0 || dst_rect.y != 0)
+-        return false; // shake-screen offset -- not the steady-state hot path
+-    if (dst_rect.w != dst->w || dst_rect.h != dst->h)
+-        return false; // a border/letterbox is present -- only handle full-window fills
++    // DOS-PORT patch 0100: the destination may be a BORDERED rectangle
++    // (letterbox/pillarbox, or a centred unscaled picture) -- it only has
++    // to lie wholly inside the window surface; anything clipped (a
++    // shake-screen offset pushing it off an edge) goes to the generic
++    // blit, which clips. Before this patch a border disqualified the fast
++    // path outright, and since 2x of a 320x200 game is 640x400 in a
++    // 640x480 mode, that was every true 320x200 game; only Trilby's Notes
++    // (320x240 by its compiled letterbox option) ever qualified.
++    if (dst_rect.x < 0 || dst_rect.y < 0 ||
++        dst_rect.x + dst_rect.w > dst->w || dst_rect.y + dst_rect.h > dst->h)
++        return false;
+     if (src->w <= 0 || src->h <= 0)
+         return false;
+     if (dst_rect.w % src->w != 0 || dst_rect.h % src->h != 0)
+         return false; // not an exact integer scale
+     const int scale_x = dst_rect.w / src->w;
+     const int scale_y = dst_rect.h / src->h;
+-    if (scale_x != scale_y || scale_x <= 1)
+-        return false; // only a uniform integer upscale >1x (1x needs no blit math to speed up)
++    if (scale_x != scale_y || scale_x < 1)
++        return false; // only a uniform integer scale; 1x is the row-memcpy branch below
+ 
+     const SDL_PixelFormatDetails *fmt = SDL_GetPixelFormatDetails(src->format);
+     if (!fmt || fmt->bytes_per_pixel == 0)
+@@ -785,9 +796,28 @@ static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const
+     dos_port_tick_record_us(dos_port_tick_timing.fastblit_lock, (_t1 - _t0) * 1000000LL / UCLOCKS_PER_SEC);
+ 
+     const Uint8 *src_pixels = (const Uint8 *)src->pixels;
+-    Uint8 *dst_pixels = (Uint8 *)dst->pixels;
++    // patch 0100: every row address below is relative to this, so moving
++    // it to the rectangle's top-left corner is all a bordered dst needs.
++    Uint8 *dst_pixels = (Uint8 *)dst->pixels + (size_t)dst_rect.y * (size_t)dst->pitch + (size_t)dst_rect.x * bpp;
+     const size_t dst_row_bytes = (size_t)src->w * (size_t)scale_x * bpp;
+ 
++    if (scale_x == 1)
++    {
++        // patch 0100: unscaled. SDL_BlitSurfaceScaled() at 1:1 still goes
++        // through its generic scaled-blit machinery (SDL has no generated
++        // same-format INDEX8 blitter to fall into); this is one memcpy per
++        // row. Accounted under fastblit_vmemcpy -- it is the same work.
++        uclock_t _tv0 = uclock();
++        for (int sy = 0; sy < src->h; ++sy)
++            std::memcpy(dst_pixels + (size_t)sy * (size_t)dst->pitch,
++                        src_pixels + (size_t)sy * (size_t)src->pitch, dst_row_bytes);
++        dos_port_tick_record_us(dos_port_tick_timing.fastblit_hreplicate, 0);
++        dos_port_tick_record_us(dos_port_tick_timing.fastblit_vmemcpy, dos_port_tick_elapsed_us(_tv0));
++        if (dst_lock) SDL_UnlockSurface(dst);
++        if (src_lock) SDL_UnlockSurface(src);
++        return true;
++    }
++
+     // One horizontally-replicated source row, reused for all scale_y
+     // identical destination rows that row expands into -- computed
+     // once per source row rather than re-doing the horizontal
+@@ -1065,9 +1095,23 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+ #else
+     const bool skip_allowed = true;
+ #endif
++    // DOS-PORT patch 0100: "clean" no longer means "dst IS the window". A
++    // bordered picture qualifies too, provided its margins are already known
++    // to be black for exactly this window surface and this rectangle --
++    // which is what _marginsClean* below tracks. The old rule cost every
++    // letterboxed game (AGS Quest 640x360, any true 320x200 game at 2x, any
++    // centred unscaled picture) the unchanged-frame skip, the fast blit AND
++    // a full-window black fill on every single present.
++    const bool dst_inside = dst.x >= 0 && dst.y >= 0 &&
++        dst.x + dst.w <= win_surface->w && dst.y + dst.h <= win_surface->h;
++    const bool has_border = dst.x != 0 || dst.y != 0 || dst.w != win_surface->w || dst.h != win_surface->h;
++    const bool margins_clean = !has_border ||
++        (_marginsCleanSurface == win_surface && _marginsCleanW == win_surface->w &&
++         _marginsCleanH == win_surface->h &&
++         _marginsCleanDst.x == dst.x && _marginsCleanDst.y == dst.y &&
++         _marginsCleanDst.w == dst.w && _marginsCleanDst.h == dst.h);
+     const bool clean_case = skip_allowed && (flip == kFlip_None) &&
+-        (blit_src->format == win_surface->format) &&
+-        (dst.x == 0 && dst.y == 0 && dst.w == win_surface->w && dst.h == win_surface->h);
++        (blit_src->format == win_surface->format) && dst_inside && margins_clean;
+     if (clean_case)
+     {
+         const size_t frame_bytes = (size_t)blit_src->pitch * (size_t)blit_src->h;
+@@ -1111,8 +1155,33 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+     // previous frame, or undefined content on the very first present)
+     // showing through any border. Only pay for the clear when there
+     // actually is a border to keep clean.
+-    if (dst.x != 0 || dst.y != 0 || dst.w != win_surface->w || dst.h != win_surface->h)
++    //
++    // patch 0100: ...and only ONCE per (window surface, dst rectangle), not
++    // on every present. The margins are outside dst by definition and
++    // nothing else draws on the window surface, so once black they stay
++    // black until the rectangle moves (shake-screen, a new render frame) or
++    // the surface itself is replaced (a mode set) -- either of which fails
++    // the comparison above and lands here again. On AGS Quest this fill was
++    // 614,400 bytes, ~15 ms, 1231 times a run. The present that clears must
++    // push the WHOLE window so the margins reach the screen; every other
++    // one pushes only dst.
++    bool full_update = !has_border;
++    if (has_border && !margins_clean)
++    {
+         SDL_FillSurfaceRect(win_surface, nullptr, SDL_MapSurfaceRGB(win_surface, 0, 0, 0));
++        full_update = true;
++        if (dst_inside)
++        {
++            _marginsCleanSurface = win_surface;
++            _marginsCleanW = win_surface->w;
++            _marginsCleanH = win_surface->h;
++            _marginsCleanDst = dst;
++        }
++        else
++        {
++            _marginsCleanSurface = nullptr; // partly off-window: never cache
++        }
++    }
+ 
+     // DOS-PORT patch 0087: try the fast integer-nearest-neighbor path
+     // first (see TryFastIntegerNearestBlit's own comment) -- falls back
+@@ -1126,6 +1195,8 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+         // patch 0093: which path, and at what source depth.
+         if (blitted) dos_port_tick_timing.blits_fast++;
+         else         dos_port_tick_timing.blits_generic++;
++        if (blitted && dst.w == blit_src->w && dst.h == blit_src->h)
++            dos_port_tick_timing.blits_unscaled++; // patch 0100: the 1x subset of "fast"
+         {
+             const SDL_PixelFormatDetails *_f = SDL_GetPixelFormatDetails(blit_src->format);
+             dos_port_tick_timing.blit_src_bytes_per_pixel = _f ? (int)_f->bytes_per_pixel : 0;
+@@ -1140,7 +1211,14 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+         DosPortTickScope _dos_port_updatewin_scope(dos_port_tick_timing.present_update_window);
+         dos_port_tick_timing.presents_real++; // patch 0093
+ #endif
+-        if (!SDL_UpdateWindowSurface(window))
++        // patch 0100: a bordered picture whose margins are already on
++        // screen only needs its own rectangle pushed. (The DOS backend's
++        // NORMAL LFB path ignores the rect list and copies the whole
++        // surface regardless -- this is free there and only pays off on its
++        // direct-framebuffer path, SDL_DOS_ALLOW_DIRECT_FRAMEBUFFER=1.)
++        const bool pushed = full_update ? SDL_UpdateWindowSurface(window)
++                                        : SDL_UpdateWindowSurfaceRects(window, &dst, 1);
++        if (!pushed)
+             Debug::Printf(kDbgMsg_Warn, "SDLRenderer: SDL_UpdateWindowSurface failed: %s", SDL_GetError());
+     }
+ }
+diff --git a/Engine/gfx/ali3dsw.h b/Engine/gfx/ali3dsw.h
+index 7f4a06fd0..a6b850bf6 100644
+--- a/Engine/gfx/ali3dsw.h
++++ b/Engine/gfx/ali3dsw.h
+@@ -398,6 +398,11 @@ private:
+     // comment for the exact invalidation conditions.
+     std::vector<Uint8> _lastPresentedPixels;
+     bool _lastPresentedValid = false;
++    // DOS-PORT patch 0100: the (window surface, dst rectangle) whose margins
++    // are known to be black -- see Present().
++    SDL_Surface *_marginsCleanSurface = nullptr;
++    int _marginsCleanW = 0, _marginsCleanH = 0;
++    SDL_Rect _marginsCleanDst = { 0, 0, 0, 0 };
+     int _lastPresentedXoff = 0;
+     int _lastPresentedYoff = 0;
+     Common::GraphicFlip _lastPresentedFlip = Common::kFlip_None;
+diff --git a/Engine/main/dos_port_tick_timing.h b/Engine/main/dos_port_tick_timing.h
+index c15f3e097..001919d68 100644
+--- a/Engine/main/dos_port_tick_timing.h
++++ b/Engine/main/dos_port_tick_timing.h
+@@ -375,6 +375,7 @@ struct DosPortTickTiming
+     // off the log rather than inferred from two other phases' call counts.
+     long blits_fast = 0;
+     long blits_generic = 0;
++    long blits_unscaled = 0; // patch 0100: fast-path blits that were 1:1 row copies
+     int blit_src_bytes_per_pixel = 0; // last real present's source format
+ };
+ 
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 940d024c4..407d6da57 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1586,9 +1586,9 @@ void dos_port_yardstick_emit(FILE *log)
+     fprintf(log, "DOS-PORT fps_basis counts=render_passes render_passes=%lu presents_real=%ld presents_skipped=%ld\n",
+         (unsigned long)GameTimer.RenderCounter,
+         dos_port_tick_timing.presents_real, dos_port_tick_timing.presents_skipped);
+-    fprintf(log, "DOS-PORT blit_path fast=%ld generic=%ld src_bytes_per_pixel=%d\n",
++    fprintf(log, "DOS-PORT blit_path fast=%ld generic=%ld src_bytes_per_pixel=%d unscaled=%ld\n",
+         dos_port_tick_timing.blits_fast, dos_port_tick_timing.blits_generic,
+-        dos_port_tick_timing.blit_src_bytes_per_pixel);
++        dos_port_tick_timing.blit_src_bytes_per_pixel, dos_port_tick_timing.blits_unscaled);
+ 
+     const long long loop_us = dos_tick_have_first
+         ? (long long)(dos_tick_last_exit - dos_tick_first_entry) * 1000000LL / UCLOCKS_PER_SEC : 0;
+-- 
+2.47.3
+

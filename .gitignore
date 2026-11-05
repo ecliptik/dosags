@@ -1,0 +1,72 @@
+
+# Claude Code local session state (agents, skill symlinks, settings.local.json)
+# is not tracked -- except settings.json, which enables the sdldos plugin for
+# every clone of this repo. `.claude/*` (not `.claude/`) so the negation works.
+.claude/*
+!.claude/settings.json
+
+# Vendored upstreams -- cloned by scripts/fetch-sources.sh, gitignored
+# entirely. Only vendor/sources.manifest is tracked (same convention as
+# doskutsu/dossage).
+/vendor/SDL/
+/vendor/ags/
+
+# Build artifacts -- SDL3 sysroot, AGS CMake build tree, staged binaries.
+/build/
+/dist/
+*.o
+*.obj
+*.exe
+*.EXE
+
+# Symlink to the ~/emulators/ hub (recreated by scripts/setup-symlinks.sh).
+/tools/djgpp
+
+# CMake generated files that might end up at the repo root.
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# DOSBox-X runtime artifacts -- written directly into the mounted C: root
+# by tools/dosbox-launch.sh/dosbox-run.sh (which currently mount this
+# repo's own root, not a build/stage/ tree -- see
+# tests/probes/window-surface-smoke/README.md's scaffolding-gap note).
+LOGS/
+.DBLOCALFILE_ATR_*
+*.SWP
+DEBUG.LOG
+
+# tests/harness/drive-walk.sh's own action trace (defaults to ./DRIVE.LOG,
+# one line per click/lock-wait, appended across whatever run invoked it
+# from the repo root) -- a transient per-run harness artifact like
+# DEBUG.LOG above, not a durable finding record (that's
+# tests/harness/results/*/, which IS tracked).
+DRIVE.LOG
+
+# CWSDPMI, staged locally for tools/dosbox-launch.sh (which -- unlike
+# dosbox-run.sh -- has no CWSDPMI= override and always mounts D: from a
+# hardcoded vendor/cwsdpmi). Nothing under here is tracked: the bytes are
+# pinned by sha256 in vendor/binaries.manifest, which make dist checks.
+/vendor/cwsdpmi/
+
+# Python bytecode cache from host-side fixture generator scripts
+# (tests/fixtures/*/build_fixture.py and similar).
+__pycache__/
+*.pyc
+
+# tests/harness: compiled AGS test packages, rebuilt on demand from a
+# pinned upstream SHA + our own overlay -- never committed (AGS Quest's
+# own art is CC BY-NC-ND). See tests/harness/README.md.
+/tests/harness/games/
+
+# Physical-screen witness frames are bulk; the contact sheet and manifest are what is committed
+# (a cell that is a finding may commit specific frames with git add -f).
+/tests/harness/results/*/witness/frames/
+/tests/harness/results/*/witness/camera/
+/tests/harness/results/*/witness-adhoc/*.jpg
+
+# witness_keep.py per-run frame counter (run-hw.sh), transient, never evidence
+tests/harness/results/*/witness/.seq
+# run-dosbox.sh --freeze-capture/--screen-series helper files (stop marker, staging-dir path)
+tests/harness/results/*/*/.stop
+tests/harness/results/*/*/stage

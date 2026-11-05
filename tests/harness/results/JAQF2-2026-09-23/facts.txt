@@ -1,0 +1,60 @@
+RATCHET stale_frames=0
+RATCHET pcm_irqs=0
+RATCHET overwrites=0
+RATCHET underruns=0
+RATCHET silent_irqs=0
+RATCHET pcm_mixed=20
+RATCHET pcm_mixed_zero=0
+RATCHET pcm_mixed_quiet=0
+RATCHET pcm_unaccounted=20
+RATCHET midi_late_writes=25
+RATCHET midi_late_max_ms=164
+RATCHET midi_events=29
+RATCHET mistall_n=0
+RATCHET code_lock_bytes=NA
+RATCHET exe_bytes=8481792
+kind                   n     p50     p95     max p95_upper  failed/unfinished/superseded/rerequested/cleared
+boot                   1    7742    7742    7742      7742  0/0/0/0/0
+room                   8    8514   12050   12050     12050  0/0/0/0/0
+save                   1     895     895     895       895  0/0/0/0/0
+save_restartpoint      0      -1      -1      -1        -1  0/0/0/0/0
+load                   1   10709   10709   10709     10709  0/0/0/0/0
+click                  0      -1      -1      -1        -1  0/0/0/0/0
+click_sim              1    1165    1165    1165      1166  0/0/0/0/0
+key                    0      -1      -1      -1        -1  0/0/0/0/0
+
+  kind=boot room=1 t_ms=0 ms=7742 to_fadein_end_ms=7475 fadein_end_to_present_ms=267 ended_in_fade=0
+  kind=room from=1 to=2 t_ms=10432 ms=8706 to_fadein_end_ms=8717 fadein_end_to_present_ms=0 retargeted=0 ended_in_fade=1
+  kind=room from=2 to=3 t_ms=19199 ms=8530 to_fadein_end_ms=8273 fadein_end_to_present_ms=256 retargeted=0 ended_in_fade=0
+  kind=room from=3 to=4 t_ms=91636 ms=12050 to_fadein_end_ms=8200 fadein_end_to_present_ms=3849 retargeted=0 ended_in_fade=0
+  kind=save slot=1 room=4 t_ms=126022 ms=895 write_ms=572 done_to_present_ms=322 failed=0
+  kind=room from=4 to=3 t_ms=132428 ms=4903 to_fadein_end_ms=4673 fadein_end_to_present_ms=230 retargeted=0 ended_in_fade=0
+  kind=load slot=1 room=3 t_ms=126623 ms=10709 restore_ms=4767 done_to_present_ms=5940 room_changed=1 failed=0
+  kind=room from=3 to=4 t_ms=138114 ms=8474 to_fadein_end_ms=8167 fadein_end_to_present_ms=306 retargeted=0 ended_in_fade=0
+  kind=room from=4 to=3 t_ms=153193 ms=11978 to_fadein_end_ms=8241 fadein_end_to_present_ms=3736 retargeted=0 ended_in_fade=0
+  kind=room from=3 to=4 t_ms=184981 ms=8514 to_fadein_end_ms=8169 fadein_end_to_present_ms=344 retargeted=0 ended_in_fade=0
+  kind=room from=4 to=3 t_ms=199515 ms=8470 to_fadein_end_ms=8231 fadein_end_to_present_ms=239 retargeted=0 ended_in_fade=0
+
+room 1->2 journey t_ms=10432  0042 start t_ms=10433  diff=1 ms
+room 2->3 journey t_ms=19199  0042 start t_ms=19200  diff=1 ms
+room 3->4 journey t_ms=91636  0042 start t_ms=91636  diff=0 ms
+room 4->3 journey t_ms=132428  0042 start t_ms=132429  diff=1 ms
+room 3->4 journey t_ms=138114  0042 start t_ms=138115  diff=1 ms
+room 4->3 journey t_ms=153193  0042 start t_ms=153194  diff=1 ms
+room 3->4 journey t_ms=184981  0042 start t_ms=184982  diff=1 ms
+room 4->3 journey t_ms=199515  0042 start t_ms=199516  diff=1 ms
+stallshare engine: 232 of 232 windows below 39 (share 1.0000; nojourney 1.0000)
+stallshare persec witness (render passes, time-weighted): 0.9730 over 228 s
+stalls>100ms: n=1039 per_min=267.64 max_ms=3864 nojourney n=806 per_min=207.62 tail_ms=575
+input: driver presses=0 seen=0 lost=0; kbd irq=0 drained=0
+
+RATCHET boot_n=1 boot_p95_ms=7742 boot_p95_upper_ms=7742 boot_failed=0 boot_unfinished=0
+RATCHET room_n=8 room_p95_ms=12050 room_p95_upper_ms=12050 room_failed=0 room_unfinished=0
+RATCHET save_n=1 save_p95_ms=895 save_p95_upper_ms=895 save_failed=0 save_unfinished=0
+RATCHET save_restartpoint_n=0 save_restartpoint_p95_ms=-1 save_restartpoint_p95_upper_ms=-1 save_restartpoint_failed=0 save_restartpoint_unfinished=0
+RATCHET load_n=1 load_p95_ms=10709 load_p95_upper_ms=10709 load_failed=0 load_unfinished=0
+RATCHET click_n=0 click_p95_ms=-1 click_p95_upper_ms=-1 click_failed=0 click_unfinished=0
+RATCHET click_sim_n=1 click_sim_p95_ms=1165 click_sim_p95_upper_ms=1166 click_sim_failed=0 click_sim_unfinished=0
+RATCHET key_n=0 key_p95_ms=-1 key_p95_upper_ms=-1 key_failed=0 key_unfinished=0
+RATCHET journeys_unfinished=0 journeys_failed=0
+RATCHET lost_clicks=0 hw_checks=1448 kbd_undrained=0

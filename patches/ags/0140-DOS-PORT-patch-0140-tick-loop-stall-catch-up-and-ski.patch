@@ -1,0 +1,400 @@
+From 1f9ddd11ae63fe0606fb05858840e949ee53a66e Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 21 Sep 2026 11:17:30 -0700
+Subject: [PATCH] DOS-PORT: patch 0140 -- tick-loop stall, catch-up and
+ skipped-frame attribution
+
+Consolidates 0140, 0141, 0142, 0143, 0144, 0145, 0147, 0148, 0149, 0153,
+0159, 0164, 0165 and 0166's per-report reset. Engine/main/game_run.cpp only,
+and it is this file WITHOUT the 0163 pacer lines, which are the next patch.
+
+Why. A steady 13.2% of renders were skipped with ~8 ms of slack in a 25 ms
+budget, so a frame had to overrun by ~8 ms to cause one. That is a fat right
+tail with a cause, and neither a mean nor a max can find it; so the frame
+that just ran is attributed directly, and blocking ticks are attributed
+rather than counted:
+- 0140/0145/0147/0148: a skipframe line (every 4th skip) with the previous
+  frame's phase deltas; the snapshot and the report at the same point in the
+  call; NESTED labelled when its parts exceed its whole.
+- 0143: DOSAGS_SKIPTEST forces the report once at tick 500, since DOSBox-X
+  never falls behind and the branch could not otherwise be proven off target.
+- 0144: catch-up counters, and a sum check (self + children == total) so an
+  accounting bug shows up as a violation instead of a plausible number.
+- 0141/0142: a stallwhat line per blocking tick, with children_ms, without
+  which nested game loops make it unreadable.
+- 0149/0153: stall begin_ms/end_ms/t_ms on the transition-milestone clock, so
+  blocking ticks and transitions can be intersected instead of summed.
+- 0159: dos_tick_nested_us and the nesting depth, exported for the
+  script-side brackets.
+- 0164/0165/0166: pixels, sprite count and largest sprite on the skip line.
+
+Timing and logging only. Reads dos_port_dirty from 0124 and the rb_* fields
+from 0125.
+
+Provenance of this export (2026-09-21): these edits sat uncommitted in the
+vendor tree from patch 0123 onward, which is why every gate cell since said
+build_dirty=1. They were made under one campaign-wide patch counter shared
+with vendor/SDL, and each hunk carries its number in an in-source comment.
+Intermediate states were never committed, so this patch is a hunk-level
+partition of the final tree by concern, attributed by those comments -- not a
+replay of the order the edits were made in, and its intermediate state was not
+built on its own. The numbers named below are the ones found in its hunks.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ Engine/main/game_run.cpp | 258 ++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 255 insertions(+), 3 deletions(-)
+
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 669c3bbf5..fab710074 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -34,6 +34,7 @@
+ #include "ac/characterextras.h"
+ #include "ac/characterinfo.h"
+ #include "ac/draw.h"
++#include "ac/draw_software.h"   // patch 0164: dos_port_dirty
+ #include "ac/event.h"
+ #include "ac/game.h"
+ #include "ac/gamesetup.h"
+@@ -1498,12 +1499,60 @@ uint32_t get_runtime_ms()
+ // parent, and subtracts what its children handed it.
+ #define DOS_TICK_STALL_THRESHOLD_US 250000LL
+ #define DOS_TICK_STALL_CAP 32
+-struct DosTickStall { uint32_t tick_index; long ms; };
++// patch 0149: t_ms -- when the stall STARTED, on the same clock the
++// transition milestones use. Without it, transition segments and blocking
++// ticks cannot be intersected, only summed -- and summing them
++// double-counts, because a transition is largely MADE of blocking ticks
++// (the load and the fade are the stalls). gate3-bars.py computed bar 1 as
++// 107 ticks/s on a 40 Hz pacer that way. One field closes it.
++// patch 0153: the REAL wall span, start and end, recorded directly.
++//
++// 0149 added t_ms derived as get_runtime_ms() - self_us/1000, and that was
++// wrong in a way that took three attempts to see: self_us EXCLUDES nested
++// game loops while the wall span does not, so the derived start was both
++// too late and the implied window too short. Every attempt to compute
++// Gate 3's bar 1 from it inherited the error -- 107.10, then 26.24, then
++// 21.98 on one run, a spread five times the bar's tolerance.
++//
++// begin_ms/end_ms are read from the same clock the transition milestones
++// use, at entry and exit, so an excluded region is a measured interval
++// rather than a reconstruction. ms (the self-time) stays, because bar 2
++// wants the tick's own cost and bar 1 wants its wall span, and those are
++// genuinely different questions.
++struct DosTickStall { uint32_t tick_index; long ms; uint32_t t_ms;
++                      uint32_t begin_ms; uint32_t end_ms; };
+ static DosTickStall dos_tick_stalls[DOS_TICK_STALL_CAP];
+ static long dos_tick_stall_total = 0;      // every stall, including any beyond the cap
+ static long long dos_tick_stall_us = 0;    // summed self-time of stall ticks
+ static long dos_tick_count = 0;
++// patch 0144: catch-up repayment, the mechanism that would explain a
++// tick_rate_steady of 41.35 against a 40 target. 3.375% over 3,558 ticks is
++// ~120 excess ticks; 19 blocking stalls plus 8 transitions at MAX_CATCHUP=5
++// apiece is 135. Predicted ~120 BEFORE measuring, from two directions.
++static long dos_catchup_ticks = 0;    // extra ticks run to repay debt
++static long dos_catchup_events = 0;   // calls that repaid anything
++static long dos_catchup_clamped = 0;  // calls that hit MAX_CATCHUP
++// patch 0144: a decomposition instrument must assert its parts sum to its
++// whole. Both stall-attribution bugs today produced PLAUSIBLE numbers and
++// were caught only because they happened to be absurd -- at 1.4s instead of
++// 17.8s the wrong answer would have been believed. self_us + children_us
++// must equal total_us by construction; anything else is an accounting bug,
++// and counting violations turns "I looked at it and it seemed fine" into a
++// check that runs on every tick.
++static long dos_tick_sumcheck_fail = 0;
++static long long dos_tick_sumcheck_worst_us = 0;
+ static long long dos_tick_children_us = 0; // exclusive-time accounting (see above)
++// patch 0159: NON-static, so a bracket elsewhere can ask "did the loop keep
++// running inside my scope?".
++//
++// The distinction it exists for: a blocking AGS call that pumps the game
++// loop leaves the screen animating, and its time lands in nested ticks. One
++// that does not pump freezes the display. Both look identical in a total,
++// and they are completely different to a player -- clicking a doorway and
++// watching a character walk for seven seconds is a game; clicking and
++// watching a frozen screen for seven seconds is a bug.
++long long dos_tick_nested_us = 0;
++static int dos_tick_depth = 0;
+ static uclock_t dos_tick_first_entry = 0;
+ static uclock_t dos_tick_last_exit = 0;
+ static bool dos_tick_have_first = false;
+@@ -1515,6 +1564,7 @@ public:
+     DosTickStallScope()
+         : _t0(uclock()), _saved_children(dos_tick_children_us), _index(GameTimer.LoopCounter + 1)
+     {
++        ++dos_tick_depth;   // patch 0159
+         if (!dos_tick_have_first)
+         {
+             dos_tick_have_first = true;
+@@ -1522,13 +1572,39 @@ public:
+             dos_tick_preloop_ms = GameTimer.RuntimeStarted ? get_runtime_ms() : 0;
+         }
+         dos_tick_children_us = 0;
++        _begin_ms = GameTimer.RuntimeStarted ? get_runtime_ms() : 0u;  // patch 0153
++        // patch 0141: snapshot the phase totals so a stall can be
++        // ATTRIBUTED, not just counted. The category question -- are gem,
++        // save, menu and the transitions one shape or four -- cannot be
++        // answered from a duration alone, and Gate 3's bar 2 wants one
++        // budget across all of them only if they are one shape.
++        {
++            const DosPortTickTiming &t = dos_port_tick_timing;
++            _s_script = t.script_vm.total_us;
++            _s_events = t.process_events_dispatch.total_us;
++            _s_scene  = t.scene_construct.total_us;
++            _s_rb     = t.render_backbuffer.total_us;
++            _s_present= t.present_update_window.total_us;
++        }
+     }
+     ~DosTickStallScope()
+     {
+         const uclock_t t1 = uclock();
+         long long total_us = (long long)(t1 - _t0) * 1000000LL / UCLOCKS_PER_SEC;
+         if (total_us < 0) total_us = 0; // uclock() non-monotonicity, see dos_port_tick_record()
++        --dos_tick_depth;                                              // patch 0159
++        if (dos_tick_depth > 0) dos_tick_nested_us += total_us;
++        const long long this_tick_children_us = dos_tick_children_us;  // patch 0142
+         long long self_us = total_us - dos_tick_children_us;
++        {   // patch 0144: the sum check, before the clamp below can hide it
++            const long long diff = total_us - (self_us + this_tick_children_us);
++            const long long adiff = diff < 0 ? -diff : diff;
++            if (adiff > 0)
++            {
++                dos_tick_sumcheck_fail++;
++                if (adiff > dos_tick_sumcheck_worst_us) dos_tick_sumcheck_worst_us = adiff;
++            }
++        }
+         if (self_us < 0) self_us = 0;
+         dos_tick_children_us = _saved_children + total_us;
+         dos_tick_last_exit = t1;
+@@ -1538,13 +1614,56 @@ public:
+             if (dos_tick_stall_total < DOS_TICK_STALL_CAP)
+             {
+                 dos_tick_stalls[dos_tick_stall_total].tick_index = _index;
++                // Start, not end: a segment is [t_ms, t_ms + ms), and the
++                // transition stamps are starts too, so the two are directly
++                // comparable without anyone having to reason about which
++                // end each one records.
++                dos_tick_stalls[dos_tick_stall_total].begin_ms = _begin_ms;
++                dos_tick_stalls[dos_tick_stall_total].end_ms =
++                    GameTimer.RuntimeStarted ? get_runtime_ms() : 0u;
++                dos_tick_stalls[dos_tick_stall_total].t_ms =
++                    GameTimer.RuntimeStarted
++                        ? (uint32_t)(get_runtime_ms() - (uint32_t)(self_us / 1000))
++                        : 0u;
+                 dos_tick_stalls[dos_tick_stall_total].ms = (long)(self_us / 1000);
+             }
+             dos_tick_stall_total++;
+             dos_tick_stall_us += self_us;
++            // patch 0141: what this one tick spent its own seconds on.
++            // script_vm is the discriminator the category question turns
++            // on -- a stall that is nearly all script_vm is a blocking
++            // script operation, and then the next question is WHOSE
++            // script; one that is not is the engine doing something
++            // synchronous (a load, a save, a fade) and is a different
++            // object wearing the same duration.
++            {
++                const DosPortTickTiming &t = dos_port_tick_timing;
++                // patch 0142: children_ms is NOT decoration -- without it
++                // this line is unreadable. The phase totals accumulate
++                // across NESTED game loops (a blocking AGS call pumps the
++                // loop recursively), so a phase delta covers the nested
++                // ticks too while self_us deliberately excludes them.
++                // First run showed tick=502 with self_ms=636 and
++                // script_us=17,847,809: a 17.8-second "delta" on a
++                // 0.6-second tick. Only a stall with children_ms=0 is
++                // cleanly attributable; for the rest the phase time
++                // belongs to the nested ticks and the parent's own
++                // seconds are somewhere these brackets do not reach.
++                Debug::Printf("DOS-PORT stallwhat tick=%ld self_ms=%ld children_ms=%ld script_us=%ld events_us=%ld scene_us=%ld rb_us=%ld present_us=%ld",
++                    _index, (long)(self_us / 1000),
++                    (long)(this_tick_children_us / 1000),
++                    (long)(t.script_vm.total_us            - _s_script),
++                    (long)(t.process_events_dispatch.total_us - _s_events),
++                    (long)(t.scene_construct.total_us      - _s_scene),
++                    (long)(t.render_backbuffer.total_us    - _s_rb),
++                    (long)(t.present_update_window.total_us- _s_present));
++            }
+         }
+     }
+ private:
++    uint32_t _begin_ms = 0;   // patch 0153
++    long long _s_script = 0, _s_events = 0, _s_scene = 0,   // patch 0141
++              _s_rb = 0, _s_present = 0;
+     uclock_t _t0;
+     long long _saved_children;
+     uint32_t _index;
+@@ -1596,14 +1715,20 @@ void dos_port_yardstick_emit(FILE *log)
+     const long long steady_us = loop_us - dos_tick_stall_us;
+     const long steady_ticks = dos_tick_count - dos_tick_stall_total;
+     const double steady_rate = steady_us > 0 ? 1000000.0 * (double)steady_ticks / (double)steady_us : 0.0;
++    fprintf(log, "DOS-PORT catchup ticks=%ld events=%ld clamped=%ld sumcheck_fail=%ld sumcheck_worst_us=%ld\n",
++        dos_catchup_ticks, dos_catchup_events, dos_catchup_clamped,
++        dos_tick_sumcheck_fail, (long)dos_tick_sumcheck_worst_us);
+     fprintf(log, "DOS-PORT tick_rate_steady=%.2f ticks=%ld stall_ticks=%ld loop_ms=%ld stall_ms=%ld preloop_ms=%lu threshold_ms=%ld\n",
+         steady_rate, dos_tick_count, dos_tick_stall_total,
+         (long)(loop_us / 1000), (long)(dos_tick_stall_us / 1000),
+         (unsigned long)dos_tick_preloop_ms, (long)(DOS_TICK_STALL_THRESHOLD_US / 1000));
+     const long listed = dos_tick_stall_total < DOS_TICK_STALL_CAP ? dos_tick_stall_total : DOS_TICK_STALL_CAP;
+     for (long i = 0; i < listed; i++)
+-        fprintf(log, "DOS-PORT tick_stall index=%lu ms=%ld\n",
+-            (unsigned long)dos_tick_stalls[i].tick_index, dos_tick_stalls[i].ms);
++        fprintf(log, "DOS-PORT tick_stall index=%lu ms=%ld t_ms=%lu begin_ms=%lu end_ms=%lu\n",
++            (unsigned long)dos_tick_stalls[i].tick_index, dos_tick_stalls[i].ms,
++            (unsigned long)dos_tick_stalls[i].t_ms,
++            (unsigned long)dos_tick_stalls[i].begin_ms,
++            (unsigned long)dos_tick_stalls[i].end_ms);
+     if (dos_tick_stall_total > DOS_TICK_STALL_CAP)
+         fprintf(log, "DOS-PORT tick_stall_overflow unlisted=%ld\n", dos_tick_stall_total - DOS_TICK_STALL_CAP);
+ 
+@@ -2046,13 +2171,139 @@ static void dos_run_tick_fixed()
+     const long actual_ticks = (long)(get_loop_counter() - epoch_tick);
+     long owed = expected_ticks - actual_ticks;
+ 
++#ifdef __DJGPP__
++    // DOS-PORT patch 0140: per-skip attribution.
++    //
++    // 426 skipped renders spread through ordinary play at a steady 13.2%,
++    // with roughly 8 ms of slack against a 25 ms budget -- so a frame must
++    // overrun by about 8 ms to cause one. That is a fat right tail with a
++    // cause, and neither a mean (present 3.76 ms) nor a max (259 ms) can
++    // find it: a handful of 259 ms frames cannot produce 426 events, so
++    // there is a population of moderately-large frames that no summary
++    // statistic will show.
++    //
++    // So attribute directly rather than infer from a distribution: when
++    // this call is about to skip, print the breakdown of the frame that
++    // just ran, which is the one that overran. Deltas against a snapshot
++    // taken at the end of the previous call.
++    static bool dp_skip_snap_valid = false;
++    static long long dp_s_total = 0, dp_s_present = 0, dp_s_rb = 0,
++                     dp_s_scene = 0, dp_s_script = 0, dp_s_events = 0;
++    // patch 0164: PIXEL counts on the skip line, not just times.
++    //
++    // The three render terms are elevated unequally on tail frames --
++    // rb 5.1x, present 3.1x, scene 2.6x -- and one full-screen sprite
++    // would produce exactly that: more pixels to composite, a dirty rect
++    // degenerating so the present stops narrowing, more scene assembly.
++    // Times cannot tell that from three separate problems; pixels can.
++    // Both together discriminate: if rb_sprite_px and the presented pixel
++    // count jump TOGETHER it is one cause, and if only the first jumps the
++    // dirty rect is not degenerating and it is something else.
++    static long long dp_s_sprpx = 0, dp_s_prespx = 0;
++    // patch 0165: sprite COUNT beside the area. 107,625 px on a tail frame
++    // is either one enormous sprite or many more than usual, and the area
++    // alone cannot tell those apart -- they need different fixes, so this
++    // is the last discrimination before choosing one.
++    static long dp_s_sprn = 0;
++    static long dp_skip_reports = 0;
++    // patch 0143: DOSBox-X never falls behind (frames_skipped=0, measured),
++    // so the catch-up path CANNOT fire under the emulator and the pre-cell
++    // rule "prove the code executes before spending a cell" has no natural
++    // way to be satisfied. DOSAGS_SKIPTEST=1 forces the reporting branch
++    // once, at a fixed tick, so the print path itself is proven off the
++    // target. It exercises only the report -- no extra tick is run, so it
++    // cannot perturb what it is verifying.
++    static int dp_skiptest = -1;
++    if (dp_skiptest < 0)
++    {
++        const char *h = getenv("DOSAGS_SKIPTEST");
++        dp_skiptest = (h && h[0] == '1') ? 1 : 0;
++    }
++    const bool dp_forced = (dp_skiptest == 1 && dos_tick_count == 500);
++    if ((owed > 0 || dp_forced) && dp_skip_snap_valid)
++    {
++        const DosPortTickTiming &t = dos_port_tick_timing;
++        // Every 4th, so 426 skips cost ~107 lines rather than flooding
++        // STDOUT.TXT and pushing other instrumentation out of the file.
++        // patch 0148: label the line when its parts exceed its whole.
++        //
++        // update_game_once_total is a whole-function bracket that records
++        // on RETURN, so while a blocking operation is running inside a
++        // nested game loop the outer call has not returned and its total
++        // has not advanced -- while the inner phases have. The delta then
++        // reads total=0 with present and events non-zero, which is correct
++        // behaviour and looks exactly like the zero-interval bug fixed one
++        // patch ago. Rather than leave the reader to tell those apart from
++        // context, say which it is in the line itself.
++        const long long d_total   = t.update_game_once_total.total_us - dp_s_total;
++        const long long d_present = t.present_update_window.total_us - dp_s_present;
++        const long long d_rb      = t.render_backbuffer.total_us - dp_s_rb;
++        const long long d_scene   = t.scene_construct.total_us - dp_s_scene;
++        const char *nest = (d_total < d_present + d_rb + d_scene)
++            ? " NESTED=outer-call-still-in-flight" : "";
++        if ((dp_skip_reports++ % 4) == 0)
++            Debug::Printf("DOS-PORT skipframe%s%s owed=%ld prev_us total=%ld present=%ld rb=%ld scene=%ld script=%ld events=%ld sprite_px=%ld present_px=%ld sprites=%ld maxspr=%ldx%ld",
++                dp_forced ? "(FORCED-TEST)" : "", nest,
++                owed,
++                (long)(t.update_game_once_total.total_us - dp_s_total),
++                (long)(t.present_update_window.total_us - dp_s_present),
++                (long)(t.render_backbuffer.total_us   - dp_s_rb),
++                (long)(t.scene_construct.total_us     - dp_s_scene),
++                (long)(t.script_vm.total_us           - dp_s_script),
++                (long)(t.process_events_dispatch.total_us - dp_s_events),
++                (long)(t.rb_sprite_px - dp_s_sprpx),
++                (long)((dos_port_dirty.px_narrow + dos_port_dirty.px_full) - dp_s_prespx),
++                t.rb_sprites - dp_s_sprn,
++                t.rb_max_spr_w, t.rb_max_spr_h);
++    }
++    {   // patch 0147: snapshot on EVERY call, UNCONDITIONALLY.
++        //
++        // Snapshot and report must sit at the SAME point in the call, so
++        // the delta is exactly one iteration. Two earlier attempts got
++        // this wrong in different ways:
++        //
++        //  0140 snapshotted at the END of the call and reported at the top
++        //       of the next -- nothing runs between those points, so every
++        //       delta was exactly zero. A well-formed row of zeros.
++        //  0145 moved the snapshot to the report point, which is INSIDE
++        //       the `if (owed > 0)` branch, so it only ran when a skip was
++        //       reported and the delta spanned from the previous skip to
++        //       this one. Many frames, reported as one.
++        //
++        // The position was right in 0145; the conditionality was not.
++        //
++        // 0145's error was caught by the plausibility principle from 0146
++        // rather than by inspection: a line reading total=0 alongside
++        // present=6808 and events=431175 has parts that do not fit its
++        // whole. I was about to accept it as "3 of 4 lines non-zero".
++        // Fourth bug in this one instrument, and the first that a rule
++        // caught rather than luck.
++        const DosPortTickTiming &t = dos_port_tick_timing;
++        dp_s_total   = t.update_game_once_total.total_us;
++        dp_s_present = t.present_update_window.total_us;
++        dp_s_rb      = t.render_backbuffer.total_us;
++        dp_s_scene   = t.scene_construct.total_us;
++        dp_s_script  = t.script_vm.total_us;
++        dp_s_events  = t.process_events_dispatch.total_us;
++        dp_s_sprpx   = t.rb_sprite_px;                                  // patch 0164
++        dp_s_prespx  = dos_port_dirty.px_narrow + dos_port_dirty.px_full;
++        dp_s_sprn    = t.rb_sprites;                                    // patch 0165
++        dos_port_tick_timing.rb_max_spr_px = 0;                         // patch 0166
++        dos_port_tick_timing.rb_max_spr_w = dos_port_tick_timing.rb_max_spr_h = 0;
++        dp_skip_snap_valid = true;
++    }
++#endif
++
+     int n = 0;
+     while (owed > 0 && n < MAX_CATCHUP)
+     {
+         UpdateGameOnce(true, nullptr, 0, 0, /*skip_render_and_wait=*/true);
+         --owed;
+         ++n;
++        dos_catchup_ticks++;   // patch 0144
+     }
++    if (n > 0) dos_catchup_events++;
++    if (n >= MAX_CATCHUP) dos_catchup_clamped++;
+ 
+     // Resync the epoch whenever we're still behind after MAX_CATCHUP (a
+     // real stall bigger than the clamp can repay -- drop the rest rather
+@@ -2068,6 +2319,7 @@ static void dos_run_tick_fixed()
+ 
+     // The one tick that actually renders + paces via WaitForNextFrame().
+     UpdateGameOnce(true);
++
+ }
+ #endif // __DJGPP__
+ 
+-- 
+2.47.3
+

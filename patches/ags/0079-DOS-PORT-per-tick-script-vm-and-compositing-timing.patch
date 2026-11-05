@@ -1,0 +1,324 @@
+From 774e66ba4e5edd79e7836245359acdf1f9fb25b9 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 16 Sep 2026 15:26:48 -0700
+Subject: [PATCH] DOS-PORT: patch 0079 -- per-tick script-VM/RenderToBackBuffer
+ timing
+
+Real-hardware data from patch 0078 (PLAN.md's "40fps push step 3"
+comparison, S16FI1/S32FI1, 2026-09-16) ruled out both load-time depth
+conversion and per-flip Present() cost as the dominant contributor to
+the ~3.6x tick_rate slowdown between 16-bit-forced and 32-bit-native
+Shards of God on real HW-486-66 hardware -- both measured directly and
+both too small/too cheap to explain it. The two remaining candidates
+per that writeup's own interpretation: AGS script VM execution and
+RenderToBackBuffer()'s CPU-side sprite compositing.
+
+Read the actual per-tick call structure before writing any bracket
+(main/game_run.cpp's UpdateGameOnce()), rather than assuming function
+names from memory:
+
+- Script VM execution is NOT one clean call site. It's spread across
+  GameUpdateEarlyRepExec()/GameUpdateLateRepExec() (rep-exec-always
+  callbacks) and GameUpdateProcessEvents()'s processallevents() (queued
+  hotspot/object/region event handlers) -- all of which funnel through
+  script/script.cpp's RunScriptFunction(), confirmed by reading that
+  function directly. Bracketed the actual VM bytecode call inside it
+  (curscript->Inst->CallScriptFunction()), not the whole
+  RunScriptFunction() wrapper: PrepareTextScript()'s own function-
+  lookup returns early (kScFnRes_NotFound) for the large majority of
+  calls (every module without the requested callback is tried and
+  skipped every tick), and counting that near-zero-cost miss as script
+  execution would swamp the real number.
+
+- RenderToBackBuffer() (gfx/ali3dsw.cpp) IS a clean, single, sequential
+  phase, confirmed by reading SDLRendererGraphicsDriver::Render(): it
+  calls RenderToBackBuffer() then Present() back to back, never
+  interleaved -- Present() is what patch 0035's own DOSAGS_FLIP_INSTR
+  instrumentation already measures, so this bracket adds the missing
+  other half of one Render() call without double-counting. Only
+  invoked on ticks that actually render (main/game_run.cpp: render is
+  skipped whenever play.fast_forward or skip_render_and_wait, i.e.
+  every DOSAGS_FIXED_TIMESTEP catch-up tick), so its own call count
+  will legitimately be far smaller than script_vm's -- documented in
+  the new header rather than left as a surprise.
+
+Full-run running aggregates (count/total/min/max via a small RAII
+helper, DosPortTickScope, for RenderToBackBuffer's multiple return
+paths), not per-call logging and not the flip instrumentation's own
+per-100-sample block-and-reset -- a single number set dumped once at
+process exit (main/quit.cpp), alongside the existing tick_rate/
+frames_skipped/memory_min_free_kb lines:
+
+  DOS-PORT tickstats_script_vm calls=<n> total_ms=<n> min_ms=<n> max_ms=<n> mean_ms=<f>
+  DOS-PORT tickstats_render_backbuffer calls=<n> total_ms=<n> min_ms=<n> max_ms=<n> mean_ms=<f>
+
+New file: Engine/main/dos_port_tick_timing.h (DosPortTickTiming struct,
+DosPortTickPhaseStats, dos_port_tick_record(), DosPortTickScope RAII
+bracket). Wired into main.cpp (shared instance definition, alongside
+patch 0078's dos_port_startup_timing), script.cpp, ali3dsw.cpp, and
+quit.cpp (final report emission).
+---
+ Engine/gfx/ali3dsw.cpp             |  14 ++++
+ Engine/main/dos_port_tick_timing.h | 115 +++++++++++++++++++++++++++++
+ Engine/main/main.cpp               |   5 ++
+ Engine/main/quit.cpp               |  22 ++++++
+ Engine/script/script.cpp           |  18 +++++
+ 5 files changed, 174 insertions(+)
+ create mode 100644 Engine/main/dos_port_tick_timing.h
+
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index 1310a1f5b..4a77b5ff5 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -21,6 +21,10 @@
+ #include "gfx/gfx_util.h"
+ #include "platform/base/agsplatformdriver.h"
+ #include "platform/base/sys_main.h"
++#ifdef __DJGPP__
++#include <time.h> // uclock_t/uclock()/UCLOCKS_PER_SEC -- DOS-PORT patch 0079
++#include "main/dos_port_tick_timing.h" // DOS-PORT patch 0079
++#endif
+ 
+ 
+ namespace AGS
+@@ -468,6 +472,16 @@ void SDLRendererGraphicsDriver::SetStageScreen(const Size & /*sz*/, int /*x*/, i
+ 
+ void SDLRendererGraphicsDriver::RenderToBackBuffer()
+ {
++    // DOS-PORT patch 0079: this function is the CPU-side sprite-
++    // compositing step, confirmed (by reading Render() just below) to
++    // be a clean, sequential, non-overlapping phase from Present()/the
++    // flip step -- Render(int,int,GraphicFlip) calls this then Present()
++    // back to back, never interleaved. RAII-bracketed (not a plain
++    // begin/end pair) because this function has more than one return
++    // path (the "nothing to render" early exit just below).
++#ifdef __DJGPP__
++    DosPortTickScope _dos_port_render_scope(dos_port_tick_timing.render_backbuffer);
++#endif
+     // Close unended batches, and issue a warning
+     assert(_actSpriteBatch == UINT32_MAX);
+     while (_actSpriteBatch != UINT32_MAX)
+diff --git a/Engine/main/dos_port_tick_timing.h b/Engine/main/dos_port_tick_timing.h
+new file mode 100644
+index 000000000..ffc34c9fe
+--- /dev/null
++++ b/Engine/main/dos_port_tick_timing.h
+@@ -0,0 +1,115 @@
++//=============================================================================
++//
++// Adventure Game Studio (AGS)
++//
++// Copyright (C) 1999-2011 Chris Jones and 2011-2026 various contributors
++// The full list of copyright holders can be found in the Copyright.txt
++// file, which is part of this source code distribution.
++//
++// The AGS source code is provided under the Artistic License 2.0.
++// A copy of this license can be found in the file License.txt and at
++// https://opensource.org/license/artistic-2-0/
++//
++//=============================================================================
++//
++// DOS-PORT patch 0079: full-run per-tick timing for the two candidate
++// steady-state bottlenecks identified from patch 0078's real-hardware
++// phase-breakdown data (PLAN.md's "40fps push step 3" comparison,
++// 2026-09-16, S16FI1/S32FI1) -- load time and per-flip Present() cost
++// were both measured and ruled out as the dominant cost; the remaining
++// candidates were script VM execution and RenderToBackBuffer()'s
++// CPU-side sprite compositing.
++//
++// Bracket points, found by reading source (not assumed):
++//  - script_vm: script/script.cpp's RunScriptFunction() -- the single
++//    funnel every per-tick script callback actually runs through
++//    (repExecAlways/lateRepExecAlways via main/game_run.cpp's
++//    GameUpdateEarlyRepExec()/GameUpdateLateRepExec(), and every queued
++//    event handler via processallevents()/GameUpdateProcessEvents() --
++//    confirmed live by reading game_run.cpp's UpdateGameOnce() and
++//    following each call site into script.cpp, rather than guessing a
++//    single "the script phase" span). Also fires for non-per-tick
++//    script calls (game_start, room-load scripts) -- a real, small,
++//    documented overlap with patch 0078's own first_room_load_ms, not
++//    hidden.
++//  - render_backbuffer: gfx/ali3dsw.cpp's
++//    SDLRendererGraphicsDriver::RenderToBackBuffer() -- confirmed to be
++//    a clean, sequential, non-overlapping phase distinct from the flip/
++//    present step: Render(int,int,GraphicFlip) calls RenderToBackBuffer()
++//    then Present() as two back-to-back, non-interleaved calls (the
++//    latter already covered by patch 0035's own DOSAGS_FLIP_INSTR
++//    instrumentation in vendor/SDL/src/video/dos/SDL_dosframebuffer.c).
++//    Only invoked on ticks that actually render (main/game_run.cpp's
++//    UpdateGameOnce(): render_graphics() is skipped whenever
++//    play.fast_forward or skip_render_and_wait, i.e. every
++//    DOSAGS_FIXED_TIMESTEP catch-up tick) -- so this phase's own call
++//    count will legitimately be far smaller than script_vm's.
++//
++// Full-run RUNNING aggregates (count/total/min/max), not per-call
++// logging (would perturb timing and flood the log, same reasoning as
++// the existing flip instrumentation) and not the flip instrumentation's
++// own per-100-sample block-and-reset (that shape exists there because
++// SDLDBG.LOG wants periodic snapshots of a long-running, possibly-never-
++// exiting game loop; this header's consumer is a single number set
++// dumped once at process exit, main/quit.cpp, alongside the existing
++// tick_rate/frames_skipped/memory_min_free_kb lines). O(1) memory and
++// O(1) work per call -- just two long compares and an add.
++//
++//=============================================================================
++#ifndef __AGS_EE_MAIN__DOS_PORT_TICK_TIMING_H
++#define __AGS_EE_MAIN__DOS_PORT_TICK_TIMING_H
++
++#ifdef __DJGPP__
++
++// Caller must already have <time.h> included for uclock_t/uclock()/
++// UCLOCKS_PER_SEC -- not included here, same convention as
++// dos_port_startup_timing.h.
++
++struct DosPortTickPhaseStats
++{
++    long calls = 0;
++    long total_ms = 0;
++    long min_ms = -1; // -1 == no sample yet
++    long max_ms = -1;
++};
++
++struct DosPortTickTiming
++{
++    DosPortTickPhaseStats script_vm;         // script/script.cpp: RunScriptFunction()
++    DosPortTickPhaseStats render_backbuffer; // gfx/ali3dsw.cpp: RenderToBackBuffer()
++};
++
++// Defined in main.cpp, alongside dos_port_startup_timing.
++extern DosPortTickTiming dos_port_tick_timing;
++
++static inline void dos_port_tick_record(DosPortTickPhaseStats &stats, long sample_ms)
++{
++    stats.calls++;
++    stats.total_ms += sample_ms;
++    if (stats.min_ms < 0 || sample_ms < stats.min_ms)
++        stats.min_ms = sample_ms;
++    if (sample_ms > stats.max_ms)
++        stats.max_ms = sample_ms;
++}
++
++// RAII bracket for a function with more than one return path (e.g.
++// RenderToBackBuffer()'s early "nothing to render" exit) -- one line at
++// the top of the function instead of touching every return statement.
++class DosPortTickScope
++{
++public:
++    explicit DosPortTickScope(DosPortTickPhaseStats &stats)
++        : _stats(stats), _t0(uclock()) {}
++    ~DosPortTickScope()
++    {
++        dos_port_tick_record(_stats,
++            (long)((uclock() - _t0) * 1000 / UCLOCKS_PER_SEC));
++    }
++private:
++    DosPortTickPhaseStats &_stats;
++    uclock_t _t0;
++};
++
++#endif // __DJGPP__
++
++#endif // __AGS_EE_MAIN__DOS_PORT_TICK_TIMING_H
+diff --git a/Engine/main/main.cpp b/Engine/main/main.cpp
+index d28fba2fa..36c2e8f42 100644
+--- a/Engine/main/main.cpp
++++ b/Engine/main/main.cpp
+@@ -44,6 +44,7 @@
+ #include <time.h> // time_t, time() -- RUNMANIFEST start-time anchor
+ #include <stdlib.h> // getenv(), setenv() -- DOSAGS_FLIP_INSTR bridge, patch 0078
+ #include "main/dos_port_startup_timing.h" // DosPortStartupTiming, patch 0078
++#include "main/dos_port_tick_timing.h" // DosPortTickTiming, patch 0079
+ #endif
+ 
+ #if AGS_PLATFORM_OS_WINDOWS
+@@ -81,6 +82,10 @@ uclock_t dos_port_engine_start_uclock = 0;
+ // DOS-PORT patch 0078: definition of the shared instance the struct's own
+ // header (dos_port_startup_timing.h) declares extern.
+ DosPortStartupTiming dos_port_startup_timing;
++
++// DOS-PORT patch 0079: same pattern, for the per-tick script-VM/
++// render-compositing aggregate (dos_port_tick_timing.h).
++DosPortTickTiming dos_port_tick_timing;
+ #endif
+ 
+ 
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 4a088e1c5..c27a8c2b4 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -32,6 +32,7 @@
+ #include "runmanifest.h"
+ #include "platform/dos/dos_audio_mixer.h"
+ #include "media/audio/audio_core.h" // dos_diag_dump_audio_poll() -- TEMPORARY DIAGNOSTIC, see audio_core.cpp
++#include "main/dos_port_tick_timing.h" // DosPortTickTiming, patch 0079
+ #endif
+ 
+ #include "platform/platform.h"
+@@ -436,6 +437,27 @@ void quit(const char *quitmsg)
+                     tick_rate_hz, dos_get_frames_skipped());
+             }
+ 
++            // DOS-PORT patch 0079: full-run script-VM/render-compositing
++            // aggregates (dos_port_tick_timing.h) -- same "own line after
++            // the RUNMANIFEST block" placement as tick_rate/frames_skipped
++            // and memory_min_free_kb just above, not a RUNMANIFEST schema
++            // field. calls=0 means that phase's bracket was never reached
++            // this run (e.g. a game that quit before its first tick) --
++            // min_ms/max_ms stay at -1 and mean_ms is printed as 0.00
++            // rather than dividing by zero.
++            {
++                const DosPortTickPhaseStats &sv = dos_port_tick_timing.script_vm;
++                const DosPortTickPhaseStats &rb = dos_port_tick_timing.render_backbuffer;
++                fprintf(run_manifest_log,
++                    "DOS-PORT tickstats_script_vm calls=%ld total_ms=%ld min_ms=%ld max_ms=%ld mean_ms=%.2f\n",
++                    sv.calls, sv.total_ms, sv.min_ms, sv.max_ms,
++                    sv.calls > 0 ? (double)sv.total_ms / (double)sv.calls : 0.0);
++                fprintf(run_manifest_log,
++                    "DOS-PORT tickstats_render_backbuffer calls=%ld total_ms=%ld min_ms=%ld max_ms=%ld mean_ms=%.2f\n",
++                    rb.calls, rb.total_ms, rb.min_ms, rb.max_ms,
++                    rb.calls > 0 ? (double)rb.total_ms / (double)rb.calls : 0.0);
++            }
++
+             // TEMPORARY DIAGNOSTIC (S7): dump the AUDIOPRB window data
+             // (audio_core.cpp) through THIS handle rather than a separate
+             // periodically-reopened AUDIOPRB.LOG -- see that file's own
+diff --git a/Engine/script/script.cpp b/Engine/script/script.cpp
+index cea436f10..cdf13f5c6 100644
+--- a/Engine/script/script.cpp
++++ b/Engine/script/script.cpp
+@@ -13,6 +13,10 @@
+ //=============================================================================
+ #include <stdio.h>
+ #include <string.h>
++#ifdef __DJGPP__
++#include <time.h> // uclock_t/uclock()/UCLOCKS_PER_SEC -- DOS-PORT patch 0079
++#include "main/dos_port_tick_timing.h" // DOS-PORT patch 0079
++#endif
+ #include "script/script.h"
+ #include "ac/common.h"
+ #include "ac/character.h"
+@@ -450,7 +454,21 @@ RunScFuncResult RunScriptFunction(ccInstance *sci, const String &tsname, size_t
+         return res;
+     }
+ 
++    // DOS-PORT patch 0079: bracket the actual VM bytecode call, not the
++    // whole RunScriptFunction wrapper -- PrepareTextScript()'s own
++    // "does this instance even have this function" lookup above returns
++    // early (kScFnRes_NotFound) for the overwhelming majority of calls
++    // (every module without the requested callback is tried and skipped
++    // every tick), and counting that fast-fail lookup as "script VM
++    // execution" would swamp the real number with near-zero-cost misses.
++#ifdef __DJGPP__
++    const uclock_t _dos_port_script_vm_t0 = uclock();
++#endif
+     const ccInstError inst_ret = curscript->Inst->CallScriptFunction(tsname, numParam, params);
++#ifdef __DJGPP__
++    dos_port_tick_record(dos_port_tick_timing.script_vm,
++        (long)((uclock() - _dos_port_script_vm_t0) * 1000 / UCLOCKS_PER_SEC));
++#endif
+     if ((inst_ret != kInstErr_None) && (inst_ret != kInstErr_FuncNotFound) && (inst_ret != kInstErr_Aborted))
+     {
+         quit_with_script_error(tsname);
+-- 
+2.47.3
+

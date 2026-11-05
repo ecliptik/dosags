@@ -1,0 +1,278 @@
+From 367f730ddc92f32908225b242f9052382fe8781a Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 17 Sep 2026 11:54:49 -0700
+Subject: [PATCH] DOS-PORT: patch 0095 -- cross-check uclock() against the CMOS
+ RTC
+
+Every rate this port self-reports (tick_rate, tick_rate_steady,
+fps_p50, every tickstats bracket) is measured with uclock(). uclock()
+is the BIOS tick count at 0040:006C plus the PIT channel 0 counter, so
+it only keeps time while IRQ0 is being serviced: starve the BIOS timer
+and the clock runs SLOW, and every self-reported rate reads HIGH. This
+hub has shipped exactly that once -- a busy-wait that made fps go up
+while real speed collapsed.
+
+The next patch replaces the engine clock and the frame pacing wait with
+uclock()-based ones, i.e. it changes the very clock the self-report
+uses. So first, a check that owes nothing to the PIT: with
+DOSAGS_CLOCK_CROSSCHECK=1 the engine syncs to a CMOS RTC second edge
+(the MC146818 has its own 32.768 kHz crystal and its own IRQ) before
+the engine-start anchors are taken and again at quit, and logs the
+uclock span over the RTC span:
+
+  DOS-PORT clock_crosscheck status=ok rtc_s=N uclock_ms=N ratio=R ticks=N
+
+Landing it as its own patch puts it in BOTH arms of the clock ABBA, so
+it also says whether the OLD binary's uclock-based numbers were honest.
+
+The RTC is read through ports 70h/71h, not INT 1Ah AH=02h. The BIOS
+call was the first choice and works, but under DOSBox-X it returns a
+time frozen at emulator start (370,000 polls over 5 s, never advanced),
+which would have left the check untestable on the emulator every gate
+runs on.
+
+A single index-write/data-read pair turned out NOT to be reliable on
+the 486 rig: a read-only probe there saw a constant register come back
+as another register's value about once in 60,000 reads (8 of 622,047;
+40 of 624,135 with an I/O delay between the two port accesses, i.e.
+more often the longer the gap; never with update-in-progress set) --
+an interrupt handler moving the index register under us. The first
+version of this reader double-checked only the seconds register and
+returned a wrong HOUR on its second real run. It now reads the whole
+h/m/s/regB set twice and requires exact agreement, with UIP clear
+before and after, and re-reads rather than giving up on a value that is
+not a time. Reg B's BCD/binary and 12/24 h bits are honoured rather
+than assumed.
+
+Opt-in because each edge sync blocks for up to a second. The start sync
+runs before dos_port_engine_start_time/_uclock are captured and the end
+sync after duration_s is computed, so no existing KPI sees either. An
+RTC that cannot be read or never advances reports
+status=rtc_unreadable after three seconds instead of hanging.
+
+Added to the RUNMANIFEST env allowlist; unset variables contribute
+nothing to env_block_sha, so older cells' hashes stand.
+---
+ Engine/main/dos_port_tick_timing.h |  21 ++++++
+ Engine/main/main.cpp               | 101 +++++++++++++++++++++++++++++
+ Engine/main/quit.cpp               |  39 +++++++++++
+ 3 files changed, 161 insertions(+)
+
+diff --git a/Engine/main/dos_port_tick_timing.h b/Engine/main/dos_port_tick_timing.h
+index bcfd7a558..7a0577c9a 100644
+--- a/Engine/main/dos_port_tick_timing.h
++++ b/Engine/main/dos_port_tick_timing.h
+@@ -381,6 +381,27 @@ struct DosPortTickTiming
+ // Defined in main.cpp, alongside dos_port_startup_timing.
+ extern DosPortTickTiming dos_port_tick_timing;
+ 
++// DOS-PORT patch 0095: clock cross-check against the CMOS real-time
++// clock. Every rate this port self-reports (tick_rate, tick_rate_steady,
++// fps_p50, every tickstats bracket) is measured with uclock(), which
++// only counts correctly while IRQ0 is being serviced: a wait that starves
++// the BIOS timer makes the clock run SLOW and every self-reported rate
++// read HIGH -- this hub has shipped exactly that once (a busy-wait that
++// made fps go up while real speed collapsed). The RTC is a separate
++// 32.768 kHz crystal that shares nothing with the PIT or IRQ0, so the
++// ratio of the two spans over a whole run is an independent check on
++// the yardstick itself. Opt-in (DOSAGS_CLOCK_CROSSCHECK=1): each of the
++// two edge syncs blocks for up to one second.
++//
++// dos_port_rtc_wait_edge() spins until the RTC's seconds field changes
++// and returns the new time of day in seconds (-1 if the RTC cannot be
++// read or never advances), with uclock() at the edge in *edge_uclock.
++// Defined in main.cpp.
++extern bool dos_port_crosscheck_active;
++extern uclock_t dos_port_crosscheck_start_uclock;
++extern long dos_port_crosscheck_start_rtc_s;
++long dos_port_rtc_wait_edge(uclock_t *edge_uclock);
++
+ static inline void dos_port_tick_record(DosPortTickPhaseStats &stats, long long sample_us)
+ {
+     stats.calls++;
+diff --git a/Engine/main/main.cpp b/Engine/main/main.cpp
+index 36c2e8f42..65676f19e 100644
+--- a/Engine/main/main.cpp
++++ b/Engine/main/main.cpp
+@@ -43,6 +43,7 @@
+ #ifdef __DJGPP__
+ #include <time.h> // time_t, time() -- RUNMANIFEST start-time anchor
+ #include <stdlib.h> // getenv(), setenv() -- DOSAGS_FLIP_INSTR bridge, patch 0078
++#include <pc.h> // outportb()/inportb() -- RTC cross-check, patch 0095
+ #include "main/dos_port_startup_timing.h" // DosPortStartupTiming, patch 0078
+ #include "main/dos_port_tick_timing.h" // DosPortTickTiming, patch 0079
+ #endif
+@@ -79,6 +80,95 @@ time_t dos_port_engine_start_time = 0;
+ // unrelated to the real-time clock dos_port_engine_start_time reads.
+ uclock_t dos_port_engine_start_uclock = 0;
+ 
++// DOS-PORT patch 0095: RTC cross-check state + helpers, see
++// dos_port_tick_timing.h's own comment for the why.
++bool dos_port_crosscheck_active = false;
++uclock_t dos_port_crosscheck_start_uclock = 0;
++long dos_port_crosscheck_start_rtc_s = -1;
++
++// Reads the MC146818's time-of-day registers directly (index port 70h,
++// data port 71h) rather than through INT 1Ah AH=02h: the BIOS call is the
++// politer interface, but under DOSBox-X it returns a time frozen at
++// emulator start (measured: 370,000 polls over 5 s, never advanced), and a
++// check that cannot be exercised on the emulator every gate runs on would
++// get its first real test on the rig. The port read advances on both.
++//
++// A single index-write/data-read pair is NOT reliable on the 486 rig:
++// measured there (rtcerr probe, read-only), a constant register comes back
++// as some OTHER register's value about once in 60,000 reads -- more often
++// when the gap between the two port accesses is made longer, never
++// correlated with update-in-progress. That is an interrupt handler moving
++// the index register between our two accesses (the wrong values are
++// plausible BCD seconds/minutes, i.e. something reads the clock on a
++// timer tick). The first version of this reader validated only the
++// seconds register and returned a wrong HOUR on its second real run.
++// So: the whole h/m/s/regB set is read twice and must agree exactly, with
++// update-in-progress (reg A bit 7) clear before and after -- one bad read
++// in 60,000 has to strike the same register with the same wrong value
++// twice running to get through. Honours reg B's binary/BCD and 12/24 h
++// bits instead of assuming the PC defaults. Index writes keep bit 7 clear
++// (NMI stays enabled, its normal state). Returns time of day in seconds,
++// -1 if unreadable.
++static int dos_port_cmos_read(int reg)
++{
++    outportb(0x70, reg & 0x7F);
++    return inportb(0x71);
++}
++
++static long dos_port_rtc_read_s()
++{
++    for (int tries = 0; tries < 4096; tries++)
++    {
++        if (dos_port_cmos_read(0x0A) & 0x80)
++            continue; // update in progress
++        int sec = dos_port_cmos_read(0x00);
++        int m = dos_port_cmos_read(0x02);
++        int h = dos_port_cmos_read(0x04);
++        const int reg_b = dos_port_cmos_read(0x0B);
++        if (dos_port_cmos_read(0x00) != sec || dos_port_cmos_read(0x02) != m ||
++            dos_port_cmos_read(0x04) != h || dos_port_cmos_read(0x0B) != reg_b)
++            continue; // a second ticked over, or something moved the index under us
++        if (dos_port_cmos_read(0x0A) & 0x80)
++            continue; // an update began while we were reading
++        const bool pm = (h & 0x80) != 0;
++        h &= 0x7F;
++        if (!(reg_b & 0x04)) // BCD
++        {
++            sec = ((sec >> 4) * 10) + (sec & 0x0F);
++            m = ((m >> 4) * 10) + (m & 0x0F);
++            h = ((h >> 4) * 10) + (h & 0x0F);
++        }
++        if (!(reg_b & 0x02)) // 12-hour
++            h = (h % 12) + (pm ? 12 : 0);
++        if (h > 23 || m > 59 || sec > 59)
++            continue; // not a time -- read again rather than give up
++        return (long)h * 3600L + (long)m * 60L + (long)sec;
++    }
++    return -1;
++}
++
++long dos_port_rtc_wait_edge(uclock_t *edge_uclock)
++{
++    const long s0 = dos_port_rtc_read_s();
++    if (s0 < 0)
++        return -1;
++    const uclock_t t_start = uclock();
++    for (;;)
++    {
++        const long s = dos_port_rtc_read_s();
++        const uclock_t t = uclock();
++        if (s >= 0 && s != s0)
++        {
++            if (edge_uclock) *edge_uclock = t;
++            return s;
++        }
++        // An RTC that never advances (or a dead battery's garbage) must
++        // not hang the engine: three seconds is three missed edges.
++        if (t - t_start > (uclock_t)UCLOCKS_PER_SEC * 3)
++            return -1;
++    }
++}
++
+ // DOS-PORT patch 0078: definition of the shared instance the struct's own
+ // header (dos_port_startup_timing.h) declares extern.
+ DosPortStartupTiming dos_port_startup_timing;
+@@ -106,6 +196,17 @@ AGS::Common::Version EngineVersion;
+ void main_init(int argc, char*argv[])
+ {
+ #ifdef __DJGPP__
++    // DOS-PORT patch 0095: the cross-check's start edge, deliberately
++    // BEFORE the two engine-start anchors below so the up-to-one-second
++    // sync is outside duration_s and every startup/t_ms figure.
++    {
++        const char *want_crosscheck = getenv("DOSAGS_CLOCK_CROSSCHECK");
++        if (want_crosscheck && want_crosscheck[0] == '1' && want_crosscheck[1] == 0)
++        {
++            dos_port_crosscheck_start_rtc_s = dos_port_rtc_wait_edge(&dos_port_crosscheck_start_uclock);
++            dos_port_crosscheck_active = true;
++        }
++    }
+     dos_port_engine_start_time = time(nullptr);
+     dos_port_engine_start_uclock = uclock();
+     // DOS-PORT patch 0078: DOSAGS_FLIP_INSTR=1 is this port's own naming
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 8af535eb6..feaf5fb9d 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -312,6 +312,11 @@ void quit(const char *quitmsg)
+             // Alphabetical throughout, per runmanifest.h's own allowlist
+             // contract -- ASCII order puts DOSAGS_* before DOS_PORT_*
+             // ('A' < '_').
++            // patch 0095: measures nothing itself and sits outside every
++            // timed span, but a cell that ran with it is still a cell
++            // that ran differently -- hashed like the rest. Unset
++            // variables contribute nothing, so older cells' hashes stand.
++            "DOSAGS_CLOCK_CROSSCHECK",
+             "DOSAGS_FIXED_TIMESTEP",
+             "DOSAGS_FORCE_COLOR_DEPTH",
+             "DOSAGS_TAS_AUTO_EXIT_TICK",
+@@ -529,6 +534,40 @@ void quit(const char *quitmsg)
+             // rather than leaving it an assumption.
+             dos_port_yardstick_emit(run_manifest_log); // patch 0093
+ 
++            // DOS-PORT patch 0095: the cross-check's end edge and verdict.
++            // ratio = uclock span / RTC span over the same two RTC second
++            // edges. 1.000 means the clock every rate above was measured
++            // with kept real time; below 1 means it ran slow (IRQ0
++            // starved) and every rate above reads HIGH by that factor.
++            // Edge detection is good to one pass of the CMOS read loop
++            // (a dozen port accesses, tens of microseconds), so over a
++            // 30 s run the ratio itself is good to well under 0.01%. ticks= is the whole-run tick count inside
++            // the same bracket, so ticks/rtc_s is a rate that owes nothing
++            // to the PIT (it includes engine init and shutdown, so it is
++            // a floor on the in-game rate, not a substitute for it).
++            if (dos_port_crosscheck_active)
++            {
++                uclock_t end_uclock = 0;
++                const long end_rtc_s = dos_port_rtc_wait_edge(&end_uclock);
++                if (dos_port_crosscheck_start_rtc_s < 0 || end_rtc_s < 0)
++                {
++                    fprintf(run_manifest_log, "DOS-PORT clock_crosscheck status=rtc_unreadable\n");
++                }
++                else
++                {
++                    long rtc_span_s = end_rtc_s - dos_port_crosscheck_start_rtc_s;
++                    if (rtc_span_s <= 0)
++                        rtc_span_s += 86400L; // ran across midnight
++                    const long long uclock_span_us =
++                        (long long)(end_uclock - dos_port_crosscheck_start_uclock) * 1000000LL / UCLOCKS_PER_SEC;
++                    fprintf(run_manifest_log,
++                        "DOS-PORT clock_crosscheck status=ok rtc_s=%ld uclock_ms=%ld ratio=%.5f ticks=%lu\n",
++                        rtc_span_s, (long)(uclock_span_us / 1000),
++                        (double)uclock_span_us / ((double)rtc_span_s * 1000000.0),
++                        (unsigned long)get_loop_counter());
++                }
++            }
++
+             fprintf(run_manifest_log, "DOS-PORT video_banked_mode=%d bank_switches=%lu\n",
+                 (int)SDL_DOSVideoIsBankedMode(),
+                 (unsigned long)SDL_DOSVideoGetBankSwitchCount());
+-- 
+2.47.3
+

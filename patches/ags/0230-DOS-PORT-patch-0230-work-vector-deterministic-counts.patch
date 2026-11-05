@@ -1,0 +1,591 @@
+From fe247ad756e058bca34f041e1f00c622493adfc5 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 23 Sep 2026 13:56:37 -0700
+Subject: [PATCH] DOS-PORT: patch 0230 -- work vector: deterministic counts of
+ the work that drives 486 time
+
+Why not just what: every rate claim on this port costs a real-hardware
+round (about an hour), and DOSBox-X time is not evidence of 486 time
+(PLAN.md: an 18% emulator figure was 100x on hardware). Counts of work
+are different: the same fixture does the same work under the emulator and
+on the 486, so a vector of counts priced with the measured bus and blit
+constants can screen an optimisation idea before the hardware round. That
+only holds if the vector covers the work that actually costs time and is
+validated against hardware cells already on disk (LAB-METRIC.md).
+
+What was already counted (bg_px, rb_sprites, black_fill_px, rb_clear_px,
+presents_real, RenderCounter) is re-read, not re-counted. What was missing
+and is added, each an integer increment or an add of a size in hand, never
+a clock read:
+- script VM instructions and engine API calls (ccInstance::Run): MMD's
+  character select spends 24.6 of 36 s in script_vm on the 486 and nothing
+  counted it. A local counter, flushed on exit and before every
+  SCMD_CALLEXT, because a blocking call runs nested ticks inside the
+  frame and QuitGame() leaves via exit() without unwinding it.
+- bytes handed to SDL_UpdateWindowSurface(Rects), clipped to the window
+  (the backend copies exactly those rects): the push is the phase at the
+  bus ceiling; dirtypresent reports px only, periodically.
+- present-time RAM->RAM copy bytes, 1:1 and scaled, and the 8-bit
+  unchanged-frame compare and cache bytes (added on FramesEqualFast's exit
+  paths, the loops untouched).
+- composited sprite px by blit class (opaque, masked, alpha), clipped to
+  the clip in force: masked costs 19.4 cycles/px against a 7.8 copy floor,
+  and rb_sprite_px is the nominal area of all classes together.
+- file bytes read through FileStream (defined in Common, read by the
+  engine at snapshot time).
+
+The vector is split the same way the time is. tick_rate_steady excludes
+stall ticks' self time and everything outside [first tick entry, last
+tick exit], so the vector is snapshotted where the tick scope already
+reads the clock, nested ticks are subtracted exactly as
+dos_tick_children_us is, a stall tick's self delta goes to an excluded
+bucket, and the last snapshot is taken at every exit, nested included,
+matching dos_tick_last_exit (AGS Quest's AutoPilot ends inside nested
+ticks). Reported in RUNMANI.LOG as one `DOS-PORT work scope=steady` line,
+its `scope=excluded` complement (steady + excluded = the whole run), and
+`workpersec` rows sampled at the existing once-per-second point.
+
+The script-instruction increment is compiled only into a LAB binary
+(make AGS_WORK_SCRIPT_INS=1, which adds -DDOSAGS_WORK_SCRIPT_INS to the
+flags the build fingerprint hashes): on a fixed-cycles DOSBox-X (bit-
+identical repeats per arm) it made MMD's script_vm 4.6% slower and, the
+tick being saturated, its render rate 18% lower (9.52 -> 7.76), against
++0.9% busy per render on BENCH8 anim12. Everything else is per call, per
+sprite, per present or per tick and stays in every build; the summary
+line says script_ins_counted=0/1 so a timed build's 0 is not misread.
+
+Not counted: allocations (needs a malloc wrap across every library, a
+build change rather than a counter).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Common/util/filestream.cpp    |  23 +++++++
+ Engine/gfx/ali3dsw.cpp        |  87 ++++++++++++++++++++++++++
+ Engine/main/dos_port_work.h   |  62 +++++++++++++++++++
+ Engine/main/game_run.cpp      | 113 +++++++++++++++++++++++++++++++++-
+ Engine/script/cc_instance.cpp |  35 +++++++++++
+ 5 files changed, 319 insertions(+), 1 deletion(-)
+ create mode 100644 Engine/main/dos_port_work.h
+
+diff --git a/Common/util/filestream.cpp b/Common/util/filestream.cpp
+index 69007804a..25f602c1f 100644
+--- a/Common/util/filestream.cpp
++++ b/Common/util/filestream.cpp
+@@ -15,6 +15,14 @@
+ #include <stdexcept>
+ #include "util/stdio_compat.h"
+ 
++#ifdef __DJGPP__
++// DOS-PORT patch 0230: file bytes read, for the work vector
++// (Engine/main/dos_port_work.h). Defined here, at global scope, because the
++// Common library cannot see the engine; the engine reads them at snapshot time.
++long long dos_port_file_rd_bytes = 0;
++long long dos_port_file_rd_calls = 0;
++#endif
++
+ namespace AGS
+ {
+ namespace Common
+@@ -102,12 +110,27 @@ soff_t FileStream::GetPosition() const
+ 
+ size_t FileStream::Read(void *buffer, size_t size)
+ {
++#ifdef __DJGPP__
++    const size_t n = fread(buffer, sizeof(uint8_t), size, _file);
++    dos_port_file_rd_bytes += (long long)n;
++    dos_port_file_rd_calls++;
++    return n;
++#else
+     return fread(buffer, sizeof(uint8_t), size, _file);
++#endif
+ }
+ 
+ int32_t FileStream::ReadByte()
+ {
++#ifdef __DJGPP__
++    const int c = fgetc(_file);
++    if (c != EOF)
++        dos_port_file_rd_bytes++;
++    dos_port_file_rd_calls++;
++    return c;
++#else
+     return fgetc(_file);
++#endif
+ }
+ 
+ size_t FileStream::Write(const void *buffer, size_t size)
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index cf2a2bd60..c7b2d280b 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -26,6 +26,7 @@
+ #ifdef __DJGPP__
+ #include <time.h> // uclock_t/uclock()/UCLOCKS_PER_SEC -- DOS-PORT patch 0079
+ #include "main/dos_port_tick_timing.h" // DOS-PORT patch 0079
++#include "main/dos_port_work.h"        // DOS-PORT patch 0230
+ #endif
+ 
+ 
+@@ -910,10 +911,29 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+     } _dp_unclip{surface, &_dp_saved_clip, _dp_clipped};
+ #endif
+ 
++#ifdef __DJGPP__
++    // patch 0230: composited px by blit class, clipped to the clip actually in
++    // force (0170's dirty clip included), for the work vector. The three classes
++    // cost very differently per pixel (PLAN.md: 19.4 cycles/px masked against a
++    // 7.8 copy floor), and 0125's rb_sprite_px is nominal area of one class.
++    long long _dw_px = 0;
++    if (native_bmp && alpha != 0)
++    {
++        const Rect _dw_s(drawAtX, drawAtY,
++                         drawAtX + native_bmp->GetWidth() - 1,
++                         drawAtY + native_bmp->GetHeight() - 1);
++        const Rect _dw_i = IntersectRects(surface->GetClip(), _dw_s);
++        if (!_dw_i.IsEmpty())
++            _dw_px = (long long)_dw_i.GetWidth() * _dw_i.GetHeight();
++    }
++#endif
+     if (alpha == 0) {} // fully transparent, do nothing
+     else if (is_opaque && (native_bmp == surface) && (alpha == 255)) {}
+     else if (is_opaque)
+     {
++#ifdef __DJGPP__
++        dos_port_work[kDW_SprOpqPx] += _dw_px;   // patch 0230
++#endif
+         surface->Blit(native_bmp, 0, 0, drawAtX, drawAtY, native_bmp->GetWidth(), native_bmp->GetHeight());
+         // TODO: we need to also support non-masked translucent blend, but...
+         // Allegro 4 **does not have such function ready** :( (only masked blends, where it skips magenta pixels);
+@@ -921,6 +941,9 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+     }
+     else if (has_alpha)
+     {
++#ifdef __DJGPP__
++      dos_port_work[kDW_SprBldPx] += _dw_px;     // patch 0230
++#endif
+       if (alpha == 255) // no global transparency, simple alpha blend
+         set_alpha_blender();
+       else
+@@ -931,6 +954,9 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+     else
+     {
+       // here _transparency is used as alpha (between 1 and 254), but 0 means opaque!
++#ifdef __DJGPP__
++      dos_port_work[alpha == 255 ? kDW_SprMskPx : kDW_SprBldPx] += _dw_px;   // patch 0230
++#endif
+       GfxUtil::DrawSpriteWithTransparency(surface, native_bmp, drawAtX, drawAtY,
+           alpha);
+     }
+@@ -1266,10 +1292,17 @@ static __attribute__((noinline)) bool FramesEqualFast(const void *a, const void
+     const size_t nwords = n / 4;
+     const Uint32 *wa = (const Uint32 *)a;
+     const Uint32 *wb = (const Uint32 *)b;
++    // patch 0230: bytes actually compared, added on the exit paths only (the
++    // loops themselves are untouched), for the work vector.
+     for (size_t i = 0; i < nwords; i++)
+     {
+         if (wa[i] != wb[i])
++        {
++#ifdef __DJGPP__
++            dos_port_work[kDW_CmpBytes] += (long long)(i + 1) * 4;
++#endif
+             return false;
++        }
+     }
+     const Uint8 *ta = (const Uint8 *)a + nwords * 4;
+     const Uint8 *tb = (const Uint8 *)b + nwords * 4;
+@@ -1277,8 +1310,16 @@ static __attribute__((noinline)) bool FramesEqualFast(const void *a, const void
+     for (size_t i = 0; i < tail; i++)
+     {
+         if (ta[i] != tb[i])
++        {
++#ifdef __DJGPP__
++            dos_port_work[kDW_CmpBytes] += (long long)(nwords * 4 + i + 1);
++#endif
+             return false;
++        }
+     }
++#ifdef __DJGPP__
++    dos_port_work[kDW_CmpBytes] += (long long)n;
++#endif
+     return true;
+ }
+ 
+@@ -1588,6 +1629,9 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+             if (_lastPresentedPixels.size() != frame_bytes)
+                 _lastPresentedPixels.resize(frame_bytes);
+             std::memcpy(_lastPresentedPixels.data(), blit_src->pixels, frame_bytes);
++#ifdef __DJGPP__
++            dos_port_work[kDW_CacheBytes] += (long long)frame_bytes;   // patch 0230
++#endif
+             _lastPresentedValid = true;
+             _lastPresentedXoff = xoff;
+             _lastPresentedYoff = yoff;
+@@ -1678,6 +1722,16 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+ #endif
+         if (!blitted && !SDL_BlitSurfaceScaled(blit_src, nullptr, win_surface, &dst, SDL_SCALEMODE_NEAREST))
+             Debug::Printf(kDbgMsg_Error, "SDLRenderer: blit to window surface failed: %s", SDL_GetError());
++#ifdef __DJGPP__
++        {   // patch 0230: the present-time RAM->RAM copy, dst bytes, 1:1 vs scaled
++            const SDL_PixelFormatDetails *_wf = SDL_GetPixelFormatDetails(win_surface->format);
++            const long long _db = (long long)dst.w * dst.h * (_wf ? _wf->bytes_per_pixel : 0);
++            if (dst.w == blit_src->w && dst.h == blit_src->h)
++                dos_port_work[kDW_Blit1xBytes] += _db;
++            else
++                dos_port_work[kDW_BlitScBytes] += _db;
++        }
++#endif
+     }
+ 
+ #ifdef __DJGPP__
+@@ -1924,6 +1978,39 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+         // already took a count -- this was always one argument away.
+         const SDL_Rect *push_many = _dp_nrects > 0 ? _dp_rects : &push_rect;
+         const int push_count = _dp_nrects > 0 ? _dp_nrects : 1;
++#ifdef __DJGPP__
++        {   // patch 0230: what this present hands to the backend to copy to the
++            // screen (it copies exactly these rects, clipped to the window), in
++            // bytes, plus the formats needed to price them.
++            const SDL_PixelFormatDetails *_wf = SDL_GetPixelFormatDetails(win_surface->format);
++            const SDL_PixelFormatDetails *_vf = SDL_GetPixelFormatDetails(blit_src->format);
++            const int _wbpp = _wf ? _wf->bytes_per_pixel : 0;
++            dos_port_work_win_bpp = _wbpp;
++            dos_port_work_vs_bpp = _vf ? _vf->bytes_per_pixel : 0;
++            dos_port_work_win_w = win_surface->w;
++            dos_port_work_win_h = win_surface->h;
++            const SDL_Rect *_pr = push_many;
++            int _pn = push_count;
++            if (palette_only_present) { _pr = &dac_rect; _pn = 1; }
++            if (!palette_only_present && full_update && !_dp_narrowed)
++            {
++                dos_port_work[kDW_PushBytes] += (long long)win_surface->w * win_surface->h * _wbpp;
++                dos_port_work[kDW_PushRects]++;
++            }
++            else
++            {
++                for (int _i = 0; _i < _pn; _i++)
++                {
++                    const int x1 = std::max(_pr[_i].x, 0), y1 = std::max(_pr[_i].y, 0);
++                    const int x2 = std::min(_pr[_i].x + _pr[_i].w, win_surface->w);
++                    const int y2 = std::min(_pr[_i].y + _pr[_i].h, win_surface->h);
++                    if (x2 > x1 && y2 > y1)
++                        dos_port_work[kDW_PushBytes] += (long long)(x2 - x1) * (y2 - y1) * _wbpp;
++                }
++                dos_port_work[kDW_PushRects] += _pn;
++            }
++        }
++#endif
+ #ifdef __DJGPP__
+         {
+             // patch 0192: verify what is about to be pushed (DOSAGS_PRESENT_VERIFY=1).
+diff --git a/Engine/main/dos_port_work.h b/Engine/main/dos_port_work.h
+new file mode 100644
+index 000000000..437212e2f
+--- /dev/null
++++ b/Engine/main/dos_port_work.h
+@@ -0,0 +1,62 @@
++//=============================================================================
++//
++// DOS-PORT patch 0230: a deterministic per-run WORK vector.
++//
++// Every rate claim on this port costs a real-hardware round (about an hour),
++// and DOSBox-X time is not evidence of 486 time. Counts of work are: the same
++// fixture does the same work under the emulator and on the 486, so a vector
++// of counts priced with the measured bus/blit constants can screen an idea
++// before the hardware round. This header is the vector; LAB-METRIC.md is the
++// cost model and its validation against hardware cells already on disk.
++//
++// Rules the counters follow, because PLAN.md records hot-path probes costing
++// about 1 fps through cache footprint: integer increments or adds of a size
++// already in hand only, never a clock read; per-instruction and per-pixel
++// work stays in a local and is added once per call.
++//
++//=============================================================================
++#ifndef __AGS_EE_MAIN__DOS_PORT_WORK_H
++#define __AGS_EE_MAIN__DOS_PORT_WORK_H
++
++#ifdef __DJGPP__
++
++enum DosPortWorkIndex
++{
++    kDW_Ticks = 0,      // loop ticks (derived: the tick-scope count)
++    kDW_Renders,        // render passes (derived: GameTimer.RenderCounter)
++    kDW_Presents,       // real presents (derived: presents_real)
++    kDW_ScriptIns,      // script VM instructions dispatched
++    kDW_ScriptExt,      // script -> engine API calls (SCMD_CALLEXT)
++    kDW_PushBytes,      // bytes handed to SDL_UpdateWindowSurface(Rects)
++    kDW_PushRects,      // rects handed to it
++    kDW_Blit1xBytes,    // present-time 1:1 RAM->RAM copy, dst bytes
++    kDW_BlitScBytes,    // present-time scaled copy, dst bytes
++    kDW_CmpBytes,       // bytes compared by the unchanged-frame check
++    kDW_CacheBytes,     // bytes copied into the last-presented cache
++    kDW_BgPx,           // background-restore px (derived: bg_px, patch 0126)
++    kDW_FillPx,         // black fill + batch clear px (derived)
++    kDW_SprN,           // sprite composites (derived: rb_sprites, patch 0125)
++    kDW_SprOpqPx,       // composited px, opaque Blit
++    kDW_SprMskPx,       // composited px, masked (transparent colour) blit
++    kDW_SprBldPx,       // composited px, alpha blend or global translucency
++    kDW_FileBytes,      // bytes returned by FileStream::Read/ReadByte (derived)
++    kDW_FileCalls,      // FileStream::Read/ReadByte calls (derived)
++    kDW_Count
++};
++
++// Live counters. Slots marked "derived" above are filled by
++// dos_port_work_snapshot() from where the engine already counts them.
++extern long long dos_port_work[kDW_Count];
++// Common/util/filestream.cpp (the Common library cannot see the engine).
++extern long long dos_port_file_rd_bytes;
++extern long long dos_port_file_rd_calls;
++// Context for pricing bytes: the last real present's formats and window.
++extern int dos_port_work_vs_bpp, dos_port_work_win_bpp;
++extern int dos_port_work_win_w, dos_port_work_win_h;
++
++// Live + derived slots, in DosPortWorkIndex order.
++void dos_port_work_snapshot(long long out[kDW_Count]);
++
++#endif // __DJGPP__
++
++#endif // __AGS_EE_MAIN__DOS_PORT_WORK_H
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 3d6d01469..7f56b1b3d 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -26,6 +26,7 @@
+ #include <stdio.h> // FILE -- DOS-PORT patch 0093 (dos_port_yardstick_emit)
+ #include <time.h> // uclock_t/uclock()/UCLOCKS_PER_SEC -- DOS-PORT patch 0080
+ #include "main/dos_port_tick_timing.h" // DOS-PORT patch 0080
++#include "main/dos_port_work.h"        // DOS-PORT patch 0230
+ #endif
+ #include <SDL3/SDL.h>
+ #include "ac/button.h"
+@@ -1562,6 +1563,38 @@ static uclock_t dos_tick_last_exit = 0;
+ static bool dos_tick_have_first = false;
+ static uint32_t dos_tick_preloop_ms = 0;   // get_runtime_ms() at the first tick's entry
+ 
++// DOS-PORT patch 0230: the work vector (main/dos_port_work.h), split the same
++// way the time is. tick_rate_steady excludes stall ticks' self time and
++// everything outside [first tick entry, last tick exit]; a vector compared with
++// that time must exclude the same work, or a room load's file reads and fade
++// presents get priced against a denominator that left them out. Snapshots are
++// taken where the tick scope already reads the clock, children are subtracted
++// exactly as dos_tick_children_us is, and a stall tick's self delta goes to
++// dos_work_excluded. About 19 loads and stores per scope edge: per tick, not
++// per pixel.
++long long dos_port_work[kDW_Count] = {};
++int dos_port_work_vs_bpp = 0, dos_port_work_win_bpp = 0;
++int dos_port_work_win_w = 0, dos_port_work_win_h = 0;
++static long long dos_work_first[kDW_Count] = {};     // at the first tick's entry
++static long long dos_work_last[kDW_Count] = {};      // at the last tick exit (any depth)
++static long long dos_work_excluded[kDW_Count] = {};  // stall ticks' self work
++static long long dos_work_children[kDW_Count] = {};  // nested ticks' work, as for time
++
++void dos_port_work_snapshot(long long out[kDW_Count])
++{
++    for (int i = 0; i < kDW_Count; i++)
++        out[i] = dos_port_work[i];
++    const DosPortTickTiming &t = dos_port_tick_timing;
++    out[kDW_Ticks]     = dos_tick_count;
++    out[kDW_Renders]   = (long long)GameTimer.RenderCounter;
++    out[kDW_Presents]  = t.presents_real;
++    out[kDW_BgPx]      = t.bg_px;
++    out[kDW_FillPx]    = t.black_fill_px + t.rb_clear_px;
++    out[kDW_SprN]      = t.rb_sprites;
++    out[kDW_FileBytes] = dos_port_file_rd_bytes;
++    out[kDW_FileCalls] = dos_port_file_rd_calls;
++}
++
+ class DosTickStallScope
+ {
+ public:
+@@ -1569,8 +1602,16 @@ public:
+         : _t0(uclock()), _saved_children(dos_tick_children_us), _index(GameTimer.LoopCounter + 1)
+     {
+         ++dos_tick_depth;   // patch 0159
++        dos_port_work_snapshot(_w0);   // patch 0230
++        for (int i = 0; i < kDW_Count; i++)
++        {
++            _saved_child_w[i] = dos_work_children[i];
++            dos_work_children[i] = 0;
++        }
+         if (!dos_tick_have_first)
+         {
++            for (int i = 0; i < kDW_Count; i++)
++                dos_work_first[i] = _w0[i];   // patch 0230
+             dos_tick_have_first = true;
+             dos_tick_first_entry = _t0;
+             dos_tick_preloop_ms = GameTimer.RuntimeStarted ? get_runtime_ms() : 0;
+@@ -1613,6 +1654,23 @@ public:
+         dos_tick_children_us = _saved_children + total_us;
+         dos_tick_last_exit = t1;
+         dos_tick_count++;
++        {   // patch 0230: this tick's work; its self part is excluded if it stalled
++            long long w1[kDW_Count];
++            dos_port_work_snapshot(w1);
++            const bool stall = self_us > DOS_TICK_STALL_THRESHOLD_US;
++            for (int i = 0; i < kDW_Count; i++)
++            {
++                const long long d = w1[i] - _w0[i];
++                if (stall)
++                    dos_work_excluded[i] += d - dos_work_children[i];
++                dos_work_children[i] = _saved_child_w[i] + d;
++            }
++            // at EVERY exit, nested included, exactly as dos_tick_last_exit is: a
++            // run can end inside a blocking call's nested ticks (AGS Quest's
++            // AutoPilot does), and loop_ms runs to that last nested exit
++            for (int i = 0; i < kDW_Count; i++)
++                dos_work_last[i] = w1[i];
++        }
+         if (self_us > DOS_TICK_STALL_THRESHOLD_US)
+         {
+             if (dos_tick_stall_total < DOS_TICK_STALL_CAP)
+@@ -1672,6 +1730,8 @@ private:
+     uclock_t _t0;
+     long long _saved_children;
+     uint32_t _index;
++    long long _w0[kDW_Count];             // patch 0230
++    long long _saved_child_w[kDW_Count];  // patch 0230
+ };
+ 
+ // Per-real-second cumulative series, so real-vs-skipped presents can be
+@@ -1685,7 +1745,9 @@ private:
+ // taken at the end of a tick, so NO row is sampled during a multi-second
+ // blocking stall (a room transition, a Display(), a save) and adjacent
+ // rows can be 20 s apart. Per-phase rates need the real elapsed time.
+-struct DosPerSec { uint32_t tick; uint32_t renders; long real; long skipped; long ms; };
++struct DosPerSec { uint32_t tick; uint32_t renders; long real; long skipped; long ms;
++                   // patch 0230: cumulative work, sampled at the same point
++                   long long ins, push, blit, spr_px, bg_px, file; };
+ static DosPerSec dos_persec[DOS_PERSEC_CAP];
+ static int dos_persec_count = 0;
+ 
+@@ -1698,6 +1760,16 @@ static void dos_persec_sample()
+     r.renders = GameTimer.RenderCounter;
+     r.real = dos_port_tick_timing.presents_real;
+     r.skipped = dos_port_tick_timing.presents_skipped;
++    {   // patch 0230
++        long long w[kDW_Count];
++        dos_port_work_snapshot(w);
++        r.ins = w[kDW_ScriptIns];
++        r.push = w[kDW_PushBytes];
++        r.blit = w[kDW_Blit1xBytes] + w[kDW_BlitScBytes];
++        r.spr_px = w[kDW_SprOpqPx] + w[kDW_SprMskPx] + w[kDW_SprBldPx];
++        r.bg_px = w[kDW_BgPx];
++        r.file = w[kDW_FileBytes];
++    }
+     {
+         extern uclock_t dos_port_engine_start_uclock;
+         r.ms = (long)((uclock() - dos_port_engine_start_uclock) * 1000 / UCLOCKS_PER_SEC);
+@@ -1741,6 +1813,45 @@ void dos_port_yardstick_emit(FILE *log)
+         fprintf(log, "DOS-PORT persec t=%d tick=%lu renders=%lu real=%ld skipped=%ld ms=%ld\n",
+             i + 1, (unsigned long)dos_persec[i].tick, (unsigned long)dos_persec[i].renders,
+             dos_persec[i].real, dos_persec[i].skipped, dos_persec[i].ms);
++
++    // patch 0230: the work vector. "steady" covers exactly the ticks
++    // tick_rate_steady covers (first tick entry to last tick exit, stall ticks'
++    // self work removed); "excluded" is everything else in the run (before the
++    // loop, stall ticks, after the loop). steady + excluded = the whole run.
++    {
++        static const char *const DWN[kDW_Count] = {
++            "ticks", "renders", "presents", "script_ins", "script_ext",
++            "push_bytes", "push_rects", "blit1x_bytes", "blitsc_bytes",
++            "cmp_bytes", "cache_bytes", "bg_px", "fill_px", "spr_n",
++            "spr_opq_px", "spr_msk_px", "spr_bld_px", "file_bytes", "file_calls" };
++        long long now[kDW_Count], steady[kDW_Count], excl[kDW_Count];
++        dos_port_work_snapshot(now);
++        for (int i = 0; i < kDW_Count; i++)
++        {
++            steady[i] = dos_work_last[i] - dos_work_first[i] - dos_work_excluded[i];
++            excl[i] = now[i] - steady[i];
++        }
++        for (int pass = 0; pass < 2; pass++)
++        {
++            const long long *v = pass == 0 ? steady : excl;
++            fprintf(log, "DOS-PORT work scope=%s", pass == 0 ? "steady" : "excluded");
++            for (int i = 0; i < kDW_Count; i++)
++                fprintf(log, " %s=%lld", DWN[i], v[i]);
++            // script_ins is counted only in a lab build (cc_instance.cpp); say which,
++            // so a 0 from a timed build is never read as "no script ran"
++#ifdef DOSAGS_WORK_SCRIPT_INS
++            const int ins_counted = 1;
++#else
++            const int ins_counted = 0;
++#endif
++            fprintf(log, " vs_bpp=%d win_bpp=%d win=%dx%d script_ins_counted=%d\n", dos_port_work_vs_bpp,
++                dos_port_work_win_bpp, dos_port_work_win_w, dos_port_work_win_h, ins_counted);
++        }
++        for (int i = 0; i < dos_persec_count; i++)
++            fprintf(log, "DOS-PORT workpersec t=%d ins=%lld push=%lld blit=%lld spr_px=%lld bg_px=%lld file=%lld\n",
++                i + 1, dos_persec[i].ins, dos_persec[i].push, dos_persec[i].blit,
++                dos_persec[i].spr_px, dos_persec[i].bg_px, dos_persec[i].file);
++    }
+ }
+ #endif // __DJGPP__
+ 
+diff --git a/Engine/script/cc_instance.cpp b/Engine/script/cc_instance.cpp
+index 3e88d7e29..17bed591f 100644
+--- a/Engine/script/cc_instance.cpp
++++ b/Engine/script/cc_instance.cpp
+@@ -25,6 +25,9 @@
+ #include "ac/dynobj/scriptuserobject.h"
+ #include "script/cc_common.h"
+ #include "script/script_runtime.h"
++#ifdef __DJGPP__
++#include "main/dos_port_work.h" // DOS-PORT patch 0230
++#endif
+ 
+ #if (DEBUG_CC_EXEC)
+ #include "util/file.h"
+@@ -613,10 +616,31 @@ ccInstError ccInstance::Run(int32_t curpc)
+     const auto timeout = std::chrono::milliseconds(_timeoutCheckMs);
+     _lastAliveTs = FastClock::now();
+ 
++#if defined(__DJGPP__) && defined(DOSAGS_WORK_SCRIPT_INS)
++    // DOS-PORT patch 0230: instructions dispatched, for the work vector. LAB BUILDS
++    // ONLY (make AGS_WORK_SCRIPT_INS=1): measured on a fixed-cycles DOSBox-X, the
++    // per-instruction increment made MMD's script_vm 4.6% slower and, because that
++    // tick is saturated, its render rate 18% lower -- a timed build must not carry
++    // it. The per-call counters below are cheap and stay in every build. A local
++    // counter, added to the global on every exit and before every call out to
++    // the engine (SCMD_CALLEXT below): a blocking engine call runs nested game
++    // ticks INSIDE this frame, and QuitGame() leaves through exit() without
++    // unwinding it, so a count held until return would land in the wrong tick
++    // or never land at all.
++    struct DosPortWorkIns
++    {
++        uint32_t n = 0;
++        ~DosPortWorkIns() { dos_port_work[kDW_ScriptIns] += n; }
++    } _dp_work_ins;
++#endif
++
+     /* Main bytecode execution loop */
+     //=====================================================================
+     while ((_flags & INSTF_ABORTED) == 0)
+     {
++#if defined(__DJGPP__) && defined(DOSAGS_WORK_SCRIPT_INS)
++        ++_dp_work_ins.n;   // patch 0230
++#endif
+         // WARNING: a time-critical code ahead;
+         // trying to pick some of the code out to separate function(s)
+         // may lead to a performance loss in script-heavy games.
+@@ -1325,6 +1349,17 @@ ccInstError ccInstance::Run(int32_t curpc)
+                 prval->DirectPtr();
+             }
+ 
++#ifdef __DJGPP__
++#ifdef DOSAGS_WORK_SCRIPT_INS
++            // patch 0230: flush before leaving for the engine (see _dp_work_ins); placed
++            // here, after the argument conversion, so it sits outside the context of the
++            // script-VM patches that rewrite this case's first lines (0293/0295)
++            dos_port_work[kDW_ScriptIns] += _dp_work_ins.n;
++            _dp_work_ins.n = 0;
++#endif
++            dos_port_work[kDW_ScriptExt]++;   // patch 0230, every build
++#endif
++
+             RuntimeScriptValue return_value;
+ 
+             if (reg1.Type == kScValPluginFunction)
+-- 
+2.47.3
+

@@ -1,0 +1,326 @@
+From ae04d7eae9d8970040cc448973a778d861cc0ac3 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 17 Sep 2026 10:41:35 -0700
+Subject: [PATCH] DOS-PORT: patch 0093 -- fix the yardstick: what fps counted,
+ steady-state tick rate, stalls listed
+
+40/40 plan, P0 items 2-4 (instrumentation only, no behavior change).
+
+fps_p50/fps_p95 count RENDER PASSES (GameTimer.RenderCounter), not
+frames that reached the display. Since patch 0091 Present() can skip
+the blit and SDL_UpdateWindowSurface() on an unchanged frame, so the
+two diverge completely on a static screen (TNP4B2: fps_p50=34.62 with
+23 of 881 presents real). Adds presents_real/presents_skipped
+counters at Present()'s two exits and emits them on a "fps_basis" line
+beside the fps figures. Also emits which blit a real present took
+(patch 0087's fast path vs the generic SDL_BlitSurfaceScaled fallback)
+and the source bytes per pixel, so "does the fast blit engage at
+16-bit" is read off the log rather than inferred.
+
+tick_rate is LoopCounter / get_runtime_ms(), anchored in start_game()
+after engine init but before the first room load, so a whole-run
+figure folds in the pre-loop room load and any one-time stall inside a
+tick. Adds a steady-state tick rate with stall ticks (>250 ms self
+time) LISTED by index and duration rather than hidden, and every
+component of the arithmetic printed (ticks, loop_ms, stall_ms,
+preloop_ms). Tick durations are exclusive (self) time: a blocking
+script call re-enters UpdateGameOnce() from inside the tick that
+started it, and an inclusive measure would report each blocking walk
+as one giant stall on top of the nested ticks already counted.
+
+Adds a per-real-second cumulative series (tick, render passes, real
+and skipped presents) so presents can be attributed to a PHASE of a
+run -- the AGS Quest AutoPilot logs its phases against the same tick
+counter.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hnodGZ6cg8CWuFXEDTsUq
+---
+ Engine/gfx/ali3dsw.cpp             |   9 ++
+ Engine/main/dos_port_tick_timing.h |  20 +++++
+ Engine/main/game_run.cpp           | 133 +++++++++++++++++++++++++++++
+ Engine/main/game_run.h             |  10 +++
+ Engine/main/quit.cpp               |   2 +
+ 5 files changed, 174 insertions(+)
+
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index bb46bf2b5..a002230d4 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -1067,6 +1067,7 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+         {
+ #ifdef __DJGPP__
+             dos_port_tick_record(dos_port_tick_timing.present_skip_unchanged, 0);
++            dos_port_tick_timing.presents_skipped++; // patch 0093
+ #endif
+             return;
+         }
+@@ -1105,6 +1106,13 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+ #ifdef __DJGPP__
+         DosPortTickScope _dos_port_blit_scope(dos_port_tick_timing.present_blit);
+         blitted = TryFastIntegerNearestBlit(blit_src, win_surface, dst);
++        // patch 0093: which path, and at what source depth.
++        if (blitted) dos_port_tick_timing.blits_fast++;
++        else         dos_port_tick_timing.blits_generic++;
++        {
++            const SDL_PixelFormatDetails *_f = SDL_GetPixelFormatDetails(blit_src->format);
++            dos_port_tick_timing.blit_src_bytes_per_pixel = _f ? (int)_f->bytes_per_pixel : 0;
++        }
+ #endif
+         if (!blitted && !SDL_BlitSurfaceScaled(blit_src, nullptr, win_surface, &dst, SDL_SCALEMODE_NEAREST))
+             Debug::Printf(kDbgMsg_Error, "SDLRenderer: blit to window surface failed: %s", SDL_GetError());
+@@ -1113,6 +1121,7 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+     {
+ #ifdef __DJGPP__
+         DosPortTickScope _dos_port_updatewin_scope(dos_port_tick_timing.present_update_window);
++        dos_port_tick_timing.presents_real++; // patch 0093
+ #endif
+         if (!SDL_UpdateWindowSurface(window))
+             Debug::Printf(kDbgMsg_Warn, "SDLRenderer: SDL_UpdateWindowSurface failed: %s", SDL_GetError());
+diff --git a/Engine/main/dos_port_tick_timing.h b/Engine/main/dos_port_tick_timing.h
+index 71a5010c6..bcfd7a558 100644
+--- a/Engine/main/dos_port_tick_timing.h
++++ b/Engine/main/dos_port_tick_timing.h
+@@ -356,6 +356,26 @@ struct DosPortTickTiming
+     // meaningful timing of its own -- it is exactly the cost NOT paid).
+     DosPortTickPhaseStats present_dirty_check;
+     DosPortTickPhaseStats present_skip_unchanged;
++
++    // patch 0093 (40/40 plan, P0 item 2): fps_p50/fps_p95 count RENDER
++    // PASSES (GameTimer.RenderCounter, bumped in UpdateGameOnce() whenever
++    // render_graphics() runs) -- NOT frames that actually reached the
++    // display. Since patch 0091, Present() can skip the blit and
++    // SDL_UpdateWindowSurface() entirely on an unchanged frame, so the
++    // two diverge completely on a static screen (TNP4B2: fps_p50=34.62
++    // with 23 of 881 presents real). Plain counters, every call site of
++    // Present(), so any fps figure can state what it measured.
++    long presents_real = 0;    // reached SDL_UpdateWindowSurface()
++    long presents_skipped = 0; // returned early: frame byte-identical to the last one presented
++
++    // patch 0093 (P0 item 4): which blit a real present actually took --
++    // patch 0087's TryFastIntegerNearestBlit() vs the generic
++    // SDL_BlitSurfaceScaled() fallback -- and the source surface's bytes
++    // per pixel, so "does the fast path engage at 16-bit at all" is read
++    // off the log rather than inferred from two other phases' call counts.
++    long blits_fast = 0;
++    long blits_generic = 0;
++    int blit_src_bytes_per_pixel = 0; // last real present's source format
+ };
+ 
+ // Defined in main.cpp, alongside dos_port_startup_timing.
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 7296cc670..7bf844cf3 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -23,6 +23,7 @@
+ #include <chrono>
+ #ifdef __DJGPP__
+ #include <dpmi.h> // __dpmi_get_free_memory_information -- DOS-PORT memory KPI
++#include <stdio.h> // FILE -- DOS-PORT patch 0093 (dos_port_yardstick_emit)
+ #include <time.h> // uclock_t/uclock()/UCLOCKS_PER_SEC -- DOS-PORT patch 0080
+ #include "main/dos_port_tick_timing.h" // DOS-PORT patch 0080
+ #endif
+@@ -1254,6 +1255,8 @@ static int dos_fps_sample_count = 0;
+ static Clock::time_point dos_fps_last_sample_time;
+ static bool dos_fps_have_last_sample_time = false;
+ 
++static void dos_persec_sample(); // patch 0093, defined with the rest of the yardstick below
++
+ void dos_fps_sample_tick()
+ {
+     const auto now = Clock::now();
+@@ -1266,6 +1269,7 @@ void dos_fps_sample_tick()
+     if (std::chrono::duration_cast<std::chrono::milliseconds>(now - dos_fps_last_sample_time) < std::chrono::milliseconds(1000))
+         return;
+     dos_fps_last_sample_time = now;
++    dos_persec_sample(); // patch 0093: unconditional, before the fps>0 filter below
+ 
+     if (dos_fps_sample_count >= DOS_FPS_SAMPLE_CAP)
+         return; // cap reached -- keep the earliest samples rather than overwrite
+@@ -1452,6 +1456,134 @@ uint32_t get_runtime_ms()
+     return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - GameTimer.StartTime).count();
+ }
+ 
++#ifdef __DJGPP__
++// DOS-PORT patch 0093 (40/40 plan, P0 items 2+3): "fix the yardstick".
++//
++// tick_rate (quit.cpp) is LoopCounter / get_runtime_ms(), and
++// get_runtime_ms()'s anchor is set_runtime_start() in start_game()
++// (main/game_start.cpp) -- AFTER engine init, BEFORE the game_start
++// script and load_new_room(). So a whole-run tick_rate silently folds in
++// (a) the first room's load, which happens before any tick, and (b) any
++// one-time stall inside a tick -- on Trilby's Notes, tick 1's blocking
++// room fade-in (~2.6 s) alone drags a ~38.8 ticks/s run down to 33.78.
++// This reports a steady-state figure with those identified and listed
++// SEPARATELY rather than hidden: nothing is dropped from the log, every
++// component of the arithmetic is printed so it can be re-derived.
++//
++// A "tick" here is one UpdateGameOnce() call. Durations are EXCLUSIVE
++// (self) time: a blocking script call (Wait(), a blocking Walk, Display)
++// re-enters UpdateGameOnce() from inside the tick that started it, and an
++// inclusive measure would report that whole blocking span as one giant
++// "stall" on top of the nested ticks it already counted. Classic
++// exclusive-time accounting: each scope hands its own total up to its
++// parent, and subtracts what its children handed it.
++#define DOS_TICK_STALL_THRESHOLD_US 250000LL
++#define DOS_TICK_STALL_CAP 32
++struct DosTickStall { uint32_t tick_index; long ms; };
++static DosTickStall dos_tick_stalls[DOS_TICK_STALL_CAP];
++static long dos_tick_stall_total = 0;      // every stall, including any beyond the cap
++static long long dos_tick_stall_us = 0;    // summed self-time of stall ticks
++static long dos_tick_count = 0;
++static long long dos_tick_children_us = 0; // exclusive-time accounting (see above)
++static uclock_t dos_tick_first_entry = 0;
++static uclock_t dos_tick_last_exit = 0;
++static bool dos_tick_have_first = false;
++static uint32_t dos_tick_preloop_ms = 0;   // get_runtime_ms() at the first tick's entry
++
++class DosTickStallScope
++{
++public:
++    DosTickStallScope()
++        : _t0(uclock()), _saved_children(dos_tick_children_us), _index(GameTimer.LoopCounter + 1)
++    {
++        if (!dos_tick_have_first)
++        {
++            dos_tick_have_first = true;
++            dos_tick_first_entry = _t0;
++            dos_tick_preloop_ms = GameTimer.RuntimeStarted ? get_runtime_ms() : 0;
++        }
++        dos_tick_children_us = 0;
++    }
++    ~DosTickStallScope()
++    {
++        const uclock_t t1 = uclock();
++        long long total_us = (long long)(t1 - _t0) * 1000000LL / UCLOCKS_PER_SEC;
++        if (total_us < 0) total_us = 0; // uclock() non-monotonicity, see dos_port_tick_record()
++        long long self_us = total_us - dos_tick_children_us;
++        if (self_us < 0) self_us = 0;
++        dos_tick_children_us = _saved_children + total_us;
++        dos_tick_last_exit = t1;
++        dos_tick_count++;
++        if (self_us > DOS_TICK_STALL_THRESHOLD_US)
++        {
++            if (dos_tick_stall_total < DOS_TICK_STALL_CAP)
++            {
++                dos_tick_stalls[dos_tick_stall_total].tick_index = _index;
++                dos_tick_stalls[dos_tick_stall_total].ms = (long)(self_us / 1000);
++            }
++            dos_tick_stall_total++;
++            dos_tick_stall_us += self_us;
++        }
++    }
++private:
++    uclock_t _t0;
++    long long _saved_children;
++    uint32_t _index;
++};
++
++// Per-real-second cumulative series, so real-vs-skipped presents can be
++// attributed to a PHASE of a run (the AGS Quest AutoPilot logs its own
++// phases against the same tick counter) rather than only to the run as a
++// whole. Cumulative, not per-interval: a consumer diffs adjacent rows.
++#define DOS_PERSEC_CAP 1024
++struct DosPerSec { uint32_t tick; uint32_t renders; long real; long skipped; };
++static DosPerSec dos_persec[DOS_PERSEC_CAP];
++static int dos_persec_count = 0;
++
++static void dos_persec_sample()
++{
++    if (dos_persec_count >= DOS_PERSEC_CAP)
++        return;
++    DosPerSec &r = dos_persec[dos_persec_count++];
++    r.tick = GameTimer.LoopCounter;
++    r.renders = GameTimer.RenderCounter;
++    r.real = dos_port_tick_timing.presents_real;
++    r.skipped = dos_port_tick_timing.presents_skipped;
++}
++
++void dos_port_yardstick_emit(FILE *log)
++{
++    // What fps_p50/fps_p95 actually counted, stated next to them.
++    fprintf(log, "DOS-PORT fps_basis counts=render_passes render_passes=%lu presents_real=%ld presents_skipped=%ld\n",
++        (unsigned long)GameTimer.RenderCounter,
++        dos_port_tick_timing.presents_real, dos_port_tick_timing.presents_skipped);
++    fprintf(log, "DOS-PORT blit_path fast=%ld generic=%ld src_bytes_per_pixel=%d\n",
++        dos_port_tick_timing.blits_fast, dos_port_tick_timing.blits_generic,
++        dos_port_tick_timing.blit_src_bytes_per_pixel);
++
++    const long long loop_us = dos_tick_have_first
++        ? (long long)(dos_tick_last_exit - dos_tick_first_entry) * 1000000LL / UCLOCKS_PER_SEC : 0;
++    const long long steady_us = loop_us - dos_tick_stall_us;
++    const long steady_ticks = dos_tick_count - dos_tick_stall_total;
++    const double steady_rate = steady_us > 0 ? 1000000.0 * (double)steady_ticks / (double)steady_us : 0.0;
++    fprintf(log, "DOS-PORT tick_rate_steady=%.2f ticks=%ld stall_ticks=%ld loop_ms=%ld stall_ms=%ld preloop_ms=%lu threshold_ms=%ld\n",
++        steady_rate, dos_tick_count, dos_tick_stall_total,
++        (long)(loop_us / 1000), (long)(dos_tick_stall_us / 1000),
++        (unsigned long)dos_tick_preloop_ms, (long)(DOS_TICK_STALL_THRESHOLD_US / 1000));
++    const long listed = dos_tick_stall_total < DOS_TICK_STALL_CAP ? dos_tick_stall_total : DOS_TICK_STALL_CAP;
++    for (long i = 0; i < listed; i++)
++        fprintf(log, "DOS-PORT tick_stall index=%lu ms=%ld\n",
++            (unsigned long)dos_tick_stalls[i].tick_index, dos_tick_stalls[i].ms);
++    if (dos_tick_stall_total > DOS_TICK_STALL_CAP)
++        fprintf(log, "DOS-PORT tick_stall_overflow unlisted=%ld\n", dos_tick_stall_total - DOS_TICK_STALL_CAP);
++
++    for (int i = 0; i < dos_persec_count; i++)
++        fprintf(log, "DOS-PORT persec t=%d tick=%lu renders=%lu real=%ld skipped=%ld\n",
++            i + 1, (unsigned long)dos_persec[i].tick, (unsigned long)dos_persec[i].renders,
++            dos_persec[i].real, dos_persec[i].skipped);
++}
++#endif // __DJGPP__
++
+ //
+ // UpdateGameOnce is a primary game update routine.
+ //
+@@ -1463,6 +1595,7 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+     // other per-tick phase, used to check whether the sum of all
+     // named sub-phases actually accounts for the whole tick.
+ #ifdef __DJGPP__
++    DosTickStallScope _dos_tick_stall_scope; // patch 0093
+     DosPortTickScope _dos_port_update_once_scope(dos_port_tick_timing.update_game_once_total);
+ #endif
+     set_our_eip(1000);
+diff --git a/Engine/main/game_run.h b/Engine/main/game_run.h
+index c1d36653a..55b5ba6cb 100644
+--- a/Engine/main/game_run.h
++++ b/Engine/main/game_run.h
+@@ -15,6 +15,9 @@
+ #define __AGS_EE_MAIN__GAMERUN_H
+ 
+ #include "ac/keycode.h"
++#ifdef __DJGPP__
++#include <stdio.h> // FILE -- DOS-PORT patch 0093 (dos_port_yardstick_emit)
++#endif
+ 
+ namespace AGS { namespace Engine { class IDriverDependantBitmap; }}
+ 
+@@ -91,6 +94,13 @@ void set_runtime_start();
+ // were ever taken (e.g. the engine quit before any game loop ran).
+ void dos_fps_sample_tick();
+ void dos_fps_percentiles(double *p50_out, double *p95_out);
++// DOS-PORT patch 0093 (40/40 plan, P0): emits, into RUNMANIFEST's own log,
++// what fps_p50/fps_p95 actually counted (render passes vs presents that
++// really reached the display), which blit path real presents took, a
++// steady-state tick rate with one-time stall ticks listed separately
++// rather than hidden, and a per-real-second cumulative series. See
++// game_run.cpp's own comment.
++void dos_port_yardstick_emit(FILE *log);
+ 
+ // DOS-PORT: DPMI free-memory minimum tracker (peak-footprint KPI).
+ // dos_memory_sample_tick() self-gates to once per real second, same
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 14703ab10..8af535eb6 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -527,6 +527,8 @@ void quit(const char *quitmsg)
+             // bank_switches is expected to be 0 and rules out VESA bank-
+             // switching as a source of the remaining per-tick gap outright,
+             // rather than leaving it an assumption.
++            dos_port_yardstick_emit(run_manifest_log); // patch 0093
++
+             fprintf(run_manifest_log, "DOS-PORT video_banked_mode=%d bank_switches=%lu\n",
+                 (int)SDL_DOSVideoIsBankedMode(),
+                 (unsigned long)SDL_DOSVideoGetBankSwitchCount());
+-- 
+2.47.3
+

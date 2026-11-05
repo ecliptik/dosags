@@ -1,0 +1,75 @@
+From 37ea589b5848147c7097dbb5c79d8d435509786b Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 16 Sep 2026 23:30:17 -0700
+Subject: [PATCH] dos: patch 0148 -- expose the VESA bank-switch counter
+ publicly
+
+Operator-directed DPMI/interrupt audit for dosags's own 40fps push:
+does anything in the per-tick path trigger frequent real-mode DPMI
+switches that a normal uclock()-based C-level bracket cannot fully
+account for? SDL_dosframebuffer.c already counts real bank switches
+internally (_dbg_bank_switches_total, wave-16 flush audit) but never
+exposed it. Adds SDL_DOSVideoGetBankSwitchCount(), same accessor
+pattern as SDL_dosmodes.c's existing SDL_DOSVideoIsBankedMode()/
+SDL_DOSVideoGetVRAMKB(), so the engine can log the real count and the
+resolved banked-vs-LFB decision together at shutdown.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hnodGZ6cg8CWuFXEDTsUq
+---
+ include/SDL3/SDL_dosident.h        | 11 +++++++++++
+ src/video/dos/SDL_dosframebuffer.c | 16 ++++++++++++++++
+ 2 files changed, 27 insertions(+)
+
+diff --git a/include/SDL3/SDL_dosident.h b/include/SDL3/SDL_dosident.h
+index 4ecea1359..1729dfc7f 100644
+--- a/include/SDL3/SDL_dosident.h
++++ b/include/SDL3/SDL_dosident.h
+@@ -76,6 +76,17 @@ extern SDL_DECLSPEC Uint32 SDLCALL SDL_DOSVideoGetVRAMKB(void);
+  */
+ extern SDL_DECLSPEC bool SDLCALL SDL_DOSVideoIsBankedMode(void);
+ 
++/**
++ * \returns the cumulative count of real BIOS-issued VESA bank switches
++ *          (SwitchBank() calls that actually changed bank, each a real
++ *          protected-to-real-mode DPMI switch) since process start.
++ *          Always 0 on an LFB-path mode (SDL_DOSVideoIsBankedMode()
++ *          false), since SwitchBank() is only reached from the banked
++ *          flush path.
++ * \since SDL 3 -- dosags-local patch, 2026-09-16.
++ */
++extern SDL_DECLSPEC Uint32 SDLCALL SDL_DOSVideoGetBankSwitchCount(void);
++
+ /* ========================================================================
+  * Audio identity (SDL_dosaudio_sb.c)
+  * ======================================================================== */
+diff --git a/src/video/dos/SDL_dosframebuffer.c b/src/video/dos/SDL_dosframebuffer.c
+index 6460a2602..d8d882049 100644
+--- a/src/video/dos/SDL_dosframebuffer.c
++++ b/src/video/dos/SDL_dosframebuffer.c
+@@ -478,6 +478,22 @@ static DOSFramebufferState fb_state;
+ static Uint32 _dbg_bank_switches_total = 0;
+ static Uint32 _dbg_bytes_written_total = 0;
+ 
++// DOS-PORT patch (dosags-local, operator-directed DPMI/interrupt audit,
++// 2026-09-16): expose the existing wave-16 counter above as a public
++// accessor, same pattern as SDL_DOSVideoIsBankedMode()/
++// SDL_DOSVideoGetVRAMKB() (SDL_dosmodes.c). Every SwitchBank() call whose
++// bank actually changes issues a real protected-to-real-mode DPMI switch
++// (__dpmi_int(0x10, ax=0x4F05) or __dpmi_simulate_real_mode_procedure_retf)
++// -- exactly the class of per-tick real-mode-callback cost a normal
++// uclock()-based C-level bracket may not fully account for. Reading this
++// counter alongside SDL_DOSVideoIsBankedMode() answers "does this
++// hardware/mode even take the banked path at all" before assuming a
++// bank-switch-driven explanation for any remaining per-tick gap.
++Uint32 SDL_DOSVideoGetBankSwitchCount(void)
++{
++    return _dbg_bank_switches_total;
++}
++
+ // DOSKUTSU patch 0033 (wave 17.4): partial-flush detector. The engine
+ // passes a rect list to UpdateWindowFramebuffer; the wave-15 dirty-rect
+ // fast path passes small rects when only a sub-region of the frame
+-- 
+2.47.3
+

@@ -1,0 +1,99 @@
+From 6dc542267b2dd3a4442b0d82f6f114c6d8aa1bb1 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 13:49:35 -0700
+Subject: [PATCH] [AGS] Cast int* to int32_t* at 4 sites where DJGPP's typedefs
+ diverge
+
+DJGPP is ILP32 with int32_t defined as `long int`, distinct from
+`int` even though both are 4 bytes on this platform -- a real
+divergence from a typical 64-bit Linux dev host, where int32_t is
+plain int and the two are interchangeable. Stream::ReadArrayOfInt32/
+WriteArrayOfInt32 take int32_t*; three containers across the tree are
+declared as plain int (std::vector<int>/std::array<int, N>) by
+design, matching upstream -- not changed here, since that could ripple
+into other assumptions about their element type elsewhere in the same
+classes. C accepts the implicit conversion with a warning; C++
+rightly refuses it outright ("invalid conversion from int* to
+int32_t*").
+
+Found build-testing patches 0001-0012, the first genuine Engine/
+Common source-level (not vendored-library) compile gap. Bounded,
+not a systemic rewrite: grepped every ReadArrayOfInt32/
+WriteArrayOfInt32(....data()) call site in the tree (8 total) --
+4 already pass an int32_t-typed container (Common/script/cc_script.cpp's
+code/fixups) and need no change; these 4 are the only real mismatches.
+reinterpret_cast is safe at each: both types are genuinely 4-byte
+two's-complement on this platform, this is a type-name technicality,
+not a width or representation difference.
+---
+ Common/ac/gamesetupstructbase.cpp |  6 +++++-
+ Engine/ac/characterextras.cpp     | 11 +++++++++--
+ Engine/game/game_init.cpp         |  6 +++++-
+ 3 files changed, 19 insertions(+), 4 deletions(-)
+
+diff --git a/Common/ac/gamesetupstructbase.cpp b/Common/ac/gamesetupstructbase.cpp
+index f96950155..489dca306 100644
+--- a/Common/ac/gamesetupstructbase.cpp
++++ b/Common/ac/gamesetupstructbase.cpp
+@@ -134,7 +134,11 @@ void GameSetupStructBase::ReadFromFile(Stream *in, GameDataVersion game_ver, Ser
+     in->ReadArrayOfInt32(reserved, NUM_INTS_RESERVED);
+ 
+     info.ExtensionOffset = static_cast<uint32_t>(in->ReadInt32());
+-    in->ReadArrayOfInt32(info.HasMessages.data(), MAXGLOBALMES);
++    // DOS-PORT: int32_t is `long int` under DJGPP, distinct from `int`
++    // even though both are 4 bytes -- HasMessages is
++    // std::array<int, MAXGLOBALMES> by design; safe reinterpret_cast,
++    // same reasoning as characterextras.cpp's matching cast.
++    in->ReadArrayOfInt32(reinterpret_cast<int32_t*>(info.HasMessages.data()), MAXGLOBALMES);
+ 
+     info.HasWordsDict = in->ReadInt32() != 0;
+     in->ReadInt32(); // globalscript (dummy 32-bit pointer value)
+diff --git a/Engine/ac/characterextras.cpp b/Engine/ac/characterextras.cpp
+index f03431a7c..586b3ecdc 100644
+--- a/Engine/ac/characterextras.cpp
++++ b/Engine/ac/characterextras.cpp
+@@ -68,7 +68,13 @@ void CharacterExtras::ReadFromSavegame(Stream *in, CharacterSvgVersion save_ver)
+     {
+         uint32_t inv_count = in->ReadInt32();
+         inventory.resize(inv_count);
+-        in->ReadArrayOfInt32(inventory.data(), inv_count);
++        // DOS-PORT: int32_t is `long int` under DJGPP (ILP32, distinct
++        // from `int` even though both are 4 bytes), so int* -> int32_t*
++        // is a strict pointer-type mismatch in C++ (not just a C
++        // warning). inventory is std::vector<int> by design (matches
++        // upstream); reinterpret_cast is safe here since both types are
++        // genuinely 4-byte two's-complement on this platform.
++        in->ReadArrayOfInt32(reinterpret_cast<int32_t*>(inventory.data()), inv_count);
+         if (inv_count > MAX_CHAR_INVENTORY)
+             inventory.resize(MAX_CHAR_INVENTORY);
+     }
+@@ -125,7 +131,8 @@ void CharacterExtras::ReadFromSavegame(Stream *in, CharacterSvgVersion save_ver)
+ void CharacterExtras::WriteToSavegame(Stream *out) const
+ {
+     out->WriteInt32(static_cast<uint32_t>(inventory.size()));
+-    out->WriteArrayOfInt32(inventory.data(), inventory.size());
++    // DOS-PORT: see the matching cast in ReadFromSavegame() above.
++    out->WriteArrayOfInt32(reinterpret_cast<const int32_t*>(inventory.data()), inventory.size());
+     out->WriteInt16(width);
+     out->WriteInt16(height);
+     out->WriteInt16(zoom);
+diff --git a/Engine/game/game_init.cpp b/Engine/game/game_init.cpp
+index f18d20199..25387a908 100644
+--- a/Engine/game/game_init.cpp
++++ b/Engine/game/game_init.cpp
+@@ -339,7 +339,11 @@ void LoadLipsyncData()
+         else
+             splipsync[ee].filename.Read(speechsync.get());
+         splipsync[ee].endtimeoffs.resize(splipsync[ee].numPhonemes);
+-        speechsync->ReadArrayOfInt32(splipsync[ee].endtimeoffs.data(), splipsync[ee].numPhonemes);
++        // DOS-PORT: int32_t is `long int` under DJGPP, distinct from
++        // `int` even though both are 4 bytes -- endtimeoffs is
++        // std::vector<int> by design; safe reinterpret_cast, same
++        // reasoning as characterextras.cpp's matching cast.
++        speechsync->ReadArrayOfInt32(reinterpret_cast<int32_t*>(splipsync[ee].endtimeoffs.data()), splipsync[ee].numPhonemes);
+         splipsync[ee].frame.resize(splipsync[ee].numPhonemes);
+         speechsync->ReadArrayOfInt16(splipsync[ee].frame.data(), splipsync[ee].numPhonemes);
+     }
+-- 
+2.47.3
+

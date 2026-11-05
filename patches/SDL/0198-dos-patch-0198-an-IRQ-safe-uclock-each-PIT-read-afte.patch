@@ -1,0 +1,150 @@
+From 629ce06a3cd61d1f5d6ed50008b30ad7ec33026b Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 25 Sep 2026 06:49:45 -0700
+Subject: [PATCH] dos: patch 0198 -- an IRQ-safe uclock(): each PIT read after
+ the first runs with interrupts off
+
+Why: DJGPP's uclock() latches PIT channel 0 and reads its two count bytes with
+interrupts on, and the SB ISR times itself on the same counter. An SB IRQ
+between the main thread's latch and its byte reads finds the 8254
+mid-sequence: the ISR's own latch is ignored and its two reads return the
+main thread's leftover byte plus a live one. The ISR's delta is then garbage
+-- the 22-54 ms isr_max outliers (hub docs/timing.md) -- and it biases
+isr_ns_per_write, a judged figure since CAP3c.
+
+What: __wrap_uclock(), for a program linked with -Wl,--wrap=uclock, so
+every uclock() call in it (the application, this library, libc) comes here.
+Calls after the first run __real_uclock() with interrupts off and EFLAGS
+restored after, so the latch and both byte reads cannot be split by an IRQ.
+The FIRST call runs with the caller's interrupt flag untouched: it
+reprograms channel 0 and then waits for the BIOS tick to change, which
+never happens at IF=0. SDL_DOSUclockWrapStats() reports how many calls took
+each path.
+
+The wrapper is its own object: __real_uclock must be a strong reference (a
+weak one does not pull libc's uclock.o out of the archive and resolves to
+0; checked with the DJGPP toolchain), and a program linked without the flag
+never pulls this object in. Reporting-side change only: no behaviour change
+beyond the few microseconds each read holds interrupts off.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ include/SDL3/SDL_dosident.h       | 10 ++++
+ src/timer/dos/SDL_dosuclockwrap.c | 83 +++++++++++++++++++++++++++++++
+ 2 files changed, 93 insertions(+)
+ create mode 100644 src/timer/dos/SDL_dosuclockwrap.c
+
+diff --git a/include/SDL3/SDL_dosident.h b/include/SDL3/SDL_dosident.h
+index 1729dfc7f..ef666915f 100644
+--- a/include/SDL3/SDL_dosident.h
++++ b/include/SDL3/SDL_dosident.h
+@@ -154,6 +154,16 @@ extern SDL_DECLSPEC int SDLCALL SDL_DOSAudioGetDSPVersionMinor(void);
+  */
+ extern SDL_DECLSPEC int SDLCALL SDL_DOSAudioGetResolvedDMAChannel(void);
+ 
++/**
++ * dosags patch 0198: the IRQ-safe uclock() wrapper's counts. first = calls that ran DJGPP's uclock()
++ * with the interrupt flag as the caller left it (the first call, which reprograms PIT channel 0 and
++ * waits on the BIOS tick); wrapped = later calls, each made with interrupts off. Both 0 when the program
++ * was linked without -Wl,--wrap=uclock (the wrapper is then never called). Any pointer may be NULL.
++ *
++ * \since SDL 3 -- dosags workspace-local patch 0198, 2026-09-25.
++ */
++extern SDL_DECLSPEC void SDLCALL SDL_DOSUclockWrapStats(Uint32 *first, Uint32 *wrapped);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/src/timer/dos/SDL_dosuclockwrap.c b/src/timer/dos/SDL_dosuclockwrap.c
+new file mode 100644
+index 000000000..ce4a5d7b3
+--- /dev/null
++++ b/src/timer/dos/SDL_dosuclockwrap.c
+@@ -0,0 +1,83 @@
++/*
++  Simple DirectMedia Layer
++  Copyright (C) 1997-2026 Sam Lantinga <slouken@libsdl.org>
++
++  This software is provided 'as-is', without any express or implied
++  warranty.  In no event will the authors be held liable for any damages
++  arising from the use of this software.
++
++  Permission is granted to anyone to use this software for any purpose,
++  including commercial applications, and to alter it and redistribute it
++  freely, subject to the following restrictions:
++
++  1. The origin of this software must not be misrepresented; you must not
++     claim that you wrote the original software. If you use this software
++     in a product, an acknowledgment in the product documentation would be
++     appreciated but is not required.
++  2. Altered source versions must be plainly marked as such, and must not be
++     misrepresented as being the original software.
++  3. This notice may not be removed or altered from any source distribution.
++*/
++#include "SDL_internal.h"
++
++#ifdef SDL_TIMER_DOS
++
++#include <time.h> /* uclock_t */
++#include <SDL3/SDL_dosident.h>
++
++/* dosags patch 0198: an IRQ-safe uclock().
++
++   DJGPP's uclock() latches PIT channel 0 (port 43h) and reads its two count bytes from port 40h with
++   interrupts ON. The SB ISR times itself on the same counter (SDL_DOSAudioReadTimer in PIT mode). An SB
++   IRQ between the main thread's latch and its byte reads finds the 8254 mid-sequence -- its own latch is
++   ignored while one is pending, and it reads the main thread's leftover byte plus a live one -- so the
++   ISR's delta is garbage (the 22-54 ms isr_max outliers; hub docs/timing.md) and the main thread's value
++   is off too.
++
++   The port links with -Wl,--wrap=uclock (ld maps DJGPP's leading underscore itself), so every call to
++   uclock() in the program -- ags, this library, libc -- comes here, and each one after the first runs
++   with interrupts off for the read alone: EFLAGS saved, cli, the read, EFLAGS restored, so a caller
++   already at IF=0 stays there.
++
++   The FIRST call runs as the caller left the interrupt flag: it reprograms channel 0 and then waits for
++   the BIOS tick at 0040:006C to change, which never happens at IF=0 (a hang). DJGPP repeats that setup
++   only after a program restart (unexec), which these programs never do.
++
++   This file is its own object on purpose. __real_uclock must be a STRONG reference: a weak one does not
++   pull libc's uclock.o out of the archive and resolves to 0. Only a program linked with the wrap flag (or
++   one calling SDL_DOSUclockWrapStats) pulls this object in, so a program linked without the flag -- a
++   probe -- is unaffected. */
++extern uclock_t __real_uclock(void);
++uclock_t __wrap_uclock(void);
++
++static volatile int dos_uclock_initialised = 0;
++static Uint32 dos_uclock_first_calls = 0, dos_uclock_wrapped_calls = 0;
++
++uclock_t __wrap_uclock(void)
++{
++    uclock_t r;
++    unsigned long flags;
++    if (!dos_uclock_initialised) {
++        r = __real_uclock(); /* interrupts as the caller left them: see above */
++        dos_uclock_first_calls++;
++        dos_uclock_initialised = 1;
++        return r;
++    }
++    __asm__ __volatile__("pushfl\n\tpopl %0\n\tcli" : "=r"(flags) : : "memory");
++    r = __real_uclock();
++    __asm__ __volatile__("pushl %0\n\tpopfl" : : "r"(flags) : "memory", "cc");
++    dos_uclock_wrapped_calls++;
++    return r;
++}
++
++void SDL_DOSUclockWrapStats(Uint32 *first, Uint32 *wrapped)
++{
++    if (first) {
++        *first = dos_uclock_first_calls;
++    }
++    if (wrapped) {
++        *wrapped = dos_uclock_wrapped_calls;
++    }
++}
++
++#endif /* SDL_TIMER_DOS */
+-- 
+2.47.3
+

@@ -1,0 +1,44 @@
+int13p: threshold 20000 us
+int13p: REGISTER TRANSPARENCY GATE
+int13p: stub at 1601:0000  handler +0x0058  ring +0x01B0 x 64
+int13p: cylinder histogram +0x05B0 x 1024
+int13p: old INT 13h vector CE26:18C5
+  AH=08 -> transparent
+  AH=15 -> transparent
+  AH=FE -> transparent
+  gate PASSED -- 3 of 3 transparent, flags included
+int13p: workload 400 records, wall 4240496 us, INT 13h calls during it = 1430
+int13p: recorded slow-call time 1522083 us of 4240496 us wall (64.1% outside)
+int13p: NOTE -- this hook sets the REAL-MODE vector, so it sits FIRST in the chain, above SMARTDRV. 'Time inside INT 13h' therefore includes SMARTDRV's own work and is NOT 'time in the BIOS'.
+
+int13p: total INT 13h calls seen = 1441
+int13p: calls at or over threshold = 8, recorded = 8
+int13p: raw write ring: 256 addresses, cylinders 0..736
+    W0   head=37 cyl=735   sec=58 
+    W1   head=00 cyl=687   sec=3  
+    W2   head=03 cyl=0     sec=45 
+    W3   head=07 cyl=0     sec=34 
+    W4   head=00 cyl=687   sec=4  
+    W5   head=37 cyl=735   sec=58 
+    W6   head=00 cyl=687   sec=5  
+    W7   head=00 cyl=687   sec=4  
+    W8   head=00 cyl=687   sec=6  
+    W9   head=37 cyl=735   sec=58 
+    W10  head=00 cyl=687   sec=6  
+    W11  head=00 cyl=687   sec=7  
+int13p: writes histogrammed = 1430 across 5 cylinders
+  cyl    writes    stalls  per 1000  
+  0      26        1       38.5      
+  687    102       1       9.8       
+  735    404       0       0.0       
+  736    205       1       4.9       
+  737    693       5       7.2       
+  SLOW #0  us=216441    ticks=3.941   AH=03 AL=01 drive=80 head=00 cyl/sec=AF83  phase_start=0.711 phase_end=0.651
+  SLOW #1  us=214612    ticks=3.907   AH=03 AL=01 drive=80 head=1E cyl/sec=E088  phase_start=0.517 phase_end=0.424
+  SLOW #2  us=207601    ticks=3.780   AH=03 AL=01 drive=80 head=29 cyl/sec=E18B  phase_start=0.390 phase_end=0.170
+  SLOW #3  us=210109    ticks=3.825   AH=03 AL=01 drive=80 head=07 cyl/sec=002E  phase_start=0.350 phase_end=0.176
+  SLOW #4  us=204888    ticks=3.730   AH=03 AL=01 drive=80 head=2B cyl/sec=E1BC  phase_start=0.326 phase_end=0.057
+  SLOW #5  us=56214     ticks=1.023   AH=03 AL=01 drive=80 head=2D cyl/sec=E182  phase_start=0.000 phase_end=0.023
+  SLOW #6  us=204406    ticks=3.722   AH=03 AL=01 drive=80 head=2D cyl/sec=E1B0  phase_start=0.424 phase_end=0.145
+  SLOW #7  us=207812    ticks=3.784   AH=03 AL=01 drive=80 head=2F cyl/sec=E1A1  phase_start=0.300 phase_end=0.083
+int13p: vector restored

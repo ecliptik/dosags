@@ -1,0 +1,84 @@
+From f3f61914244576bbe8dc35213d06845cc437d436 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 17 Sep 2026 06:50:03 -0700
+Subject: [PATCH] DOS-PORT: patch 0090 -- branch-free word-store for the 2x
+ horizontal replicate
+
+Patch 0089's sub-phase breakdown (TNP89A, real hardware) found
+fastblit_hreplicate still the single largest remaining cost
+(mean=45.86ms/call) even after patch 0087 removed the per-byte
+memcpy() call -- the generic `for (r=0; r<scale_x; r++) *out++ = v`
+inner loop pays real per-iteration overhead twice per source pixel for
+what is, in the only scale this port actually exercises (2x), exactly
+two identical byte writes.
+
+Special-cases bpp==1 && scale_x==2 with a branch-free 16-bit word
+store: v * 0x0101 replicates the byte into both halves of a Uint16
+(endianness-independent, since both bytes equal v regardless of
+order), issued as ONE store instead of two in a loop. Falls back to
+the existing generic per-byte-per-scale-factor loop for any other
+integer scale.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hnodGZ6cg8CWuFXEDTsUq
+---
+ Engine/gfx/ali3dsw.cpp | 43 +++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 42 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index 68983461c..32219880b 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -816,7 +816,48 @@ static bool TryFastIntegerNearestBlit(SDL_Surface *src, SDL_Surface *dst, const
+     // multi-byte memcpy's per-call overhead is proportionally smaller
+     // relative to its payload than a 1-byte one is.
+     long long hrep_us = 0, vmemcpy_us = 0;
+-    if (bpp == 1)
++    if (bpp == 1 && scale_x == 2)
++    {
++        // patch 0090 (operator-directed follow-up to patch 0089's
++        // measurement): fastblit_hreplicate was STILL the single
++        // largest remaining cost (mean 45.86ms/call, TNP89A) even
++        // after patch 0087 removed the per-byte memcpy() call --
++        // the generic `for (r=0; r<scale_x; r++) *out++ = v` inner
++        // loop pays real per-iteration overhead (increment, compare,
++        // branch) twice per source pixel for what is, in the only
++        // scale this port ever actually exercises (2x, confirmed by
++        // reading real STDOUT.TXT on every benchmark cell), exactly
++        // two identical byte writes. Special-cased here: replicate the
++        // byte into both halves of a Uint16 via a branch-free multiply
++        // (v * 0x0101 puts v in both the low and high byte) and issue
++        // ONE 16-bit store instead of two 8-bit stores in a loop --
++        // half the store operations, and the inner loop is gone
++        // entirely. row_buf (a std::vector<Uint8>) is allocator-aligned
++        // at offset 0, and every write advances by exactly 2 bytes, so
++        // the Uint16* stays 2-byte-aligned for the whole row; x86 also
++        // tolerates unaligned access without faulting even if it
++        // somehow weren't.
++        for (int sy = 0; sy < src->h; sy++)
++        {
++            _t0 = uclock();
++            const Uint8 *src_row = src_pixels + (size_t)sy * (size_t)src->pitch;
++            Uint16 *out16 = (Uint16 *)row_buf.data();
++            for (int sx = 0; sx < src->w; sx++)
++            {
++                *out16++ = (Uint16)(src_row[sx] * 0x0101u);
++            }
++            _t1 = uclock();
++            hrep_us += (_t1 - _t0) * 1000000LL / UCLOCKS_PER_SEC;
++            Uint8 *dst_row_base = dst_pixels + (size_t)(sy * scale_y) * (size_t)dst->pitch;
++            for (int r = 0; r < scale_y; r++)
++            {
++                std::memcpy(dst_row_base + (size_t)r * (size_t)dst->pitch, row_buf.data(), dst_row_bytes);
++            }
++            _t0 = uclock();
++            vmemcpy_us += (_t0 - _t1) * 1000000LL / UCLOCKS_PER_SEC;
++        }
++    }
++    else if (bpp == 1)
+     {
+         for (int sy = 0; sy < src->h; sy++)
+         {
+-- 
+2.47.3
+

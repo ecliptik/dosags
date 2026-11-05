@@ -1,0 +1,9 @@
+bench16 gui at the centred-1x rung (640x480x16, DOSAGS_MAX_SCALE=1, narrowing ON): stale_frames 480 / 1038.
+Same run, one switch:
+  DOSAGS_GUI_NOINVAL=1 (default, ags 0191 skip ON) : frames=1036 stale_frames=480 stale_px_max=7559 first_stale_frame=58
+  DOSAGS_GUI_NOINVAL=0 (skip OFF)                  : frames=1035 stale_frames=0
+7,559 px is the menu's rect (game 100..220 x 40..112, +160,140 centred offset = window 260..380 x 180..252). Stale
+starts at the SECOND show of the menu and persists through each visible phase: the menu is composited into RAM
+and never pushed. Cause: ags 0191 keeps a GUI's last-composite record valid while the GUI is hidden; a re-shown GUI
+has no changed flag (SetVisible marks nothing, content unchanged) and identical properties, so SameAs() is true and
+the invalidation is skipped. guiskip flushed=25 hidden=25 shows every HIDE is handled; the SHOW is what is missed.

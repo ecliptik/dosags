@@ -1,0 +1,16 @@
+# 0210 alone (vendor SDL 7aa613faf) vs 0210+0211 (ead484755): pack functions
+== dos_mode_is_pack24
+IDENTICAL
+== dos_pack24_row
+IDENTICAL
+== dos_pack24_push
+35a36,44
+>                 if (dos_pack24_verify > 0) {
+>                     for (int x = 0; x < rw; x++) {
+>                         const Uint32 p = sp[x];
+>                         if (dp[3 * x] != (Uint8)p || dp[3 * x + 1] != (Uint8)(p >> 8) ||
+>                             dp[3 * x + 2] != (Uint8)(p >> 16)) {
+>                             dos_pack24_mismatch_px++;
+>                         }
+>                     }
+>                 }

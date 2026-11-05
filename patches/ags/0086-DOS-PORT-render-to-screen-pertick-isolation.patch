@@ -1,0 +1,91 @@
+From 10904f2589c453465451e7f220347b906808ec9b Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 16 Sep 2026 23:46:34 -0700
+Subject: [PATCH] DOS-PORT: patch 0086 -- isolate render_to_screen's own
+ per-tick call site
+
+TNP85A (patch 0085's real-hardware cell) found render_to_screen's own
+whole-process total (25486ms/210 calls) EXCEEDS update_game_once_total
+(39649ms) when naively added to the other named phases (sum=43835ms,
+impossible for a true subset). Root cause: render_to_screen() has many
+call sites beyond render_graphics()'s own per-tick one (ac/screen.cpp's
+fade-transition state machine -- used by this exact game's one-time
+room-transition fade at startup, ac/global_screen.cpp, media/video/
+video.cpp, main/engine.cpp) -- render_to_screen's own bracket is a
+whole-process accumulator summing ALL of them, not a pure subset of
+update_game_once_total's own per-tick-loop total.
+
+Adds render_to_screen_pertick: a second bracket at the ONE call site
+actually reached from inside UpdateGameOnce()->render_graphics()'s own
+per-tick path, cleanly comparable against update_game_once_total
+without the cross-call-site contamination.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hnodGZ6cg8CWuFXEDTsUq
+---
+ Engine/ac/draw.cpp                 | 14 ++++++++++++++
+ Engine/main/dos_port_tick_timing.h | 10 +++++++++-
+ Engine/main/quit.cpp               |  1 +
+ 3 files changed, 24 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index 978820237..92d5e8f21 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -3176,6 +3176,20 @@ void render_graphics(IDriverDependantBitmap *extraBitmap, int extraX, int extraY
+         }
+         construct_game_screen_overlay(!in_room_transition);
+     }
++    // DOS-PORT patch 0086: render_to_screen() has MANY call sites besides
++    // this one (ac/screen.cpp's fade-transition state machine,
++    // global_screen.cpp, media/video/video.cpp, main/engine.cpp) --
++    // render_to_screen's own whole-function bracket is a GLOBAL,
++    // whole-process accumulator that sums ALL of them, including calls
++    // made during the one-time room-transition fade sequence at startup
++    // (before the per-tick benchmark loop even begins), so it is NOT a
++    // pure subset of update_game_once_total's own total. This second,
++    // call-site-specific bracket isolates ONLY the normal per-tick path
++    // (the one reached from inside UpdateGameOnce()->render_graphics()),
++    // so it CAN be compared cleanly against update_game_once_total.
++#ifdef __DJGPP__
++    DosPortTickScope _dos_port_render_to_screen_pertick_scope(dos_port_tick_timing.render_to_screen_pertick);
++#endif
+     render_to_screen();
+ 
+     spriteset.EnableAutoFreeMem(true);
+diff --git a/Engine/main/dos_port_tick_timing.h b/Engine/main/dos_port_tick_timing.h
+index cd9bbdbf1..d8c192ab6 100644
+--- a/Engine/main/dos_port_tick_timing.h
++++ b/Engine/main/dos_port_tick_timing.h
+@@ -315,7 +315,15 @@ struct DosPortTickTiming
+     // render_backbuffer's own nested cost -- same "report alongside, not
+     // summed with" convention as rep_exec_wrapper/drawable_object_states/
+     // process_events_dispatch.
+-    DosPortTickPhaseStats render_to_screen; // ac/draw.cpp: render_to_screen()
++    DosPortTickPhaseStats render_to_screen; // ac/draw.cpp: render_to_screen(), ALL call sites (whole-process accumulator)
++
++    // patch 0086: render_to_screen's own total (above) sums every call
++    // site, including the one-time room-transition fade sequence at
++    // startup -- NOT a pure subset of update_game_once_total. This
++    // isolates only the call reached from render_graphics()'s own
++    // per-tick path (ac/draw.cpp:~3179), which IS a clean subset,
++    // comparable directly against update_game_once_total.
++    DosPortTickPhaseStats render_to_screen_pertick; // ac/draw.cpp: render_graphics()'s own render_to_screen() call site only
+ };
+ 
+ // Defined in main.cpp, alongside dos_port_startup_timing.
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 6cc447332..0b0632b1b 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -506,6 +506,7 @@ void quit(const char *quitmsg)
+                 dos_port_tick_emit(run_manifest_log, "process_events_dispatch", t.process_events_dispatch);
+                 dos_port_tick_emit(run_manifest_log, "catchup_audio_poll", t.catchup_audio_poll);
+                 dos_port_tick_emit(run_manifest_log, "render_to_screen", t.render_to_screen);
++                dos_port_tick_emit(run_manifest_log, "render_to_screen_pertick", t.render_to_screen_pertick);
+             }
+ 
+             // DOS-PORT patch 0085 (operator-directed DPMI/interrupt audit):
+-- 
+2.47.3
+

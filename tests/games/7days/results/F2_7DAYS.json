@@ -1,0 +1,159 @@
+{
+  "sound_on": {
+    "tag": "7DSK_ON",
+    "env": {
+      "DOSAGS_TAS_AUTO_EXIT_TICK": "200",
+      "DOSAGS_LOG_TAG": "7DSK_ON",
+      "DOSAGS_FIXED_TIMESTEP": "1",
+      "SDL_HINT_DOS_AUDIO_BACKEND": "opl3"
+    },
+    "stage_dir": "/tmp/dos-port-dosbox.yM3Qv1",
+    "runmanifest_log": "/tmp/dos-port-dosbox.yM3Qv1/7DSK_ON.LOG",
+    "runmanifest": {
+      "schema_version": "1",
+      "environment": "dosbox-x",
+      "binary_sha12": "c9ee2b121d04",
+      "wave_tag": "7DSK_ON",
+      "scene": "boot",
+      "env_block_sha": "6aa7fe3b763f",
+      "started_utc": "2026-12-01T14:28:53Z",
+      "duration_s": "9",
+      "exit_code": "0",
+      "fps_p50": "25.71",
+      "fps_p95": "27.88",
+      "audio_vital_status": "pcm=sb@11025m16,voices=8,underruns=0;midi=none,events=0",
+      "regime": "NA",
+      "banner_required_hit": "0",
+      "banner_required_total": "0",
+      "banner_forbidden_hit": "0",
+      "banner_optional_hit": "0",
+      "critical_count": "0",
+      "warn_count": "0",
+      "tick_rate": "29.11",
+      "frames_skipped": "71",
+      "memory_min_free_kb": "169200"
+    },
+    "expected": {
+      "audio_vital_status": "pcm=sb@11025m16,voices=8,underruns=0;midi=none,events=0",
+      "exit_code": 0
+    },
+    "checks": {
+      "runmanifest_present": {
+        "ok": true
+      },
+      "exit_code": {
+        "ok": true,
+        "expected": 0,
+        "actual": "0"
+      },
+      "critical_count": {
+        "ok": true,
+        "expected": "0",
+        "actual": "0"
+      },
+      "warn_count": {
+        "ok": true,
+        "expected": "0",
+        "actual": "0"
+      },
+      "audio_vital_status": {
+        "ok": true,
+        "expected": "pcm=sb@11025m16,voices=8,underruns=0;midi=none,events=0",
+        "actual": "pcm=sb@11025m16,voices=8,underruns=0;midi=none,events=0"
+      },
+      "stdout_present": {
+        "ok": true
+      },
+      "fixed_timestep": {
+        "ok": true,
+        "expected_line": "DOS-PORT fixed-timestep: ENABLED"
+      },
+      "game_speed_40hz": {
+        "ok": false,
+        "gating": false,
+        "tick_rate": 29.11,
+        "band": "40.0 +/- 2%"
+      }
+    },
+    "pass": true,
+    "capture_hash": null
+  },
+  "sound_off": {
+    "tag": "7DSKOFF",
+    "env": {
+      "DOSAGS_TAS_AUTO_EXIT_TICK": "200",
+      "DOSAGS_LOG_TAG": "7DSKOFF",
+      "DOSAGS_FIXED_TIMESTEP": "1"
+    },
+    "stage_dir": "/tmp/dos-port-dosbox.0qgO9b",
+    "runmanifest_log": "/tmp/dos-port-dosbox.0qgO9b/7DSKOFF.LOG",
+    "runmanifest": {
+      "schema_version": "1",
+      "environment": "dosbox-x",
+      "binary_sha12": "c9ee2b121d04",
+      "wave_tag": "7DSKOFF",
+      "scene": "boot",
+      "env_block_sha": "098a64e57eea",
+      "started_utc": "2026-12-01T14:12:40Z",
+      "duration_s": "7",
+      "exit_code": "0",
+      "fps_p50": "40.00",
+      "fps_p95": "40.38",
+      "audio_vital_status": "NA",
+      "regime": "NA",
+      "banner_required_hit": "0",
+      "banner_required_total": "0",
+      "banner_forbidden_hit": "0",
+      "banner_optional_hit": "0",
+      "critical_count": "0",
+      "warn_count": "0",
+      "tick_rate": "34.01",
+      "frames_skipped": "6",
+      "memory_min_free_kb": "169328"
+    },
+    "expected": {
+      "audio_vital_status": "NA",
+      "exit_code": 0
+    },
+    "checks": {
+      "runmanifest_present": {
+        "ok": true
+      },
+      "exit_code": {
+        "ok": true,
+        "expected": 0,
+        "actual": "0"
+      },
+      "critical_count": {
+        "ok": true,
+        "expected": "0",
+        "actual": "0"
+      },
+      "warn_count": {
+        "ok": true,
+        "expected": "0",
+        "actual": "0"
+      },
+      "audio_vital_status": {
+        "ok": true,
+        "expected": "NA",
+        "actual": "NA"
+      },
+      "stdout_present": {
+        "ok": true
+      },
+      "fixed_timestep": {
+        "ok": true,
+        "expected_line": "DOS-PORT fixed-timestep: ENABLED"
+      },
+      "game_speed_40hz": {
+        "ok": false,
+        "gating": false,
+        "tick_rate": 34.01,
+        "band": "40.0 +/- 2%"
+      }
+    },
+    "pass": true,
+    "capture_hash": null
+  }
+}

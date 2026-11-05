@@ -1,0 +1,239 @@
+From 84fd5591c40e97d868958c6a0222bd46c520fe77 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Wed, 16 Sep 2026 19:21:26 -0700
+Subject: [PATCH] DOS-PORT: patch 0081 -- scene-construct/wait-next-frame
+ timing, closing round
+
+The 8-bit optimization pass (Trilby's Notes, TNP80A/TNP80B, reconciled
+against the trusted 1000-tick TN8A1/TN8A2 baseline after a short-window
+methodological error was caught and corrected) found that patches
+0079/0080's four instrumented phases together account for only ~17% of
+the corrected 29047ms steady-state window (load time already
+subtracted out) -- 83% still unaccounted for. Three remaining
+candidates, all in the same per-tick loop:
+
+- scene_construct: ac/draw.cpp's construct_game_scene() +
+  construct_game_screen_overlay() -- the draw-LIST-building step
+  (walks room/UI objects, appends to gfxDriver's draw list), confirmed
+  to be a distinct, earlier, non-recursive phase from
+  RenderToBackBuffer()'s own sprite blitting by reading render_graphics()
+  directly: it calls these two, then gfxDriver->Render() (which calls
+  RenderToBackBuffer(), already measured by patch 0079).
+- flip/present cost: not new code -- patch 0035's existing
+  DOSAGS_FLIP_INSTR hook, just enabled alongside this round's real-
+  hardware cell instead of left off.
+- wait_next_frame: ac/timer.cpp's WaitForNextFrame() -- read carefully
+  before instrumenting, per the operator's explicit caution (this
+  project's own dos-hardware-validation precedent: a busy-wait once
+  starved the BIOS timer and made a self-reported fps number go UP
+  while real performance collapsed). Confirmed this implementation
+  uses a real std::this_thread::sleep_for() (not a spin/poll loop) and
+  a "jump ahead if lagging" clamp (MAXIMUM_FALL_BEHIND=3 frames) that
+  should make it request near-zero sleep for a game already running
+  below its target frame rate -- but rather than trust that reasoning
+  alone, this patch tracks BOTH the function's own measured wall-clock
+  cost (wait_next_frame) AND, separately, what it itself computed as
+  the requested sleep duration whenever positive
+  (wait_next_frame_sleep_calls/wait_next_frame_requested_ms, tracked
+  at the actual sleep_for() call site) -- so a real run's data can show
+  whether measured cost tracks requested sleep (expected pacing) or
+  vastly exceeds it (a miscalibrated wait, the exact failure mode a
+  bare wall-clock number cannot distinguish from correct behavior on
+  its own).
+
+Extends patch 0079/0080's own struct/macros. New DOS-PORT tickstats
+lines in quit.cpp's report, same full-run running-aggregate shape.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hnodGZ6cg8CWuFXEDTsUq
+---
+ Engine/ac/draw.cpp                 | 37 +++++++++++++++++++++---------
+ Engine/ac/timer.cpp                | 20 ++++++++++++++++
+ Engine/main/dos_port_tick_timing.h | 33 ++++++++++++++++++++++++++
+ Engine/main/quit.cpp               | 18 +++++++++++++++
+ 4 files changed, 97 insertions(+), 11 deletions(-)
+
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index a5727289a..a1a0b47d5 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -14,6 +14,10 @@
+ #include <stdio.h>
+ #include <algorithm>
+ #include <cmath>
++#ifdef __DJGPP__
++#include <time.h> // uclock_t/uclock()/UCLOCKS_PER_SEC -- DOS-PORT patch 0081
++#include "main/dos_port_tick_timing.h" // DOS-PORT patch 0081
++#endif
+ #include "aastr.h"
+ #include "ac/common.h"
+ #include "util/compress.h"
+@@ -3139,18 +3143,29 @@ void render_graphics(IDriverDependantBitmap *extraBitmap, int extraX, int extraY
+     spriteset.EnableAutoFreeMem(false);
+ 
+     gfxDriver->ClearDrawLists();
+-    construct_game_scene(false);
+-    set_our_eip(5);
+-    // TODO: extraBitmap is a hack, used to place an additional gui element
+-    // on top of the screen. Normally this should be a part of the game UI stage.
+-    if (extraBitmap != nullptr)
+-    {
+-        gfxDriver->BeginSpriteBatch(play.GetMainViewport(), play.GetGlobalTransform(drawstate.FullFrameRedraw), (GraphicFlip)play.screen_flipped);
+-        invalidate_sprite(extraX, extraY, extraBitmap, false);
+-        gfxDriver->DrawSprite(extraX, extraY, extraBitmap);
+-        gfxDriver->EndSpriteBatch();
++    // DOS-PORT patch 0081: draw-LIST-building, a distinct, earlier,
++    // non-recursive phase from RenderToBackBuffer()'s own sprite
++    // blitting (gfx/ali3dsw.cpp, patch 0079) -- confirmed by this very
++    // call sequence: everything in this bracket only walks room/UI
++    // objects and appends to gfxDriver's draw list, nothing here
++    // touches the back buffer or the video hardware.
++    {
++#ifdef __DJGPP__
++        DosPortTickScope _dos_port_scene_scope(dos_port_tick_timing.scene_construct);
++#endif
++        construct_game_scene(false);
++        set_our_eip(5);
++        // TODO: extraBitmap is a hack, used to place an additional gui element
++        // on top of the screen. Normally this should be a part of the game UI stage.
++        if (extraBitmap != nullptr)
++        {
++            gfxDriver->BeginSpriteBatch(play.GetMainViewport(), play.GetGlobalTransform(drawstate.FullFrameRedraw), (GraphicFlip)play.screen_flipped);
++            invalidate_sprite(extraX, extraY, extraBitmap, false);
++            gfxDriver->DrawSprite(extraX, extraY, extraBitmap);
++            gfxDriver->EndSpriteBatch();
++        }
++        construct_game_screen_overlay(!in_room_transition);
+     }
+-    construct_game_screen_overlay(!in_room_transition);
+     render_to_screen();
+ 
+     spriteset.EnableAutoFreeMem(true);
+diff --git a/Engine/ac/timer.cpp b/Engine/ac/timer.cpp
+index 0367aac0f..6a6ea79fc 100644
+--- a/Engine/ac/timer.cpp
++++ b/Engine/ac/timer.cpp
+@@ -22,6 +22,10 @@
+ #if AGS_PLATFORM_OS_EMSCRIPTEN
+ #include "SDL.h"
+ #endif
++#ifdef __DJGPP__
++#include <time.h> // uclock_t/uclock()/UCLOCKS_PER_SEC -- DOS-PORT patch 0081
++#include "main/dos_port_tick_timing.h" // DOS-PORT patch 0081
++#endif
+ 
+ using namespace AGS::Engine;
+ 
+@@ -70,6 +74,17 @@ bool isTimerFpsMaxed()
+ 
+ void WaitForNextFrame()
+ {
++    // DOS-PORT patch 0081: RAII-bracketed (two return paths: the
++    // "maximise framerate" early exit below, and the normal fall-
++    // through) -- measures this function's own MEASURED wall-clock
++    // cost. See the separate wait_next_frame_requested_ms tracking
++    // below (at the actual sleep_for() call site) for what the
++    // function itself INTENDED to sleep for -- comparing the two is
++    // the whole point (a correct pacing wait should measure close to
++    // what it requested; a miscalibrated one won't).
++#ifdef __DJGPP__
++    DosPortTickScope _dos_port_wait_scope(dos_port_tick_timing.wait_next_frame);
++#endif
+     // Do the last polls on this frame, if necessary
+ #if defined(AGS_DISABLE_THREADS)
+     audio_core_entry_poll();
+@@ -98,6 +113,11 @@ void WaitForNextFrame()
+ 
+     auto frame_time_remaining = next_frame_timestamp - now;
+     if (frame_time_remaining > std::chrono::milliseconds::zero()) {
++#ifdef __DJGPP__
++        dos_port_tick_timing.wait_next_frame_sleep_calls++;
++        dos_port_tick_timing.wait_next_frame_requested_ms +=
++            (long)std::chrono::duration_cast<std::chrono::milliseconds>(frame_time_remaining).count();
++#endif
+ #if AGS_PLATFORM_OS_EMSCRIPTEN
+         // pass the time as negative in Emscripten Platform Driver
+         platform->Delay(-ToMilliseconds(frame_time_remaining));
+diff --git a/Engine/main/dos_port_tick_timing.h b/Engine/main/dos_port_tick_timing.h
+index 9dd09de4a..1f3264e52 100644
+--- a/Engine/main/dos_port_tick_timing.h
++++ b/Engine/main/dos_port_tick_timing.h
+@@ -27,6 +27,31 @@
+ // commit message for the dos_run_tick_fixed()/MAX_CATCHUP analysis that
+ // narrowed the remaining candidates to input polling and audio sync.
+ //
++// DOS-PORT patch 0081: after the 8-bit optimization pass (Trilby's
++// Notes, TNP80A/TNP80B) found that patches 0079/0080's four phases
++// together account for only ~17% of the corrected steady-state window
++// (load time subtracted out, reconciled against the trusted 1000-tick
++// ABBA baseline) -- 83% still unaccounted for -- three more candidates,
++// all closing the SAME per-tick loop:
++//  - scene_construct: ac/draw.cpp's construct_game_scene() +
++//    construct_game_screen_overlay() -- the draw-LIST-building step,
++//    confirmed to be a distinct, earlier, non-recursive phase from
++//    RenderToBackBuffer()'s own sprite-blitting (render_graphics()
++//    calls them in that order, before gfxDriver->Render()).
++//  - wait_next_frame: ac/timer.cpp's WaitForNextFrame() -- the frame-
++//    pacing wait. Two counters, not one, per the operator's explicit
++//    instruction not to just time it: wait_next_frame (the function's
++//    own measured wall-clock cost) AND wait_next_frame_requested_ms
++//    (the SUM of frame_time_remaining whenever the function itself
++//    computed a positive value, i.e. what it intended to sleep for).
++//    Comparing measured cost against requested sleep directly answers
++//    "is this expected pacing, or a miscalibrated wait burning more
++//    time than it asked for" -- the dos-hardware-validation skill's own
++//    cited precedent (a busy-wait once starved the BIOS timer and made
++//    a self-reported fps number go UP while real performance
++//    collapsed) is exactly the failure mode a bare wall-clock number
++//    alone cannot distinguish from correct behavior.
++//
+ // Bracket points, found by reading source (not assumed):
+ //  - script_vm: script/script.cpp's RunScriptFunction() -- the single
+ //    funnel every per-tick script callback actually runs through
+@@ -86,6 +111,14 @@ struct DosPortTickTiming
+     DosPortTickPhaseStats render_backbuffer; // gfx/ali3dsw.cpp: RenderToBackBuffer()
+     DosPortTickPhaseStats input_poll;        // ac/sys_events.cpp: sys_evt_process_pending()
+     DosPortTickPhaseStats audio_sync;        // media/audio/audio.cpp: update_audio_system_on_game_loop()
++    DosPortTickPhaseStats scene_construct;   // ac/draw.cpp: construct_game_scene()+construct_game_screen_overlay()
++    DosPortTickPhaseStats wait_next_frame;   // ac/timer.cpp: WaitForNextFrame(), measured wall-clock cost
++    // Not a DosPortTickPhaseStats -- these two track what
++    // WaitForNextFrame() itself INTENDED to sleep for (the sum of
++    // frame_time_remaining whenever positive), so it can be compared
++    // against wait_next_frame's own MEASURED cost above.
++    long wait_next_frame_sleep_calls = 0;
++    long wait_next_frame_requested_ms = 0;
+ };
+ 
+ // Defined in main.cpp, alongside dos_port_startup_timing.
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index f7b05d080..e818887f7 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -469,6 +469,24 @@ void quit(const char *quitmsg)
+                     "DOS-PORT tickstats_audio_sync calls=%ld total_ms=%ld min_ms=%ld max_ms=%ld mean_ms=%.2f\n",
+                     au.calls, au.total_ms, au.min_ms, au.max_ms,
+                     au.calls > 0 ? (double)au.total_ms / (double)au.calls : 0.0);
++                // DOS-PORT patch 0081: three more candidates from the
++                // 8-bit optimization pass (draw-list construction, and
++                // the frame-pacing wait -- both measured cost AND, for
++                // the wait, what it itself requested to sleep for).
++                const DosPortTickPhaseStats &sc = dos_port_tick_timing.scene_construct;
++                const DosPortTickPhaseStats &wf = dos_port_tick_timing.wait_next_frame;
++                fprintf(run_manifest_log,
++                    "DOS-PORT tickstats_scene_construct calls=%ld total_ms=%ld min_ms=%ld max_ms=%ld mean_ms=%.2f\n",
++                    sc.calls, sc.total_ms, sc.min_ms, sc.max_ms,
++                    sc.calls > 0 ? (double)sc.total_ms / (double)sc.calls : 0.0);
++                fprintf(run_manifest_log,
++                    "DOS-PORT tickstats_wait_next_frame calls=%ld total_ms=%ld min_ms=%ld max_ms=%ld mean_ms=%.2f\n",
++                    wf.calls, wf.total_ms, wf.min_ms, wf.max_ms,
++                    wf.calls > 0 ? (double)wf.total_ms / (double)wf.calls : 0.0);
++                fprintf(run_manifest_log,
++                    "DOS-PORT tickstats_wait_next_frame_requested sleep_calls=%ld requested_ms=%ld\n",
++                    dos_port_tick_timing.wait_next_frame_sleep_calls,
++                    dos_port_tick_timing.wait_next_frame_requested_ms);
+             }
+ 
+             // TEMPORARY DIAGNOSTIC (S7): dump the AUDIOPRB window data
+-- 
+2.47.3
+

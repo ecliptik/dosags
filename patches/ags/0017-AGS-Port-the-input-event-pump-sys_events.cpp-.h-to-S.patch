@@ -1,0 +1,900 @@
+From 0714615845bf19b20079c1f6793df130842773da Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 10 Sep 2026 14:37:55 -0700
+Subject: [PATCH] [AGS] Port the input event pump (sys_events.cpp/.h) to SDL3
+
+Phase D. The confirmed next build blocker: Engine/ac/sys_events.h:21,
+fatal error: SDL_keyboard.h: No such file or directory -- the bare
+SDL2-style include, plus the real event/keyboard API surface behind it.
+
+Real signature and type changes found by reading this port's own
+vendored SDL3 headers directly (vendor/SDL/include/SDL3/), not assumed:
+
+- SDL_Keysym is removed entirely -- SDL3 flattens scancode/key(was sym)/
+  mod directly onto SDL_KeyboardEvent. Every .key.keysym.* access becomes
+  .key.*; sys_keysdown and ags_getkeysdown() now store/return the real
+  SDL_KeyboardEvent instead of a smaller SDL_Keysym-shaped copy (SDL3
+  provides no smaller equivalent struct worth introducing a parallel
+  type for). is_sdl_mod_key()/make_sdl_mod_flag() move from inline (in
+  the header) to declared-in-header/defined-in-cpp, since their new
+  SDL_KeyboardEvent parameter type needs SDL_events.h's full definition,
+  and this header deliberately avoids pulling that in (its own existing
+  comment: "leads to conflicts with allegro").
+- Every SDL2 event-type constant is renamed with an SDL_EVENT_ prefix
+  (SDL_KEYDOWN -> SDL_EVENT_KEY_DOWN, SDL_MOUSEBUTTONDOWN ->
+  SDL_EVENT_MOUSE_BUTTON_DOWN, etc.). SDL_WINDOWEVENT (a single type with
+  a nested event.window.event sub-dispatch) is gone -- every window
+  sub-event is now its own top-level SDL_EVENT_WINDOW_* type; the nested
+  switch in sys_evt_process_one() flattens into more top-level cases.
+  SDL_WINDOWEVENT_CLOSE -> SDL_EVENT_WINDOW_CLOSE_REQUESTED;
+  SDL_WINDOWEVENT_SIZE_CHANGED -> SDL_EVENT_WINDOW_RESIZED. KMOD_* gains
+  an SDL_ prefix throughout (SDL_KMOD_*).
+- SDL_MouseButtonEvent/MouseMotionEvent/MouseWheelEvent's x/y/xrel/yrel
+  are float now (sub-pixel precision), not int -- every read into AGS's
+  int-based mouse state is now an explicit, intentional
+  static_cast<int>, not an implicit truncation. SDL_MouseButtonEvent::state
+  (SDL_PRESSED/SDL_RELEASED) is gone, replaced by a plain bool .down.
+  SDL_MouseWheelEvent::y is now a raw float scroll amount; .integer_y
+  (whole "ticks") is used instead to match the old SDL2 field's actual
+  semantics, not just coerced from the new float field.
+  SDL_TouchFingerEvent::fingerId was renamed fingerID (capital ID).
+- SDL_GetKeyboardState() returns "const bool *" now, not "const Uint8 *".
+  SDL_GetKeyFromScancode() and SDL_GetScancodeFromKey() both gained real
+  new parameters (modstate/key_event, and an out-param modstate
+  respectively) -- genuine signature changes, not renames.
+  SDL_EventFilter's return type is bool now, not int.
+  SDL_TextInputEvent::text is a heap-owned "const char *" now, not a
+  fixed char[32] -- sizeof(SDL_TextInputEvent::text) (used to size a
+  local buffer) would now give a pointer's size, not the old array's;
+  replaced with a named constant matching the old array size (only
+  ascii[0] is ever read, so this is an honest rename, not a behavior
+  change). A synthetic text-input event now points .text at a
+  short-lived local buffer -- confirmed safe by SDL_events.h's own doc
+  comment on SDL_PushEvent: the string is deep-copied into the queue,
+  the caller may dispose of it immediately after the call returns.
+
+Also touches two files outside this patch's originally-scoped list
+(PATCH-SEQUENCE.md 0017's row), both real, necessary companions to
+sys_events.h's own type changes, not scope creep -- the header change
+itself would otherwise break both:
+- Engine/main/game_run.cpp: the same event-type-constant renames plus
+  .key.keysym -> .key, in run_service_key_controls()/run_service_mb_controls().
+- Engine/ac/global_game.cpp: GetPressedKeys() reads keys[i].sym -- the
+  field is .key now on the SDL_KeyboardEvent ags_getkeysdown() returns.
+
+Verified: with this patch (plus 0001-0016) applied, `make build-ags`
+gets past every file this patch or its two companions touch -- no SDL2/
+SDL3-related compile error remains anywhere in the build. It now fails
+on a genuinely new, unrelated blocker: Engine/ac/dynobj/cc_serializer.h:22,
+"'void AGSDeSerializer::Unserialize(...)' marked 'override', but does
+not override" -- a fresh instance of patch 0013's int32_t-vs-int DJGPP
+divergence (ICCObjectCollectionReader::Unserialize's first param is
+int32_t handle; the override declared int index), in a virtual-override
+shape 0013's own narrower grep (ReadArrayOfInt32/WriteArrayOfInt32 call
+sites only) didn't cover. Confirmed by full build log: only 2 real
+errors reported (both this one root cause), the IPO/LTO probe noise
+already known harmless. Left for the next patch, not fixed here -- a
+different file, different concern.
+---
+ Engine/ac/global_game.cpp |   5 +-
+ Engine/ac/sys_events.cpp  | 310 ++++++++++++++++++++++----------------
+ Engine/ac/sys_events.h    |  47 +++---
+ Engine/main/game_run.cpp  |  25 +--
+ 4 files changed, 220 insertions(+), 167 deletions(-)
+
+diff --git a/Engine/ac/global_game.cpp b/Engine/ac/global_game.cpp
+index 396695837..09a474711 100644
+--- a/Engine/ac/global_game.cpp
++++ b/Engine/ac/global_game.cpp
+@@ -862,9 +862,12 @@ void *GetPressedKeys()
+     DynObjectRef arr = DynamicArrayHelpers::CreateArray(sizeof(int), keys.size());
+     if (arr)
+     {
++        // DOS-PORT: SDL_Keysym::sym was renamed .key on the flattened
++        // SDL_KeyboardEvent that ags_getkeysdown() now stores/returns
++        // (SDL_Keysym itself is gone in SDL3).
+         for (size_t i = 0; i < keys.size(); ++i)
+             *(static_cast<uint32_t*>(arr.Obj()) + i) = AGSKeyToScriptKey(
+-                sdl_key_to_ags_key(keys[i].sym, keys[i].scancode, 0u /* ignore mod */));
++                sdl_key_to_ags_key(keys[i].key, keys[i].scancode, 0u /* ignore mod */));
+     }
+     return arr.Obj();
+ }
+diff --git a/Engine/ac/sys_events.cpp b/Engine/ac/sys_events.cpp
+index 2350d5d8b..ff647f537 100644
+--- a/Engine/ac/sys_events.cpp
++++ b/Engine/ac/sys_events.cpp
+@@ -15,7 +15,7 @@
+ #include <chrono>
+ #include <deque>
+ #include <math.h>
+-#include <SDL.h>
++#include <SDL3/SDL.h>
+ #include "platform/platform.h"
+ #include "ac/common.h"
+ #include "ac/keycode.h"
+@@ -37,14 +37,14 @@ extern SystemConfig gl_SysConfig;
+ int sdl_mod_to_ags_mod(const Uint16 mod)
+ {
+     int ags_mod = 0;
+-    if (mod & KMOD_LSHIFT) ags_mod |= eAGSModLShift;
+-    if (mod & KMOD_RSHIFT) ags_mod |= eAGSModRShift;
+-    if (mod & KMOD_LCTRL)  ags_mod |= eAGSModLCtrl;
+-    if (mod & KMOD_RCTRL)  ags_mod |= eAGSModRCtrl;
+-    if (mod & KMOD_LALT)   ags_mod |= eAGSModLAlt;
+-    if (mod & KMOD_RALT)   ags_mod |= eAGSModRAlt;
+-    if (mod & KMOD_NUM)    ags_mod |= eAGSModNum;
+-    if (mod & KMOD_CAPS)   ags_mod |= eAGSModCaps;
++    if (mod & SDL_KMOD_LSHIFT) ags_mod |= eAGSModLShift;
++    if (mod & SDL_KMOD_RSHIFT) ags_mod |= eAGSModRShift;
++    if (mod & SDL_KMOD_LCTRL)  ags_mod |= eAGSModLCtrl;
++    if (mod & SDL_KMOD_RCTRL)  ags_mod |= eAGSModRCtrl;
++    if (mod & SDL_KMOD_LALT)   ags_mod |= eAGSModLAlt;
++    if (mod & SDL_KMOD_RALT)   ags_mod |= eAGSModRAlt;
++    if (mod & SDL_KMOD_NUM)    ags_mod |= eAGSModNum;
++    if (mod & SDL_KMOD_CAPS)   ags_mod |= eAGSModCaps;
+     return ags_mod;
+ }
+ 
+@@ -57,9 +57,9 @@ eAGSKeyCode sdl_key_to_ags_key(const SDL_Keycode sym, const SDL_Scancode scancod
+     // Old mode: Ctrl and Alt combinations realign the letter code to certain offset
+     if (old_keyhandle && (sym >= SDLK_a && sym <= SDLK_z))
+     {
+-        if ((mod & KMOD_CTRL) != 0) // align letters to code 1
++        if ((mod & SDL_KMOD_CTRL) != 0) // align letters to code 1
+             return static_cast<eAGSKeyCode>( 0 + (sym - SDLK_a) + 1 );
+-        else if ((mod & KMOD_ALT) != 0) // align letters to code 301
++        else if ((mod & SDL_KMOD_ALT) != 0) // align letters to code 301
+             return static_cast<eAGSKeyCode>( AGS_EXT_KEY_SHIFT + (sym - SDLK_a) + 1 );
+     }
+     // New mode: also handle common key range
+@@ -69,7 +69,7 @@ eAGSKeyCode sdl_key_to_ags_key(const SDL_Keycode sym, const SDL_Scancode scancod
+     }
+ 
+     // NumPad with NumLock on
+-    if (!old_keyhandle && (sym >= SDLK_KP_1 && sym <= SDLK_KP_PERIOD) && (mod & KMOD_NUM) != 0)
++    if (!old_keyhandle && (sym >= SDLK_KP_1 && sym <= SDLK_KP_PERIOD) && (mod & SDL_KMOD_NUM) != 0)
+     {
+         switch (sym)
+         {
+@@ -156,9 +156,11 @@ eAGSKeyCode sdl_key_to_ags_key(const SDL_Keycode key, const SDL_Scancode scancod
+     return sdl_key_to_ags_key(key, scancode, mod, false);
+ }
+ 
+-eAGSKeyCode sdl_key_to_ags_key(const SDL_Keysym &key, bool old_keyhandle)
++// DOS-PORT: takes the real SDL_KeyboardEvent now (SDL3 removed SDL_Keysym
++// and flattened its fields directly onto the event) -- .sym is renamed .key.
++eAGSKeyCode sdl_key_to_ags_key(const SDL_KeyboardEvent &key, bool old_keyhandle)
+ {
+-    return sdl_key_to_ags_key(key.sym, key.scancode, key.mod, old_keyhandle);
++    return sdl_key_to_ags_key(key.key, key.scancode, key.mod, old_keyhandle);
+ }
+ 
+ // Converts ags key to SDL key scans (up to 3 values, because this is not a 1:1 match);
+@@ -186,7 +188,10 @@ bool ags_key_to_sdl_scan(eAGSKeyCode key, SDL_Scancode(&scan)[3])
+     // If we have got key sym, convert it to SDL scancode using library's function
+     if (sym != SDLK_UNKNOWN)
+     {
+-        scan[0] = SDL_GetScancodeFromKey(sym);
++        // DOS-PORT: SDL_GetScancodeFromKey() gained a second out-param in
++        // SDL3 (the modifier state needed to produce this key); AGS doesn't
++        // need it here, so nullptr.
++        scan[0] = SDL_GetScancodeFromKey(sym, nullptr);
+ 
+         // Numpad keys that do not depend on NumLock state, so should always be checked
+         // TODO: I was not certain whether to handle numeric keys here, because they
+@@ -258,14 +263,14 @@ bool ags_key_to_sdl_scan(eAGSKeyCode key, SDL_Scancode(&scan)[3])
+ int ags_mod_to_sdl_mod(eAGSKeyMod mod)
+ {
+     int sdl_mod = 0;
+-    if (mod & eAGSModLShift) sdl_mod |= KMOD_LSHIFT;
+-    if (mod & eAGSModRShift) sdl_mod |= KMOD_RSHIFT;
+-    if (mod & eAGSModLCtrl)  sdl_mod |= KMOD_LCTRL;
+-    if (mod & eAGSModRCtrl)  sdl_mod |= KMOD_RCTRL;
+-    if (mod & eAGSModLAlt)   sdl_mod |= KMOD_LALT;
+-    if (mod & eAGSModRAlt)   sdl_mod |= KMOD_RALT;
+-    if (mod & eAGSModNum)    sdl_mod |= KMOD_NUM;
+-    if (mod & eAGSModCaps)   sdl_mod |= KMOD_CAPS;
++    if (mod & eAGSModLShift) sdl_mod |= SDL_KMOD_LSHIFT;
++    if (mod & eAGSModRShift) sdl_mod |= SDL_KMOD_RSHIFT;
++    if (mod & eAGSModLCtrl)  sdl_mod |= SDL_KMOD_LCTRL;
++    if (mod & eAGSModRCtrl)  sdl_mod |= SDL_KMOD_RCTRL;
++    if (mod & eAGSModLAlt)   sdl_mod |= SDL_KMOD_LALT;
++    if (mod & eAGSModRAlt)   sdl_mod |= SDL_KMOD_RALT;
++    if (mod & eAGSModNum)    sdl_mod |= SDL_KMOD_NUM;
++    if (mod & eAGSModCaps)   sdl_mod |= SDL_KMOD_CAPS;
+     return sdl_mod;
+ }
+ 
+@@ -282,10 +287,19 @@ KeyInput sdl_keyevt_to_ags_key(const SDL_Event &event, bool old_keyhandle)
+     // TEXTINPUT for char print only.
+     switch (event.type)
+     {
+-    case SDL_TEXTINPUT:
++    case SDL_EVENT_TEXT_INPUT:
++    {
++        // DOS-PORT: SDL_TextInputEvent::text is a heap-owned, null-terminated
++        // "const char *" in SDL3, not a fixed-size char[32] array -- sizeof()
++        // on it would now give the size of a pointer, not a usable buffer
++        // length. ASCII_BUF_SIZE mirrors SDL2's old fixed array size (only
++        // ascii[0] is ever read below, so any size comfortably larger than
++        // one converted character is correct; matching the old size keeps
++        // this an honest rename, not a behavior change).
++        const size_t ASCII_BUF_SIZE = 32;
+         if (old_keyhandle)
+         {
+-            char ascii[sizeof(SDL_TextInputEvent::text)];
++            char ascii[ASCII_BUF_SIZE];
+             StrUtil::ConvertUtf8ToAscii(event.text.text, "C", &ascii[0], sizeof(ascii));
+             if (ascii[0] >= 32)
+             {
+@@ -294,12 +308,15 @@ KeyInput sdl_keyevt_to_ags_key(const SDL_Event &event, bool old_keyhandle)
+             }
+         }
+         ags_strncpy_s(ki.Text, KeyInput::UTF8_ARR_SIZE, event.text.text, KeyInput::UTF8_ARR_SIZE - 1);
+-        Utf8::GetChar(event.text.text, sizeof(SDL_TextInputEvent::text), &ki.UChar);
++        Utf8::GetChar(event.text.text, SDL_strlen(event.text.text), &ki.UChar);
+         return ki;
+-    case SDL_KEYDOWN:
+-        ki.Mod = sdl_mod_to_ags_mod(event.key.keysym.mod);
+-        ki.Key = sdl_key_to_ags_key(event.key.keysym, old_keyhandle);
+-        ki.CompatKey = sdl_key_to_ags_key(event.key.keysym, true);
++    }
++    case SDL_EVENT_KEY_DOWN:
++        // DOS-PORT: SDL_Keysym is gone -- .key.keysym.mod/.sym are now
++        // directly .key.mod/.key.key on the flattened SDL_KeyboardEvent.
++        ki.Mod = sdl_mod_to_ags_mod(event.key.mod);
++        ki.Key = sdl_key_to_ags_key(event.key, old_keyhandle);
++        ki.CompatKey = sdl_key_to_ags_key(event.key, true);
+         if (!old_keyhandle && (ki.CompatKey == eAGSKeyCodeNone))
+             ki.CompatKey = ki.Key; // in the new mode also assign letter-range keys
+         return ki;
+@@ -317,7 +334,9 @@ KeyInput sdl_keyevt_to_ags_key(const SDL_Event &event, bool old_keyhandle)
+ // input events for our internal use whenever engine have to query player input.
+ static std::deque<SDL_Event> g_inputEvtQueue;
+ 
+-std::vector<SDL_Keysym> sys_keysdown;
++// DOS-PORT: SDL_Keysym is gone in SDL3 -- stores the real SDL_KeyboardEvent
++// instead (see sys_events.h's ags_getkeysdown() comment).
++std::vector<SDL_KeyboardEvent> sys_keysdown;
+ int sys_modkeys = 0; // saved accumulated key mods
+ bool sys_modkeys_fired = false; // saved mod key combination already fired
+ 
+@@ -327,12 +346,12 @@ InputType ags_inputevent_ready()
+         return kInputNone;
+     switch (g_inputEvtQueue.front().type)
+     {
+-    case SDL_KEYDOWN:
+-    case SDL_KEYUP:
+-    case SDL_TEXTINPUT:
++    case SDL_EVENT_KEY_DOWN:
++    case SDL_EVENT_KEY_UP:
++    case SDL_EVENT_TEXT_INPUT:
+         return kInputKeyboard;
+-    case SDL_MOUSEBUTTONDOWN:
+-    case SDL_MOUSEBUTTONUP:
++    case SDL_EVENT_MOUSE_BUTTON_DOWN:
++    case SDL_EVENT_MOUSE_BUTTON_UP:
+         return kInputMouse;
+     default:
+         return kInputNone;
+@@ -365,7 +384,9 @@ bool ags_iskeydown(eAGSKeyCode ags_key)
+     if (gl_SysConfig.OldStyleKeyHandling)
+         SDL_PumpEvents();
+ 
+-    const Uint8 *state = SDL_GetKeyboardState(NULL);
++    // DOS-PORT: SDL_GetKeyboardState() returns "const bool *" in SDL3, not
++    // "const Uint8 *".
++    const bool *state = SDL_GetKeyboardState(NULL);
+     SDL_Scancode scan[3];
+     if (!ags_key_to_sdl_scan(ags_key, scan))
+         return false;
+@@ -377,7 +398,7 @@ bool ags_isanykeydown()
+     return sys_keysdown.size() > 0;
+ }
+ 
+-const std::vector<SDL_Keysym> &ags_getkeysdown()
++const std::vector<SDL_KeyboardEvent> &ags_getkeysdown()
+ {
+     return sys_keysdown;
+ }
+@@ -389,21 +410,33 @@ void ags_simulate_keypress(eAGSKeyCode ags_key, eAGSKeyMod mod, bool old_keyhand
+         return;
+     // Push a key event to the event queue; note that this won't affect the key states array
+     SDL_Event sdlevent = {};
+-    sdlevent.type = SDL_KEYDOWN;
+-    const SDL_Keycode key_sym = SDL_GetKeyFromScancode(scan[0]);
+-    sdlevent.key.keysym.sym = key_sym;
+-    sdlevent.key.keysym.scancode = scan[0];
+-    sdlevent.key.keysym.mod = ags_mod_to_sdl_mod(mod) | SDL_GetModState();
++    sdlevent.type = SDL_EVENT_KEY_DOWN;
++    // DOS-PORT: SDL_GetKeyFromScancode() gained modstate/key_event params in
++    // SDL3 (a real signature change, not a rename) -- modstate matches
++    // SDL2's own implicit behavior (using the current modifier state),
++    // key_event=true since this keycode is going into a real key event.
++    // SDL_Keysym is gone -- .key.keysym.sym/.scancode/.mod are now directly
++    // .key.key/.key.scancode/.key.mod on the flattened SDL_KeyboardEvent.
++    const SDL_Keycode key_sym = SDL_GetKeyFromScancode(scan[0], SDL_GetModState(), true);
++    sdlevent.key.key = key_sym;
++    sdlevent.key.scancode = scan[0];
++    sdlevent.key.mod = ags_mod_to_sdl_mod(mod) | SDL_GetModState();
+     SDL_PushEvent(&sdlevent);
+     // Push a text input event for ascii printable characters;
+     // in case of "old key handling mode" this instead will trigger on_key_press for them.
+     if (old_keyhandle && (key_sym >= SDLK_SPACE && key_sym <= SDLK_z))
+     {
+-        sdlevent.type = SDL_TEXTINPUT;
+-        sdlevent.text.text[0] = static_cast<char>(key_sym);
++        // DOS-PORT: SDL_TextInputEvent::text is a "const char *" in SDL3, not
++        // a writable fixed array -- SDL_PushEvent() deep-copies the pointed-to
++        // string into its own queue storage (confirmed in SDL_events.h's own
++        // doc comment: "the caller may dispose of the memory ... after
++        // SDL_PushEvent() returns"), so a short-lived local buffer is safe.
++        const char text_buf[2] = { static_cast<char>(key_sym), '\0' };
++        sdlevent.type = SDL_EVENT_TEXT_INPUT;
++        sdlevent.text.text = text_buf;
+         SDL_PushEvent(&sdlevent);
+     }
+-    sdlevent.type = SDL_KEYUP;
++    sdlevent.type = SDL_EVENT_KEY_UP;
+     SDL_PushEvent(&sdlevent);
+ }
+ 
+@@ -415,21 +448,21 @@ void push_sdl_key_event(eAGSKeyCode ags_key, Uint32 sdl_event)
+     // Push a key event to the event queue; note that this won't affect the key states array
+     SDL_Event sdlevent = {};
+     sdlevent.type = sdl_event;
+-    const SDL_Keycode key_sym = SDL_GetKeyFromScancode(scan[0]);
+-    sdlevent.key.keysym.sym = key_sym;
+-    sdlevent.key.keysym.scancode = scan[0];
+-    sdlevent.key.keysym.mod = SDL_GetModState();
++    const SDL_Keycode key_sym = SDL_GetKeyFromScancode(scan[0], SDL_GetModState(), true);
++    sdlevent.key.key = key_sym;
++    sdlevent.key.scancode = scan[0];
++    sdlevent.key.mod = SDL_GetModState();
+     SDL_PushEvent(&sdlevent);
+ }
+ 
+ void ags_simulate_keydown(eAGSKeyCode ags_key)
+ {
+-    push_sdl_key_event(ags_key, SDL_KEYDOWN);
++    push_sdl_key_event(ags_key, SDL_EVENT_KEY_DOWN);
+ }
+ 
+ void ags_simulate_keyup(eAGSKeyCode ags_key)
+ {
+-    push_sdl_key_event(ags_key, SDL_KEYUP);
++    push_sdl_key_event(ags_key, SDL_EVENT_KEY_UP);
+ }
+ 
+ static void on_sdl_key_down(const SDL_Event &event)
+@@ -439,7 +472,7 @@ static void on_sdl_key_down(const SDL_Event &event)
+     g_inputEvtQueue.push_back(event);
+     if (event.key.repeat == 0)
+     {
+-        sys_keysdown.push_back(event.key.keysym);
++        sys_keysdown.push_back(event.key);
+     }
+ }
+ 
+@@ -450,7 +483,7 @@ static void on_sdl_key_up(const SDL_Event &event)
+     if (event.key.repeat == 0)
+     {
+         sys_keysdown.erase(
+-            std::remove_if(sys_keysdown.begin(), sys_keysdown.end(), [&event](const SDL_Keysym &key){ return key.sym == event.key.keysym.sym; }),
++            std::remove_if(sys_keysdown.begin(), sys_keysdown.end(), [&event](const SDL_KeyboardEvent &key){ return key.key == event.key.key; }),
+             sys_keysdown.end());
+     }
+ }
+@@ -547,9 +580,11 @@ static void send_mouse_button_event(int evt_type, int device, int button, int x,
+     SDL_Event evt = {};
+     evt.type = evt_type;
+     evt.button.which = device;
+-    evt.button.state = evt_type == SDL_MOUSEBUTTONDOWN ? SDL_PRESSED : SDL_RELEASED;
++    // DOS-PORT: SDL_MouseButtonEvent::state (SDL_PRESSED/SDL_RELEASED) is
++    // gone -- replaced with a plain bool .down field.
++    evt.button.down = (evt_type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+     evt.button.button = button;
+-    evt.button.x = x;
++    evt.button.x = x; // DOS-PORT: .x/.y are float now, int->float widens, no cast needed
+     evt.button.y = y;
+     SDL_PushEvent(&evt);
+ }
+@@ -557,9 +592,9 @@ static void send_mouse_button_event(int evt_type, int device, int button, int x,
+ static void send_mouse_motion_event(int device, int x, int y, int xrel, int yrel)
+ {
+     SDL_Event evt = {};
+-    evt.type = SDL_MOUSEMOTION;
++    evt.type = SDL_EVENT_MOUSE_MOTION;
+     evt.motion.which = device;
+-    evt.motion.x = x;
++    evt.motion.x = x; // DOS-PORT: .x/.y/.xrel/.yrel are float now, int->float widens
+     evt.motion.y = y;
+     evt.motion.xrel = xrel;
+     evt.motion.yrel = yrel;
+@@ -570,8 +605,8 @@ void ags_simulate_mouseclick(eAGSMouseButton but)
+ {
+     // Simulate using SDL_TOUCH_MOUSEID pseudo-device, in order to distinguish
+     // from the real mouse device (we may also allocate our own ID if necessary)
+-    send_mouse_button_event(SDL_MOUSEBUTTONDOWN, SDL_TOUCH_MOUSEID, ags_button_to_sdl(but), sys_mouse_x, sys_mouse_y);
+-    send_mouse_button_event(SDL_MOUSEBUTTONUP, SDL_TOUCH_MOUSEID, ags_button_to_sdl(but), sys_mouse_x, sys_mouse_y);
++    send_mouse_button_event(SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_TOUCH_MOUSEID, ags_button_to_sdl(but), sys_mouse_x, sys_mouse_y);
++    send_mouse_button_event(SDL_EVENT_MOUSE_BUTTON_UP, SDL_TOUCH_MOUSEID, ags_button_to_sdl(but), sys_mouse_x, sys_mouse_y);
+ }
+ 
+ // Syncs all the emulated mouse devices with the real sys_mouse_* coords
+@@ -582,10 +617,13 @@ static void on_sdl_mouse_motion(const SDL_MouseMotionEvent &event)
+     if (event.which == disabled_mouse_device)
+         return;
+ 
+-    sys_mouse_x = event.x;
+-    sys_mouse_y = event.y;
+-    mouse_accum_relx += event.xrel;
+-    mouse_accum_rely += event.yrel;
++    // DOS-PORT: SDL_MouseMotionEvent's x/y/xrel/yrel are float now (SDL3
++    // added sub-pixel mouse precision); AGS's own mouse state is int-based
++    // pixel coords, so this is a real, intentional truncation, not a bug.
++    sys_mouse_x = static_cast<int>(event.x);
++    sys_mouse_y = static_cast<int>(event.y);
++    mouse_accum_relx += static_cast<int>(event.xrel);
++    mouse_accum_rely += static_cast<int>(event.yrel);
+     sync_sys_mouse_pos();
+ }
+ 
+@@ -594,16 +632,16 @@ static void on_sdl_mouse_down(const SDL_Event &event)
+     if (event.button.which == disabled_mouse_device)
+         return;
+ 
+-    sys_mouse_x = event.button.x;
+-    sys_mouse_y = event.button.y;
++    sys_mouse_x = static_cast<int>(event.button.x); // DOS-PORT: .x/.y are float now
++    sys_mouse_y = static_cast<int>(event.button.y);
+     mouse_button_state |= sdl_button_to_mask(event.button.button);
+     g_inputEvtQueue.push_back(event);
+ }
+ 
+ static void on_sdl_mouse_up(const SDL_Event &event)
+ {
+-    sys_mouse_x = event.button.x;
+-    sys_mouse_y = event.button.y;
++    sys_mouse_x = static_cast<int>(event.button.x); // DOS-PORT: .x/.y are float now
++    sys_mouse_y = static_cast<int>(event.button.y);
+     mouse_button_state &= ~sdl_button_to_mask(event.button.button);
+     // Uncomment when need to handle mouse up event in the game states
+     //g_inputEvtQueue.push_back(event);
+@@ -614,7 +652,12 @@ static void on_sdl_mouse_wheel(const SDL_MouseWheelEvent &event)
+     if (event.which == disabled_mouse_device)
+         return;
+ 
+-    sys_mouse_z += event.y;
++    // DOS-PORT: SDL_MouseWheelEvent::y is now a float raw scroll amount, not
++    // the old SDL2 whole-tick Sint32 -- .integer_y preserves the original
++    // whole-tick semantics AGS's own up/down wheel comparison expects
++    // (ags_check_mouse_wheel() only compares sys_mouse_z for direction, not
++    // magnitude), rather than truncating the new float field.
++    sys_mouse_z += event.integer_y;
+ }
+ 
+ void ags_mouse_acquire_relxy(int &x, int &y)
+@@ -782,10 +825,14 @@ static int tfinger_to_mouse_but(int finger_index)
+ }
+ 
+ // Handles double tap detection (multiple touch downs and ups)
++// DOS-PORT: SDL_TouchFingerEvent::fingerId was renamed fingerID in SDL3
++// (capital ID) -- every event.fingerId access below follows that rename;
++// the Fingers class's own fingerId-named parameters (above) are unrelated
++// local names, not SDL fields, and are left as-is.
+ static void detect_double_tap(const SDL_TouchFingerEvent &event, bool down)
+ {
+     auto tap_ts = Clock::now();
+-    if ((touch.last_tap_finger == event.fingerId) &&
++    if ((touch.last_tap_finger == event.fingerID) &&
+         (tap_ts < (touch.last_tap_ts + touch.quick_tap_delay)))
+     {
+         if (down) touch.tap_count++;
+@@ -795,7 +842,7 @@ static void detect_double_tap(const SDL_TouchFingerEvent &event, bool down)
+         touch.tap_count = down ? 1 : 0;
+     }
+     touch.last_tap_ts = tap_ts;
+-    touch.last_tap_finger = event.fingerId;
++    touch.last_tap_finger = event.fingerID;
+ }
+ 
+ // Calculates relative emulated mouse delta,
+@@ -865,7 +912,7 @@ static void sync_sys_mouse_pos()
+ 
+ static void on_sdl_touch_down(const SDL_TouchFingerEvent &event)
+ {
+-    int finger_index = touch.fingers.push(event.fingerId);
++    int finger_index = touch.fingers.push(event.fingerID);
+     if(finger_index == Fingers::NO_INDEX) return;
+ 
+     touch.fingers_down |= 1 << finger_index;
+@@ -881,7 +928,7 @@ static void on_sdl_touch_down(const SDL_TouchFingerEvent &event)
+         {
+             set_t2m_pos(event.x, event.y, 0.f, 0.f);
+             t2m.start_pos = t2m.pos;
+-            send_mouse_button_event(SDL_MOUSEBUTTONDOWN, SDL_TOUCH_MOUSEID, mouse_but,
++            send_mouse_button_event(SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_TOUCH_MOUSEID, mouse_but,
+                 t2m.emul_pos.X, t2m.emul_pos.Y);
+         }
+         break;
+@@ -893,12 +940,12 @@ static void on_sdl_touch_down(const SDL_TouchFingerEvent &event)
+         if ((mouse_but == SDL_BUTTON_LEFT) && (touch.tap_count == 2))
+         {
+             t2m.drag_down = SDL_BUTTON_LEFT;
+-            send_mouse_button_event(SDL_MOUSEBUTTONDOWN, SDL_TOUCH_MOUSEID, t2m.drag_down, t2m.emul_pos.X, t2m.emul_pos.Y);
++            send_mouse_button_event(SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_TOUCH_MOUSEID, t2m.drag_down, t2m.emul_pos.X, t2m.emul_pos.Y);
+         }
+         // If another finger was down, then unpress the drag
+         else if (t2m.drag_down > 0)
+         {
+-            send_mouse_button_event(SDL_MOUSEBUTTONUP, SDL_TOUCH_MOUSEID, t2m.drag_down, t2m.emul_pos.X, t2m.emul_pos.Y);
++            send_mouse_button_event(SDL_EVENT_MOUSE_BUTTON_UP, SDL_TOUCH_MOUSEID, t2m.drag_down, t2m.emul_pos.X, t2m.emul_pos.Y);
+             t2m.drag_down = 0;
+         }
+ 
+@@ -929,7 +976,7 @@ static void on_sdl_touch_down(const SDL_TouchFingerEvent &event)
+ 
+ static void on_sdl_touch_up(const SDL_TouchFingerEvent &event)
+ {
+-    int finger_index = touch.fingers.get_index(event.fingerId);
++    int finger_index = touch.fingers.get_index(event.fingerID);
+     if(finger_index == Fingers::NO_INDEX) return;
+ 
+     touch.fingers_down &= ~(1 << finger_index);
+@@ -943,7 +990,7 @@ static void on_sdl_touch_up(const SDL_TouchFingerEvent &event)
+         int mouse_but = tfinger_to_mouse_but(finger_index);
+         if (mouse_but == SDL_BUTTON_LEFT)
+         {
+-            send_mouse_button_event(SDL_MOUSEBUTTONUP, SDL_TOUCH_MOUSEID, mouse_but, t2m.emul_pos.X, t2m.emul_pos.Y);
++            send_mouse_button_event(SDL_EVENT_MOUSE_BUTTON_UP, SDL_TOUCH_MOUSEID, mouse_but, t2m.emul_pos.X, t2m.emul_pos.Y);
+             t2m.is_dragging = false;
+             t2m.emul_pos_init = false; // force init at the next finger down
+         }
+@@ -960,15 +1007,15 @@ static void on_sdl_touch_up(const SDL_TouchFingerEvent &event)
+             // If was dragging, then only release
+             if (t2m.drag_down)
+             {
+-                send_mouse_button_event(SDL_MOUSEBUTTONUP, SDL_TOUCH_MOUSEID, t2m.drag_down, t2m.emul_pos.X, t2m.emul_pos.Y);
++                send_mouse_button_event(SDL_EVENT_MOUSE_BUTTON_UP, SDL_TOUCH_MOUSEID, t2m.drag_down, t2m.emul_pos.X, t2m.emul_pos.Y);
+                 t2m.drag_down = 0;
+             }
+             // Else, if was not dragging around, then perform a "click"
+             // (send both mouse button down and up)
+             else if (!t2m.is_dragging)
+             {
+-                send_mouse_button_event(SDL_MOUSEBUTTONDOWN, SDL_TOUCH_MOUSEID, mouse_but, t2m.emul_pos.X, t2m.emul_pos.Y);
+-                send_mouse_button_event(SDL_MOUSEBUTTONUP, SDL_TOUCH_MOUSEID, mouse_but, t2m.emul_pos.X, t2m.emul_pos.Y);
++                send_mouse_button_event(SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_TOUCH_MOUSEID, mouse_but, t2m.emul_pos.X, t2m.emul_pos.Y);
++                send_mouse_button_event(SDL_EVENT_MOUSE_BUTTON_UP, SDL_TOUCH_MOUSEID, mouse_but, t2m.emul_pos.X, t2m.emul_pos.Y);
+             }
+         }
+         // If all fingers are up, reset the locked mouse motion and forced button
+@@ -983,12 +1030,12 @@ static void on_sdl_touch_up(const SDL_TouchFingerEvent &event)
+     }
+     default: break; // do nothing
+     }
+-    touch.fingers.pop(event.fingerId);
++    touch.fingers.pop(event.fingerID);
+ }
+ 
+ static void on_sdl_touch_motion(const SDL_TouchFingerEvent &event)
+ {
+-    int finger_index = touch.fingers.get_index(event.fingerId);
++    int finger_index = touch.fingers.get_index(event.fingerID);
+     if(finger_index == Fingers::NO_INDEX) return;
+ 
+     switch (t2m.mode)
+@@ -1048,7 +1095,8 @@ static void(*_on_quit_callback)(void) = nullptr;
+ static void(*_on_switchin_callback)(void) = nullptr;
+ static void(*_on_switchout_callback)(void) = nullptr;
+ 
+-int sys_evt_filter(void *userdata, SDL_Event *event)
++// DOS-PORT: SDL_EventFilter's return type is bool in SDL3, not int.
++bool sys_evt_filter(void *userdata, SDL_Event *event)
+ {
+     const SystemConfig *cfg = static_cast<SystemConfig *>(userdata);
+     if (!cfg->MouseEnabled)
+@@ -1057,18 +1105,18 @@ int sys_evt_filter(void *userdata, SDL_Event *event)
+         // except ones which belong to the emulated device
+         switch (event->type)
+         {
+-        case SDL_MOUSEBUTTONDOWN:
+-        case SDL_MOUSEBUTTONUP:
+-            return event->button.which == SDL_TOUCH_MOUSEID ? 1 : 0;
+-        case SDL_MOUSEMOTION:
+-            return event->motion.which == SDL_TOUCH_MOUSEID ? 1 : 0;
+-        case SDL_MOUSEWHEEL:
+-            return event->wheel.which == SDL_TOUCH_MOUSEID ? 1 : 0;
++        case SDL_EVENT_MOUSE_BUTTON_DOWN:
++        case SDL_EVENT_MOUSE_BUTTON_UP:
++            return event->button.which == SDL_TOUCH_MOUSEID;
++        case SDL_EVENT_MOUSE_MOTION:
++            return event->motion.which == SDL_TOUCH_MOUSEID;
++        case SDL_EVENT_MOUSE_WHEEL:
++            return event->wheel.which == SDL_TOUCH_MOUSEID;
+         default:
+-            return 1;
++            return true;
+         }
+     }
+-    return 1;
++    return true;
+ }
+ 
+ void sys_evt_on_config_set() {
+@@ -1091,71 +1139,73 @@ void sys_evt_set_focus_callbacks(void(*switch_in)(void), void(*switch_out)(void)
+     _on_switchout_callback = switch_out;
+ }
+ 
++// DOS-PORT: SDL3 flattens every SDL2 SDL_WINDOWEVENT sub-type (previously
++// dispatched via a nested switch on event.window.event) into its own
++// top-level SDL_EVENT_WINDOW_* event type -- there is no more
++// SDL_WINDOWEVENT wrapper or .window.event sub-type field to switch on;
++// the payload fields themselves (event.window.data1/data2) are unchanged.
++// SDL_WINDOWEVENT_CLOSE was renamed SDL_EVENT_WINDOW_CLOSE_REQUESTED;
++// SDL_WINDOWEVENT_SIZE_CHANGED was renamed SDL_EVENT_WINDOW_RESIZED.
+ void sys_evt_process_one(const SDL_Event &event) {
+     switch (event.type) {
+     // GENERAL
+-    case SDL_QUIT:
++    case SDL_EVENT_QUIT:
+         Debug::Printf("SDL event: quit");
+         if (_on_quit_callback) {
+             _on_quit_callback();
+         }
+         break;
+     // WINDOW
+-    case SDL_WINDOWEVENT:
+-        switch (event.window.event)
+-        {
+-        case SDL_WINDOWEVENT_FOCUS_GAINED:
+-            Debug::Printf("Window event: focus gained");
+-            if (_on_switchin_callback) {
+-                _on_switchin_callback();
+-            }
+-            break;
+-        case SDL_WINDOWEVENT_FOCUS_LOST:
+-            Debug::Printf("Window event: focus lost");
+-            if (_on_switchout_callback) {
+-                _on_switchout_callback();
+-            }
+-            break;
+-        case SDL_WINDOWEVENT_CLOSE:
+-            Debug::Printf("Window event: close");
+-            break;
+-        case SDL_WINDOWEVENT_SIZE_CHANGED:
+-            Debug::Printf("Window event: size changed (%d, %d)", event.window.data1, event.window.data2);
+-            engine_on_window_changed(Size(event.window.data1, event.window.data2));
+-            break;
++    case SDL_EVENT_WINDOW_FOCUS_GAINED:
++        Debug::Printf("Window event: focus gained");
++        if (_on_switchin_callback) {
++            _on_switchin_callback();
+         }
+         break;
++    case SDL_EVENT_WINDOW_FOCUS_LOST:
++        Debug::Printf("Window event: focus lost");
++        if (_on_switchout_callback) {
++            _on_switchout_callback();
++        }
++        break;
++    case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
++        Debug::Printf("Window event: close");
++        break;
++    case SDL_EVENT_WINDOW_RESIZED:
++        Debug::Printf("Window event: size changed (%d, %d)", event.window.data1, event.window.data2);
++        engine_on_window_changed(Size(event.window.data1, event.window.data2));
++        break;
+     // KEY INPUT
+-    case SDL_KEYDOWN:
++    case SDL_EVENT_KEY_DOWN:
+         on_sdl_key_down(event);
+         break;
+-    case SDL_KEYUP:
++    case SDL_EVENT_KEY_UP:
+         on_sdl_key_up(event);
+         break;
+-    case SDL_TEXTINPUT:
++    case SDL_EVENT_TEXT_INPUT:
+         on_sdl_textinput(event);
+         break;
+     // MOUSE INPUT
+-    case SDL_MOUSEMOTION:
++    case SDL_EVENT_MOUSE_MOTION:
+         on_sdl_mouse_motion(event.motion);
+         break;
+-    case SDL_MOUSEBUTTONDOWN:
++    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+         on_sdl_mouse_down(event);
+         break;
+-    case SDL_MOUSEBUTTONUP:
++    case SDL_EVENT_MOUSE_BUTTON_UP:
+         on_sdl_mouse_up(event);
+         break;
+-    case SDL_MOUSEWHEEL:
++    case SDL_EVENT_MOUSE_WHEEL:
+         on_sdl_mouse_wheel(event.wheel);
+         break;
+     // TOUCH INPUT
+-    case SDL_FINGERDOWN:
++    case SDL_EVENT_FINGER_DOWN:
+         on_sdl_touch_down(event.tfinger);
+         break;
+-    case SDL_FINGERUP:
++    case SDL_EVENT_FINGER_UP:
+         on_sdl_touch_up(event.tfinger);
+         break;
+-    case SDL_FINGERMOTION:
++    case SDL_EVENT_FINGER_MOTION:
+         on_sdl_touch_motion(event.tfinger);
+         break;
+     default: break;
+@@ -1171,8 +1221,12 @@ void sys_evt_process_pending(void) {
+ 
+ void sys_flush_events(void) {
+     SDL_PumpEvents();
+-    SDL_FlushEvent(SDL_WINDOWEVENT);
+-    SDL_FlushEvents(SDL_KEYDOWN, SDL_TEXTINPUT);
+-    SDL_FlushEvents(SDL_MOUSEMOTION, SDL_MOUSEWHEEL);
++    // DOS-PORT: SDL_WINDOWEVENT (a single flushable type covering every
++    // window sub-event) is gone -- window events are now their own
++    // contiguous SDL_EVENT_WINDOW_* range, flushed via the real
++    // SDL_EVENT_WINDOW_FIRST/_LAST bounds SDL3 defines for exactly this.
++    SDL_FlushEvents(SDL_EVENT_WINDOW_FIRST, SDL_EVENT_WINDOW_LAST);
++    SDL_FlushEvents(SDL_EVENT_KEY_DOWN, SDL_EVENT_TEXT_INPUT);
++    SDL_FlushEvents(SDL_EVENT_MOUSE_MOTION, SDL_EVENT_MOUSE_WHEEL);
+     ags_clear_input_state();
+ }
+diff --git a/Engine/ac/sys_events.h b/Engine/ac/sys_events.h
+index 23ccf3000..cdef93d1e 100644
+--- a/Engine/ac/sys_events.h
++++ b/Engine/ac/sys_events.h
+@@ -18,7 +18,7 @@
+ #ifndef __AGS_EE_AC__SYS_EVENTS_H
+ #define __AGS_EE_AC__SYS_EVENTS_H
+ #include <vector>
+-#include <SDL_keyboard.h>
++#include <SDL3/SDL_keyboard.h>
+ #include "ac/keycode.h"
+ #include "util/geometry.h"
+ 
+@@ -37,6 +37,7 @@ enum InputType
+ //
+ // avoid including SDL.h here, at least for now, because that leads to conflicts with allegro
+ union SDL_Event;
++struct SDL_KeyboardEvent;
+ 
+ // Converts SDL key data to eAGSKeyCode, which may be also directly used as an ASCII char
+ // if it is in proper range, see comments to eAGSKeyCode for details.
+@@ -51,38 +52,24 @@ eAGSKeyCode sdl_key_to_ags_key(const SDL_Keycode sym, const SDL_Scancode scancod
+ int sdl_mod_to_ags_mod(const Uint16 mod);
+ 
+ // Tells if key event refers to one of the mod-keys
+-inline bool is_sdl_mod_key(const SDL_Keysym &key)
+-{
+-    return key.scancode == SDL_SCANCODE_LCTRL || key.scancode == SDL_SCANCODE_RCTRL ||
+-        key.scancode == SDL_SCANCODE_LALT || key.scancode == SDL_SCANCODE_RALT ||
+-        key.scancode == SDL_SCANCODE_LSHIFT || key.scancode == SDL_SCANCODE_RSHIFT ||
+-        key.scancode == SDL_SCANCODE_MODE;
+-}
+-
++// DOS-PORT: takes the real SDL_KeyboardEvent (SDL3 flattens SDL_Keysym's
++// fields directly onto it; SDL_Keysym itself is gone) rather than a lighter
++// SDL_Keysym-shaped struct -- declared here, defined in sys_events.cpp
++// (not inline) because SDL_KeyboardEvent's full definition lives in
++// SDL_events.h, which this header deliberately avoids pulling in (see the
++// "avoid including SDL.h here" comment above -- conflicts with allegro).
++bool is_sdl_mod_key(const SDL_KeyboardEvent &key);
+ // Makes a mod flag out of the scan code
+-inline int make_sdl_mod_flag(const SDL_Keysym &key)
+-{
+-    switch (key.scancode)
+-    {
+-    case SDL_SCANCODE_LSHIFT: return KMOD_LSHIFT;
+-    case SDL_SCANCODE_RSHIFT: return KMOD_RSHIFT;
+-    case SDL_SCANCODE_LCTRL: return KMOD_LCTRL;
+-    case SDL_SCANCODE_RCTRL: return KMOD_RCTRL;
+-    case SDL_SCANCODE_LALT: return KMOD_LALT;
+-    case SDL_SCANCODE_RALT: return KMOD_RALT;
+-    case SDL_SCANCODE_MODE: return KMOD_MODE;
+-    default: return KMOD_NONE;
+-    }
+-}
++int make_sdl_mod_flag(const SDL_KeyboardEvent &key);
+ 
+ // Converts mod key into merged mod (left & right) for easier handling
+ inline int make_sdl_merged_mod(int mod)
+ {
+     int m_mod = 0;
+-    if ((mod & KMOD_CTRL) != 0) m_mod |= KMOD_CTRL;
+-    if ((mod & KMOD_SHIFT) != 0) m_mod |= KMOD_SHIFT;
+-    if ((mod & KMOD_ALT) != 0) m_mod |= KMOD_ALT;
+-    // what about KMOD_GUI, and there's also some SDL_SCANCODE_MODE?
++    if ((mod & SDL_KMOD_CTRL) != 0) m_mod |= SDL_KMOD_CTRL;
++    if ((mod & SDL_KMOD_SHIFT) != 0) m_mod |= SDL_KMOD_SHIFT;
++    if ((mod & SDL_KMOD_ALT) != 0) m_mod |= SDL_KMOD_ALT;
++    // what about SDL_KMOD_GUI, and there's also some SDL_SCANCODE_MODE?
+     return m_mod;
+ }
+ 
+@@ -99,7 +86,11 @@ bool ags_iskeydown(eAGSKeyCode ags_key);
+ // Tells whether any key is currently down
+ bool ags_isanykeydown();
+ // Returns a list of keys that are currently down
+-const std::vector<SDL_Keysym> &ags_getkeysdown();
++// DOS-PORT: SDL_Keysym is gone in SDL3 -- stores/returns the real
++// SDL_KeyboardEvent instead of a smaller SDL_Keysym-shaped copy (see
++// is_sdl_mod_key()'s comment above for why this header doesn't include
++// SDL_events.h directly).
++const std::vector<SDL_KeyboardEvent> &ags_getkeysdown();
+ // Simulates key press with the given AGS key (sends key down, then key up event)
+ void ags_simulate_keypress(eAGSKeyCode ags_key, eAGSKeyMod mod, bool old_keyhandle);
+ // Simulates key down event with the given AGS key
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index f117151e4..e41fd03fe 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -18,7 +18,7 @@
+ 
+ #include <limits>
+ #include <chrono>
+-#include <SDL.h>
++#include <SDL3/SDL.h>
+ #include "ac/button.h"
+ #include "ac/common.h"
+ #include "ac/character.h"
+@@ -402,11 +402,13 @@ bool run_service_mb_controls(eAGSMouseButton &out_mbut, Point *out_mpos)
+         return false; // there was no mouse event
+ 
+     const SDL_Event mb_evt = ags_get_next_inputevent();
+-    if (mb_evt.type == SDL_MOUSEBUTTONDOWN)
++    if (mb_evt.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+     {
+         out_mbut = sdl_mbut_to_ags_but(mb_evt.button.button);
+         if (out_mpos)
+-            *out_mpos = Mouse::SysToGamePos(mb_evt.button.x, mb_evt.button.y);
++            // DOS-PORT: SDL_MouseButtonEvent::x/y are float in SDL3 (sub-pixel
++            // precision); Mouse::SysToGamePos() takes int pixel coords.
++            *out_mpos = Mouse::SysToGamePos(static_cast<int>(mb_evt.button.x), static_cast<int>(mb_evt.button.y));
+         lock_mouse_on_click();
+     }
+     return out_mbut != kMouseNone;
+@@ -525,15 +527,18 @@ bool run_service_key_controls(KeyInput &out_key)
+     // TODO: maybe split this mod handling into sep procedure and make it easier to use (not that it's used alot)?
+     int cur_mod = sys_modkeys;
+     bool is_only_mod_key = false;
++    // DOS-PORT: SDL_Keysym is gone in SDL3 -- key_evt.key.keysym is now just
++    // key_evt.key (SDL_KeyboardEvent's scancode/key/mod fields are flattened
++    // directly onto the event).
+     switch (key_evt.type)
+     {
+-    case SDL_KEYDOWN:
+-        is_only_mod_key = is_sdl_mod_key(key_evt.key.keysym);
+-        cur_mod |= make_sdl_merged_mod(make_sdl_mod_flag(key_evt.key.keysym));
++    case SDL_EVENT_KEY_DOWN:
++        is_only_mod_key = is_sdl_mod_key(key_evt.key);
++        cur_mod |= make_sdl_merged_mod(make_sdl_mod_flag(key_evt.key));
+         break;
+-    case SDL_KEYUP:
+-        is_only_mod_key = is_sdl_mod_key(key_evt.key.keysym);
+-        cur_mod &= ~make_sdl_merged_mod(make_sdl_mod_flag(key_evt.key.keysym));
++    case SDL_EVENT_KEY_UP:
++        is_only_mod_key = is_sdl_mod_key(key_evt.key);
++        cur_mod &= ~make_sdl_merged_mod(make_sdl_mod_flag(key_evt.key));
+         break;
+     }
+     
+@@ -552,7 +557,7 @@ bool run_service_key_controls(KeyInput &out_key)
+         else if ((sys_modkeys != 0) && ((sys_modkeys & cur_mod) != sys_modkeys))
+         {
+             // Toggle mouse lock on Ctrl + Alt
+-            if (sys_modkeys == (KMOD_CTRL | KMOD_ALT))
++            if (sys_modkeys == (SDL_KMOD_CTRL | SDL_KMOD_ALT))
+             {
+                 toggle_mouse_lock();
+                 handled = true;
+-- 
+2.47.3
+

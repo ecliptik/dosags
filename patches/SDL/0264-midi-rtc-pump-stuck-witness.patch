@@ -1,0 +1,193 @@
+From 7deac5ea418043cf96752c4a5edf3f5613e9c39d Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 09:43:51 -0700
+Subject: [PATCH] dos: patch 0264 -- witness what the hardware looked like when
+ the RTC pump's IRQ 8 went silent
+
+On the real 486 (dosags round D, WBH5), 0262's kick found the pump's
+interrupt silent 37 times with everything armed: PIE on, IRQ 8 and
+the cascade unmasked, the rate right, yet not one RTC tick for a
+whole SB IRQ. Reading register C released it each time. That fits the
+RTC holding its line high with C unread, an edge nothing serviced. It
+fits a slave-PIC in-service bit left set by a missing EOI less well.
+The counters could not tell these apart, nor tie them to the BIOS
+INT 15h/86h waits running at the time.
+
+So at each such repair the kick keeps what it sees:
+- the value of that register-C read: bit 7 IRQF means the line was
+  held, bit 6 is PF;
+- the slave PIC's ISR and IRR (OCW3 reads of A0h, IRR left selected,
+  the power-on default) and the master's;
+- the BIOS wait byte 0040:00A0.
+Each of IRQF, PF, IRQ 8 in service, IRQ 8 requested and wait-active is
+counted per event, and the first event is kept whole.
+SDL_DOSMidiDeferRtcStuckWitness exports them so a port can put them on
+its status line: the SDL trace fsyncs every line, so a timing cell
+does not carry it.
+
+SDL_HINT_DOS_AUDIO_WB_RTC_TEST_STUCK=N forces the branch every N-th SB
+IRQ with a due queue head, whatever state the pump is in. It exercises
+the record and the report (DOSBox-X never goes silent), and costs at
+most one tick's delay each time. It sits after the repair chain, not
+inside the stuck branch: that branch needs PIE already on with the
+pump mid-burst, which on DOSBox-X almost never coincides with the
+schedule. The first build put it there, and it never fired (dosags
+LAB-WB WRTw). ISR code: port I/O and integer stores to locked data.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ include/SDL3/SDL_dosmidi_tick.h |  5 +++
+ src/audio/dos/SDL_dosaudio_sb.c | 75 ++++++++++++++++++++++++++++++++-
+ 2 files changed, 78 insertions(+), 2 deletions(-)
+
+diff --git a/include/SDL3/SDL_dosmidi_tick.h b/include/SDL3/SDL_dosmidi_tick.h
+index 97b33e5bf..7ef25ded5 100644
+--- a/include/SDL3/SDL_dosmidi_tick.h
++++ b/include/SDL3/SDL_dosmidi_tick.h
+@@ -336,6 +336,11 @@ extern SDL_DECLSPEC Uint32 SDLCALL SDL_DOSMidiDeferRtcRunningStatus(bool *enable
+    no tick since the last SB IRQ" (register C read to release the line). Nonzero = something outside
+    the pump turned it off; the SDL log names the state at the first repair. */
+ extern SDL_DECLSPEC void SDLCALL SDL_DOSMidiDeferRtcRearms(Uint32 *pie, Uint32 *rate, Uint32 *mask, Uint32 *stuck);
++/* DOS-PORT patch 0264: at each "stuck" repair, counts of: register C IRQF set, C PF set, IRQ 8 in
++   service at the slave PIC, IRQ 8 requested at the slave PIC, a BIOS INT 15h/86h wait active; and the
++   first event's snapshot (C, slave IRR, slave ISR, master IRR, master ISR, reg A, reg B, 0040:00A0).
++   False = no stuck event. SDL_HINT_DOS_AUDIO_WB_RTC_TEST_STUCK=N forces the branch every N SB IRQs. */
++extern SDL_DECLSPEC bool SDLCALL SDL_DOSMidiDeferRtcStuckWitness(Uint32 *counts5, Uint8 *snap8);
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index db1ca51a2..cbc3a056f 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -1897,6 +1897,15 @@ static volatile Uint8 g_rtc_snap[8];          /* kind, reg A, reg B, IMR slave,
+ static volatile Uint32 g_rtc_snap_irq = 0;
+ static volatile Uint32 g_rtc_snap_ticks = 0;
+ static Uint8 g_rtc_nobioswait = 0;           /* DOS-PORT patch 0263: SDL_Delay avoids BIOS INT 15h/86h */
++/* DOS-PORT patch 0264: what the hardware looked like at each "stuck" repair (0262: PIE on, unmasked,
++   no RTC tick for a whole SB IRQ). Counted per event: register C's IRQF (the RTC held IRQ 8 asserted)
++   and PF, the slave PIC's ISR bit 0 (IRQ 8 still in service: a missing EOI) and IRR bit 0 (requested,
++   never delivered), and an active BIOS INT 15h/86h wait. First event kept whole. */
++enum { STUCKW_IRQF, STUCKW_PF, STUCKW_ISR8, STUCKW_IRR8, STUCKW_WAIT, STUCKW_N };
++static volatile Uint32 g_rtc_stuckw[STUCKW_N];
++static volatile Uint8 g_rtc_stucksnap[8];     /* C, slave IRR, slave ISR, master IRR, master ISR, A, B, BDA 0040:00A0 */
++static volatile Uint8 g_rtc_stucksnap_taken = 0;
++static volatile Uint32 g_rtc_test_stuck = 0;  /* SDL_HINT_DOS_AUDIO_WB_RTC_TEST_STUCK: force the branch every N SB IRQs */
+ static bool g_rtc_locked = false;
+ 
+ /* Interrupts must be off around every call (port 70h is shared). */
+@@ -1931,6 +1940,38 @@ static void MidiRtcRearmed(int kind, Uint8 a, Uint8 b, Uint8 imr_s, Uint8 imr_m,
+     }
+ }
+ 
++/* DOS-PORT patch 0264: at a "stuck" repair (or forced), read register C -- releasing a held line --
++   and keep what the hardware looked like. */
++static void MidiRtcStuckWitness(Uint8 a, Uint8 b, Uint8 imr_s, Uint8 imr_m, Uint32 irq_now)
++{
++    MidiRtcRearmed(RTC_REARM_STUCK, a, b, imr_s, imr_m, irq_now);
++    {
++        const Uint8 c = MidiRtcRead(0x0C);
++        Uint8 irr_s, isr_s, irr_m, isr_m, bda;
++        outportb(0xA0, 0x0B); isr_s = inportb(0xA0);
++        outportb(0xA0, 0x0A); irr_s = inportb(0xA0);
++        outportb(0x20, 0x0B); isr_m = inportb(0x20);
++        outportb(0x20, 0x0A); irr_m = inportb(0x20);
++        bda = _farpeekb(g_rtc_dos_sel, MDQ_BDA_WAIT_ACTIVE);
++        if (c & 0x80) g_rtc_stuckw[STUCKW_IRQF]++;
++        if (c & 0x40) g_rtc_stuckw[STUCKW_PF]++;
++        if (isr_s & 0x01) g_rtc_stuckw[STUCKW_ISR8]++;
++        if (irr_s & 0x01) g_rtc_stuckw[STUCKW_IRR8]++;
++        if (bda & 0x01) g_rtc_stuckw[STUCKW_WAIT]++;
++        if (!g_rtc_stucksnap_taken) {
++            g_rtc_stucksnap_taken = 1;
++            g_rtc_stucksnap[0] = c;
++            g_rtc_stucksnap[1] = irr_s;
++            g_rtc_stucksnap[2] = isr_s;
++            g_rtc_stucksnap[3] = irr_m;
++            g_rtc_stucksnap[4] = isr_m;
++            g_rtc_stucksnap[5] = a;
++            g_rtc_stucksnap[6] = b;
++            g_rtc_stucksnap[7] = bda;
++        }
++    }
++}
++
+ /* SB ISR, every IRQ while kind 3 runs. DOS-PORT patch 0262: when the queue head is due, the
+    pump's interrupt must really be on. 0260 trusted its own flag (g_rtc_pie, cleared only by the
+    RTC ISR on an idle tick), so anything else that turned the periodic interrupt off -- PIE cleared
+@@ -1954,6 +1995,7 @@ static void MidiRtcKick(Uint32 irq_now)
+         Uint8 b = MidiRtcRead(0x0B);
+         const Uint8 imr_s = inportb(0xA1);
+         const Uint8 imr_m = inportb(0x21);
++        int witnessed = 0;
+         if ((a & 0x0F) != MDQ_RTC_RATE_BITS) {
+             MidiRtcRearmed(RTC_REARM_RATE, a, b, imr_s, imr_m, irq_now);
+             MidiRtcWrite(0x0A, (Uint8)((a & 0xF0) | MDQ_RTC_RATE_BITS));
+@@ -1973,11 +2015,16 @@ static void MidiRtcKick(Uint32 irq_now)
+         } else if (g_rtc_pie && g_rtc_ticks == g_rtc_kick_ticks) {
+             /* on and unmasked, yet not one tick since the last SB IRQ (~95 are due): a line held
+                high by an unread register C gives no new edge. Reading C releases it. */
+-            MidiRtcRearmed(RTC_REARM_STUCK, a, b, imr_s, imr_m, irq_now);
+-            (void)MidiRtcRead(0x0C);
++            MidiRtcStuckWitness(a, b, imr_s, imr_m, irq_now);
++            witnessed = 1;
+         } else {
+             g_rtc_pie = 1;
+         }
++        /* DOS-PORT patch 0264: the forced-execution mode takes the witness on its own schedule,
++           whatever state the pump is in (on DOSBox-X it is idle at most SB IRQs). */
++        if (!witnessed && g_rtc_test_stuck && (irq_now % g_rtc_test_stuck) == 0) {
++            MidiRtcStuckWitness(a, b, imr_s, imr_m, irq_now);
++        }
+     }
+     g_rtc_kick_ticks = g_rtc_ticks;
+ }
+@@ -2211,6 +2258,12 @@ static bool MidiRtcInstall(Uint32 gap_us)
+         const char *h = SDL_GetHint("SDL_HINT_DOS_AUDIO_WB_RTC_NO_BIOS_WAIT");
+         g_rtc_nobioswait = (h && h[0] == '0' && h[1] == 0) ? 0 : 1;
+     }
++    {
++        /* DOS-PORT patch 0264: forced-execution mode for the stuck witness (lab only). */
++        const char *h = SDL_GetHint("SDL_HINT_DOS_AUDIO_WB_RTC_TEST_STUCK");
++        const int n = (h && h[0]) ? SDL_atoi(h) : 0;
++        g_rtc_test_stuck = (n > 0) ? (Uint32)n : 0;
++    }
+     /* The compiler does not keep these functions in source order (the ISR
+        has been laid out after its end marker), so a range lock alone cannot
+        be trusted: the pump runs only under the whole-image lock (0194). */
+@@ -2241,6 +2294,10 @@ static bool MidiRtcInstall(Uint32 gap_us)
+         DOS_LockVariable(g_rtc_snap);
+         DOS_LockVariable(g_rtc_snap_irq);
+         DOS_LockVariable(g_rtc_snap_ticks);
++        DOS_LockVariable(g_rtc_stuckw); /* DOS-PORT patch 0264 */
++        DOS_LockVariable(g_rtc_stucksnap);
++        DOS_LockVariable(g_rtc_stucksnap_taken);
++        DOS_LockVariable(g_rtc_test_stuck);
+         g_rtc_locked = true;
+     }
+     DOS_DisableInterrupts();
+@@ -2635,6 +2692,20 @@ bool SDL_DOSMidiRtcAvoidBiosWait(void)
+     return g_rtc_installed && g_rtc_nobioswait;
+ }
+ 
++/* DOS-PORT patch 0264: the stuck witness -- per-event counts (IRQF, PF, IRQ 8 in service, IRQ 8
++   requested, BIOS wait active) and the first event's snapshot (C, slave IRR, slave ISR, master IRR,
++   master ISR, reg A, reg B, BDA 0040:00A0). Returns false when no stuck event has happened. */
++bool SDL_DOSMidiDeferRtcStuckWitness(Uint32 *counts5, Uint8 *snap8)
++{
++    for (int i = 0; i < STUCKW_N; i++) {
++        if (counts5) counts5[i] = g_rtc_stuckw[i];
++    }
++    for (int i = 0; i < 8; i++) {
++        if (snap8) snap8[i] = g_rtc_stucksnap[i];
++    }
++    return g_rtc_stucksnap_taken != 0;
++}
++
+ /* DOS-PORT patch 0262: the pump's hardware repairs by kind (run totals). */
+ void SDL_DOSMidiDeferRtcRearms(Uint32 *pie, Uint32 *rate, Uint32 *mask, Uint32 *stuck)
+ {
+-- 
+2.47.3
+

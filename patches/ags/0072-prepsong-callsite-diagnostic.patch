@@ -1,0 +1,119 @@
+From 67fbac4d3b5ac45a7cc03689d8bb925ebef65488 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 15 Sep 2026 07:42:59 -0700
+Subject: [PATCH] DOS-PORT: patch 0072 -- gus_sink_prepare_song() call-site
+ cost diagnostic (S7-GUS)
+
+WHY: SDL_DOSGusGetState(), all five SDL_DOSGus* voice-setup/-teardown
+calls, and midi_sched_tick() as a whole function are all now exonerated
+on real hardware (max 3602us for miditick, vs the ~6.89s slots_us
+outlier) -- the outlier must live in AudioPlayer::Init()'s own call
+chain, which runs before midi_sched_tick() ever starts. Init() ->
+MidiInit() -> dos_midi_backend_prepare_song() -> gus_sink_prepare_song()
+(shared/audio/gus_sink.c, hub-owned) uploads every resident
+instrument's .pat sample data, which SDL patch SDL/0147 separately
+brackets at the SDL_DOSGusUploadSample()/gus_upload_pio() level.
+
+WHAT: brackets the gus_sink_prepare_song() CALL SITE here in dosags's
+own dos_midi_backend.cpp (deliberately not shared/audio/gus_sink.c
+itself, same zero-blast-radius reasoning as the existing miditick
+call-site bracket in audioplayer.cpp) -- captures the FULL per-song
+prepare cost (file I/O + every GUS upload it triggers + loop overhead),
+so a real-hardware run can compare this total against SDL/0147's own
+upload-specific numbers: if they're close, the GUS hardware transfer
+dominates as hypothesized; if this total is notably larger, .pat file
+I/O itself is a separate, not-yet-measured contributor.
+DOSAGS_MidiPrepSongDiagSnapshot() is the new accessor;
+patches/ags/0074 folds it into AUDIOPRB.LOG.
+
+Temporary -- to be reverted once this sub-investigation concludes.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01VVzc2V3qXnVbYZC693CTWt
+---
+ Engine/platform/dos/dos_midi_backend.cpp | 54 ++++++++++++++++++++++++
+ 1 file changed, 54 insertions(+)
+
+diff --git a/Engine/platform/dos/dos_midi_backend.cpp b/Engine/platform/dos/dos_midi_backend.cpp
+index a73750add..6426c851c 100644
+--- a/Engine/platform/dos/dos_midi_backend.cpp
++++ b/Engine/platform/dos/dos_midi_backend.cpp
+@@ -12,9 +12,11 @@
+ //
+ //=============================================================================
+ #include "platform/dos/dos_midi_backend.h"
++#include <cstdint> // UINT64_MAX -- TEMPORARY DIAGNOSTIC (S7-GUS), see dos_midi_backend_prepare_song() below
+ #include <cstdio>
+ #include <SDL3/SDL.h>
+ #include "debug/out.h"
++#include <time.h> // uclock(), UCLOCKS_PER_SEC -- TEMPORARY DIAGNOSTIC (S7-GUS), see dos_midi_backend_prepare_song() below
+ 
+ using namespace AGS::Common;
+ 
+@@ -176,11 +178,63 @@ void *dos_midi_backend_open(DosMidiBackendKind *out_kind, midi_sched_sink *out_s
+     return handle;
+ }
+ 
++// TEMPORARY DIAGNOSTIC (S7-GUS, continuation): real hardware (tags
++// GUST1/GUSD1/GUSV1) has now exonerated SDL_DOSGusGetState(), all five
++// SDL_DOSGus* voice-setup/-teardown calls, AND midi_sched_tick() itself
++// as a whole (GUSV1's own miditick max=3602us, three orders of
++// magnitude short of the ~6.89s slots_us outlier) -- see
++// tests/games/trilbysnotes/results/
++// S7-gus-voicecalls-miditick-realhw-2026-09-15.md. That entry's own
++// source read found AudioPlayer::MidiPoll() calls Init() (which reaches
++// here, gus_sink_prepare_song(), via dos_midi_backend_prepare_song())
++// BEFORE the midi_sched_tick() bracket even starts timing -- and
++// gus_sink_prepare_song() (shared/audio/gus_sink.c) uploads every
++// resident instrument's .pat sample data into GUS DRAM via
++// SDL_DOSGusUploadSample() (SDL patch SDL/0147 separately brackets that
++// call and its own gus_upload_pio() byte-wise ISA PIO transfer loop).
++// This brackets the CALL SITE here -- dosags's own file
++// (dos_midi_backend.cpp), not shared/audio/gus_sink.c itself, same
++// zero-blast-radius reasoning as the miditick call-site bracket
++// (audioplayer.cpp) -- so the real-hardware run can confirm whether
++// this ONE call (file I/O + every GUS upload it triggers, for the
++// backend-dispatch no-op case on every non-GUS backend) accounts for
++// the whole outlier, and whether SDL/0147's own upload-specific numbers
++// then fully explain it or leave a residual (pointing at .pat file I/O
++// itself, not yet separately measured). Temporary -- revert once this
++// sub-investigation concludes.
++static uint32_t s_prepsong_calls = 0;
++static uint64_t s_prepsong_sum_us = 0;
++static uint64_t s_prepsong_min_us = UINT64_MAX;
++static uint64_t s_prepsong_max_us = 0;
++
++extern "C" void DOSAGS_MidiPrepSongDiagSnapshot(
++    uint32_t *out_calls, uint32_t *out_min_us, uint32_t *out_mean_us, uint32_t *out_max_us)
++{
++    if (out_calls)  *out_calls  = s_prepsong_calls;
++    if (out_min_us) *out_min_us = (uint32_t)((s_prepsong_calls > 0) ? s_prepsong_min_us : 0);
++    if (out_mean_us) *out_mean_us = (uint32_t)((s_prepsong_calls > 0) ? (s_prepsong_sum_us / s_prepsong_calls) : 0);
++    if (out_max_us) *out_max_us = (uint32_t)s_prepsong_max_us;
++
++    s_prepsong_calls = 0;
++    s_prepsong_sum_us = 0;
++    s_prepsong_min_us = UINT64_MAX;
++    s_prepsong_max_us = 0;
++}
++
+ void dos_midi_backend_prepare_song(void *handle, DosMidiBackendKind kind, const midi_sched *m)
+ {
+     if (kind != DOS_MIDI_BACKEND_GUS || !handle || !m)
+         return; // no-op for every other backend, or a not-yet-open GUS sink
++
++    const uclock_t t0 = uclock(); /* TEMPORARY DIAGNOSTIC, see above */
+     gus_sink_prepare_song((gus_sink *)handle, m);
++    {
++        const uint64_t call_us = (uint64_t)((uclock() - t0) * 1000000ULL / UCLOCKS_PER_SEC);
++        s_prepsong_calls++;
++        s_prepsong_sum_us += call_us;
++        if (call_us < s_prepsong_min_us) s_prepsong_min_us = call_us;
++        if (call_us > s_prepsong_max_us) s_prepsong_max_us = call_us;
++    }
+ }
+ 
+ void dos_midi_backend_end_song(void *&handle, DosMidiBackendKind kind)
+-- 
+2.47.3
+

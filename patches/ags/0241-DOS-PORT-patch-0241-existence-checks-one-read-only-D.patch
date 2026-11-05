@@ -1,0 +1,225 @@
+From 74fbac31f7c3271d83d9e67c2d111b225687a7aa Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <services.claude@accounts.ecliptik.com>
+Date: Sat, 26 Sep 2026 19:26:34 -0700
+Subject: [PATCH] DOS-PORT: patch 0241 -- existence checks: one read-only DOS
+ call answers "not found" before stat()
+
+AGS looks for a loose copy of an asset in the game directory before it opens
+the package (AssetManager, kAssetPriorityDir -> FindFileCI -> File::IsFile ->
+ags_file_exists), so every first play of a packaged clip stat()s a file that
+is not there. On DJGPP that stat() costs about 13 INT 21h calls, 4 of them
+findfirst directory scans; a clip first play is ~36 INT 21h calls for 5 data
+reads (docs/lab/io.md), and a directory scan on the target's CF card is in
+the measured ~7-21 ms class.
+
+INT 21h AX=4300h (7143h BL=0 under LFN) -- the GET-attributes forms, never
+the set forms -- answers existence in one call. The path goes through
+DJGPP's own _put_path(), as in stat() and _chmod(), so path interpretation is
+the same. Only "not found" (CF, AX 2 or 3) is taken from DOS; everything else
+falls through to the original stat(), so every positive answer is stat()'s
+own. Wildcards, empty, drive-only, roots, trailing separators and "." / ".."
+components always go to stat(). Applied to ags_file_exists and
+ags_directory_exists only (their positive answers need S_ISREG / S_ISDIR,
+which no device or volume label satisfies); ags_path_exists is unchanged.
+
+Default OFF (DOSAGS_STATEXISTS=1 turns it on): the exactness argument rests on
+what the DOS kernel's 4300h/7143h answers, and the lab gates ran on
+DOSBox-X's DOS, not MS-DOS 6.22's FAT code; a false "not found" would break
+asset lookup or saves. It stays off until a real-DOS shadow run reads 0.
+DOSAGS_EXISTSHADOW=1 is that check: every fast "not found" is re-asked of
+stat(); a regular file or directory stat() finds is counted as a mismatch and
+stat() decides, so shadow mode cannot change behaviour. The manifest reports
+"DOS-PORT existfast mode= misses= stat= shadow= compared= mismatches=".
+---
+ Common/util/stdio_compat.c | 134 +++++++++++++++++++++++++++++++++++++
+ Engine/main/quit.cpp       |   8 +++
+ 2 files changed, 142 insertions(+)
+
+diff --git a/Common/util/stdio_compat.c b/Common/util/stdio_compat.c
+index 9624c1c49..558698131 100644
+--- a/Common/util/stdio_compat.c
++++ b/Common/util/stdio_compat.c
+@@ -94,6 +94,132 @@ file_off_t ags_ftell(FILE * stream)
+     #endif
+ }
+ 
++#ifdef __DJGPP__
++/* DOS-PORT patch 0241: a one-call MISS test in front of stat() for the existence checks.
++ *
++ * AGS looks for a loose copy of an asset in the game directory before it
++ * opens the package (AssetManager, kAssetPriorityDir -> File::FindFileCI ->
++ * File::IsFile -> ags_file_exists), so every first play of a packaged clip
++ * pays a stat() of a file that is not there. DJGPP's stat() of a missing
++ * file costs about 13 INT 21h calls, 4 of them findfirst directory scans
++ * (docs/lab/io.md: a clip first play is ~36 calls for 5 data reads), and a
++ * directory scan on the target's CF card is the measured ~7-21 ms class.
++ *
++ * DOS answers "does this path exist" in ONE call: INT 21h AX=4300h (or
++ * 7143h BL=0 under LFN), the GET-attributes forms -- this never uses the
++ * set forms. The path is placed by DJGPP's own _put_path(), the routine
++ * stat() and _chmod() use, so /dev/ names, slashes and LFN mapping are the
++ * same. Only "not found" (CF with AX 2 or 3) is taken from DOS; every other
++ * outcome falls through to the original stat() code, so a positive answer
++ * is always stat()'s own. Paths DOS and stat() may treat differently --
++ * wildcards, empty, drive-only, roots, a trailing separator, "." or ".."
++ * components -- always go to stat(). Only ags_file_exists and
++ * ags_directory_exists use it: their positive answers need S_ISREG /
++ * S_ISDIR, which a device or a volume label never satisfies, so a DOS
++ * "not found" on such a name cannot flip an answer; ags_path_exists keeps
++ * plain stat().
++ *
++ * Default OFF; DOSAGS_STATEXISTS=1 turns it on. The exactness argument rests
++ * on what the DOS kernel's 4300h/7143h answers, and the lab gates ran on
++ * DOSBox-X's DOS, not MS-DOS 6.22's FAT code: a false "not found" would
++ * break asset lookup or saves, which is worse than a slow click. So it
++ * stays off until a real-DOS shadow run reads 0 mismatches.
++ * DOSAGS_EXISTSHADOW=1 (with the fast path on) is that check: every fast
++ * "not found" is re-asked of stat(), and disagreements are counted in the
++ * manifest line (the stat() answer is the one returned in shadow mode, so
++ * a disagreement can never change the engine's behaviour).
++ */
++#include <dpmi.h>
++#include <go32.h>
++#include <fcntl.h>
++#include <string.h>
++#include <stdlib.h>
++#include <libc/dosio.h>
++long dos_port_existfast_n = 0;   /* misses answered by the one DOS call */
++long dos_port_existshadow_n = 0;   /* shadow: fast misses re-asked of stat() */
++long dos_port_existshadow_bad = 0; /* shadow: stat() found what DOS called missing */
++int dos_port_existshadow_mode = -1;
++long dos_port_existslow_n = 0;   /* checks that went to stat() */
++int dos_port_statexists_mode = -1;
++
++static int dos_port_exist_candidate(const char *p)
++{
++    size_t n;
++    const char *s;
++    if (p == NULL || p[0] == 0)
++        return 0;
++    if (strpbrk(p, "*?") != NULL)
++        return 0;
++    n = strlen(p);
++    if (p[n - 1] == '\\' || p[n - 1] == '/' || p[n - 1] == ':')
++        return 0;
++    for (s = p; *s; )
++    {
++        const char *e = s;
++        size_t len;
++        while (*e && *e != '/' && *e != '\\')
++            e++;
++        len = (size_t)(e - s);
++        if ((len == 1 && s[0] == '.') || (len == 2 && s[0] == '.' && s[1] == '.'))
++            return 0;
++        s = *e ? e + 1 : e;
++    }
++    return 1;
++}
++
++/* 1 only when DOS reports the path as not found; 0 means "ask stat()". */
++static int dos_port_definitely_missing(const char *path)
++{
++    __dpmi_regs r;
++    if (dos_port_statexists_mode < 0)
++    {
++        const char *e = getenv("DOSAGS_STATEXISTS");
++        dos_port_statexists_mode = (e != NULL && e[0] == '1') ? 1 : 0;   /* default OFF (see above) */
++    }
++    if (!dos_port_statexists_mode || !dos_port_exist_candidate(path))
++    {
++        dos_port_existslow_n++;
++        return 0;
++    }
++    memset(&r, 0, sizeof(r));
++    _put_path(path);
++    if (_USE_LFN)
++    {
++        r.x.ax = 0x7143;
++        r.h.bl = 0;           /* 0 = get attributes */
++    }
++    else
++        r.x.ax = 0x4300;      /* get attributes */
++    r.x.ds = __tb_segment;
++    r.x.dx = __tb_offset;
++    __dpmi_int(0x21, &r);
++    if ((r.x.flags & 1) && (r.x.ax == 2 || r.x.ax == 3))
++    {
++        struct stat st;
++        dos_port_existfast_n++;
++        if (dos_port_existshadow_mode < 0)
++        {
++            const char *e = getenv("DOSAGS_EXISTSHADOW");
++            dos_port_existshadow_mode = (e != NULL && e[0] == '1') ? 1 : 0;
++        }
++        if (!dos_port_existshadow_mode)
++            return 1;
++        /* shadow: ask stat() as well. A disagreement is a regular file or a directory that DOS called
++         * missing -- the only case that could flip either caller's answer (a device or label found by
++         * stat() is neither, so both answer 0 anyway). It is counted, and stat() decides. */
++        dos_port_existshadow_n++;
++        if (stat(path, &st) == 0 && (S_ISREG(st.st_mode) || S_ISDIR(st.st_mode)))
++        {
++            dos_port_existshadow_bad++;
++            return 0;
++        }
++        return 1;
++    }
++    dos_port_existslow_n++;
++    return 0;
++}
++#endif
++
+ int  ags_file_exists(const char *path) 
+ {
+ #if AGS_PLATFORM_OS_WINDOWS
+@@ -102,6 +228,10 @@ int  ags_file_exists(const char *path)
+     return PathFileExistsW(wstr) && !PathIsDirectoryW(wstr);
+ #else // POSIX
+     struct stat path_stat;
++#ifdef __DJGPP__
++    if (dos_port_definitely_missing(path))   /* patch 0241 */
++        return 0;
++#endif
+     if (stat(path, &path_stat) != 0) {
+         return 0;
+     }
+@@ -117,6 +247,10 @@ int ags_directory_exists(const char *path)
+     return PathFileExistsW(wstr) && PathIsDirectoryW(wstr);
+ #else // POSIX
+     struct stat path_stat;
++#ifdef __DJGPP__
++    if (dos_port_definitely_missing(path))   /* patch 0241 */
++        return 0;
++#endif
+     if (stat(path, &path_stat) != 0) {
+         return 0;
+     }
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 8bec2e087..39f05f2ec 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -102,6 +102,10 @@ extern int dos_port_pv_bbox[4];
+ 
+ #ifdef __DJGPP__
+ extern "C" int dosags_wordscan;   // patch 0238, defined in libsrc/allegro/src/c/cmisc.c
++extern "C" long dos_port_existfast_n, dos_port_existslow_n;   // patch 0241, Common/util/stdio_compat.c
++extern "C" int dos_port_statexists_mode;
++extern "C" long dos_port_existshadow_n, dos_port_existshadow_bad;
++extern "C" int dos_port_existshadow_mode;
+ #endif
+ 
+ #if defined(__DJGPP__) && defined(DOSAGS_SPRITE_RUN_STATS)
+@@ -706,6 +710,10 @@ void quit(const char *quitmsg)
+                         dos_port_gui_refused_n, dos_port_gui_alpha_binary_n, dos_port_gui_alpha_partial_n);
+                     // patch 0238: -1 = no 16-bpp forward blit ran, 0 = DOSAGS_WORDSCAN=0, 1 = on
+                     Debug::Printf("DOS-PORT wordscan=%d", dosags_wordscan);
++                    // patch 0241: existence checks answered by the one-call DOS miss test, and those left to stat()
++                    Debug::Printf("DOS-PORT existfast mode=%d misses=%ld stat=%ld shadow=%d compared=%ld mismatches=%ld",
++                        dos_port_statexists_mode, dos_port_existfast_n, dos_port_existslow_n,
++                        dos_port_existshadow_mode, dos_port_existshadow_n, dos_port_existshadow_bad);
+                     for (int _g = 0; _g < 64; ++_g)
+                         if (dos_port_gui_flush_tally[_g])
+                             Debug::Printf("DOS-PORT guiflush idx=%d n=%ld", _g, dos_port_gui_flush_tally[_g]);
+-- 
+2.47.3
+

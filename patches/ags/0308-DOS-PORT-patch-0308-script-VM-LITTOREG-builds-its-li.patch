@@ -1,0 +1,63 @@
+From 0d92d81f6587db0ac3c779745863f6db401a9726 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 24 Sep 2026 16:29:32 -0700
+Subject: [PATCH] DOS-PORT: patch 0308 -- script VM: LITTOREG builds its
+ literal in the register
+
+WHY: LITTOREG (the "movl" opcode) is the second most frequent VM instruction in old verb-template
+scripts: 722 a tick on Maniac Mansion Deluxe. It built its value in the address-taken codeOp.Args[1]
+(SetInt32, then FixupArgument), then copied the 20-byte RuntimeScriptValue into the register. Building
+it in the register directly removes that round trip. Read from the build's own -S: movl's path is
+shorter by 6/4/5/3/5 instructions for no-fixup/gdata/func/string/import literals, ~4.1k instructions
+a tick on MMD's mix (LAB-MMD.md 18.7, 19).
+
+WHAT: reg1.SetInt32(arg2); FixupArgument(reg1, ...) in place of the codeOp.Args[1] build and copy.
+Exact: FixupArgument reads only the code word, the fixup tables, the strings and the stack, never the
+registers, and in every case either leaves the value as SetInt32 made it or overwrites it whole, so the
+register ends with the same five fields. ASSERT_CC_ERROR is empty in release builds. In a
+DEBUG_CC_EXEC build it would return after the register was written rather than before, on an
+error-abort path only. WRITELIT is unchanged. __DJGPP__-gated.
+
+-S check: Run 3,365 -> 3,395 instructions; `this` reloads unchanged (70); the loop head, back-edge and
+every other hot handler identical.
+
+Measured at fixed 40000 cycles on MMD's character select: script event 9.354 -> 9.257 ms/tick (-0.097;
+band -0.07 to -0.13). Determinism guard (state digests every 25 ticks, script events, AutoPilot log,
+PH*.BMP) EQUAL on MMD, AGS Quest and 5 Days (seeded), with baseline-twice and perturbation controls;
+screen gate pixel-equal at every freeze tick (LAB-MMD.md 19, 19.1).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Nz9XeKeVG8Ab7dm8esJsMu
+---
+ Engine/script/cc_instance.cpp | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/Engine/script/cc_instance.cpp b/Engine/script/cc_instance.cpp
+index c2cb3d44d..a9bb5f607 100644
+--- a/Engine/script/cc_instance.cpp
++++ b/Engine/script/cc_instance.cpp
+@@ -838,11 +838,21 @@ ccInstError ccInstance::Run(int32_t curpc)
+         case SCMD_LITTOREG:
+         {
+             auto &reg1 = _registers[op_arg1];
++#ifdef __DJGPP__
++            // DOS-PORT patch 0308: build the literal and apply its fixup IN the register, not in
++            // codeOp.Args[1] followed by a 20-byte copy into it. FixupArgument reads only the code
++            // word, the fixup tables and the stack, never the registers, and sets the value's
++            // fields exactly as before; so the register ends up with the same five fields.
++            reg1.SetInt32(op_arg2);
++            FixupArgument(reg1, codeInst->_code_fixups[_pc + 2], codeInst->_code[_pc + 2], _stackBegin, codeInst->_strings);
++            ASSERT_CC_ERROR();
++#else
+             codeOp.Args[1].SetInt32(op_arg2); // patch 0293/0295: the whole value, before its fixup
+             FixupArgument(codeOp.Args[1], codeInst->_code_fixups[_pc + 2], codeInst->_code[_pc + 2], _stackBegin, codeInst->_strings);
+             ASSERT_CC_ERROR();
+             const auto &arg_value = codeOp.Arg2();
+             reg1 = arg_value;
++#endif
+             break;
+         }
+         case SCMD_MEMREAD:
+-- 
+2.47.3
+

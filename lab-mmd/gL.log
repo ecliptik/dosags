@@ -1,0 +1,31 @@
+run-cells: shared lock per cell (run-dosbox.sh takes it)
+GLT-MMD pkg=mmd exe=AGSWD309.EXE sha12=5a622aa83493 ticks=1000 cfg=/home/claude/git/dosags-lab-mmd/lab-mmd/cfg/ACSETUP.CFG ags=[ - ] env=[] opts=[] conf=dosbox-x.conf rc=0 stage=/tmp/dos-port-dosbox.yCIcad wall_s=344
+MMD4LW pkg=mmd exe=AGSMW4WD.EXE sha12=00fc6bcd6736 ticks=1000 cfg=/home/claude/git/dosags-lab-mmd/lab-mmd/cfg/ACSETUP.CFG ags=[ - ] env=[] opts=[] conf=dosbox-x.conf rc=0 stage=/tmp/dos-port-dosbox.L0w7ek wall_s=4167
+AQ4LW pkg=agsquest exe=AGSMW4WD.EXE sha12=00fc6bcd6736 ticks=6000 cfg=- ags=[ - ] env=[] opts=[] conf=dosbox-x.conf rc=0 stage=/tmp/dos-port-dosbox.pYFZRL wall_s=1265
+5D4LW pkg=5days exe=AGSMW4WD.EXE sha12=00fc6bcd6736 ticks=2000 cfg=/home/claude/git/dosags-lab-mmd/lab-mmd/cfg/ACSETUP.CFG ags=[ --startr 3 ] env=[ DOSAGS_WIT_SEED=12345] opts=[] conf=dosbox-x.conf rc=0 stage=/tmp/dos-port-dosbox.cgFKMF wall_s=1076
+dosbox lock: waiting (up to 21600s) to take the exclusive lock; recorded:
+  waiting: pid=38677 tool=lab-metric-h1geom mode=exclusive since=2026-09-24T13:39:31Z (STALE: pid 38677 is not running)
+  waiting: pid=2245434 tool=click-cell.sh series=1 mode=exclusive since=2026-09-24T19:00:35Z (STALE: pid 2245434 is not running)
+  waiting: pid=2382765 tool=lab-metric-d2-S2Q-L mode=exclusive since=2026-09-24T19:16:41Z (STALE: pid 2382765 is not running)
+  waiting: pid=2497769 tool=lab-c3-fixeq mode=exclusive since=2026-09-24T19:32:06Z (STALE: pid 2497769 is not running)
+  waiting: pid=2798705 tool=lab-c3-fixeq mode=exclusive since=2026-09-24T20:19:50Z (STALE: pid 2798705 is not running)
+  waiting: pid=2889016 tool=click-cell.sh series=1 mode=exclusive since=2026-09-24T20:22:25Z (STALE: pid 2889016 is not running)
+  waiting: pid=2920889 tool=lab-c3-fixeq mode=exclusive since=2026-09-24T20:26:45Z (STALE: pid 2920889 is not running)
+  waiting: pid=3290730 tool=click-cell.sh series=1 mode=exclusive since=2026-09-24T21:40:16Z (STALE: pid 3290730 is not running)
+  waiting: pid=3304807 tool=lab-c3-fixeq mode=exclusive since=2026-09-24T22:03:04Z (alive)
+  pid=2797872 tool=ratchet.sh unit=run.mi-stall-isr mode=shared since=2026-09-24T22:19:28Z (alive)
+  waiting: pid=3613599 tool=click-cell.sh series=1 mode=exclusive since=2026-09-24T22:19:28Z (alive)
+  waiting: pid=3626753 tool=lab-mmd/run-cells.sh:gLscreen.spec series=1 mode=exclusive since=2026-09-24T22:20:22Z (alive)
+  kernel: held shared (placed through pid 3479483, now gone -- normal for the flock utility)
+  kernel: pid 3613490 (flock) is WAITING for it exclusive
+  open by pid 2797872 (bash)
+  open by pid 3304807 (bash)
+  open by pid 3613490 (flock)
+  open by pid 3613599 (bash)
+  open by pid 3617493 (flock)
+  open by pid 3626753 (bash)
+run-cells: holding the DOSBox-X lock exclusive for the series
+MMDSG7LW pkg=mmd exe=AGSMW4WD.EXE sha12=00fc6bcd6736 ticks=1000 cfg=/home/claude/git/dosags-lab-mmd/lab-mmd/cfg/ACSETUP.CFG ags=[ - ] env=[  ] opts=[ freeze=200,500,900] conf=dosbox-x-fast.conf rc=0 stage=/tmp/dos-port-dosbox.H8nczU wall_s=36
+AQSG7LW pkg=agsquest exe=AGSMW4WD.EXE sha12=00fc6bcd6736 ticks=3500 cfg=- ags=[ - ] env=[  ] opts=[ freeze=400,1500,3000] conf=dosbox-x-fast.conf rc=0 stage=/tmp/dos-port-dosbox.rLjQU9 wall_s=111
+5DSG7LW pkg=5days exe=AGSMW4WD.EXE sha12=00fc6bcd6736 ticks=1000 cfg=/home/claude/git/dosags-lab-mmd/lab-mmd/cfg/ACSETUP.CFG ags=[ --startr 3 ] env=[ DOSAGS_WIT_SEED=12345 ] opts=[ freeze=200,500,900] conf=dosbox-x-fast.conf rc=0 stage=/tmp/dos-port-dosbox.pT6WQS wall_s=35
+done

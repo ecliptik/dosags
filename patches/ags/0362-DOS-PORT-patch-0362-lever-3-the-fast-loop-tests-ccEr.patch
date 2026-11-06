@@ -1,0 +1,70 @@
+From 2bf3e929070a515b069f7bcbe1a64a959d4d059f Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 6 Nov 2026 03:36:30 -0800
+Subject: [PATCH 362/365] DOS-PORT: patch 0362 -- lever 3: the fast loop tests
+ ccError.HasError inline after an engine call
+
+cc_has_error() is an out-of-line call after every engine call the fast loop makes (~175 a tick on
+MMD character select). Under DJGPP cc_common.cpp's ccError gets external linkage and the loop's two
+post-call tests (h_callext, the fused farcall) read the same flag inline. Same flag, same test.
+
+Lab (docs/lab/LEVERS-REPORT.md section 1): digests EQUAL on the four fixtures, aq-journeys 10/10;
+fixed 40k 4.308 -> 4.294 ms/tick. The 486 profile (F1a) put the call at ~0.14 ms/tick, far above
+its instruction count; it was measured on the 486 only together with levers 1 and 2 (round L5).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P4db4MSiR2PYUDFdrDdJe2
+---
+ Common/script/cc_common.cpp      | 4 ++++
+ Engine/script/cc_instance_vm.cpp | 5 +++--
+ 2 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/Common/script/cc_common.cpp b/Common/script/cc_common.cpp
+index 9bcba27c1..cadb512ca 100644
+--- a/Common/script/cc_common.cpp
++++ b/Common/script/cc_common.cpp
+@@ -45,7 +45,11 @@ int ccGetOption(int optbit)
+ // Returns current running script callstack as a human-readable text
+ extern String cc_get_callstack(int max_lines = INT_MAX);
+ 
++#ifdef __DJGPP__
++ScriptError ccError; // DOS-PORT patch 0362 (lever 3): external, so the VM's fast loop reads HasError inline
++#else
+ static ScriptError ccError;
++#endif
+ 
+ void cc_clear_error()
+ {
+diff --git a/Engine/script/cc_instance_vm.cpp b/Engine/script/cc_instance_vm.cpp
+index c4305ff35..b5584386a 100644
+--- a/Engine/script/cc_instance_vm.cpp
++++ b/Engine/script/cc_instance_vm.cpp
+@@ -60,6 +60,7 @@
+ using namespace AGS::Common;
+ using namespace AGS::Engine;
+ using namespace AGS::Common::Memory;
++extern ScriptError ccError; // cc_common.cpp (lever 3): cc_has_error() is ccError.HasError
+ 
+ int dos_vm_sccmd_argc(int op);          // cc_instance.cpp, patch 0359
+ bool dos_vm_sccmd_argisreg(int op, int k);
+@@ -2324,7 +2325,7 @@ h_callext: // SCMD_CALLEXT: Run()'s text, with _pc synced before the call and th
+         {
+             cc_error("invalid pointer type for function call: %d", reg1.Type);
+         }
+-        if (cc_has_error())
++        if (ccError.HasError) // cc_has_error(), inline (lever 3)
+             return kInstErr_Generic;
+         _registers[SREG_AX] = return_value;
+         fr->next_call_needs_object = 0;
+@@ -2401,7 +2402,7 @@ h_s_farcall: // farpush ax; setfuncargs N; movl ax,IMPORT; farcall ax; farsubsp
+         }
+         dos_port_work[kDW_ScriptExt]++;
+         const RuntimeScriptValue return_value = _registers[SREG_AX].SPfn(fr->fcs->GetHead(), fr->num_args_to_func);
+-        if (cc_has_error())
++        if (ccError.HasError) // cc_has_error(), inline (lever 3)
+             return kInstErr_Generic;
+         _registers[SREG_AX] = return_value;
+         fr->next_call_needs_object = 0;
+-- 
+2.47.3
+

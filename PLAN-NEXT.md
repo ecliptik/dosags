@@ -295,6 +295,26 @@ R2 -- only if the ABBA says the gate cells move to the release flavour (it did; 
 - If a depth falls out of band, it gets one x2 re-run on the same binary
   before the release; the 09-30 claim is not withdrawn by an x1 miss, and
   the miss is recorded.
+Pre-registered 2026-11-05 (before any data): WARMUPR2, GR16WBP + GR16WBR (the WB arm needs its
+same-binary poll control, so GR16WB is a P+R pair), GR16, GR32P, all on release a1dba5d61624; driver
+build/ws/roundR2/driveR2.sh (untracked), cap 75 min. Power-on bar (operator 2026-11-05): a named
+capture stick/cable swap, then 90+ min clean in the Pi's kernel log from it (vcctrl), then a close
+watch on the warm-up (the driver stops on a non-nolock capture STALE or no capture device).
+DONE 2026-11-05 (tests/harness/results/ROUNDR2-2026-11-05): GR32P MET (39.29 / 40.12), GR16WB PASS
+(D 0.744), GR16 figures MET (39.27 / 40.11) but no screen witness (camera pointed away, capture card
+does not lock 512x384) -- one GR16 re-run with the camera on, before v0.1. DONE in R3 2026-11-05:
+GR16R3 MET (39.29 / 40.12, 99.48%), camera CLEAN. Operator waived the
+capture bar for this round; the stick did not drop (one corrupt frame, outside every scored window).
+R4 ("as shipped", 2026-11-05, tests/harness/results/ROUNDR4-2026-11-05): DIST1 plays at the gate rate as shipped
+(39.27 / 40.13, 99.56%, camera CLEAN) but FAILs as registered on a walk-dependent proxy (no "Playing sound 3";
+effects 9/10 played). GUSC16 FAIL: the GUS backend runs but K2/K3/M1/M2 fail and underruns=39631 (09-15: 0) --
+a GUS PCM regression to locate. ADLC16 VOID: without BLASTER the engine disables ALL audio, so OPL2 music never
+starts -- AdLib-only / MPU-only players get silence. Both are v0.1 blockers for the README's sound claims;
+README.TXT now states the limits. Next: fix audio init without SB, find the GUS regression, re-run both cells.
+G1/G2 (2026-11-06): model C (ags 0355) PASSES on the 486 -- ADLC16B (PGADLIB, OPL2, auto): K1/K2/M1 +0 cents/M2 0.763;
+MPUNB16B (MPU proxy, wb): M1 -1 cent, M2 0.872. The hub gus-pcm-fix holds (underruns 0, no exhaustion), but GUS sound effects
+are still not heard (K3) and SDL 0270 (8-bit sign flip) is FALSIFIED on the rig: it must not land. Next for GUS: D4
+(REAP_GRACE) and the GUS MIDI path (gus_sink.c: K2 gap, -24 cents). README.TXT keeps 'prefer opl3 or wb' for GUS.
 If the ABBA says the release flavour is not equivalent, R2 does not run:
 v0.1 ships the release flavour only if the ABBA shows no loss; otherwise
 the operator decides between shipping the instrumented flavour (the 09-30
@@ -305,6 +325,22 @@ evidence) and a lab slice on the difference.
 In dosags: the tag, the dist zip as the release artifact, vault
 `plog -c release`, kanban next line. Via sdlports (hub files, theirs):
 gallery entry, ports.yaml dos_status and notes, COMPATIBILITY.md row.
+
+### 5a. v0.1 -- RELEASED 2026-11-06 (operator, via sdlports)
+
+Tag v0.1 on f0f9275c; zip c0c6fe00...; AGS.EXE c754df64babd. Record: DIST2 PASS; S16 MET x2; S32P and S8 MET 1 of 2
+each (V1 misses the whole-run band only); MMD 99.90% x2. No third gate reading before release (operator).
+
+Post-release items, in order:
+1. **Gameplay fps** (operator 2026-11-06: "measure gameplay fps too"): MMD in play from the room-1 save x2,
+   Iowna and Shards in play (never measured on the 486), 5 Days across rooms -- engine-driven walking, frames
+   displayed over the play window. Every scored figure so far is one room or MMD's idle character select.
+2. **Start-up variance** (S32P / S8 whole-run misses in V1): pre-loop start-up rose from ~620 ms (11-05) to
+   926-1,004 ms (V1) on the same scene. Lead: C:\DOSAGS accumulates every cell's <TAG>.LOG and <TAG5>SDL.LOG
+   (run-hw.sh never deletes there; ~670 cells), and DOS directory lookups are linear. Next round's warm-up lists
+   the directory; a cleanup (move the collected logs to a subdirectory) needs the operator's OK.
+3. Cleanup patch: 0363's dos_englev_shadow() definition under #ifdef DOSAGS_VMTRACE (dead code today).
+4. GUS (v0.2): PCM effects missing, MIDI gaps and pitch.
 
 ### 6. After v0.1 (low priority, spare rig room only)
 

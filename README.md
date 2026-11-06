@@ -14,14 +14,14 @@ This project is being built agentically using [Claude Code](https://claude.com/c
 
 ### Screenshots
 
-| | |
-|:---:|:---:|
-| <img src="docs/screenshots/dosags-title-screen-8bit.png" alt="AGS window surface opened, cleared, and presented at 8-bit INDEX8" width="100%"> | <img src="docs/screenshots/dosags-title-screen-16bit.png" alt="AGS window surface opened, cleared, and presented at 16-bit RGB565" width="100%"> |
-| **Window surface, 8-bit INDEX8 (TITLE_SCREEN)** | **Window surface, 16-bit RGB565 (TITLE_SCREEN)** |
-| <img src="docs/screenshots/dosags-sdl3-init.png" alt="AGS engine booting under DOSBox-X: banner, SDL3 init, no-game-data search" width="100%"> | <img src="docs/screenshots/dosags-clean-shutdown.png" alt="AGS engine exiting cleanly back to the DOS prompt" width="100%"> |
-| **Boot + SDL3 init (STARTS)** | **Clean shutdown** |
+Frames from the VGA capture of the real 486DX2-66 + ATI Mach64 + PicoGUS (release build, 2026-11-05).
 
-<p align="center">The two <code>TITLE_SCREEN</code> captures are real 640x480 fullscreen-desktop frames pulled from DOSBox-X's own video capture (<code>F12+I</code>) -- a solid cleared surface is the <em>correct</em> result here, not a blank capture: this minimal synthetic game package (<code>tests/fixtures/minimal-game-package/</code>) has no sprites/rooms, so the window opens, clears to its background color, and presents with nothing drawn on top, exactly matching this milestone's own definition. 640x480 is the <em>window's</em> pixel size, not the game's rendering resolution -- the engine's own log confirms <code>Game native resolution: 320 x 240</code> every run (the v0.1 target); AGS auto-scales the window 2x to fit the desktop when nothing forces windowed mode, and <code>--windowed --gfxfilter stdscale 1</code> gets an exact 1:1 320x240 window instead (same code path, confirmed via a real run). The boot/shutdown captures are older STARTS-milestone frames from before any game package existed; the boot one is paused mid-stream via DOS's own <code>MORE</code> pager (hence the <code>-- More --</code> line) since the real output otherwise scrolls past in under a second under DOSBox-X.</p>
+| | | |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/dosags-486-boot.png" alt="MS-DOS 6.22 boot on the Gateway 2000: PicoGUS initialised in Sound Blaster mode, then RUN.BAT" width="100%"> | <img src="docs/screenshots/dosags-486-5days-16bit.png" alt="5 Days a Stranger, room 13, 16-bit colour, on the 486" width="100%"> | <img src="docs/screenshots/dosags-486-5days-32bit.png" alt="5 Days a Stranger, room 3, forced to 32-bit colour, on the 486" width="100%"> |
+| **Boot: PicoGUS in SB mode, then the run** | **5 Days a Stranger, 16-bit** | **5 Days a Stranger, 32-bit, 40 ticks/s** |
+
+<p align="center">5 Days a Stranger is freeware by Ben "Yahtzee" Croshaw; it is not included here -- bring your own copy.</p>
 
 ---
 

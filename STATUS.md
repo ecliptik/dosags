@@ -61,14 +61,20 @@ external_dependencies: linked -- SDL3 (vendored + patched), Allegro 4.4.3
   the exe -- CWSDPMI r7. See THIRD-PARTY.md and LICENSE-REVIEW.md.
 release_packaging: `make dist` (2026-11-04) builds build/dist/dosags-<V>.zip
   from the release flavour and checks it against THIRD-PARTY.md and
-  LICENSE-REVIEW.md (scripts/check-dist.sh). Not releasable until the
-  source has a public URL.
+  LICENSE-REVIEW.md (scripts/check-dist.sh).
+release: v0.1 (2026-11-06, tag on f0f9275c) -- dosags-v0.1.zip sha256
+  c0c6fe00...; AGS.EXE release c754df64babd with the script VM and engine
+  levers on by default (ags 0359-0365). 486 record for that exe: the zip
+  as shipped PASS (DIST2); S16 MET x2 (N7S16, V1S16); S32P and S8 MET 1 of
+  2 each -- V1's second readings miss the whole-run band only (39.18,
+  39.13; start-up ~100-200 ms longer than N7 on the identical exe, game
+  loop equal; cause open); MMD character select 99.90% displayed x2
+  (N7M1/M2); AGS Quest 93.04% (N7AQ). GUS documented as not yet right.
 copyrighted_assets: none -- no AGS game data is shipped or tracked. Test
   games are pinned by hash in tests/games/*/PIN and
   tests/harness/packages/*/PIN.
-dos_status: PLAYABLE   # the hub's ports.yaml value (sdlports owns it); the
-                       # gates below are the OPTIMIZING bar, met; v0.1 waits
-                       # on PLAN-NEXT R1
+dos_status: PLAYABLE   # the hub's ports.yaml value (sdlports owns it); v0.1
+                       # released 2026-11-06; no full-game play-through yet
 dos_minimum_target: 486DX2-66 / 16 MB, ATI Mach64 (VESA via UniVBE) --
   the gate machine (HW-486-66 has 48 MB; 16 MB is a target, unmeasured)
 dos_recommended_target: null
@@ -134,7 +140,20 @@ Since then:
   flavour** (camera CLEAN at the 09-30 standard). CAPR8 (640x480 capture
   listen, release): PASS (K2 16.6 dB, K3 0.41 vs 0.13, K4 >= 51.0 / 44.0
   dB). Whole-run margins 0.03-0.07 (09-30: 0.06-0.15). Gate cells move to
-  the release flavour; R2 (GR16, GR32P, GR16WB) remains for S16 / S32P.
+  the release flavour.
+- **Round R2 (2026-11-05, tests/harness/results/ROUNDR2-2026-11-05)** on
+  release a1dba5d61624 (operator waived the capture-stick bar; capture
+  sheet as the screen witness while the camera was pointed away): GR32P
+  **MET** 39.29 / 40.12; the WB pair **PASS** (depth-score: A PASS, B
+  0.963 vs 0.627, D 0.744); GR16 39.27 / 40.11, figures MET but **no
+  screen witness** (the capture card does not lock 512x384, the camera was
+  pointed away) -- not a gate reading; one GR16 re-run owed.
+- **Round R3 (2026-11-05)**: GR16R3 **MET** 39.29 / 40.12, 99.48% displayed, camera
+  CLEAN -- the release flavour carries S8 x2, S16 x1 and S32P x1 on the 486.
+- **Round R4 (2026-11-05)**: the dist zip as shipped plays at the gate rate (DIST1 39.27 /
+  40.13, 99.56%; FAIL as registered on a walk-dependent proxy). Two bugs: the GUS backend
+  regressed since 09-15 (GUSC16 FAIL, underruns 39,631); without a BLASTER variable all
+  audio is off, so AdLib/MPU-only setups are silent (ADLC16 VOID).
 - **`make dist`** (05cfb7f4): the player zip, checked against the
   licence records. Not releasable until the source is published.
 - Next: PLAN-NEXT R1 (operator ask), then v0.1.
@@ -151,7 +170,7 @@ Since then:
 | Compatibility sweep | claimed 2026-09-16, operator sign-off -- six games (Trilby's Notes, 5 Days a Stranger, Maniac Mansion Deluxe, Shards of God, IOAWN4T, 7 Days a Skeptic) swept on DOSBox-X: boots/title PASS across the board (each reaches and idles in its own start room, exit_code=0); first-room/playable/complete honestly not-reached/not-attempted (title screens wait for player input, none injected this pass; no input-injection automation exists for closed binaries -- an honest scope limit, not a defect). King's Quest III (Infamous Adventures) was dropped after its only download path turned out to be itch.io's session/JS-gated download-URL endpoint with no plain mirror; 7 Days a Skeptic (same developer/hosting pattern as the other two Yahtzee games) replaced it. See PLAN.md's "Compatibility sweep" section. |
 | FULL_GAME | not started (needs the self-authored test game) |
 | OPTIMIZING ("40/40") -- 40 fps / 40 Hz on HW-486-66 | **Gate 1 CLAIMED 2026-09-18** (Trilby's Notes 8-bit idle: `fps_p50` 40.00, steady 40.04, whole-run 39.54 vs 39.2, 5/5). **Gate 2 RE-CLAIMED, SCOPED, 2026-09-21 (operator decision):** 8-bit 320x200 at Mode 13h on anim12 (in-place animation) AND the walk arm (moving position), Mach64-only, on the fixed binary (ags 0194) -- anim12 x2: `fps_p50` 40.00, steady 40.01, whole-run 39.34, 2,481 presents; walk arm x2: `fps_p50` 40.00, steady 39.99, whole-run 39.34/39.32, 982 presents; both witness-reviewed clean, both pass the alias screen-equality gate with a working control; margin over the 39.2 floor 0.12-0.14 with the +215-224 ms whole-run residual still unexplained. **Does NOT cover any real game.** See PLAN.md for the full evidence and the prior OPEN/REOPENED history in place. **Gate 3 RE-HOMED 2026-09-21**: AGS Quest (16-bit 640x360) closed on evidence at 38.0, content-bound (40.61 with its GUI hidden); the 16-bit gate is now 5 Days a Stranger (320x200) in play at a centred 1x rung. **Gate 3 CLAIMED 2026-09-22 (operator decision via the question tool, on the pre-agreed "replicate once, then claim" condition):** 16-bit 320x200, 5 Days a Stranger IN PLAY (room 3 via `--startr 3`, drive-walk 2 s), 512x384 centred 1x with the pillarbox alias ON (ags 0196, `binary_sha12=340fa8167624`), Mach64-only, sound off -- S2F2 / S2F3: steady 39.97 / 39.95, whole-run 39.26 / 39.24, stable 39.47 / 39.46, `fps_p50` 40.00 x2, ~100% presents; camera witness clean both cells apart from the `--startr` two-figure beat (DUPCHAR4: a debug-jump artifact). Caveats: whole-run margin 0.04-0.06; n=2; 0196 binary, not 0197; does NOT cover Maniac Mansion Deluxe or 32-bit. 32-bit: two zero-code cells owed. **Step 3 CLOSED 2026-09-22** (work-order step, not a gate): ags patch 0196 makes the 8-bit alias/direct path engage on a centred 1x rung (previously full-window-width only) -- Trilby's Notes in play at 512x384 now gets the alias (`vscreen alias ON x=96 y=72`), `tick_rate_steady` 39.99, stable rate 39.91, `presents_real` 5003/`render_passes` 4990 (~100%, was 3.6% before the drive-walk cadence fix). **Generalized to the other 320-wide catalogue titles, DOSBox-X-gated, 2026-09-22**: 5 Days a Stranger (16-bit) and Maniac Mansion Deluxe (16-bit, via its BENCH16 stand-in) both PASS clean (5/5, controls fail as required); Shards of God (32-bit, first exercise of this patch at that depth anywhere) FAILS screen-equal at one of five freeze ticks, but the alias-disabled diagnostic reproduces the identical divergence byte-for-byte, decoupling it from patch 0196 -- a pre-existing title-screen content question, not a placement-math defect (see PLAN.md for the full check, including why a clean-tick rerun was tried and reverted). Real-hardware in-play validation not yet started for any of the three. See `PLAN.md` (plan of record) and `PLAN-LOG.md` (history). |
-| RELEASE_READY | in progress: release flavour (2026-11-04), `make dist` (2026-11-04); S8 carried on the 486 (R1 2026-11-05); v0.1 waits on R2 (S16 / S32P) and the source snapshot at github.com/ecliptik/dosags |
+| RELEASE_READY | in progress: release flavour (2026-11-04), `make dist` (2026-11-04); release flavour on the 486: S8 x2 + CAPR8 (R1), S32P x1 + WB S16 (R2), S16 x1 (R3); source snapshot live at github.com/ecliptik/dosags |
 
 ## Real-hardware figures (HW-486-66 + ATI Mach64, `DOSAGS_FIXED_TIMESTEP=1`, sound off)
 

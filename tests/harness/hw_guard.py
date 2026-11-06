@@ -88,7 +88,7 @@ WITNESS_S_ENV = "HW_GUARD_WITNESS_S"  # override the witness bound (the dry-run 
 # so nothing is declared failed before well past that.
 DEFAULT_WITNESS_S = 150
 
-FTP_MARKERS = ("goodbye", "transfer complete", "server closed", "ftp>", "mtcp")
+FTP_MARKERS = ("goodbye", "transfer complete", "server closed", "ftp>", "mtcp", "ftp session ended")  # last: vcctrl 1e5a1e7 BATs (FTP output to NUL), 2026-11-05
 
 
 def _parse_when(text):

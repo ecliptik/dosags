@@ -1,0 +1,248 @@
+From 6c2be00c73d76ac2fabb8ee4ecbfaecb288aac70 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 6 Nov 2026 03:36:30 -0800
+Subject: [PATCH 363/365] DOS-PORT: patch 0363 -- lever 1: skip the per-tick
+ update of a character that provably cannot change
+
+Every tick UpdateCharacterMoveAndAnim and its five callees run for every 'on' character in the game
+-- 102 on MMD, 101 of them in other rooms (~1.24 ms/tick on the 486, F1a). For a character in
+another room that is not turning, not moving, not following anyone, and whose (view, loop, frame)
+were validated by the last full update and are unchanged, that update does exactly one thing:
+process_idle_this_time = 0. The skip does that and nothing else; any other character, and the
+first tick after any of those fields changes, takes the full update (which re-records the triple).
+
+Behind DOSAGS_ENGLEV=1 here (0365 makes it the default; 0 is the fallback); read once with the
+VM mode. Lab-only (-DDOSAGS_VMTRACE, DOSAGS_ENGLEV_SHADOW=1): for every skipped character the full
+update still runs on a copy and the whole CharacterInfo/CharacterExtras state, the follower list
+and the number of Random() draws are compared ("charskip MISMATCH"); statewit gains el= and rnd=.
+
+Lab (docs/lab/LEVERS-REPORT.md sections 5-12): 0 mismatches over 751,085 skipped updates on MMD
+character select, the MMD intro, AGS Quest (with restore) and seeded 5 Days; RNG draws unchanged;
+digests EQUAL to legacy on all four; game_objects_update 0.569 -> 0.145 ms/tick at fixed 40k.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P4db4MSiR2PYUDFdrDdJe2
+---
+ Engine/ac/math.cpp               |  6 +++
+ Engine/main/dos_englev.h         | 16 +++++++
+ Engine/main/game_run.cpp         |  6 ++-
+ Engine/main/update.cpp           | 72 ++++++++++++++++++++++++++++++++
+ Engine/script/cc_instance_vm.cpp | 26 ++++++++++++
+ 5 files changed, 124 insertions(+), 2 deletions(-)
+ create mode 100644 Engine/main/dos_englev.h
+
+diff --git a/Engine/ac/math.cpp b/Engine/ac/math.cpp
+index 147d257b3..dcf5cc3ca 100644
+--- a/Engine/ac/math.cpp
++++ b/Engine/ac/math.cpp
+@@ -137,8 +137,14 @@ float Math_Sqrt(float value)
+     return ::sqrt(value);
+ }
+ 
++#ifdef DOSAGS_VMTRACE
++extern unsigned long dos_rand_calls; // DOS-PORT 0363 lab: lever 1's RNG witness
++#endif
+ int __Rand(int upto)
+ {
++#ifdef DOSAGS_VMTRACE
++    ++dos_rand_calls;
++#endif
+     upto++;
+     if (upto < 1)
+         quit("!Random: invalid parameter passed -- must be at least 0.");
+diff --git a/Engine/main/dos_englev.h b/Engine/main/dos_englev.h
+new file mode 100644
+index 000000000..d8b1069ed
+--- /dev/null
++++ b/Engine/main/dos_englev.h
+@@ -0,0 +1,16 @@
++// DOS-PORT patch 0363 -- engine lever 1 outside the VM (LEVERS-REPORT.md), behind DOSAGS_ENGLEV=1 (default 0 = off):
++//   lever 1: skip the per-tick move/animate update of a character it provably cannot change (update.cpp)
++// Implemented in script/cc_instance_vm.cpp. Lab shadow checks only with -DDOSAGS_VMTRACE and DOSAGS_ENGLEV_SHADOW=1.
++#ifndef DOS_ENGLEV_H
++#define DOS_ENGLEV_H
++#ifdef __DJGPP__
++#include <stdint.h>
++extern bool dos_englev_on;          // DOSAGS_ENGLEV=1, read once at engine start (dos_englev_init)
++void dos_englev_init();
++bool dos_englev_shadow();           // lab: DOSAGS_ENGLEV_SHADOW=1 in a -DDOSAGS_VMTRACE build
++#ifdef DOSAGS_VMTRACE
++extern unsigned long dos_el_skip, dos_el_check, dos_el_bad;
++extern unsigned long dos_rand_calls;
++#endif
++#endif
++#endif
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index c37c22f06..fc0993d38 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1278,6 +1278,7 @@ static void game_loop_update_background_animation()
+ extern uint32_t dos_vmtrace_h, dos_vmtrace_tick, dos_vmsync_h;
+ extern unsigned long dos_vmtrace_n, dos_vmsync_n, dos_vmshadow_n, dos_vmshadow_bad;
+ extern unsigned long dos_vmfuse_n[];
++extern unsigned long dos_el_skip, dos_el_check, dos_el_bad, dos_rand_calls;
+ static uint32_t dp_fnv(uint32_t h, const void *p, size_t n)
+ {
+     const uint8_t *b = static_cast<const uint8_t*>(p);
+@@ -1318,12 +1319,13 @@ static void dp_statewit()
+     // localload, localstore, pushmovlpop, popbinmov, cmpmovjz); shadow = checks/mismatches
+     const unsigned long *fz = dos_vmfuse_n; // indices: kVmH_SFarCall.. in cc_instance_vm.cpp (41..54)
+     Debug::Printf("DOS-PORT statewit tick=%lu room=%d chars=%08lx objs=%08lx gints=%08lx gdata=%08lx rdata=%08lx player=%d,%d vmtrace=%08lx vmops=%lu"
+-        " vmsync=%08lx syncn=%lu fz=%lu,%lu,%lu,%lu,%lu,%lu shadow=%lu/%lu",
++        " vmsync=%08lx syncn=%lu fz=%lu,%lu,%lu,%lu,%lu,%lu shadow=%lu/%lu el=%lu/%lu/%lu rnd=%lu",
+         (unsigned long)tick, displayed_room, (unsigned long)hc, (unsigned long)ho, (unsigned long)hg,
+         (unsigned long)hd, (unsigned long)hr, pc >= 0 ? game.chars[pc].x : -1, pc >= 0 ? game.chars[pc].y : -1,
+         (unsigned long)dos_vmtrace_h, dos_vmtrace_n, (unsigned long)dos_vmsync_h, dos_vmsync_n,
+         fz[41], fz[42], fz[43], fz[44], fz[45] + fz[46] + fz[47] + fz[48],
+-        fz[49] + fz[50] + fz[51] + fz[52] + fz[53] + fz[54], dos_vmshadow_n, dos_vmshadow_bad);
++        fz[49] + fz[50] + fz[51] + fz[52] + fz[53] + fz[54], dos_vmshadow_n, dos_vmshadow_bad,
++        dos_el_skip, dos_el_check, dos_el_bad, dos_rand_calls);
+ }
+ #endif
+ 
+diff --git a/Engine/main/update.cpp b/Engine/main/update.cpp
+index 037751c56..a169ba163 100644
+--- a/Engine/main/update.cpp
++++ b/Engine/main/update.cpp
+@@ -40,6 +40,9 @@
+ #include "gfx/graphicsdriver.h"
+ #include "main/game_run.h"
+ #include "main/update.h"
++#include "main/dos_englev.h" // DOS-PORT patch 0363 lever 1
++#include "debug/out.h"
++#include <string.h>
+ #include "media/audio/audio_system.h"
+ 
+ 
+@@ -305,8 +308,39 @@ void update_player_view()
+         playerchar->view = playerchar->defview;
+ }
+ 
++#ifdef __DJGPP__
++// DOS-PORT patch 0363 lever 1. For a character in another room that is not turning and not following,
++// UpdateCharacterMoveAndAnim (characterinfo_engine.cpp) does nothing but FixupCharacterLoopAndFrame and
++// `process_idle_this_time = 0`: Moving, Animating and Idle all require the displayed room, Follower requires
++// following >= 0, Turning requires walking >= TURNING_AROUND. Fixup changes nothing (and cannot quit) when the
++// (view, loop, frame) it last saw were in range with a non-empty loop and are unchanged -- views are static data.
++// So such a character is skipped with only the store left. dos_char_valid caches the last full update's
++// (view, loop, frame) when in range, -1 otherwise.
++static std::vector<int> dos_char_valid; // 3 ints per character: view, loop, frame
++static inline void dos_char_record(int aa, const CharacterInfo *chi)
++{
++    int *v = &dos_char_valid[aa * 3];
++    const int view = chi->view, loop = chi->loop, frame = chi->frame;
++    if (view >= 0 && static_cast<size_t>(view) < views.size() && loop >= 0 && loop < views[view].numLoops &&
++        views[view].loops[loop].numFrames > 0 && frame >= 0 && frame < views[view].loops[loop].numFrames)
++    { v[0] = view; v[1] = loop; v[2] = frame; }
++    else
++        v[0] = -1;
++}
++static inline bool dos_char_skippable(int aa, const CharacterInfo *chi, const CharacterExtras *chex)
++{
++    const int *v = &dos_char_valid[aa * 3];
++    return chi->room != displayed_room && chi->walking < TURNING_AROUND && chex->following < 0 &&
++        v[0] >= 0 && v[0] == chi->view && v[1] == chi->loop && v[2] == chi->frame;
++}
++#endif
++
+ void update_character_move_and_anim(std::vector<int> &followingAsSheep)
+ {
++#ifdef __DJGPP__
++  if (dos_englev_on && dos_char_valid.size() != static_cast<size_t>(game.numcharacters) * 3)
++    dos_char_valid.assign(static_cast<size_t>(game.numcharacters) * 3, -1);
++#endif
+ 	// move & animate characters
+   for (int aa=0;aa<game.numcharacters;aa++) {
+     if (game.chars[aa].on != 1) continue;
+@@ -314,6 +348,44 @@ void update_character_move_and_anim(std::vector<int> &followingAsSheep)
+     CharacterInfo*chi    = &game.chars[aa];
+ 	CharacterExtras*chex = &charextra[aa];
+ 
++#ifdef __DJGPP__
++    if (dos_englev_on)
++    {
++      if (dos_char_skippable(aa, chi, chex))
++      {
++#ifdef DOSAGS_VMTRACE
++        ++dos_el_skip;
++        if (dos_englev_shadow())
++        {
++          // the full update must leave everything as the skip does: the structs unchanged but for the store,
++          // no RNG draw, no follower queued
++          ++dos_el_check;
++          static uint8_t ci0[sizeof(CharacterInfo)], ce0[sizeof(CharacterExtras)];
++          memcpy(ci0, chi, sizeof(CharacterInfo));
++          memcpy(ce0, chex, sizeof(CharacterExtras));
++          reinterpret_cast<CharacterExtras*>(ce0)->process_idle_this_time = 0;
++          const unsigned long rand0 = dos_rand_calls;
++          const size_t sheep0 = followingAsSheep.size();
++          UpdateCharacterMoveAndAnim(chi, chex, followingAsSheep);
++          if (memcmp(ci0, chi, sizeof(CharacterInfo)) || memcmp(ce0, chex, sizeof(CharacterExtras)) ||
++              rand0 != dos_rand_calls || sheep0 != followingAsSheep.size())
++          {
++            if (dos_el_bad < 10)
++              AGS::Common::Debug::Printf("DOS-PORT charskip MISMATCH char=%d room=%d", aa, chi->room);
++            ++dos_el_bad;
++          }
++          dos_char_record(aa, chi);
++          continue;
++        }
++#endif
++        chex->process_idle_this_time = 0;
++        continue;
++      }
++      UpdateCharacterMoveAndAnim(chi, chex, followingAsSheep);
++      dos_char_record(aa, chi);
++      continue;
++    }
++#endif
+ 	UpdateCharacterMoveAndAnim(chi, chex, followingAsSheep);
+   }
+ }
+diff --git a/Engine/script/cc_instance_vm.cpp b/Engine/script/cc_instance_vm.cpp
+index b5584386a..9c14b9999 100644
+--- a/Engine/script/cc_instance_vm.cpp
++++ b/Engine/script/cc_instance_vm.cpp
+@@ -61,6 +61,31 @@ using namespace AGS::Common;
+ using namespace AGS::Engine;
+ using namespace AGS::Common::Memory;
+ extern ScriptError ccError; // cc_common.cpp (lever 3): cc_has_error() is ccError.HasError
++#include "main/dos_englev.h"
++
++// ---- engine lever 1 (dos_englev.h) ----------------------------------------------------------
++bool dos_englev_on = false;
++#ifdef DOSAGS_VMTRACE
++unsigned long dos_el_skip = 0, dos_el_check = 0, dos_el_bad = 0;
++unsigned long dos_rand_calls = 0;
++#endif
++void dos_englev_init()
++{
++    static bool done = false;
++    if (done) return;
++    done = true;
++    const char *e = getenv("DOSAGS_ENGLEV");
++    dos_englev_on = (e && e[0] == '1');
++    if (e && *e)
++        Debug::Printf("DOS-PORT englev DOSAGS_ENGLEV=%s on=%d", e, dos_englev_on ? 1 : 0);
++}
++bool dos_englev_shadow()
++{
++    static int s = -1;
++    if (s < 0) { const char *e = getenv("DOSAGS_ENGLEV_SHADOW"); s = (e && e[0] == '1') ? 1 : 0; }
++    return s != 0;
++}
++
+ 
+ int dos_vm_sccmd_argc(int op);          // cc_instance.cpp, patch 0359
+ bool dos_vm_sccmd_argisreg(int op, int k);
+@@ -138,6 +163,7 @@ int ccInstance::DosVmMode()
+         else if (e && strcmp(e, "fastgeneric") == 0) mode = kDosVm_FastGeneric;
+         if (e && *e)
+             Debug::Printf("DOS-PORT vmmode DOSAGS_VM=%s mode=%d", e, mode);
++        dos_englev_init(); // lever 1: read DOSAGS_ENGLEV once, at the first script load
+     }
+     return mode;
+ }
+-- 
+2.47.3
+

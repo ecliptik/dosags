@@ -1,0 +1,2457 @@
+From a7634948f799895bf4e353b7c8d29c73de05d4e1 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 6 Nov 2026 03:36:30 -0800
+Subject: [PATCH 360/365] DOS-PORT: patch 0360 -- script VM slice 2: a threaded
+ fast loop over the decoded stream (DOSAGS_VM=fast)
+
+The loop that uses 0359's stream (docs/lab/VM-DESIGN.md 3, docs/lab/VM-SLICE2.md): one handler per
+(opcode, operand variant), dispatched by GCC computed goto through a handler table, with
+ip and this held in callee-saved registers across the dispatch (VM-SLICE0: checked in -S at the
+project flags: every dispatch must stay "jmp *(%edi)"). CallScriptFunction enters it through
+DosVmEnter(), which falls back to the untouched upstream Run() for a script that did not decode,
+under the debugger, or when DOSAGS_VM is not fast. Any instruction without a handler of its own, and
+every instruction in DOSAGS_VM=fastgeneric, runs through DosVmStep(): Run()'s own switch text,
+transformed mechanically (Run()'s locals -> a frame struct), so the semantics are Run()'s.
+
+Opt-in here (DOSAGS_VM=fast); 0365 makes it the default. Lab-only code is compiled only with
+-DDOSAGS_VMTRACE (make AGS_RUNSTATS_DEF=-DDOSAGS_VMTRACE): a per-instruction trace digest folded
+identically in Run() and the fast loop, and the statewit determinism witness (character/object/
+global/script-data digests every 25 ticks, DOSAGS_WIT_PERTURB_TICK as its control).
+
+Lab: trace and state digests EQUAL to legacy on MMD character select, AGS Quest (incl. restore),
+seeded 5 Days and the MMD intro (26.7M instructions); MMD CS script event 9.311 -> 5.130 ms/tick at
+fixed 40k cycles. 486, round F1b (same lab binary, legacy vs fast): MMD displayed 26.77 -> 86.94%,
+script_vm 20.47 -> 12.70 ms/tick (1.61x).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P4db4MSiR2PYUDFdrDdJe2
+---
+ Engine/main/game_run.cpp         |   52 +
+ Engine/script/cc_instance.cpp    |   10 +
+ Engine/script/cc_instance.h      |   15 +
+ Engine/script/cc_instance_vm.cpp | 2160 ++++++++++++++++++++++++++++--
+ 4 files changed, 2120 insertions(+), 117 deletions(-)
+
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index e38ef6162..dcddb44a5 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1271,9 +1271,61 @@ static void game_loop_update_background_animation()
+     }
+ }
+ 
++#ifdef DOSAGS_VMTRACE
++// DOS-PORT patch 0360, LAB ONLY (make AGS_RUNSTATS_DEF=-DDOSAGS_VMTRACE): the determinism witness
++// of LAB-MMD probe 0292 (state digests every 25 ticks; DOSAGS_WIT_PERTURB_TICK=N nudges the player
++// one pixel at tick N, the control) carrying the VM trace digest of cc_instance_vm.cpp.
++extern uint32_t dos_vmtrace_h, dos_vmtrace_tick;
++extern unsigned long dos_vmtrace_n;
++static uint32_t dp_fnv(uint32_t h, const void *p, size_t n)
++{
++    const uint8_t *b = static_cast<const uint8_t*>(p);
++    for (size_t i = 0; i < n; ++i) { h ^= b[i]; h *= 16777619u; }
++    return h;
++}
++#define DP_FNV(h, v) h = dp_fnv(h, &(v), sizeof(v))
++static void dp_statewit()
++{
++    static long perturb = -2;
++    if (perturb == -2) { const char *e = getenv("DOSAGS_WIT_PERTURB_TICK"); perturb = e ? atol(e) : -1; }
++    const uint32_t tick = GameTimer.LoopCounter;
++    dos_vmtrace_tick = tick;
++    if (perturb >= 0 && tick == (uint32_t)perturb && game.playercharacter >= 0)
++        game.chars[game.playercharacter].x += 1;
++    if (tick % 25 != 0) return;
++    uint32_t hc = 2166136261u, ho = 2166136261u, hg = 2166136261u, hd = 2166136261u, hr = 2166136261u;
++    for (int i = 0; i < game.numcharacters; ++i)
++    {
++        const CharacterInfo &c = game.chars[i];
++        DP_FNV(hc, c.room); DP_FNV(hc, c.x); DP_FNV(hc, c.y); DP_FNV(hc, c.z); DP_FNV(hc, c.loop);
++        DP_FNV(hc, c.frame); DP_FNV(hc, c.view); DP_FNV(hc, c.walking); DP_FNV(hc, c.animating);
++        DP_FNV(hc, c.flags); DP_FNV(hc, c.wait);
++    }
++    if (croom)
++        for (uint32_t i = 0; i < croom->numobj; ++i)
++        {
++            const RoomObject &o = croom->obj[i];
++            DP_FNV(ho, o.x); DP_FNV(ho, o.y); DP_FNV(ho, o.on); DP_FNV(ho, o.view); DP_FNV(ho, o.loop);
++            DP_FNV(ho, o.frame); DP_FNV(ho, o.cycling); DP_FNV(ho, o.moving); DP_FNV(ho, o.num);
++            DP_FNV(ho, o.transparent); DP_FNV(ho, o.baseline);
++        }
++    hg = dp_fnv(hg, play.globalscriptvars, sizeof(play.globalscriptvars));
++    if (gameinst) { const auto &g = gameinst->GetGlobalData(); if (!g.empty()) hd = dp_fnv(hd, g.data(), g.size()); }
++    if (roominst) { const auto &r = roominst->GetGlobalData(); if (!r.empty()) hr = dp_fnv(hr, r.data(), r.size()); }
++    const int pc = game.playercharacter;
++    Debug::Printf("DOS-PORT statewit tick=%lu room=%d chars=%08lx objs=%08lx gints=%08lx gdata=%08lx rdata=%08lx player=%d,%d vmtrace=%08lx vmops=%lu",
++        (unsigned long)tick, displayed_room, (unsigned long)hc, (unsigned long)ho, (unsigned long)hg,
++        (unsigned long)hd, (unsigned long)hr, pc >= 0 ? game.chars[pc].x : -1, pc >= 0 ? game.chars[pc].y : -1,
++        (unsigned long)dos_vmtrace_h, dos_vmtrace_n);
++}
++#endif
++
+ static void game_loop_update_loop_counter()
+ {
+     GameTimer.LoopCounter++;
++#ifdef DOSAGS_VMTRACE
++    dp_statewit(); // patch 0360, LAB ONLY
++#endif
+ 
+     if (play.wait_counter > 0) play.wait_counter--;
+     if (play.shakesc_length > 0) play.shakesc_length--;
+diff --git a/Engine/script/cc_instance.cpp b/Engine/script/cc_instance.cpp
+index e9a0bb7c7..7836bf8f6 100644
+--- a/Engine/script/cc_instance.cpp
++++ b/Engine/script/cc_instance.cpp
+@@ -448,7 +448,11 @@ ccInstError ccInstance::CallScriptFunction(const String &funcname, int32_t numar
+ 
+     InstThreads.push_back(this); // push instance thread
+     _runningInst = this;
++#ifdef __DJGPP__
++    const ccInstError reterr = DosVmEnter(start_at); // DOS-PORT patch 0360: Run() or the fast loop
++#else
+     const ccInstError reterr = Run(start_at);
++#endif
+     // Cleanup before returning, even if error
+     ASSERT_STACK_SIZE(numargs);
+     PopValuesFromStack(numargs);
+@@ -690,6 +694,9 @@ ccInstError ccInstance::Run(int32_t curpc)
+         default:
+             break;
+         }
++#ifdef DOSAGS_VMTRACE
++        DosVmTraceFold(codeInst, _pc, op_code); // DOS-PORT patch 0360, LAB ONLY: the trace digest
++#endif
+         //---------------------------------------------------------------------
+         /* End read operation */
+         //=====================================================================
+@@ -1441,6 +1448,9 @@ ccInstError ccInstance::Run(int32_t curpc)
+             }
+ 
+             _registers[SREG_AX] = return_value;
++#ifdef DOSAGS_VMTRACE
++            { extern bool dos_vmtrace_control_fire(); if (dos_vmtrace_control_fire()) _registers[SREG_AX].IValue ^= 1; } // LAB ONLY control
++#endif
+             next_call_needs_object = 0;
+             num_args_to_func = -1;
+             break;
+diff --git a/Engine/script/cc_instance.h b/Engine/script/cc_instance.h
+index ac84d8110..896d567a0 100644
+--- a/Engine/script/cc_instance.h
++++ b/Engine/script/cc_instance.h
+@@ -30,6 +30,9 @@
+ #include "util/time_util.h"
+ 
+ using namespace AGS;
++#ifdef __DJGPP__
++struct DosVmFrame; // DOS-PORT patch 0360, cc_instance_vm.cpp
++#endif
+ 
+ #define INSTF_SHAREDATA     1
+ #define INSTF_ABORTED       2
+@@ -196,6 +199,11 @@ public:
+     // 1 = "decode" (decode at load and log), 2 = "check" (decode, then verify the decoded stream
+     // against the bytecode and the legacy fixup semantics, and log the mismatches).
+     static int DosVmMode();
++    enum { kDosVm_Legacy = 0, kDosVm_Decode = 1, kDosVm_Check = 2, kDosVm_Fast = 3, kDosVm_FastGeneric = 4 };
++#ifdef DOSAGS_VMTRACE
++    // LAB ONLY: fold the VM state before an instruction into the trace digest
++    void    DosVmTraceFold(const ccInstance *codeInst, int32_t pc, int32_t op) const;
++#endif
+ #endif
+ 
+ private:
+@@ -215,6 +223,11 @@ private:
+     void    DosVmDecode();
+     // DOS-PORT patch 0359: independent re-derivation of every decoded instruction; returns mismatches
+     long    DosVmCheck(long *by_cat, uint32_t *n_instr) const;
++    // DOS-PORT patch 0360 (slice 2): Run() or the fast loop, by DOSAGS_VM and the code instance
++    ccInstError DosVmEnter(int32_t curpc);
++    ccInstError DosVmRun(int32_t curpc);
++    ccInstError DosVmLoop(DosVmFrame *fr, int32_t startpc);
++    int     DosVmStep(DosVmFrame &fr, int32_t pc);
+ #endif
+ 
+     // Searches for the function among this script's exports,
+@@ -289,6 +302,8 @@ private:
+         std::vector<intptr_t>   dcode;
+         std::vector<uint32_t>   dstart;
+         bool                    decoded_ok = false;
++        ResolvedScriptData() = default;
++        ~ResolvedScriptData(); // counts the decoded bytes freed (cc_instance_vm.cpp)
+ #endif
+     };
+     std::shared_ptr<ResolvedScriptData> _scriptData;
+diff --git a/Engine/script/cc_instance_vm.cpp b/Engine/script/cc_instance_vm.cpp
+index c2c338832..26fbaf45c 100644
+--- a/Engine/script/cc_instance_vm.cpp
++++ b/Engine/script/cc_instance_vm.cpp
+@@ -1,37 +1,37 @@
+ //=============================================================================
+ //
+-// DOS-PORT patch 0359 -- script VM slice 1: decode each script once at load into an
+-// index-parallel stream (docs/lab/VM-DESIGN.md 2.2-2.3), and check it.
++// DOS-PORT patch 0359 -- the script VM: decode each script once at load (slice 1) and run the
++// decoded stream in a threaded loop (slice 2). docs/lab/VM-DESIGN.md 2.2-2.10.
+ //
+-// Inert unless DOSAGS_VM is set: with DOSAGS_VM unset (or "legacy") ResolveImportFixups makes
+-// one cached getenv() and nothing else, and no memory is allocated. Nothing executes the
+-// decoded stream yet; ccInstance::Run() is untouched.
+-//
+-//   DOSAGS_VM=decode  decode every primary instance at load; one "vmdecode" log line each
+-//   DOSAGS_VM=check   the same, then re-derive every instruction independently of the decoder
+-//                     (its own walk over the ORIGINAL ccScript code, the legacy fixup text, field
+-//                     by field RuntimeScriptValue comparison) and log a "vmcheck" line
++// DOSAGS_VM (read once):
++//   unset/legacy  nothing is decoded; ccInstance::Run() runs every script, as before
++//   decode        decode every primary instance at load and log it (nothing executes it)
++//   check         decode, then verify the stream against the bytecode (slice 1's gate)
++//   fast          decode; CallScriptFunction() runs eligible scripts in DosVmLoop()
++//   fastnofuse    the same as fast (slice 2 has no superinstructions yet)
++//   fastgeneric   decode; every instruction goes through DosVmStep(), the legacy-text stepper
++// DOSAGS_VM_CHECK=1 additionally runs the slice-1 check in any decoding mode.
+ //
+ // Layout (VM-DESIGN 2.2). For an instruction at pc with argc arguments:
+-//   dcode[pc]          its handler kind: bits 0-7 the opcode as Run() executes it (the
+-//                      CALLEXT->CALLAS rewrite included), bits 8-15 a variant (kVmV_*);
+-//                      slice 2 maps kinds to handler label addresses
+-//   dcode[pc+1+k]      argument k, pre-processed BY OPCODE:
+-//                        register argument  -> reg * sizeof(RuntimeScriptValue)
+-//                        jzi/jnzi/jmpi      -> word delta (arg + 2) when the target is an
+-//                                              instruction start inside the code (variant 0),
+-//                                              else the raw word (variant kVmV_Slow)
+-//                        LITTOREG/WRITELIT argument 2, by its fixup type:
+-//                          none / FUNCTION  -> the int (variant 0)
+-//                          GLOBALDATA       -> &((ScriptVariable*)word)->RValue (kVmV_Gvar)
+-//                          STRING           -> _strings + word (kVmV_Str)
+-//                          IMPORT           -> the import INDEX, looked up at run time (kVmV_Imp)
+-//                          STACK / other    -> raw word (kVmV_Slow: the generic stepper)
+-//                        anything else      -> the raw word, exactly what Run() reads
+-//   dcode[n..n+2]      zero padding
+-// A script with an opcode >= CC_NUM_SCCMDS, an instruction running past the end, or a register
+-// argument outside 0..CC_NUM_REGISTERS-1 is NOT decoded (decoded_ok = false): it would always
+-// run the legacy Run(), keeping today's behaviour by construction.
++//   dcode[pc]       check/decode modes: its kind (bits 0-7 the opcode as Run() executes it,
++//                   bits 8-15 a variant kVmV_*); fast modes: the address of its handler label
++//   dcode[pc+1+k]   argument k, pre-processed BY OPCODE: a register -> reg*sizeof(RSV);
++//                   jzi/jnzi/jmpi -> (arg + 2) when the target is an instruction start inside the
++//                   code, else the raw word (variant kVmV_Slow); LITTOREG/WRITELIT argument 2 by
++//                   fixup: none/FUNCTION -> the int, GLOBALDATA -> &ScriptVariable::RValue,
++//                   STRING -> _strings + word, IMPORT -> the index (looked up at run time),
++//                   STACK/other -> raw (kVmV_Slow); anything else -> the raw word
++//   dcode[n..n+2]   zero
++// A script with an opcode >= CC_NUM_SCCMDS, an instruction running past the end or a register
++// argument outside 0..7 is not decoded and always runs the legacy Run().
++//
++// The fast loop keeps only ip and this live across dispatch; every other Run() local is in a
++// DosVmFrame. The member _pc is written before every call out of the loop and on every exit.
++// INSTF_ABORTED is tested at entry and after every handler that calls out (only engine code,
++// reached through a call out, can set it). Anything a native handler does not handle -- rare
++// opcodes, odd fixups, a precondition (stack space, register types) it would fail -- goes to
++// h_generic BEFORE any state is changed, and DosVmStep() executes that instruction with the text
++// of Run()'s own case (generated from cc_instance.cpp's switch, see DosVmStep).
+ //
+ //=============================================================================
+ #ifdef __DJGPP__
+@@ -40,14 +40,31 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <time.h> // uclock()
++#include <unistd.h> // sbrk()
++#include <assert.h>
++#include <algorithm>
++#include <chrono>
++#include <vector>
++#include "ac/common.h"
++#include "ac/sys_events.h"
++#include "ac/dynobj/cc_dynamicarray.h"
++#include "ac/dynobj/dynobj_manager.h"
++#include "ac/dynobj/managedobjectpool.h"
++#include "ac/dynobj/scriptstring.h"
++#include "ac/dynobj/scriptuserobject.h"
+ #include "debug/out.h"
++#include "main/dos_port_work.h"
+ #include "script/cc_common.h"
+-#include "script/script_runtime.h" // simp
++#include "script/script_runtime.h" // simp, new_line_hook_type
+ 
+ using namespace AGS::Common;
++using namespace AGS::Engine;
++using namespace AGS::Common::Memory;
+ 
+ int dos_vm_sccmd_argc(int op);          // cc_instance.cpp, patch 0359
+ bool dos_vm_sccmd_argisreg(int op, int k);
++extern new_line_hook_type new_line_hook;   // script_runtime.cpp
++extern ccInstance *LoadedInstances[MAX_PRIMARY_INSTANCES]; // cc_instance.cpp
+ 
+ enum DosVmVariant
+ {
+@@ -58,141 +75,289 @@ enum DosVmVariant
+     kVmV_Slow  = 4,
+ };
+ 
++enum DosVmHandler
++{
++    kVmH_Generic = 0, kVmH_Linenum, kVmH_Add, kVmH_Sub, kVmH_Mov, kVmH_Ret,
++    kVmH_MovlInt, kVmH_MovlGvar, kVmH_MovlStr, kVmH_MovlImp, kVmH_MemRead, kVmH_MemWrite,
++    kVmH_MulReg, kVmH_AddReg, kVmH_SubReg, kVmH_BitAnd, kVmH_BitOr, kVmH_IsEqual, kVmH_NotEqual,
++    kVmH_Greater, kVmH_LessThan, kVmH_Gte, kVmH_Lte, kVmH_And, kVmH_Or, kVmH_XorReg, kVmH_Call,
++    kVmH_Jz, kVmH_Jnz, kVmH_Jmp, kVmH_Push, kVmH_Pop, kVmH_Mul, kVmH_CallExt, kVmH_PushReal,
++    kVmH_SubRealStack, kVmH_NumFuncArgs, kVmH_ThisBase, kVmH_CheckBounds, kVmH_CheckNull,
++    kVmH_CheckNullReg,
++    kVmH_Count
++};
++
++static const void *s_vm_handlers[kVmH_Count];
++static bool s_vm_handlers_ready = false;
++
+ static inline intptr_t VmKind(int op, int variant) { return static_cast<intptr_t>(op | (variant << 8)); }
+-static inline bool IsJump(int op) { return op == SCMD_JZ || op == SCMD_JNZ || op == SCMD_JMP; }
+-static inline bool HasFixedArg2(int op) { return op == SCMD_LITTOREG || op == SCMD_WRITELIT; }
+ static inline unsigned long UclockUs(uclock_t d) { return static_cast<unsigned long>((d * 1000000LL) / UCLOCKS_PER_SEC); }
+ 
+-// running totals over the whole run, printed on every line so the last one is the summary
+-static unsigned long g_vm_scripts = 0, g_vm_ineligible = 0, g_vm_bytes = 0, g_vm_decode_us = 0;
++// The opcode table, copied once into this TU (sccmd_info has internal linkage in cc_instance.cpp)
++static uint8_t s_argc[CC_NUM_SCCMDS];
++static uint8_t s_regmask[CC_NUM_SCCMDS];
++static bool s_table_ready = false;
++static void VmTableInit()
++{
++    if (s_table_ready) return;
++    for (int op = 0; op < CC_NUM_SCCMDS; ++op)
++    {
++        s_argc[op] = static_cast<uint8_t>(dos_vm_sccmd_argc(op));
++        uint8_t m = 0;
++        for (int k = 0; k < s_argc[op]; ++k)
++            if (dos_vm_sccmd_argisreg(op, k)) m |= static_cast<uint8_t>(1u << k);
++        s_regmask[op] = m;
++    }
++    s_table_ready = true;
++}
++
++// running totals over the whole run (printed on every line so the last one is the summary)
++static unsigned long g_vm_scripts = 0, g_vm_ineligible = 0, g_vm_words = 0, g_vm_decode_us = 0;
++static unsigned long g_vm_alloc_bytes = 0, g_vm_freed_bytes = 0, g_vm_allocs = 0, g_vm_frees = 0;
+ static unsigned long g_vm_check_mismatch = 0, g_vm_check_us = 0;
+ 
++static unsigned long VmBrk() { return static_cast<unsigned long>(reinterpret_cast<uintptr_t>(sbrk(0))); }
++
+ int ccInstance::DosVmMode()
+ {
+     static int mode = -1;
+     if (mode < 0)
+     {
+         const char *e = getenv("DOSAGS_VM");
+-        if (e && strcmp(e, "decode") == 0)
+-            mode = 1;
+-        else if (e && strcmp(e, "check") == 0)
+-            mode = 2;
+-        else
+-            mode = 0;
++        mode = kDosVm_Legacy;
++        if (e && strcmp(e, "decode") == 0) mode = kDosVm_Decode;
++        else if (e && strcmp(e, "check") == 0) mode = kDosVm_Check;
++        else if (e && (strcmp(e, "fast") == 0 || strcmp(e, "fastnofuse") == 0)) mode = kDosVm_Fast;
++        else if (e && strcmp(e, "fastgeneric") == 0) mode = kDosVm_FastGeneric;
+         if (e && *e)
+-            Debug::Printf("DOS-PORT vmmode DOSAGS_VM=%s mode=%s", e,
+-                mode == 2 ? "check" : (mode == 1 ? "decode" : "legacy"));
++            Debug::Printf("DOS-PORT vmmode DOSAGS_VM=%s mode=%d", e, mode);
+     }
+     return mode;
+ }
+ 
++static bool VmCheckRequested()
++{
++    static int c = -1;
++    if (c < 0)
++    {
++        const char *e = getenv("DOSAGS_VM_CHECK");
++        c = (e && e[0] == '1') ? 1 : 0;
++    }
++    return c != 0 || ccInstance::DosVmMode() == ccInstance::kDosVm_Check;
++}
++
++// slice-1 memory accounting: every decoded stream freed is counted here
++ccInstance::ResolvedScriptData::~ResolvedScriptData()
++{
++    const unsigned long b = dcode.capacity() * sizeof(intptr_t) + dstart.capacity() * sizeof(uint32_t);
++    if (b > 0)
++    {
++        g_vm_freed_bytes += b;
++        ++g_vm_frees;
++        Debug::Printf("DOS-PORT vmfree bytes=%lu live=%lu allocs=%lu frees=%lu brk=0x%lx",
++            b, g_vm_alloc_bytes - g_vm_freed_bytes, g_vm_allocs, g_vm_frees, VmBrk());
++    }
++}
++
++static int HandlerFor(intptr_t kind)
++{
++    const int op = static_cast<int>(kind & 0xFF);
++    const int var = static_cast<int>((kind >> 8) & 0xFF);
++    if (ccInstance::DosVmMode() == ccInstance::kDosVm_FastGeneric)
++        return kVmH_Generic;
++    switch (op)
++    {
++    case SCMD_LINENUM:   return kVmH_Linenum;
++    case SCMD_ADD:       return kVmH_Add;
++    case SCMD_SUB:       return kVmH_Sub;
++    case SCMD_REGTOREG:  return kVmH_Mov;
++    case SCMD_RET:       return kVmH_Ret;
++    case SCMD_LITTOREG:
++        switch (var)
++        {
++        case kVmV_Plain: return kVmH_MovlInt;
++        case kVmV_Gvar:  return kVmH_MovlGvar;
++        case kVmV_Str:   return kVmH_MovlStr;
++        case kVmV_Imp:   return kVmH_MovlImp;
++        default:         return kVmH_Generic;
++        }
++    case SCMD_MEMREAD:   return kVmH_MemRead;
++    case SCMD_MEMWRITE:  return kVmH_MemWrite;
++    case SCMD_MULREG:    return kVmH_MulReg;
++    case SCMD_ADDREG:    return kVmH_AddReg;
++    case SCMD_SUBREG:    return kVmH_SubReg;
++    case SCMD_BITAND:    return kVmH_BitAnd;
++    case SCMD_BITOR:     return kVmH_BitOr;
++    case SCMD_ISEQUAL:   return kVmH_IsEqual;
++    case SCMD_NOTEQUAL:  return kVmH_NotEqual;
++    case SCMD_GREATER:   return kVmH_Greater;
++    case SCMD_LESSTHAN:  return kVmH_LessThan;
++    case SCMD_GTE:       return kVmH_Gte;
++    case SCMD_LTE:       return kVmH_Lte;
++    case SCMD_AND:       return kVmH_And;
++    case SCMD_OR:        return kVmH_Or;
++    case SCMD_XORREG:    return kVmH_XorReg;
++    case SCMD_CALL:      return kVmH_Call;
++    case SCMD_JZ:        return var == kVmV_Plain ? kVmH_Jz : kVmH_Generic;
++    case SCMD_JNZ:       return var == kVmV_Plain ? kVmH_Jnz : kVmH_Generic;
++    case SCMD_JMP:       return var == kVmV_Plain ? kVmH_Jmp : kVmH_Generic;
++    case SCMD_PUSHREG:   return kVmH_Push;
++    case SCMD_POPREG:    return kVmH_Pop;
++    case SCMD_MUL:       return kVmH_Mul;
++    case SCMD_CALLEXT:   return kVmH_CallExt;
++    case SCMD_PUSHREAL:  return kVmH_PushReal;
++    case SCMD_SUBREALSTACK: return kVmH_SubRealStack;
++    case SCMD_NUMFUNCARGS:  return kVmH_NumFuncArgs;
++    case SCMD_THISBASE:  return kVmH_ThisBase;
++    case SCMD_CHECKBOUNDS:  return kVmH_CheckBounds;
++    case SCMD_CHECKNULL:    return kVmH_CheckNull;
++    case SCMD_CHECKNULLREG: return kVmH_CheckNullReg;
++    default:             return kVmH_Generic;
++    }
++}
++
++static inline bool IsJump(int op) { return op == SCMD_JZ || op == SCMD_JNZ || op == SCMD_JMP; }
++
++// kind -> handler address, built once per run in a fast mode, so the decode pays one table load per
++// instruction instead of a HandlerFor() call (slice 2 follow-up)
++static const void *s_kind_handler[CC_NUM_SCCMDS * (kVmV_Slow + 1)];
++static bool s_kind_handler_ready = false;
++static void VmKindTableInit()
++{
++    if (s_kind_handler_ready) return;
++    for (int op = 0; op < CC_NUM_SCCMDS; ++op)
++        for (int var = 0; var <= kVmV_Slow; ++var)
++            s_kind_handler[op * (kVmV_Slow + 1) + var] = s_vm_handlers[HandlerFor(VmKind(op, var))];
++    s_kind_handler_ready = true;
++}
++static inline intptr_t VmHandlerOf(intptr_t kind)
++{
++    return reinterpret_cast<intptr_t>(s_kind_handler[(kind & 0xFF) * (kVmV_Slow + 1) + ((kind >> 8) & 0xFF)]);
++}
++
+ void ccInstance::DosVmDecode()
+ {
++    VmTableInit();
++    const bool fast = DosVmMode() >= kDosVm_Fast;
++    const bool check = VmCheckRequested();
++    const bool direct = fast && !check; // write handler addresses in the same pass
++    if (fast && !s_vm_handlers_ready)
++        DosVmLoop(nullptr, 0); // fills s_vm_handlers
++    if (fast)
++        VmKindTableInit();
+     ResolvedScriptData &sd = *_scriptData;
+     const uclock_t t0 = uclock();
+     const uint32_t n = _codesize;
+     const intptr_t *code = _code;
+     const uint8_t *fix = _code_fixups;
+ 
+-    sd.dcode.assign(static_cast<size_t>(n) + 3, 0);
++    // one pass: no zero-fill of dcode (every word is written in order), the start bits are small
++    std::vector<intptr_t> dc;
++    dc.reserve(static_cast<size_t>(n) + 3);
+     sd.dstart.assign(static_cast<size_t>(n) / 32 + 1, 0u);
++    uint32_t *starts = sd.dstart.data();
++    std::vector<uint32_t> fwd; // forward jump sites, resolved once every start is known
+     sd.decoded_ok = false;
+ 
+-    // pass 1: instruction starts and eligibility (the same walk as Run(): op word, argc, next)
+     const char *why = "none";
+     uint32_t why_pc = 0, n_instr = 0;
+     bool ok = true;
++    unsigned long n_movl[5] = { 0, 0, 0, 0, 0 }, n_jslow = 0, n_callas = 0, n_otherfix = 0, n_null = 0;
+     for (uint32_t pc = 0; pc < n; )
+     {
+         const int op = static_cast<int>(code[pc] & INSTANCE_ID_REMOVEMASK);
+         if (op < 0 || op >= CC_NUM_SCCMDS) { ok = false; why = "opcode"; why_pc = pc; break; }
+-        const int argc = dos_vm_sccmd_argc(op);
++        const int argc = s_argc[op];
+         if (static_cast<uint32_t>(pc + argc) >= n) { ok = false; why = "truncated"; why_pc = pc; break; }
++        const uint8_t rm = s_regmask[op];
++        starts[pc >> 5] |= 1u << (pc & 31);
++        ++n_instr;
++        const size_t kind_at = dc.size();
++        dc.push_back(0);
++        int variant = kVmV_Plain;
++        if (op == SCMD_CALLAS) ++n_callas;
++        if (op == 0) ++n_null;
+         for (int k = 0; k < argc; ++k)
+         {
+-            if (dos_vm_sccmd_argisreg(op, k))
++            const uint32_t at = pc + 1 + k;
++            const intptr_t v = code[at];
++            intptr_t out = v;
++            if (rm & (1u << k))
++            {
++                if (v < 0 || v >= CC_NUM_REGISTERS) { ok = false; why = "register"; why_pc = pc; break; }
++                out = v * static_cast<intptr_t>(sizeof(RuntimeScriptValue));
++            }
++            else if (IsJump(op))
++            {
++                const long long target = static_cast<long long>(pc) + 2 + v;
++                if (target < 0 || target >= n) { variant = kVmV_Slow; ++n_jslow; }
++                else if (target <= pc)
++                {
++                    if ((starts[target >> 5] >> (target & 31)) & 1u) out = v + 2;
++                    else { variant = kVmV_Slow; ++n_jslow; }
++                }
++                else
++                {
++                    out = v + 2; // provisional; checked after the walk
++                    fwd.push_back(pc);
++                }
++            }
++            else if ((op == SCMD_LITTOREG || op == SCMD_WRITELIT) && k == 1)
++            {
++                switch (fix[at])
++                {
++                case FIXUP_NOFIXUP:
++                case FIXUP_FUNCTION:
++                    variant = kVmV_Plain;
++                    break;
++                case FIXUP_GLOBALDATA:
++                    variant = kVmV_Gvar;
++                    out = reinterpret_cast<intptr_t>(&reinterpret_cast<ScriptVariable*>(v)->RValue);
++                    break;
++                case FIXUP_STRING:
++                    variant = kVmV_Str;
++                    out = reinterpret_cast<intptr_t>(_strings + v);
++                    break;
++                case FIXUP_IMPORT:
++                    variant = kVmV_Imp;
++                    break;
++                default:
++                    variant = kVmV_Slow;
++                    break;
++                }
++                if (op == SCMD_LITTOREG) ++n_movl[variant];
++            }
++            else if (fix[at] != FIXUP_NOFIXUP)
+             {
+-                const intptr_t r = code[pc + 1 + k];
+-                if (r < 0 || r >= CC_NUM_REGISTERS) { ok = false; why = "register"; why_pc = pc; break; }
++                ++n_otherfix; // Run() ignores fixups here and reads the word as it is; so do we
+             }
++            dc.push_back(out);
+         }
+         if (!ok) break;
+-        sd.dstart[pc >> 5] |= 1u << (pc & 31);
+-        ++n_instr;
++        const intptr_t kind = VmKind(op, variant);
++        dc[kind_at] = direct ? VmHandlerOf(kind) : kind;
+         pc += argc + 1;
+     }
+-
+-    // pass 2: kinds and operands
+-    unsigned long n_movl[5] = { 0, 0, 0, 0, 0 }, n_jslow = 0, n_callas = 0, n_otherfix = 0, n_null = 0;
+     if (ok)
+     {
+-        for (uint32_t pc = 0; pc < n; )
++        dc.push_back(0); dc.push_back(0); dc.push_back(0);
++        for (uint32_t pc : fwd)
+         {
+-            const int op = static_cast<int>(code[pc] & INSTANCE_ID_REMOVEMASK);
+-            const int argc = dos_vm_sccmd_argc(op);
+-            int variant = kVmV_Plain;
+-            if (op == SCMD_CALLAS) ++n_callas;
+-            if (op == 0) ++n_null;
+-            for (int k = 0; k < argc; ++k)
++            const long long target = static_cast<long long>(pc) + dc[pc + 1];
++            if (!((starts[target >> 5] >> (target & 31)) & 1u))
+             {
+-                const uint32_t at = pc + 1 + k;
+-                const intptr_t v = code[at];
+-                intptr_t out = v;
+-                if (dos_vm_sccmd_argisreg(op, k))
+-                {
+-                    out = v * static_cast<intptr_t>(sizeof(RuntimeScriptValue));
+-                }
+-                else if (IsJump(op))
+-                {
+-                    const long long target = static_cast<long long>(pc) + 2 + v;
+-                    if (target >= 0 && target < n && (sd.dstart[target >> 5] >> (target & 31) & 1u))
+-                        out = v + 2;
+-                    else
+-                    {
+-                        variant = kVmV_Slow;
+-                        ++n_jslow;
+-                    }
+-                }
+-                else if (HasFixedArg2(op) && k == 1)
+-                {
+-                    switch (fix[at])
+-                    {
+-                    case FIXUP_NOFIXUP:
+-                    case FIXUP_FUNCTION:
+-                        variant = kVmV_Plain;
+-                        break;
+-                    case FIXUP_GLOBALDATA:
+-                        variant = kVmV_Gvar;
+-                        out = reinterpret_cast<intptr_t>(&reinterpret_cast<ScriptVariable*>(v)->RValue);
+-                        break;
+-                    case FIXUP_STRING:
+-                        variant = kVmV_Str;
+-                        out = reinterpret_cast<intptr_t>(_strings + v);
+-                        break;
+-                    case FIXUP_IMPORT:
+-                        variant = kVmV_Imp;
+-                        break;
+-                    default:
+-                        variant = kVmV_Slow;
+-                        break;
+-                    }
+-                    if (op == SCMD_LITTOREG) ++n_movl[variant];
+-                }
+-                else if (fix[at] != FIXUP_NOFIXUP)
+-                {
+-                    ++n_otherfix; // Run() ignores fixups here and reads the word as it is; so do we
+-                }
+-                sd.dcode[at] = out;
++                const int op = static_cast<int>(code[pc] & INSTANCE_ID_REMOVEMASK);
++                const intptr_t kind = VmKind(op, kVmV_Slow);
++                dc[pc] = direct ? VmHandlerOf(kind) : kind;
++                dc[pc + 1] = code[pc + 1];
++                ++n_jslow;
+             }
+-            sd.dcode[pc] = VmKind(op, variant);
+-            pc += argc + 1;
+         }
++        sd.dcode.swap(dc);
+         sd.decoded_ok = true;
+     }
+     else
+     {
+-        // not eligible: free the memory, this instance runs the legacy loop only
+-        std::vector<intptr_t>().swap(sd.dcode);
+         std::vector<uint32_t>().swap(sd.dstart);
+         ++g_vm_ineligible;
+     }
+@@ -201,16 +366,20 @@ void ccInstance::DosVmDecode()
+     const unsigned long bytes = sd.dcode.capacity() * sizeof(intptr_t) + sd.dstart.capacity() * sizeof(uint32_t);
+     const unsigned long dus = UclockUs(t1 - t0);
+     ++g_vm_scripts;
+-    g_vm_bytes += bytes;
++    g_vm_words += n;
+     g_vm_decode_us += dus;
++    if (bytes > 0) { g_vm_alloc_bytes += bytes; ++g_vm_allocs; }
+     Debug::Printf("DOS-PORT vmdecode script=%s inst=%d words=%u instrs=%u ok=%d why=%s at=%u bytes=%lu decode_us=%lu"
+-        " movl_int=%lu movl_gvar=%lu movl_str=%lu movl_imp=%lu movl_slow=%lu jump_slow=%lu callas=%lu null_ops=%lu"
+-        " otherfix=%lu tot_scripts=%lu tot_ineligible=%lu tot_bytes=%lu tot_decode_us=%lu",
++        " ns_per_word=%lu movl_int=%lu movl_gvar=%lu movl_str=%lu movl_imp=%lu movl_slow=%lu jump_slow=%lu callas=%lu"
++        " null_ops=%lu otherfix=%lu tot_scripts=%lu tot_ineligible=%lu tot_words=%lu tot_decode_us=%lu"
++        " alloc_bytes=%lu freed_bytes=%lu live_bytes=%lu brk=0x%lx",
+         _instanceof->GetScriptName().c_str(), _loadedInstanceId, n, n_instr, ok ? 1 : 0, why, why_pc, bytes, dus,
++        n ? static_cast<unsigned long>((dus * 1000ULL) / n) : 0UL,
+         n_movl[0], n_movl[1], n_movl[2], n_movl[3], n_movl[4], n_jslow, n_callas, n_null,
+-        n_otherfix, g_vm_scripts, g_vm_ineligible, g_vm_bytes, g_vm_decode_us);
++        n_otherfix, g_vm_scripts, g_vm_ineligible, g_vm_words, g_vm_decode_us,
++        g_vm_alloc_bytes, g_vm_freed_bytes, g_vm_alloc_bytes - g_vm_freed_bytes, VmBrk());
+ 
+-    if (DosVmMode() == 2 && sd.decoded_ok)
++    if (check && sd.decoded_ok)
+     {
+         long cat[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+         uint32_t walked = 0;
+@@ -223,6 +392,14 @@ void ccInstance::DosVmDecode()
+             " check_us=%lu tot_mismatches=%lu tot_check_us=%lu",
+             _instanceof->GetScriptName().c_str(), walked, mism, cat[0], cat[1], cat[2], cat[3], cat[4], cat[5], cat[6],
+             cus, g_vm_check_mismatch, g_vm_check_us);
++        if (fast)
++        {
++            // the check needs kinds; now translate them to handler addresses
++            const std::vector<uint32_t> &st = sd.dstart;
++            for (uint32_t pc = 0; pc < n; ++pc)
++                if ((st[pc >> 5] >> (pc & 31)) & 1u)
++                    sd.dcode[pc] = VmHandlerOf(sd.dcode[pc]);
++        }
+     }
+ }
+ 
+@@ -378,4 +555,1753 @@ long ccInstance::DosVmCheck(long *cat, uint32_t *n_instr) const
+     return bad;
+ }
+ 
++
++//=============================================================================
++// Slice 2: running the decoded stream
++//=============================================================================
++
++#define MAXNEST 50  // as cc_instance.cpp's Run()
++
++// cc_instance.cpp's FunctionCallStack, the same text (it is local to that TU)
++struct DosVmCallStack
++{
++    DosVmCallStack(size_t initial_count = 16)
++    {
++        initial_count = std::max<size_t>(1u, initial_count);
++        _entries.resize(initial_count);
++        _head = _entries.data() + initial_count;
++    }
++
++    inline RuntimeScriptValue *GetHead() { return _head; }
++    inline const RuntimeScriptValue *GetHead() const { return _head; }
++    inline size_t GetSize() const { return _entries.data() + _entries.size() - _head; }
++
++    inline void Push(const RuntimeScriptValue &value)
++    {
++        if (_head == _entries.data())
++        {
++            std::vector<RuntimeScriptValue> expansion(_entries.size() * 2);
++            std::copy(_entries.begin(), _entries.begin() + _entries.size(), expansion.begin() + _entries.size());
++            _entries = std::move(expansion);
++            _head = _entries.data() + _entries.size() / 2;
++        }
++        *(--_head) = value;
++    }
++
++    inline void PopCount(size_t count)
++    {
++        count = std::min(count, static_cast<size_t>(_entries.data() + _entries.size() - _head));
++        _head += count;
++    }
++
++    std::vector<RuntimeScriptValue> _entries;
++    RuntimeScriptValue *_head = nullptr;
++};
++
++// Every Run() local the fast loop does not keep in a register
++struct DosVmFrame
++{
++    const intptr_t *dbase;       // codeInst's decoded stream (index-parallel to its code)
++    const uint32_t *dstart;      // its instruction-start bits
++    uint32_t        codesize;
++    ccInstance     *codeInst;    // Run()'s codeInst
++    DosVmCallStack *fcs;         // Run()'s func_callstack
++    int             curnest;
++    int             num_args_to_func;
++    int             next_call_needs_object;
++    int             was_just_callas;
++    int             loopIterationCheckDisabled;
++    unsigned        loopIterations;
++    unsigned        loopCheckIterations;
++    std::chrono::milliseconds timeout;
++    int32_t         thisbase[MAXNEST];
++    int32_t         funcstart[MAXNEST];
++};
++
++// cc_instance.cpp's assertion macros, returning DosVmStep's error code. The debug-only ones are
++// empty in this build exactly as there (DEBUG_CC_EXEC is off; with it on the fast path is unused).
++#if (DEBUG_CC_EXEC)
++#define CC_ERROR_IF_RETCODE(COND, ERROR, ...) if (COND) { cc_error(ERROR, ##__VA_ARGS__); return -1; }
++#define CC_ERROR_IF_RETVAL(COND, T, ERROR, ...) if (COND) { cc_error(ERROR, ##__VA_ARGS__); return T(); }
++#define ASSERT_CC_ERROR() if (cc_has_error()) { return -1; }
++#else
++#define CC_ERROR_IF_RETCODE(COND, ERROR, ...)
++#define CC_ERROR_IF_RETVAL(COND, T, ERROR, ...)
++#define ASSERT_CC_ERROR()
++#endif
++
++#define ASSERT_STACK_SPACE_AVAILABLE(N_VALS, N_BYTES) \
++    if ((_registers[SREG_SP].RValue + N_VALS - _stackBegin) >= CC_STACK_SIZE || \
++        (_stackdataPtr + N_BYTES - _stackdataBegin) >= CC_STACK_DATA_SIZE) \
++    { \
++        cc_error("stack overflow, attempted to grow from %zu by %zu bytes", (size_t)(_stackdataPtr - _stackdataBegin), (size_t)(N_BYTES)); \
++        return -1; \
++    }
++#define ASSERT_STACK_SPACE_BYTES(N_BYTES) ASSERT_STACK_SPACE_AVAILABLE(1u, N_BYTES)
++#define ASSERT_STACK_SPACE_VALS(N_VALS) ASSERT_STACK_SPACE_AVAILABLE(N_VALS, sizeof(int32_t) * N_VALS)
++#define ASSERT_STACK_SIZE(N) \
++    if (_registers[SREG_SP].RValue - N < _stackBegin) \
++    { \
++        cc_error("stack underflow"); \
++        return -1; \
++    }
++#define ASSERT_STACK_UNWINDED(STACK_VAL, DATA_PTR) \
++    if ((_registers[SREG_SP].RValue > STACK_VAL.RValue) || \
++        (_stackdataPtr > DATA_PTR)) \
++    { \
++        cc_error("stack is not unwinded after function call, %zu bytes remain", (size_t)(_stackdataPtr - DATA_PTR)); \
++        return -1; \
++    }
++#define PUSH_CALL_STACK() \
++    if (_callStackSize >= MAX_CALL_STACK) { \
++        cc_error("CallScriptFunction stack overflow (recursive call error?)"); \
++        return -1; \
++    } \
++    _callStackLineNumber[_callStackSize] = _lineNumber;  \
++    _callStackCodeInst[_callStackSize] = _runningInst;  \
++    _callStackAddr[_callStackSize] = _pc;  \
++    _callStackSize++
++#define POP_CALL_STACK() \
++    if (_callStackSize < 1) { \
++        cc_error("CallScriptFunction stack underflow -- internal error"); \
++        return -1; \
++    } \
++    _callStackSize--;\
++    _lineNumber = _callStackLineNumber[_callStackSize];\
++    currentline = _lineNumber
++
++// cc_instance.cpp's GetStackPtrOffsetFw and FixupArgument, the same text (both inline there)
++static inline RuntimeScriptValue DosVmGetStackPtrOffsetFw(RuntimeScriptValue *stack, int32_t fw_offset)
++{
++    int32_t total_off = 0;
++    RuntimeScriptValue *stack_entry = stack;
++    while (total_off < fw_offset && (stack_entry - stack) < CC_STACK_SIZE )
++    {
++        stack_entry++;
++        total_off += stack_entry->Size;
++    }
++    CC_ERROR_IF_RETVAL(total_off < fw_offset, RuntimeScriptValue, "accessing address beyond stack's tail");
++    CC_ERROR_IF_RETVAL(total_off > fw_offset, RuntimeScriptValue, "stack offset forward: trying to access stack data inside stack entry, stack corrupted?");
++    RuntimeScriptValue stack_ptr;
++    stack_ptr.SetStackPtr(stack_entry);
++    return stack_ptr;
++}
++
++static inline bool DosVmFixupArgument(RuntimeScriptValue &arg, const int fixup, const uintptr_t code,
++    RuntimeScriptValue *stack, const char *strings)
++{
++    switch (fixup)
++    {
++    case FIXUP_NOFIXUP:
++        return true;
++    case FIXUP_GLOBALDATA:
++        {
++            ScriptVariable *gl_var = (ScriptVariable*)code;
++            assert(gl_var->RValue.IsValid());
++            arg.SetGlobalVar(&gl_var->RValue);
++        }
++        return true;
++    case FIXUP_FUNCTION:
++        arg.SetInt32(static_cast<int32_t>(code));
++        return true;
++    case FIXUP_STRING:
++        arg.SetStringLiteral(strings + code);
++        return true;
++    case FIXUP_IMPORT:
++        {
++            const ScriptImport *import = simp.GetByIndex(static_cast<uint32_t>(code));
++            if (import)
++            {
++                assert(import->Value.IsValid());
++                arg = import->Value;
++            }
++            else
++            {
++                cc_error("cannot resolve import, key = %ld", code);
++                return false;
++            }
++        }
++        return true;
++    case FIXUP_DATADATA:
++        return false;
++    case FIXUP_STACK:
++        arg = DosVmGetStackPtrOffsetFw(stack, static_cast<int32_t>(code));
++        return true;
++    default:
++        cc_error("internal fixup type error: %d", fixup);
++        return false;
++    }
++}
++
++ccInstError ccInstance::DosVmEnter(int32_t curpc)
++{
++    if (DosVmMode() >= kDosVm_Fast && _runningInst->_scriptData->decoded_ok
++#if (DEBUG_CC_EXEC)
++        && ccGetOption(SCOPT_DEBUGRUN) == 0
++#endif
++        )
++        return DosVmRun(curpc);
++    return Run(curpc);
++}
++
++ccInstError ccInstance::DosVmRun(int32_t curpc)
++{
++    // Run()'s prologue, in its order
++    _pc = curpc;
++    _returnValue = -1;
++    if ((curpc < 0) || (static_cast<uint32_t>(curpc) >= _runningInst->_codesize))
++    {
++        cc_error("specified code offset is not valid");
++        return kInstErr_Generic;
++    }
++    DosVmCallStack func_callstack(16);
++    DosVmFrame fr;
++    fr.codeInst = _runningInst;
++    fr.dbase = fr.codeInst->_scriptData->dcode.data();
++    fr.dstart = fr.codeInst->_scriptData->dstart.data();
++    fr.codesize = fr.codeInst->_codesize;
++    fr.fcs = &func_callstack;
++    fr.curnest = 0;
++    fr.num_args_to_func = -1;
++    fr.next_call_needs_object = 0;
++    fr.was_just_callas = -1;
++    fr.loopIterationCheckDisabled = 0;
++    fr.loopIterations = 0u;
++    fr.loopCheckIterations = 0u;
++    fr.thisbase[0] = 0;
++    fr.funcstart[0] = _pc;
++    fr.timeout = std::chrono::milliseconds(_timeoutCheckMs);
++    _lastAliveTs = FastClock::now();
++    return DosVmLoop(&fr, curpc);
++}
++
++// One instruction with Run()'s own semantics, reading the ORIGINAL code (fr.codeInst->_code).
++// The switch below is cc_instance.cpp's Run() switch (lines 713-1705 at patch 0354), transformed
++// mechanically: Run()'s locals -> fr.*, `continue` -> return 0 (the handler already set _pc),
++// `return kInstErr_None` -> return 1, `return kInstErr_Generic` -> return -1, Run() -> DosVmEnter()
++// (a nested CALLAS picks its own VM), FixupArgument -> its copy above, the lab-only 0230 counter
++// block dropped. Returns 0 to continue at _pc, 1 when Run() would return kInstErr_None, -1 error.
++int ccInstance::DosVmStep(DosVmFrame &fr, int32_t pc)
++{
++    _pc = pc;
++    ScriptOperation codeOp;
++    const int32_t op_word = static_cast<int32_t>(fr.codeInst->_code[_pc]);
++    const int32_t op_code = op_word & INSTANCE_ID_REMOVEMASK; // now this is pure instruction code
++    CC_ERROR_IF_RETCODE((op_code < 0 || op_code >= CC_NUM_SCCMDS),
++        "invalid instruction %d found in code stream", op_code);
++    const int op_argc = dos_vm_sccmd_argc(op_code);
++    CC_ERROR_IF_RETCODE(static_cast<uint32_t>(_pc + op_argc) >= fr.codeInst->_codesize,
++        "unexpected end of code data (%u; %u)", static_cast<uint32_t>(_pc + op_argc), fr.codeInst->_codesize);
++    int32_t op_arg1 = 0, op_arg2 = 0, op_arg3 = 0;
++    switch (op_argc)
++    {
++    case 3:
++        op_arg3 = static_cast<int32_t>(fr.codeInst->_code[_pc + 3]);
++        /* fall-through */
++    case 2:
++        op_arg2 = static_cast<int32_t>(fr.codeInst->_code[_pc + 2]);
++        /* fall-through */
++    case 1:
++        op_arg1 = static_cast<int32_t>(fr.codeInst->_code[_pc + 1]);
++        break;
++    default:
++        break;
++    }
++    (void)op_arg3;
++
++    switch (op_code)
++    {
++    case SCMD_LINENUM:
++        _lineNumber = op_arg1;
++        currentline = _lineNumber;
++        if (new_line_hook)
++            new_line_hook(this, currentline);
++        break;
++    case SCMD_ADD:
++    {
++        const auto arg_reg = op_arg1;
++        const auto arg_lit = op_arg2;
++        auto &reg1 = _registers[arg_reg];
++        // If the the register is SREG_SP, we are allocating new variable on the stack
++        if (arg_reg == SREG_SP)
++        {
++            // Only allocate new data if current stack entry is invalid;
++            // in some cases this may be advancing over value that was written by MEMWRITE*
++            // FIXME: this is bad, but seemed to be the way to separate PushValue and PushData
++            // find if it's possible to do this in a uniform way (always same operation),
++            // and don't rely on stack entries being valid/invalid beyond the stack ptr.
++            ASSERT_STACK_SPACE_AVAILABLE(1, arg_lit);
++            if (reg1.RValue->IsValid())
++            {
++                // TODO: perhaps should add a flag here to ensure this happens only after MEMWRITE-ing to stack
++                _registers[SREG_SP].RValue++;
++                _stackdataPtr += arg_lit; // formality, to keep data ptr consistent
++            }
++            else
++            {
++                PushDataToStack(arg_lit);
++                ASSERT_CC_ERROR();
++            }
++        }
++        else
++        {
++            reg1.IValue += arg_lit;
++        }
++        break;
++    }
++    case SCMD_SUB:
++    {
++        const auto arg_reg = op_arg1;
++        const auto arg_lit = op_arg2;
++        auto &reg1 = _registers[arg_reg];
++        if (reg1.Type == kScValStackPtr)
++        {
++            // If this is SREG_SP, this is stack pop, which frees local variables;
++            // Other than SREG_SP this may be AGS 2.x method to offset stack in SREG_MAR;
++            // quote JJS:
++            // // AGS 2.x games also perform relative stack access by copying SREG_SP to SREG_MAR
++            // // and then subtracting from that.
++            // FIXME: try to do this in uniform way, call same func, save result in reg1
++            if (arg_reg == SREG_SP)
++            {
++                PopDataFromStack(arg_lit);
++            }
++            else
++            {
++                // This is practically LOADSPOFFS
++                reg1 = GetStackPtrOffsetRw(arg_lit);
++            }
++            ASSERT_CC_ERROR();
++        }
++        else
++        {
++            reg1.IValue -= arg_lit;
++        }
++        break;
++    }
++    case SCMD_REGTOREG:
++    {
++        const auto &reg1 = _registers[op_arg1];
++        auto       &reg2 = _registers[op_arg2];
++        reg2 = reg1;
++        break;
++    }
++    case SCMD_WRITELIT:
++    {
++        // Take the data address from reg[MAR] and copy there arg1 bytes from arg2 address
++        //
++        // NOTE: since it reads directly from arg2 (which originally was
++        // long, or rather int32 due x32 build), written value may normally
++        // be only up to 4 bytes large;
++        // I guess that's an obsolete way to do WRITE, WRITEW and WRITEB
++        const auto arg_size = op_arg1;
++        codeOp.Args[1].SetInt32(op_arg2); // patch 0293/0295: the whole value, before its fixup
++        DosVmFixupArgument(codeOp.Args[1], fr.codeInst->_code_fixups[_pc + 2], fr.codeInst->_code[_pc + 2], _stackBegin, fr.codeInst->_strings);
++        ASSERT_CC_ERROR();
++        const auto &arg_value = codeOp.Arg2();
++        switch (arg_size)
++        {
++        case sizeof(char) :
++            _registers[SREG_MAR].WriteByte(arg_value.IValue);
++            break;
++        case sizeof(int16_t) :
++            _registers[SREG_MAR].WriteInt16(arg_value.IValue);
++            break;
++        case sizeof(int32_t) :
++            // We do not know if this is math integer or some pointer, etc
++            _registers[SREG_MAR].WriteValue(arg_value);
++            break;
++        default:
++            cc_error("unexpected data size for WRITELIT op: %d", arg_size);
++            break;
++        }
++        break;
++    }
++    case SCMD_RET:
++    {
++        if (fr.loopIterationCheckDisabled > 0)
++            fr.loopIterationCheckDisabled--;
++
++        ASSERT_STACK_SIZE(1);
++        RuntimeScriptValue rval = PopValueFromStack();
++        fr.curnest--;
++        _pc = rval.IValue;
++        if (_pc == 0)
++        {
++            _returnValue = _registers[SREG_AX].IValue;
++            return 1; // legacy: return kInstErr_None
++        }
++        POP_CALL_STACK();
++        return 0; // legacy: continue (the PC is already set)
++    }
++    case SCMD_LITTOREG:
++    {
++        auto &reg1 = _registers[op_arg1];
++#ifdef __DJGPP__
++        // DOS-PORT patch 0308: build the literal and apply its fixup IN the register, not in
++        // codeOp.Args[1] followed by a 20-byte copy into it. FixupArgument reads only the code
++        // word, the fixup tables and the stack, never the registers, and sets the value's
++        // fields exactly as before; so the register ends up with the same five fields.
++        reg1.SetInt32(op_arg2);
++        DosVmFixupArgument(reg1, fr.codeInst->_code_fixups[_pc + 2], fr.codeInst->_code[_pc + 2], _stackBegin, fr.codeInst->_strings);
++        ASSERT_CC_ERROR();
++#else
++        codeOp.Args[1].SetInt32(op_arg2); // patch 0293/0295: the whole value, before its fixup
++        DosVmFixupArgument(codeOp.Args[1], fr.codeInst->_code_fixups[_pc + 2], fr.codeInst->_code[_pc + 2], _stackBegin, fr.codeInst->_strings);
++        ASSERT_CC_ERROR();
++        const auto &arg_value = codeOp.Arg2();
++        reg1 = arg_value;
++#endif
++        break;
++    }
++    case SCMD_MEMREAD:
++    {
++        // Take the data address from reg[MAR] and copy int32_t to reg[arg1]
++        auto &reg1 = _registers[op_arg1];
++        reg1 = _registers[SREG_MAR].ReadValue();
++        break;
++    }
++    case SCMD_MEMWRITE:
++    {
++        // Take the data address from reg[MAR] and copy there int32_t from reg[arg1]
++        const auto &reg1 = _registers[op_arg1];
++        _registers[SREG_MAR].WriteValue(reg1);
++        break;
++    }
++    case SCMD_LOADSPOFFS:
++    {
++        const auto arg_off = op_arg1;
++        _registers[SREG_MAR] = GetStackPtrOffsetRw(arg_off);
++        ASSERT_CC_ERROR();
++        break;
++    }
++    case SCMD_MULREG:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetInt32(reg1.IValue * reg2.IValue);
++        break;
++    }
++    case SCMD_DIVREG:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        if (reg2.IValue == 0)
++        {
++            cc_error("!Integer divide by zero");
++            return -1;
++        }
++        reg1.SetInt32(reg1.IValue / reg2.IValue);
++        break;
++    }
++    case SCMD_ADDREG:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        // This may be pointer arithmetics, in which case IValue stores offset from base pointer
++        reg1.IValue += reg2.IValue;
++        break;
++    }
++    case SCMD_SUBREG:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        // This may be pointer arithmetics, in which case IValue stores offset from base pointer
++        reg1.IValue -= reg2.IValue;
++        break;
++    }
++    case SCMD_BITAND:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetInt32(reg1.IValue & reg2.IValue);
++        break;
++    }
++    case SCMD_BITOR:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetInt32(reg1.IValue | reg2.IValue);
++        break;
++    }
++    case SCMD_ISEQUAL:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetInt32AsBool(reg1 == reg2);
++        break;
++    }
++    case SCMD_NOTEQUAL:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetInt32AsBool(reg1 != reg2);
++        break;
++    }
++    case SCMD_GREATER:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetInt32AsBool(reg1.IValue > reg2.IValue);
++        break;
++    }
++    case SCMD_LESSTHAN:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetInt32AsBool(reg1.IValue < reg2.IValue);
++        break;
++    }
++    case SCMD_GTE:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetInt32AsBool(reg1.IValue >= reg2.IValue);
++        break;
++    }
++    case SCMD_LTE:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetInt32AsBool(reg1.IValue <= reg2.IValue);
++        break;
++    }
++    case SCMD_AND:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetInt32AsBool(reg1.IValue && reg2.IValue);
++        break;
++    }
++    case SCMD_OR:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetInt32AsBool(reg1.IValue || reg2.IValue);
++        break;
++    }
++    case SCMD_XORREG:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetInt32(reg1.IValue ^ reg2.IValue);
++        break;
++    }
++    case SCMD_MODREG:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        if (reg2.IValue == 0)
++        {
++            cc_error("!Integer divide by zero");
++            return -1;
++        }
++        reg1.SetInt32(reg1.IValue % reg2.IValue);
++        break;
++    }
++    case SCMD_NOTREG:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        reg1 = !(reg1);
++        break;
++    }
++    case SCMD_CALL:
++    {
++        // Call another function within same script, just save PC
++        // and continue from there
++        if (fr.curnest >= MAXNEST - 1)
++        {
++            cc_error("!call stack overflow, recursive call problem?");
++            return -1;
++        }
++
++        PUSH_CALL_STACK();
++
++        ASSERT_STACK_SPACE_VALS(1);
++        PushValueToStack(RuntimeScriptValue().SetInt32(_pc + op_argc + 1));
++
++        const auto &reg1 = _registers[op_arg1];
++        if (fr.thisbase[fr.curnest] == 0)
++            _pc = reg1.IValue;
++        else {
++            _pc = fr.funcstart[fr.curnest];
++            _pc += (reg1.IValue - fr.thisbase[fr.curnest]);
++        }
++
++        fr.next_call_needs_object = 0;
++
++        if (fr.loopIterationCheckDisabled)
++            fr.loopIterationCheckDisabled++;
++
++        fr.curnest++;
++        fr.thisbase[fr.curnest] = 0;
++        fr.funcstart[fr.curnest] = _pc;
++        return 0; // legacy: continue (the PC is already set)
++    }
++    case SCMD_MEMREADB:
++    {
++        // Take the data address from reg[MAR] and copy byte to reg[arg1]
++        auto &reg1 = _registers[op_arg1];
++        reg1.SetUInt8(_registers[SREG_MAR].ReadByte());
++        break;
++    }
++    case SCMD_MEMREADW:
++    {
++        // Take the data address from reg[MAR] and copy int16_t to reg[arg1]
++        auto &reg1 = _registers[op_arg1];
++        reg1.SetInt16(_registers[SREG_MAR].ReadInt16());
++        break;
++    }
++    case SCMD_MEMWRITEB:
++    {
++        // Take the data address from reg[MAR] and copy there byte from reg[arg1]
++        const auto &reg1 = _registers[op_arg1];
++        _registers[SREG_MAR].WriteByte(reg1.IValue);
++        break;
++    }
++    case SCMD_MEMWRITEW:
++    {
++        // Take the data address from reg[MAR] and copy there int16_t from reg[arg1]
++        const auto &reg1 = _registers[op_arg1];
++        _registers[SREG_MAR].WriteInt16(reg1.IValue);
++        break;
++    }
++    case SCMD_JZ:
++    {
++        const auto arg_lit = op_arg1;
++        if (_registers[SREG_AX].IsNull())
++            _pc += arg_lit;
++        break;
++    }
++    case SCMD_JNZ:
++    {
++        const auto arg_lit = op_arg1;
++        if (!_registers[SREG_AX].IsNull())
++            _pc += arg_lit;
++        break;
++    }
++    case SCMD_PUSHREG:
++    {
++        // Push reg[arg1] value to the stack
++        const auto &reg1 = _registers[op_arg1];
++        ASSERT_STACK_SPACE_VALS(1);
++        PushValueToStack(reg1);
++        break;
++    }
++    case SCMD_POPREG:
++    {
++        auto &reg1 = _registers[op_arg1];
++        ASSERT_STACK_SIZE(1);
++        reg1 = PopValueFromStack();
++        break;
++    }
++    case SCMD_JMP:
++    {
++        const auto arg_lit = op_arg1;
++        _pc += arg_lit;
++
++        // Make sure it's not stuck in a While loop
++        if (arg_lit < 0)
++        {
++            ++fr.loopIterations;
++            if (_flags & INSTF_RUNNING)
++            { // was notified still running, don't do anything
++                _flags &= ~INSTF_RUNNING;
++                fr.loopIterations = 0u;
++                fr.loopCheckIterations = 0u;
++            }
++            else if ((fr.loopIterationCheckDisabled == 0) && (_maxWhileLoops > 0) &&
++                (++fr.loopCheckIterations > _maxWhileLoops))
++            {
++                cc_error("!Script appears to be hung (a while loop ran %d times). The problem may be in a calling function; check the call stack.", fr.loopCheckIterations);
++                return -1;
++            }
++            else if ((fr.loopIterations & 0x3FF) == 0 && // test each 1024 loops (arbitrary)
++                (std::chrono::duration_cast<std::chrono::milliseconds>(
++                    FastClock::now() - _lastAliveTs) > fr.timeout))
++            { // minimal fr.timeout occured
++                // NOTE: removed timeout_abort check for now: was working *logically* wrong;
++                // at least let user to manipulate the game window
++                sys_evt_process_pending();
++                _lastAliveTs = FastClock::now();
++            }
++        }
++        break;
++    }
++    case SCMD_MUL:
++    {
++        auto &reg1 = _registers[op_arg1];
++        const auto arg_lit = op_arg2;
++        reg1.IValue *= arg_lit;
++        break;
++    }
++    case SCMD_CHECKBOUNDS:
++    {
++        const auto &reg1 = _registers[op_arg1];
++        const auto arg_lit = op_arg2;
++        if ((reg1.IValue < 0) ||
++            (reg1.IValue >= arg_lit))
++        {
++            cc_error("!Array index out of bounds (index: %d, bounds: 0..%d)", reg1.IValue, arg_lit - 1);
++            return -1;
++        }
++        break;
++    }
++    case SCMD_DYNAMICBOUNDS:
++    {
++        const auto &reg1 = _registers[op_arg1];
++        void *arr_ptr = _registers[SREG_MAR].GetPtrWithOffset();
++        const auto &hdr = CCDynamicArray::GetHeader(arr_ptr);
++        if ((reg1.IValue < 0) ||
++            (static_cast<uint32_t>(reg1.IValue) >= hdr.TotalSize))
++        {
++            int elem_count = hdr.ElemCount & (~ARRAY_MANAGED_TYPE_FLAG);
++            if (elem_count <= 0)
++            {
++                cc_error("!Array has an invalid size (%d) and cannot be accessed", elem_count);
++            }
++            else
++            {
++                int elementSize = (hdr.TotalSize / elem_count);
++                cc_error("!Array index out of bounds (index: %d, bounds: 0..%d)", reg1.IValue / elementSize, elem_count - 1);
++            }
++            return -1;
++        }
++        break;
++    }
++    case SCMD_MEMREADPTR:
++    {
++        auto &reg1 = _registers[op_arg1];
++        int32_t handle = _registers[SREG_MAR].ReadInt32();
++        // FIXME: make pool return a ready RuntimeScriptValue with these set?
++        // or another struct, which may be assigned to RSV
++        void *object;
++        IScriptObject *manager;
++        ScriptValueType obj_type = ccGetObjectAddressAndManagerFromHandle(handle, object, manager);
++        reg1.SetScriptObject(obj_type, object, manager);
++        ASSERT_CC_ERROR();
++        break;
++    }
++    case SCMD_MEMWRITEPTR:
++    {
++        const auto &reg1 = _registers[op_arg1];
++        int32_t handle = _registers[SREG_MAR].ReadInt32();
++        void *address;
++
++        switch (reg1.Type)
++        {
++        case kScValStaticArray:
++            //FIXME: return manager type from interface?
++            //CC_ERROR_IF_RETCODE(!reg1.ArrMgr->GetDynamicManager(), "internal error: MEMWRITEPTR argument is not a dynamic object");
++            address = reg1.ArrMgr->GetElementPtr(reg1.Ptr, reg1.IValue);
++            break;
++        case kScValScriptObject:
++        case kScValPluginObject:
++        case kScValPluginArgPtr:
++            address = reg1.Ptr;
++            break;
++        case kScValPluginArg:
++            // FIXME: plugin API is currently strictly 32-bit, so this may break on 64-bit systems
++            address = Int32ToPtr<void>(reg1.IValue);
++            break;
++        default:
++            // There's one possible case when the reg1 is 0, which means writing nullptr
++            CC_ERROR_IF_RETCODE(!reg1.IsNull(), "internal error: MEMWRITEPTR argument is not a dynamic object");
++            address = nullptr;
++            break;
++        }
++
++        int32_t newHandle = ccGetObjectHandleFromAddress(address);
++        if (newHandle == -1)
++            return -1;
++
++        if (handle != newHandle)
++        {
++            ccReleaseObjectReference(handle);
++            ccAddObjectReference(newHandle);
++        }
++        // Assign always, avoid leaving undefined value
++        _registers[SREG_MAR].WriteInt32(newHandle);
++        break;
++    }
++    case SCMD_MEMINITPTR:
++    {
++        void *address;
++        const auto &reg1 = _registers[op_arg1];
++
++        switch (reg1.Type)
++        {
++        case kScValStaticArray:
++            //FIXME: return manager type from interface?
++            //CC_ERROR_IF_RETCODE(!reg1.ArrMgr->GetDynamicManager(), "internal error: SCMD_MEMINITPTR argument is not a dynamic object");
++            address = reg1.ArrMgr->GetElementPtr(reg1.Ptr, reg1.IValue);
++            break;
++        case kScValScriptObject:
++        case kScValPluginObject:
++        case kScValPluginArgPtr:
++            address = reg1.Ptr;
++            break;
++        case kScValPluginArg:
++            // FIXME: plugin API is currently strictly 32-bit, so this may break on 64-bit systems
++            address = Int32ToPtr<void>(reg1.IValue);
++            break;
++        default:
++            // There's one possible case when the reg1 is 0, which means writing nullptr
++            CC_ERROR_IF_RETCODE(!reg1.IsNull(), "internal error: SCMD_MEMINITPTR argument is not a dynamic object");
++            address = nullptr;
++            break;
++        }
++
++        // like memwriteptr, but doesn't attempt to free the old one
++        int32_t newHandle = ccGetObjectHandleFromAddress(address);
++        if (newHandle == -1)
++            return -1;
++
++        ccAddObjectReference(newHandle);
++        _registers[SREG_MAR].WriteInt32(newHandle);
++        break;
++    }
++    case SCMD_MEMZEROPTR:
++    {
++        int32_t handle = _registers[SREG_MAR].ReadInt32();
++        ccReleaseObjectReference(handle);
++        _registers[SREG_MAR].WriteInt32(0);
++        break;
++    }
++    case SCMD_MEMZEROPTRND:
++    {
++        int32_t handle = _registers[SREG_MAR].ReadInt32();
++
++        // don't do the Dispose check for the object being returned -- this is
++        // for returning a String (or other pointer) from a custom function.
++        // Note: we might be freeing a dynamic array which contains the DisableDispose
++        // object, that will be handled inside the recursive call to SubRef.
++        // CHECKME!! what type of data may reg1 point to?
++        pool.disableDisposeForObject = _registers[SREG_AX].Ptr;
++        ccReleaseObjectReference(handle);
++        pool.disableDisposeForObject = nullptr;
++        _registers[SREG_MAR].WriteInt32(0);
++        break;
++    }
++    case SCMD_CHECKNULL:
++        if (_registers[SREG_MAR].IsNull())
++        {
++            cc_error("!Null pointer referenced");
++            return -1;
++        }
++        break;
++    case SCMD_CHECKNULLREG:
++    {
++        const auto &reg1 = _registers[op_arg1];
++        if (reg1.IsNull())
++        {
++            cc_error("!Null string referenced");
++            return -1;
++        }
++        break;
++    }
++    case SCMD_NUMFUNCARGS:
++    {
++        const auto arg_lit = op_arg1;
++        fr.num_args_to_func = arg_lit;
++        break;
++    }
++    case SCMD_CALLAS:
++    {
++        PUSH_CALL_STACK();
++
++        // Call to a function in another script
++        const auto &reg1 = _registers[op_arg1];
++
++        // If there are nested CALLAS calls, the stack might
++        // contain 2 calls worth of parameters, so only
++        // push args for this call (??? - CHECKME)
++        if (fr.num_args_to_func < 0)
++        {
++            fr.num_args_to_func = fr.fcs->GetSize();
++        }
++        ASSERT_STACK_SPACE_VALS(fr.num_args_to_func + 1 /* return address */);
++        for (const RuntimeScriptValue *prval = fr.fcs->GetHead() + fr.num_args_to_func;
++            --prval >= fr.fcs->GetHead();)
++        {
++            PushValueToStack(*prval);
++        }
++
++        const RuntimeScriptValue oldstack = _registers[SREG_SP];
++        const uint8_t * const oldstackdata = _stackdataPtr;
++        // Push placeholder for the return value (it will be popped before ret)
++        PushValueToStack(RuntimeScriptValue().SetInt32(0));
++
++        const int oldpc = _pc;
++        ccInstance *wasRunning = _runningInst;
++
++        // extract the instance ID
++        int32_t instId = (op_word >> INSTANCE_ID_SHIFT) & INSTANCE_ID_MASK; // patch 0295
++        // determine the offset into the code of the instance we want
++        _runningInst = LoadedInstances[instId];
++        uintptr_t callAddr = reg1.PtrU8 - reinterpret_cast<uint8_t*>(_runningInst->_code);
++        if (callAddr % sizeof(uintptr_t) != 0)
++        {
++            cc_error("call address not aligned");
++            return -1;
++        }
++        callAddr /= sizeof(uintptr_t); // size of ccScript::code elements
++
++        if (DosVmEnter(static_cast<int32_t>(callAddr)))
++            return -1;
++
++        _runningInst = wasRunning;
++
++        if ((_flags & INSTF_ABORTED) == 0)
++            ASSERT_STACK_UNWINDED(oldstack, oldstackdata);
++
++        fr.next_call_needs_object = 0;
++
++        _pc = oldpc;
++        fr.was_just_callas = fr.fcs->GetSize();
++        fr.num_args_to_func = -1;
++        POP_CALL_STACK();
++        break;
++    }
++    case SCMD_CALLEXT:
++    {
++        // Call to a real 'C' code function
++        const auto &reg1 = _registers[op_arg1];
++
++        fr.was_just_callas = -1;
++        if (fr.num_args_to_func < 0)
++        {
++            fr.num_args_to_func = fr.fcs->GetSize();
++        }
++
++        // Convert pointer arguments to simple types
++        for (RuntimeScriptValue *prval = fr.fcs->GetHead() + fr.num_args_to_func;
++            --prval >= fr.fcs->GetHead();)
++        {
++            prval->DirectPtr();
++        }
++
++#ifdef __DJGPP__
++        dos_port_work[kDW_ScriptExt]++;   // patch 0230, every build
++#endif
++
++        RuntimeScriptValue return_value;
++
++        if (reg1.Type == kScValPluginFunction)
++        {
++            if (fr.next_call_needs_object)
++            {
++                RuntimeScriptValue obj_rval = _registers[SREG_OP];
++                obj_rval.DirectPtrObj();
++                return_value = CallPluginFunction(reg1.Ptr, &obj_rval, fr.fcs->GetHead(), fr.num_args_to_func);
++            }
++            else
++            {
++                return_value = CallPluginFunction(reg1.Ptr, nullptr, fr.fcs->GetHead(), fr.num_args_to_func);
++            }
++        }
++        else if (fr.next_call_needs_object)
++        {
++            // member function call
++            if (reg1.Type == kScValObjectFunction)
++            {
++                RuntimeScriptValue obj_rval = _registers[SREG_OP];
++                obj_rval.DirectPtrObj();
++                return_value = reg1.ObjPfn(obj_rval.Ptr, fr.fcs->GetHead(), fr.num_args_to_func);
++            }
++            else
++            {
++                cc_error("invalid pointer type for object function call: %d", reg1.Type);
++            }
++        }
++        else if (reg1.Type == kScValStaticFunction)
++        {
++            return_value = reg1.SPfn(fr.fcs->GetHead(), fr.num_args_to_func);
++        }
++        else if (reg1.Type == kScValObjectFunction)
++        {
++            cc_error("unexpected object function pointer on SCMD_CALLEXT");
++        }
++        else
++        {
++            cc_error("invalid pointer type for function call: %d", reg1.Type);
++        }
++
++        if (cc_has_error())
++        {
++            return -1;
++        }
++
++        _registers[SREG_AX] = return_value;
++        fr.next_call_needs_object = 0;
++        fr.num_args_to_func = -1;
++        break;
++    }
++    case SCMD_PUSHREAL:
++    {
++        const auto &reg1 = _registers[op_arg1];
++        fr.fcs->Push(reg1);
++        break;
++    }
++    case SCMD_SUBREALSTACK:
++    {
++        // Drop arg_lit entries from the func_callstack
++        // TODO: cannot we just clear the func_callstack right after using it in call op?
++        // it does not seem like these values are needed for anything else.
++        const auto arg_lit = op_arg1;
++        if (fr.fcs->GetSize() < static_cast<uint32_t>(arg_lit))
++        {
++            cc_error("function callstack underflow");
++            return -1;
++        }
++        fr.fcs->PopCount(arg_lit);
++
++        if (fr.was_just_callas >= 0)
++        {
++            ASSERT_STACK_SIZE(arg_lit);
++            PopValuesFromStack(arg_lit);
++            fr.was_just_callas = -1;
++        }
++        break;
++    }
++    case SCMD_CALLOBJ:
++    {
++        // set the OP register
++        const auto &reg1 = _registers[op_arg1];
++        if (reg1.IsNull())
++        {
++            cc_error("!Null pointer referenced");
++            return -1;
++        }
++        switch (reg1.Type)
++        {
++            // This might be a static object, passed to the user-defined extender function
++        case kScValScriptObject:
++        case kScValPluginObject:
++        case kScValPluginArg:
++        case kScValPluginArgPtr:
++            // This might be an object of USER-DEFINED type, calling its MEMBER-FUNCTION.
++            // Note, that this is the only case known when such object is written into reg[SREG_OP];
++            // in any other case that would count as error.
++        case kScValGlobalVar:
++        case kScValStackPtr:
++            _registers[SREG_OP] = reg1;
++            break;
++        case kScValStaticArray:
++            //FIXME: return manager type from interface?
++            //CC_ERROR_IF_RETCODE(!reg1.ArrMgr->GetDynamicManager(), "internal error: SCMD_CALLOBJ argument is not a dynamic object");
++            _registers[SREG_OP].SetScriptObject(
++                    reg1.ArrMgr->GetElementPtr(reg1.Ptr, reg1.IValue),
++                    reg1.ArrMgr->GetObjectManager());
++            break;
++        default:
++            cc_error("internal error: SCMD_CALLOBJ argument is not an object of built-in or user-defined type");
++            return -1;
++        }
++        fr.next_call_needs_object = 1;
++        break;
++    }
++    case SCMD_SHIFTLEFT:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetInt32(reg1.IValue << reg2.IValue);
++        break;
++    }
++    case SCMD_SHIFTRIGHT:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetInt32(reg1.IValue >> reg2.IValue);
++        break;
++    }
++    case SCMD_THISBASE:
++    {
++        const auto arg_lit = op_arg1;
++        fr.thisbase[fr.curnest] = arg_lit;
++        break;
++    }
++    case SCMD_NEWARRAY:
++    {
++        auto &reg1 = _registers[op_arg1];
++        const int arg_elnum = reg1.IValue;
++        const uint32_t arg_elsize = static_cast<uint32_t>(op_arg2);
++        const bool arg_managed = op_arg3 != 0; // patch 0293: == Arg3().GetAsBool() on an int-set value
++        if (arg_elnum < 0)
++        {
++            cc_error("Invalid size for dynamic array; requested: %d, range: 0..%d", arg_elnum, INT32_MAX);
++            return -1;
++        }
++        DynObjectRef ref = CCDynamicArray::Create(static_cast<uint32_t>(arg_elnum), arg_elsize, arg_managed);
++        reg1.SetScriptObject(ref.Obj(), &globalDynamicArray);
++        break;
++    }
++    case SCMD_NEWUSEROBJECT:
++    {
++        auto &reg1 = _registers[op_arg1];
++        const uint32_t arg_size = static_cast<uint32_t>(op_arg2);
++        if (arg_size > INT32_MAX)
++        {
++            cc_error("Invalid size for user object; requested: %u, range: 0..%d", arg_size, INT32_MAX);
++            return -1;
++        }
++        DynObjectRef ref = ScriptUserObject::Create(arg_size);
++        reg1.SetScriptObject(ref.Obj(), ref.Mgr());
++        break;
++    }
++    case SCMD_FADD:
++    {
++        auto &reg1 = _registers[op_arg1];
++        const auto arg_lit = op_arg2;
++        reg1.SetFloat(reg1.FValue + arg_lit); // arg2 was used as int here originally
++        break;
++    }
++    case SCMD_FSUB:
++    {
++        auto &reg1 = _registers[op_arg1];
++        const auto arg_lit = op_arg2;
++        reg1.SetFloat(reg1.FValue - arg_lit); // arg2 was used as int here originally
++        break;
++    }
++    case SCMD_FMULREG:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetFloat(reg1.FValue * reg2.FValue);
++        break;
++    }
++    case SCMD_FDIVREG:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        if (reg2.FValue == 0.0)
++        {
++            cc_error("!Floating point divide by zero");
++            return -1;
++        }
++        reg1.SetFloat(reg1.FValue / reg2.FValue);
++        break;
++    }
++    case SCMD_FADDREG:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetFloat(reg1.FValue + reg2.FValue);
++        break;
++    }
++    case SCMD_FSUBREG:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetFloat(reg1.FValue - reg2.FValue);
++        break;
++    }
++    case SCMD_FGREATER:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetFloatAsBool(reg1.FValue > reg2.FValue);
++        break;
++    }
++    case SCMD_FLESSTHAN:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetFloatAsBool(reg1.FValue < reg2.FValue);
++        break;
++    }
++    case SCMD_FGTE:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetFloatAsBool(reg1.FValue >= reg2.FValue);
++        break;
++    }
++    case SCMD_FLTE:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        reg1.SetFloatAsBool(reg1.FValue <= reg2.FValue);
++        break;
++    }
++    case SCMD_ZEROMEMORY:
++    {
++        const auto arg_size = op_arg1;
++        // Check if we are zeroing at stack tail
++        if (_registers[SREG_MAR] == _registers[SREG_SP])
++        {
++            // creating a local variable -- check the stack to ensure no mem overrun
++            ASSERT_STACK_SPACE_BYTES(arg_size);
++            // NOTE: according to compiler's logic, this is always followed
++            // by SCMD_ADD, and that is where the data is "allocated", here we
++            // just clean the place.
++            memset(_stackdataPtr, 0, arg_size);
++        }
++        else
++        {
++            cc_error("internal error: stack tail address expected on SCMD_ZEROMEMORY instruction, reg[MAR] type is %d",
++                _registers[SREG_MAR].Type);
++            return -1;
++        }
++        break;
++    }
++    case SCMD_CREATESTRING:
++    {
++        auto &reg1 = _registers[op_arg1];
++        const char *ptr = reinterpret_cast<const char*>(reg1.GetDirectPtr());
++        DynObjectRef ref = ScriptString::Create(ptr);
++        reg1.SetScriptObject(ref.Obj(), &myScriptStringImpl);
++        break;
++    }
++    case SCMD_STRINGSEQUAL:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        if ((reg1.IsNull()) || (reg2.IsNull()))
++        {
++            cc_error("!Null pointer referenced");
++            return -1;
++        }
++        else
++        {
++            const char *ptr1 = reinterpret_cast<const char*>(reg1.GetDirectPtr());
++            const char *ptr2 = reinterpret_cast<const char*>(reg2.GetDirectPtr());
++            reg1.SetInt32AsBool(strcmp(ptr1, ptr2) == 0);
++        }
++        break;
++    }
++    case SCMD_STRINGSNOTEQ:
++    {
++        auto       &reg1 = _registers[op_arg1];
++        const auto &reg2 = _registers[op_arg2];
++        if ((reg1.IsNull()) || (reg2.IsNull()))
++        {
++            cc_error("!Null pointer referenced");
++            return -1;
++        }
++        else
++        {
++            const char *ptr1 = reinterpret_cast<const char*>(reg1.GetDirectPtr());
++            const char *ptr2 = reinterpret_cast<const char*>(reg2.GetDirectPtr());
++            reg1.SetInt32AsBool(strcmp(ptr1, ptr2) != 0);
++        }
++        break;
++    }
++    case SCMD_LOOPCHECKOFF:
++        if (fr.loopIterationCheckDisabled == 0)
++            fr.loopIterationCheckDisabled++;
++        break;
++    default:
++        cc_error("instruction %d is not implemented", op_code);
++        return -1;
++    }
++    _pc += op_argc + 1;
++    return 0;
++}
++
++// The fast loop. fr == nullptr: fill s_vm_handlers and return.
++// Register operands are byte offsets into _registers; jump operands are word deltas from the
++// jump's own slot. Every native handler tests its preconditions before writing anything and
++// leaves through h_generic when one fails, so DosVmStep raises the same error with the same state.
++#define VM_REG(off) (*reinterpret_cast<RuntimeScriptValue*>(reinterpret_cast<char*>(_registers) + (off)))
++#define VM_PC() static_cast<int32_t>(ip - fr->dbase)
++#define VM_IS_START(p) ((fr->dstart[static_cast<uint32_t>(p) >> 5] >> (static_cast<uint32_t>(p) & 31)) & 1u)
++#ifdef DOSAGS_VMTRACE
++#define VM_TRACE() DosVmTraceFold(fr->codeInst, VM_PC(), static_cast<int32_t>(fr->codeInst->_code[VM_PC()] & INSTANCE_ID_REMOVEMASK))
++#else
++#define VM_TRACE()
++#endif
++#define VM_DISPATCH() do { VM_TRACE(); goto *reinterpret_cast<const void*>(*ip); } while (0)
++#define VM_NEXT(n) do { ip += (n); VM_DISPATCH(); } while (0)
++#define VM_ABORTED_EXIT() if (_flags & INSTF_ABORTED) { _pc = VM_PC(); return kInstErr_None; }
++#define VM_SP (_registers[SREG_SP])
++
++ccInstError ccInstance::DosVmLoop(DosVmFrame *fr, int32_t startpc)
++{
++    if (!fr)
++    {
++        static const void *const tbl[kVmH_Count] = {
++            &&h_generic, &&h_linenum, &&h_add, &&h_sub, &&h_mov, &&h_ret,
++            &&h_movl_int, &&h_movl_gvar, &&h_movl_str, &&h_movl_imp, &&h_memread, &&h_memwrite,
++            &&h_mulreg, &&h_addreg, &&h_subreg, &&h_bitand, &&h_bitor, &&h_isequal, &&h_notequal,
++            &&h_greater, &&h_lessthan, &&h_gte, &&h_lte, &&h_and, &&h_or, &&h_xorreg, &&h_call,
++            &&h_jz, &&h_jnz, &&h_jmp, &&h_push, &&h_pop, &&h_mul, &&h_callext, &&h_pushreal,
++            &&h_subrealstack, &&h_numfuncargs, &&h_thisbase, &&h_checkbounds, &&h_checknull,
++            &&h_checknullreg };
++        for (int i = 0; i < kVmH_Count; ++i)
++            s_vm_handlers[i] = tbl[i];
++        s_vm_handlers_ready = true;
++        return kInstErr_None;
++    }
++
++    const intptr_t *ip = fr->dbase + startpc;
++    // Run()'s loop condition, before the first instruction
++    if (_flags & INSTF_ABORTED)
++        return kInstErr_None;
++    if (!VM_IS_START(startpc))
++        goto h_generic_untraced;
++    VM_DISPATCH();
++
++h_linenum: // SCMD_LINENUM; the hook is a call-out
++    _lineNumber = static_cast<int>(ip[1]);
++    currentline = _lineNumber;
++    if (new_line_hook)
++    {
++        _pc = VM_PC();
++        new_line_hook(this, currentline);
++        ip += 2;
++        VM_ABORTED_EXIT();
++        VM_DISPATCH();
++    }
++    VM_NEXT(2);
++
++h_add: // SCMD_ADD
++    {
++        RuntimeScriptValue &reg1 = VM_REG(ip[1]);
++        const int32_t arg_lit = static_cast<int32_t>(ip[2]);
++        if (ip[1] == SREG_SP * static_cast<intptr_t>(sizeof(RuntimeScriptValue)))
++        {
++            if ((VM_SP.RValue + 1 - _stackBegin) >= CC_STACK_SIZE ||
++                (_stackdataPtr + arg_lit - _stackdataBegin) >= CC_STACK_DATA_SIZE)
++                goto h_generic;
++            if (reg1.RValue->IsValid())
++            {
++                VM_SP.RValue++;
++                _stackdataPtr += arg_lit;
++            }
++            else
++            {
++                // PushDataToStack (its CC_ERROR_IF is empty in this build)
++                VM_SP.RValue->SetData(_stackdataPtr, arg_lit);
++                _stackdataPtr += arg_lit;
++                VM_SP.RValue++;
++            }
++        }
++        else
++        {
++            reg1.IValue += arg_lit;
++        }
++        VM_NEXT(3);
++    }
++
++h_sub: // SCMD_SUB
++    {
++        RuntimeScriptValue &reg1 = VM_REG(ip[1]);
++        const int32_t arg_lit = static_cast<int32_t>(ip[2]);
++        if (reg1.Type == kScValStackPtr)
++        {
++            if (ip[1] == SREG_SP * static_cast<intptr_t>(sizeof(RuntimeScriptValue)))
++            {
++                PopDataFromStack(arg_lit);
++            }
++            else
++            {
++                // GetStackPtrOffsetRw, inline (its CC_ERROR_IF_RETVALs are empty in this build)
++                int32_t total_off = 0;
++                RuntimeScriptValue *stack_entry = VM_SP.RValue;
++                while (total_off < arg_lit && stack_entry > _stackBegin)
++                {
++                    stack_entry--;
++                    total_off += stack_entry->Size;
++                }
++                reg1.SetStackPtr(stack_entry);
++                reg1.IValue += total_off - arg_lit;
++            }
++        }
++        else
++        {
++            reg1.IValue -= arg_lit;
++        }
++        VM_NEXT(3);
++    }
++
++h_mov: // SCMD_REGTOREG
++    {
++        const RuntimeScriptValue &reg1 = VM_REG(ip[1]);
++        RuntimeScriptValue &reg2 = VM_REG(ip[2]);
++        reg2 = reg1;
++        VM_NEXT(3);
++    }
++
++h_ret: // SCMD_RET
++    {
++        if (VM_SP.RValue - 1 < _stackBegin)
++            goto h_generic;
++        RuntimeScriptValue *slot = VM_SP.RValue - 1;
++        const int32_t newpc = slot->IValue;
++        if (newpc != 0 && _callStackSize < 1)
++            goto h_generic;
++        if (fr->loopIterationCheckDisabled > 0)
++            fr->loopIterationCheckDisabled--;
++        VM_SP.RValue = slot;
++        _stackdataPtr -= sizeof(int32_t);
++        slot->Invalidate();
++        fr->curnest--;
++        _pc = newpc;
++        if (newpc == 0)
++        {
++            _returnValue = _registers[SREG_AX].IValue;
++            return kInstErr_None;
++        }
++        _callStackSize--;
++        _lineNumber = _callStackLineNumber[_callStackSize];
++        currentline = _lineNumber;
++        ip = fr->dbase + newpc;
++        if (newpc < 0 || static_cast<uint32_t>(newpc) >= fr->codesize || !VM_IS_START(newpc))
++            goto h_generic_untraced;
++        VM_DISPATCH();
++    }
++
++h_movl_int: // SCMD_LITTOREG, no fixup / FIXUP_FUNCTION
++    VM_REG(ip[1]).SetInt32(static_cast<int32_t>(ip[2]));
++    VM_NEXT(3);
++h_movl_gvar: // FIXUP_GLOBALDATA: operand is &ScriptVariable::RValue
++    VM_REG(ip[1]).SetGlobalVar(reinterpret_cast<RuntimeScriptValue*>(ip[2]));
++    VM_NEXT(3);
++h_movl_str: // FIXUP_STRING: operand is _strings + offset
++    VM_REG(ip[1]).SetStringLiteral(reinterpret_cast<const char*>(ip[2]));
++    VM_NEXT(3);
++h_movl_imp: // FIXUP_IMPORT: operand is the import index, looked up now as Run() does
++    {
++        const ScriptImport *import = simp.GetByIndex(static_cast<uint32_t>(ip[2]));
++        if (!import)
++            goto h_generic;
++        VM_REG(ip[1]) = import->Value;
++        VM_NEXT(3);
++    }
++
++h_memread: // SCMD_MEMREAD, MAR on the stack or a global variable (no call-outs on those paths)
++    {
++        const RuntimeScriptValue &mar = _registers[SREG_MAR];
++        if (mar.Type != kScValStackPtr && mar.Type != kScValGlobalVar)
++            goto h_generic;
++        VM_REG(ip[1]) = mar.ReadValue();
++        VM_NEXT(2);
++    }
++h_memwrite: // SCMD_MEMWRITE, same two MAR types
++    {
++        RuntimeScriptValue &mar = _registers[SREG_MAR];
++        if (mar.Type != kScValStackPtr && mar.Type != kScValGlobalVar)
++            goto h_generic;
++        mar.WriteValue(VM_REG(ip[1]));
++        VM_NEXT(2);
++    }
++
++#define VM_BINOP(LABEL, EXPR) \
++LABEL: \
++    { \
++        RuntimeScriptValue &reg1 = VM_REG(ip[1]); \
++        const RuntimeScriptValue &reg2 = VM_REG(ip[2]); \
++        EXPR; \
++        VM_NEXT(3); \
++    }
++    VM_BINOP(h_mulreg, reg1.SetInt32(reg1.IValue * reg2.IValue))
++    VM_BINOP(h_addreg, reg1.IValue += reg2.IValue)
++    VM_BINOP(h_subreg, reg1.IValue -= reg2.IValue)
++    VM_BINOP(h_bitand, reg1.SetInt32(reg1.IValue & reg2.IValue))
++    VM_BINOP(h_bitor, reg1.SetInt32(reg1.IValue | reg2.IValue))
++    VM_BINOP(h_isequal, reg1.SetInt32AsBool(reg1 == reg2))
++    VM_BINOP(h_notequal, reg1.SetInt32AsBool(reg1 != reg2))
++    VM_BINOP(h_greater, reg1.SetInt32AsBool(reg1.IValue > reg2.IValue))
++    VM_BINOP(h_lessthan, reg1.SetInt32AsBool(reg1.IValue < reg2.IValue))
++    VM_BINOP(h_gte, reg1.SetInt32AsBool(reg1.IValue >= reg2.IValue))
++    VM_BINOP(h_lte, reg1.SetInt32AsBool(reg1.IValue <= reg2.IValue))
++    VM_BINOP(h_and, reg1.SetInt32AsBool(reg1.IValue && reg2.IValue))
++    VM_BINOP(h_or, reg1.SetInt32AsBool(reg1.IValue || reg2.IValue))
++    VM_BINOP(h_xorreg, reg1.SetInt32(reg1.IValue ^ reg2.IValue))
++#undef VM_BINOP
++
++h_mul: // SCMD_MUL
++    VM_REG(ip[1]).IValue *= static_cast<int32_t>(ip[2]);
++    VM_NEXT(3);
++
++h_call: // SCMD_CALL
++    {
++        if (fr->curnest >= MAXNEST - 1 || _callStackSize >= MAX_CALL_STACK)
++            goto h_generic;
++        RuntimeScriptValue *slot = VM_SP.RValue;
++        if ((slot + 1 - _stackBegin) >= CC_STACK_SIZE ||
++            (_stackdataPtr + sizeof(int32_t) - _stackdataBegin) >= CC_STACK_DATA_SIZE ||
++            VM_SP.Type != kScValStackPtr || slot->Type == kScValData)
++            goto h_generic;
++        const int32_t pc = VM_PC();
++        // PUSH_CALL_STACK
++        _callStackLineNumber[_callStackSize] = _lineNumber;
++        _callStackCodeInst[_callStackSize] = _runningInst;
++        _callStackAddr[_callStackSize] = pc;
++        _callStackSize++;
++        // PushValueToStack(RuntimeScriptValue().SetInt32(_pc + op_argc + 1))
++        slot->SetInt32(pc + 2);
++        slot->Size = 4;
++        _stackdataPtr += sizeof(int32_t);
++        VM_SP.RValue = slot + 1;
++        const RuntimeScriptValue &reg1 = VM_REG(ip[1]);
++        int32_t target;
++        if (fr->thisbase[fr->curnest] == 0)
++            target = reg1.IValue;
++        else
++        {
++            target = fr->funcstart[fr->curnest];
++            target += (reg1.IValue - fr->thisbase[fr->curnest]);
++        }
++        _pc = target;
++        fr->next_call_needs_object = 0;
++        if (fr->loopIterationCheckDisabled)
++            fr->loopIterationCheckDisabled++;
++        fr->curnest++;
++        fr->thisbase[fr->curnest] = 0;
++        fr->funcstart[fr->curnest] = target;
++        ip = fr->dbase + target;
++        if (target < 0 || static_cast<uint32_t>(target) >= fr->codesize || !VM_IS_START(target))
++            goto h_generic_untraced;
++        VM_DISPATCH();
++    }
++
++h_jz: // SCMD_JZ; operand = arg + 2
++    if (_registers[SREG_AX].IsNull())
++        VM_NEXT(ip[1]);
++    VM_NEXT(2);
++h_jnz: // SCMD_JNZ
++    if (!_registers[SREG_AX].IsNull())
++        VM_NEXT(ip[1]);
++    VM_NEXT(2);
++h_jmp: // SCMD_JMP, with Run()'s backward-jump watchdog
++    {
++        const int32_t arg_lit = static_cast<int32_t>(ip[1]) - 2;
++        if (arg_lit < 0)
++        {
++            const int32_t pc_after = VM_PC() + arg_lit; // Run(): _pc += arg_lit, before the checks
++            ++fr->loopIterations;
++            if (_flags & INSTF_RUNNING)
++            {
++                _flags &= ~INSTF_RUNNING;
++                fr->loopIterations = 0u;
++                fr->loopCheckIterations = 0u;
++            }
++            else if ((fr->loopIterationCheckDisabled == 0) && (_maxWhileLoops > 0) &&
++                (++fr->loopCheckIterations > _maxWhileLoops))
++            {
++                _pc = pc_after;
++                cc_error("!Script appears to be hung (a while loop ran %d times). The problem may be in a calling function; check the call stack.", fr->loopCheckIterations);
++                return kInstErr_Generic;
++            }
++            else if ((fr->loopIterations & 0x3FF) == 0 &&
++                (std::chrono::duration_cast<std::chrono::milliseconds>(
++                    FastClock::now() - _lastAliveTs) > fr->timeout))
++            {
++                _pc = pc_after;
++                sys_evt_process_pending();
++                _lastAliveTs = FastClock::now();
++                ip += ip[1];
++                VM_ABORTED_EXIT();
++                VM_DISPATCH();
++            }
++        }
++        VM_NEXT(ip[1]);
++    }
++
++h_push: // SCMD_PUSHREG
++    {
++        RuntimeScriptValue *slot = VM_SP.RValue;
++        if ((slot + 1 - _stackBegin) >= CC_STACK_SIZE ||
++            (_stackdataPtr + sizeof(int32_t) - _stackdataBegin) >= CC_STACK_DATA_SIZE ||
++            VM_SP.Type != kScValStackPtr || slot->Type == kScValData)
++            goto h_generic;
++        *slot = VM_REG(ip[1]);
++        slot->Size = 4;
++        _stackdataPtr += sizeof(int32_t);
++        VM_SP.RValue = slot + 1;
++        VM_NEXT(2);
++    }
++h_pop: // SCMD_POPREG: straight into the register (registers and the stack never alias)
++    {
++        if (VM_SP.RValue - 1 < _stackBegin)
++            goto h_generic;
++        RuntimeScriptValue *slot = VM_SP.RValue - 1;
++        VM_SP.RValue = slot;
++        _stackdataPtr -= sizeof(int32_t);
++        VM_REG(ip[1]) = *slot;
++        slot->Invalidate();
++        VM_NEXT(2);
++    }
++
++h_callext: // SCMD_CALLEXT: Run()'s text, with _pc synced before the call and the abort test after
++    {
++        _pc = VM_PC();
++        const RuntimeScriptValue &reg1 = VM_REG(ip[1]);
++        DosVmCallStack &fcs = *fr->fcs;
++        fr->was_just_callas = -1;
++        if (fr->num_args_to_func < 0)
++            fr->num_args_to_func = fcs.GetSize();
++        for (RuntimeScriptValue *prval = fcs.GetHead() + fr->num_args_to_func;
++            --prval >= fcs.GetHead();)
++        {
++            prval->DirectPtr();
++        }
++        dos_port_work[kDW_ScriptExt]++;   // patch 0230, every build
++        RuntimeScriptValue return_value;
++        if (reg1.Type == kScValPluginFunction)
++        {
++            if (fr->next_call_needs_object)
++            {
++                RuntimeScriptValue obj_rval = _registers[SREG_OP];
++                obj_rval.DirectPtrObj();
++                return_value = CallPluginFunction(reg1.Ptr, &obj_rval, fcs.GetHead(), fr->num_args_to_func);
++            }
++            else
++            {
++                return_value = CallPluginFunction(reg1.Ptr, nullptr, fcs.GetHead(), fr->num_args_to_func);
++            }
++        }
++        else if (fr->next_call_needs_object)
++        {
++            if (reg1.Type == kScValObjectFunction)
++            {
++                RuntimeScriptValue obj_rval = _registers[SREG_OP];
++                obj_rval.DirectPtrObj();
++                return_value = reg1.ObjPfn(obj_rval.Ptr, fcs.GetHead(), fr->num_args_to_func);
++            }
++            else
++            {
++                cc_error("invalid pointer type for object function call: %d", reg1.Type);
++            }
++        }
++        else if (reg1.Type == kScValStaticFunction)
++        {
++            return_value = reg1.SPfn(fcs.GetHead(), fr->num_args_to_func);
++        }
++        else if (reg1.Type == kScValObjectFunction)
++        {
++            cc_error("unexpected object function pointer on SCMD_CALLEXT");
++        }
++        else
++        {
++            cc_error("invalid pointer type for function call: %d", reg1.Type);
++        }
++        if (cc_has_error())
++            return kInstErr_Generic;
++        _registers[SREG_AX] = return_value;
++        fr->next_call_needs_object = 0;
++        fr->num_args_to_func = -1;
++        ip += 2;
++        VM_ABORTED_EXIT();
++        VM_DISPATCH();
++    }
++
++h_pushreal: // SCMD_PUSHREAL
++    fr->fcs->Push(VM_REG(ip[1]));
++    VM_NEXT(2);
++h_subrealstack: // SCMD_SUBREALSTACK; the after-CALLAS case goes through the stepper
++    {
++        const int32_t arg_lit = static_cast<int32_t>(ip[1]);
++        if (fr->fcs->GetSize() < static_cast<uint32_t>(arg_lit) || fr->was_just_callas >= 0)
++            goto h_generic;
++        fr->fcs->PopCount(arg_lit);
++        VM_NEXT(2);
++    }
++h_numfuncargs: // SCMD_NUMFUNCARGS
++    fr->num_args_to_func = static_cast<int32_t>(ip[1]);
++    VM_NEXT(2);
++h_thisbase: // SCMD_THISBASE
++    fr->thisbase[fr->curnest] = static_cast<int32_t>(ip[1]);
++    VM_NEXT(2);
++h_checkbounds: // SCMD_CHECKBOUNDS; the error goes through the stepper
++    {
++        const RuntimeScriptValue &reg1 = VM_REG(ip[1]);
++        const int32_t arg_lit = static_cast<int32_t>(ip[2]);
++        if ((reg1.IValue < 0) || (reg1.IValue >= arg_lit))
++            goto h_generic;
++        VM_NEXT(3);
++    }
++h_checknull: // SCMD_CHECKNULL
++    if (_registers[SREG_MAR].IsNull())
++        goto h_generic;
++    VM_NEXT(1);
++h_checknullreg: // SCMD_CHECKNULLREG
++    if (VM_REG(ip[1]).IsNull())
++        goto h_generic;
++    VM_NEXT(2);
++
++h_generic_untraced: // ip is at an instruction the trace has not seen yet (a non-start target)
++    VM_TRACE();
++h_generic: // the instruction at ip, and any that follow until an instruction start, by the stepper
++    {
++        int32_t pc = VM_PC();
++        for (;;)
++        {
++            const int st = DosVmStep(*fr, pc);
++            if (st < 0)
++                return kInstErr_Generic;
++            if (st > 0)
++                return kInstErr_None;
++            if (_flags & INSTF_ABORTED)
++                return kInstErr_None; // _pc is the next instruction, as Run() leaves it
++            pc = _pc;
++            if (pc >= 0 && static_cast<uint32_t>(pc) < fr->codesize && VM_IS_START(pc))
++            {
++                ip = fr->dbase + pc;
++                VM_DISPATCH();
++            }
++#ifdef DOSAGS_VMTRACE
++            DosVmTraceFold(fr->codeInst, pc, static_cast<int32_t>(fr->codeInst->_code[pc] & INSTANCE_ID_REMOVEMASK));
++#endif
++        }
++    }
++}
++
++#ifdef DOSAGS_VMTRACE
++// LAB ONLY (make AGS_RUNSTATS_DEF=-DDOSAGS_VMTRACE): the instruction-by-instruction trace digest
++// (VM-DESIGN 5, slice 2). Folded before every executed instruction, by Run() and by the fast loop
++// alike: the code instance, pc, opcode, all eight registers' type/value/size and pointer
++// presence (a stack pointer by its stack index), the stack data offset, the three stack entries
++// at the top, the line number and the call depth. Pointers are folded as present/absent only,
++// so heap layout cannot move the digest. game_run.cpp prints it on the statewit line.
++uint32_t dos_vmtrace_h = 2166136261u;
++unsigned long dos_vmtrace_n = 0;
++uint32_t dos_vmtrace_tick = 0;
++
++void ccInstance::DosVmTraceFold(const ccInstance *codeInst, int32_t pc, int32_t op) const
++{
++    uint32_t h = dos_vmtrace_h;
++#define VT(v) h = (h ^ static_cast<uint32_t>(v)) * 16777619u
++    VT(codeInst->_loadedInstanceId); VT(pc); VT(op);
++    for (int i = 0; i < CC_NUM_REGISTERS; ++i)
++    {
++        const RuntimeScriptValue &r = _registers[i];
++        VT(r.Type); VT(r.IValue); VT(r.Size); VT(r.Ptr != nullptr); VT(r.MgrPtr != nullptr);
++        if (r.Type == kScValStackPtr && r.RValue >= _stackBegin && r.RValue < _stackBegin + CC_STACK_SIZE)
++            VT(r.RValue - _stackBegin);
++    }
++    VT(_stackdataPtr - _stackdataBegin);
++    if (_registers[SREG_SP].Type == kScValStackPtr)
++    {
++        const RuntimeScriptValue *sp = _registers[SREG_SP].RValue;
++        for (int k = -2; k <= 0; ++k)
++        {
++            const RuntimeScriptValue *e = sp + k;
++            if (e >= _stackBegin && e < _stackBegin + CC_STACK_SIZE)
++            {
++                VT(e->Type); VT(e->IValue); VT(e->Size);
++            }
++        }
++    }
++    VT(_lineNumber); VT(_callStackSize);
++#undef VT
++    dos_vmtrace_h = h;
++    dos_vmtrace_n++;
++}
++
++// The trace's control: DOSAGS_VMTRACE_CONTROL=N flips bit 0 of AX after the first engine call at
++// or after tick N (Run()'s CALLEXT only; the control arm runs the legacy VM).
++bool dos_vmtrace_control_fire()
++{
++    static long at = -2;
++    static bool done = false;
++    if (at == -2) { const char *e = getenv("DOSAGS_VMTRACE_CONTROL"); at = e ? atol(e) : -1; }
++    if (at < 0 || done || static_cast<long>(dos_vmtrace_tick) < at) return false;
++    done = true;
++    return true;
++}
++#endif
++
+ #endif // __DJGPP__
+-- 
+2.47.3
+

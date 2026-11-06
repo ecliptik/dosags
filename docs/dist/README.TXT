@@ -33,6 +33,7 @@ FILES
   CWSDPMI.EXE   DPMI host (DJGPP programs need one; keep it next to
                 AGS.EXE or on the PATH)
   CWSDPMI.DOC   CWSDPMI's licence and documentation
+  OPL3BANK.DAT  General MIDI instrument bank for OPL3/OPL2 music
   README.TXT    this file
   LICENSE.TXT   licence for this port's own code (MIT)
   ARTISTIC.TXT  Artistic License 2.0, the AGS engine's licence
@@ -46,7 +47,8 @@ FILES
 SETTING UP A GAME
 -----------------
 
-1. Copy AGS.EXE and CWSDPMI.EXE into the game's directory.
+1. Copy AGS.EXE, CWSDPMI.EXE and OPL3BANK.DAT into the game's directory.
+   (Without OPL3BANK.DAT, FM music uses 8 built-in instruments.)
 2. The game's data file must have a DOS 8.3 name (e.g. GAME.AGS). Games
    shipped as a Windows .EXE with the data appended work too, renamed to
    an 8.3 name. Keep any AUDIO.VOX / SPEECH.VOX next to it.
@@ -86,8 +88,13 @@ The Sound Blaster is found from the BLASTER variable, e.g.
 from ULTRASND, e.g. SET ULTRASND=240,1,1,11,7 (port, DMA, DMA, IRQ, IRQ).
 Use the values your card's own setup program gives you.
 
-If a backend's hardware is not found, that part of the sound is off for
-the session and the game still runs.
+Without a Sound Blaster (no BLASTER variable), music still plays on an
+AdLib/OPL card (auto or opl3) or an MPU-401 (wb); sound effects and
+speech are silent, and the game runs normally. For an AdLib card use
+auto or opl3, not "adlib".
+
+The gus backend works but is not yet right on the reference machine
+(gaps, missing effects, music off pitch): prefer opl3 or wb for now.
 
 
 KNOWN LIMITS
@@ -97,6 +104,11 @@ KNOWN LIMITS
   project's three test scenes ran at full speed (40 game ticks per
   second) at 8-, 16- and 32-bit colour. Other games and heavier rooms
   can be slower; game logic stays correct, the frame rate drops.
+- Script speed-ups. Game scripts run on a faster interpreter, and some
+  per-frame engine work that cannot change anything is skipped. If a
+  game behaves differently from its Windows version, try again with
+  SET DOSAGS_VM=legacy and SET DOSAGS_ENGLEV=0 (AGS's own interpreter,
+  no skipping).
 - OGG and MP3 audio are NOT decoded on DOS. Games whose music or speech
   is OGG/MP3 (most games made with AGS 3.x) play those clips silently
   unless the clips are first converted to WAV on a modern PC with the
@@ -127,6 +139,9 @@ Project License (FTL.TXT). AllegroFont 2.0.9 is also under that licence.
 
 Uses SDL 3 (zlib licence), Allegro 4.4.3 (giftware), aastr (giftware),
 miniz (MIT), stb_image (MIT) and GLM (MIT); see NOTICES.TXT.
+
+OPL3BANK.DAT is generated from DMXOPL (github.com/sneakernets/DMXOPL),
+MIT licence; see NOTICES.TXT.
 
 Built with DJGPP (stock libc). DJGPP is free and can be obtained from
 https://www.delorie.com/djgpp/

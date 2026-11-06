@@ -1,0 +1,393 @@
+From 9b1b87b6ef30fc745574dcb2b21333d7efe29ae1 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 6 Nov 2026 03:36:30 -0800
+Subject: [PATCH 364/365] DOS-PORT: patch 0364 -- lever 2: memoise
+ GetCharIDAtRoom inside a whitelisted engine call
+
+MMD's scripts ask the same character hit test several times a tick with nothing in between that can
+change the answer: 4 lookups a tick inside the VM on character select, 3 of them repeats; each scans
+all 102 characters (~0.41 ms/tick of the script event on the 486, MMD-REMAINDER). A 4-entry memo
+keyed (x, y, hit_options) and a generation counter answers a repeat, restoring char_lowest_yp too.
+
+When it may be used: only while the innermost engine call made by the fast VM is on a 10-name
+whitelist -- the calls MMD makes between a store and a hit, each audited to change nothing the hit
+test reads and to run no tick or script: GetLocationType, GetLocationName, StrGetCharAt, StrLen,
+StrSetCharAt, StrCat, StrCopy, GetPlayerCharacter, GetCursorMode, GetInvAt. What invalidates (bumps
+the generation): any other engine call (object, plugin and unknown calls included); a generic VM
+step other than a memory read or a write into the script's own memory (its stack, a global
+variable, its global data block); the line hook; the pending-events check; every VM entry and exit;
+a legacy Run(). The hooks are lazy -- they test anything only while the memo holds a live entry --
+and out of line, so the fast loop keeps its register allocation (a first version with locals cost
++0.32 ms/tick at fixed cycles; an inline stepper test cost the loop its DosVmStep inlining, hence
+DosVmStep/DosVmStepBody). Engine-side hit tests (outside the VM) are never memoised.
+
+Lab-only (-DDOSAGS_VMTRACE, DOSAGS_ENGLEV_SHADOW=1): every hit is recomputed and compared, result
+and char_lowest_yp ("cmemo MISMATCH"); statewit gains cm=. Lab: 0 mismatches over 13,872 hits (MMD
+character select 2997, intro 10875); digests EQUAL on the four fixtures; aq-journeys 10/10.
+486, round L5 (lab binary 23fd25201ec9, VM fast both arms, levers 1+2 off vs on): MMD displayed
+91.28 / 91.24% -> 99.90 / 99.90% at 40.00 ticks/s (B-A +8.62 / +8.66, predicted +7 to +10.5).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P4db4MSiR2PYUDFdrDdJe2
+---
+ Engine/ac/character.cpp          |  53 +++++++++++++
+ Engine/main/dos_englev.h         |  11 ++-
+ Engine/main/game_run.cpp         |   6 +-
+ Engine/script/cc_instance.h      |   1 +
+ Engine/script/cc_instance_vm.cpp | 123 +++++++++++++++++++++++++++++--
+ 5 files changed, 183 insertions(+), 11 deletions(-)
+
+diff --git a/Engine/ac/character.cpp b/Engine/ac/character.cpp
+index 5c3f5893f..d652f8eaa 100644
+--- a/Engine/ac/character.cpp
++++ b/Engine/ac/character.cpp
+@@ -18,6 +18,7 @@
+ #include <cstdio>
+ #include <math.h>
+ #include "ac/character.h"
++#include "main/dos_englev.h"     // DOS-PORT 0364 levers 1 + 2
+ #include "ac/common.h"
+ #include "ac/gamesetupstruct.h"
+ #include "ac/display.h"
+@@ -2608,7 +2609,59 @@ void update_character_scale(int charid)
+     chex.zoom_offs = zoom_offs;
+ }
+ 
++#ifdef __DJGPP__
++static int GetCharIDAtRoomImpl(int x, int y, int hit_options);
++// DOS-PORT patch 0364 lever 2: inside the fast VM the scripts ask the same (x, y, hit) several times a tick with
++// nothing that changes characters in between (MMD: 4 calls a tick inside the VM, 3 of them repeats). A small memo
++// keyed by the generation dos_cmemo_gen, which everything that might change what this reads bumps (dos_englev.h);
++// used only when the innermost engine call from the fast VM is on the whitelist (cc_instance_vm.cpp).
++// Restores char_lowest_yp with the result, as the scan sets it.
++struct DosCharMemo { uint32_t gen; int x, y, hit, result, lowest; };
++static DosCharMemo dos_cmemo[4];
++static unsigned dos_cmemo_next = 0;
+ int GetCharIDAtRoom(int x, int y, int hit_options)
++{
++    if (dos_englev_on && dos_cmemo_curpure())
++    {
++#ifdef DOSAGS_VMTRACE
++        ++dos_cm_look;
++#endif
++        for (const DosCharMemo &m : dos_cmemo)
++        {
++            if (m.gen == dos_cmemo_gen && m.x == x && m.y == y && m.hit == hit_options)
++            {
++#ifdef DOSAGS_VMTRACE
++                ++dos_cm_hit;
++                if (dos_englev_shadow())
++                {
++                    ++dos_cm_check;
++                    const int r = GetCharIDAtRoomImpl(x, y, hit_options);
++                    if (r != m.result || char_lowest_yp != m.lowest)
++                    {
++                        if (dos_cm_bad < 10)
++                            Debug::Printf("DOS-PORT cmemo MISMATCH x=%d y=%d hit=%d memo=%d/%d scan=%d/%d", x, y, hit_options,
++                                m.result, m.lowest, r, char_lowest_yp);
++                        ++dos_cm_bad;
++                    }
++                }
++#endif
++                char_lowest_yp = m.lowest;
++                return m.result;
++            }
++        }
++        const int r = GetCharIDAtRoomImpl(x, y, hit_options);
++        DosCharMemo &m = dos_cmemo[dos_cmemo_next++ & 3];
++        m.gen = dos_cmemo_gen; m.x = x; m.y = y; m.hit = hit_options; m.result = r; m.lowest = char_lowest_yp;
++        dos_cmemo_live = 1;
++        return r;
++    }
++    return GetCharIDAtRoomImpl(x, y, hit_options);
++}
++
++static int GetCharIDAtRoomImpl(int x, int y, int hit_options)
++#else
++int GetCharIDAtRoom(int x, int y, int hit_options)
++#endif
+ {
+     const bool only_clickable = (hit_options & kHit_Interactable) != 0;
+     int cc,sppic,lowestyp=0,lowestwas=-1;
+diff --git a/Engine/main/dos_englev.h b/Engine/main/dos_englev.h
+index d8b1069ed..44e3a40af 100644
+--- a/Engine/main/dos_englev.h
++++ b/Engine/main/dos_englev.h
+@@ -1,15 +1,22 @@
+-// DOS-PORT patch 0363 -- engine lever 1 outside the VM (LEVERS-REPORT.md), behind DOSAGS_ENGLEV=1 (default 0 = off):
++// DOS-PORT patch 0363 -- engine levers outside the VM (LEVERS-REPORT.md), behind DOSAGS_ENGLEV=1 (default 0 = off):
+ //   lever 1: skip the per-tick move/animate update of a character it provably cannot change (update.cpp)
++//   lever 2: memoise GetCharIDAtRoom inside whitelisted engine calls from the fast VM, invalidated by every
++//            engine call off the whitelist, by every generic VM step that may write engine state, and on
++//            every VM entry/exit (character.cpp, cc_instance_vm.cpp)
+ // Implemented in script/cc_instance_vm.cpp. Lab shadow checks only with -DDOSAGS_VMTRACE and DOSAGS_ENGLEV_SHADOW=1.
+ #ifndef DOS_ENGLEV_H
+ #define DOS_ENGLEV_H
+ #ifdef __DJGPP__
+ #include <stdint.h>
+ extern bool dos_englev_on;          // DOSAGS_ENGLEV=1, read once at engine start (dos_englev_init)
++extern uint32_t dos_cmemo_gen;      // lever 2: bumped on anything that may change what GetCharIDAtRoom reads
++extern int dos_cmemo_live;          // lever 2: 1 while the memo holds an entry of the current generation
++extern const void *dos_vm_curcall;  // lever 2: the static API function the fast VM is calling, else nullptr
++bool dos_cmemo_curpure();           // lever 2: dos_vm_curcall is on the whitelist
+ void dos_englev_init();
+ bool dos_englev_shadow();           // lab: DOSAGS_ENGLEV_SHADOW=1 in a -DDOSAGS_VMTRACE build
+ #ifdef DOSAGS_VMTRACE
+-extern unsigned long dos_el_skip, dos_el_check, dos_el_bad;
++extern unsigned long dos_el_skip, dos_el_check, dos_el_bad, dos_cm_look, dos_cm_hit, dos_cm_check, dos_cm_bad;
+ extern unsigned long dos_rand_calls;
+ #endif
+ #endif
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index fc0993d38..283f3a8bd 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1278,7 +1278,7 @@ static void game_loop_update_background_animation()
+ extern uint32_t dos_vmtrace_h, dos_vmtrace_tick, dos_vmsync_h;
+ extern unsigned long dos_vmtrace_n, dos_vmsync_n, dos_vmshadow_n, dos_vmshadow_bad;
+ extern unsigned long dos_vmfuse_n[];
+-extern unsigned long dos_el_skip, dos_el_check, dos_el_bad, dos_rand_calls;
++extern unsigned long dos_el_skip, dos_el_check, dos_el_bad, dos_cm_look, dos_cm_hit, dos_cm_check, dos_cm_bad, dos_rand_calls;
+ static uint32_t dp_fnv(uint32_t h, const void *p, size_t n)
+ {
+     const uint8_t *b = static_cast<const uint8_t*>(p);
+@@ -1319,13 +1319,13 @@ static void dp_statewit()
+     // localload, localstore, pushmovlpop, popbinmov, cmpmovjz); shadow = checks/mismatches
+     const unsigned long *fz = dos_vmfuse_n; // indices: kVmH_SFarCall.. in cc_instance_vm.cpp (41..54)
+     Debug::Printf("DOS-PORT statewit tick=%lu room=%d chars=%08lx objs=%08lx gints=%08lx gdata=%08lx rdata=%08lx player=%d,%d vmtrace=%08lx vmops=%lu"
+-        " vmsync=%08lx syncn=%lu fz=%lu,%lu,%lu,%lu,%lu,%lu shadow=%lu/%lu el=%lu/%lu/%lu rnd=%lu",
++        " vmsync=%08lx syncn=%lu fz=%lu,%lu,%lu,%lu,%lu,%lu shadow=%lu/%lu el=%lu/%lu/%lu cm=%lu/%lu/%lu/%lu rnd=%lu",
+         (unsigned long)tick, displayed_room, (unsigned long)hc, (unsigned long)ho, (unsigned long)hg,
+         (unsigned long)hd, (unsigned long)hr, pc >= 0 ? game.chars[pc].x : -1, pc >= 0 ? game.chars[pc].y : -1,
+         (unsigned long)dos_vmtrace_h, dos_vmtrace_n, (unsigned long)dos_vmsync_h, dos_vmsync_n,
+         fz[41], fz[42], fz[43], fz[44], fz[45] + fz[46] + fz[47] + fz[48],
+         fz[49] + fz[50] + fz[51] + fz[52] + fz[53] + fz[54], dos_vmshadow_n, dos_vmshadow_bad,
+-        dos_el_skip, dos_el_check, dos_el_bad, dos_rand_calls);
++        dos_el_skip, dos_el_check, dos_el_bad, dos_cm_look, dos_cm_hit, dos_cm_check, dos_cm_bad, dos_rand_calls);
+ }
+ #endif
+ 
+diff --git a/Engine/script/cc_instance.h b/Engine/script/cc_instance.h
+index fabfb551c..c6394a14c 100644
+--- a/Engine/script/cc_instance.h
++++ b/Engine/script/cc_instance.h
+@@ -236,6 +236,7 @@ private:
+     ccInstError DosVmRun(int32_t curpc);
+     ccInstError DosVmLoop(DosVmFrame *fr, int32_t startpc);
+     int     DosVmStep(DosVmFrame &fr, int32_t pc);
++    int     DosVmStepBody(DosVmFrame &fr, int32_t pc);
+ #endif
+ 
+     // Searches for the function among this script's exports,
+diff --git a/Engine/script/cc_instance_vm.cpp b/Engine/script/cc_instance_vm.cpp
+index 9c14b9999..8ddb78a8d 100644
+--- a/Engine/script/cc_instance_vm.cpp
++++ b/Engine/script/cc_instance_vm.cpp
+@@ -63,10 +63,13 @@ using namespace AGS::Common::Memory;
+ extern ScriptError ccError; // cc_common.cpp (lever 3): cc_has_error() is ccError.HasError
+ #include "main/dos_englev.h"
+ 
+-// ---- engine lever 1 (dos_englev.h) ----------------------------------------------------------
++// ---- engine levers 1 + 2 (dos_englev.h) -------------------------------------------------------
+ bool dos_englev_on = false;
++uint32_t dos_cmemo_gen = 1;
++int dos_cmemo_live = 0;
++const void *dos_vm_curcall = nullptr;
+ #ifdef DOSAGS_VMTRACE
+-unsigned long dos_el_skip = 0, dos_el_check = 0, dos_el_bad = 0;
++unsigned long dos_el_skip = 0, dos_el_check = 0, dos_el_bad = 0, dos_cm_look = 0, dos_cm_hit = 0, dos_cm_check = 0, dos_cm_bad = 0;
+ unsigned long dos_rand_calls = 0;
+ #endif
+ void dos_englev_init()
+@@ -86,6 +89,66 @@ bool dos_englev_shadow()
+     return s != 0;
+ }
+ 
++// Lever 2's whitelist: the engine API calls MMD makes between its repeated hit tests (measured in the lab: the
++// calls made between a memo store and a memo hit on MMD character select and intro), each audited to change
++// nothing GetCharIDAtRoom reads (characters and their extras, views/frames and images, the room) and to run no
++// game tick or script. Every other function, every plugin and object function, invalidates.
++static const char *const s_pure_names[] = {
++    "GetLocationType", "GetLocationName",                         // the callers: GUI/room/hotspot/object hit tests
++                                                                  // (Name also writes its buffer and the last-name state)
++    "StrGetCharAt", "StrLen", "StrSetCharAt", "StrCat", "StrCopy", // script string buffers only
++    "GetPlayerCharacter", "GetCursorMode",                        // plain reads
++    "GetInvAt",                                                   // GUI + inventory window read
++};
++static const void *s_pure_tab[64];
++static const void *s_pure_over[32];
++static int s_pure_over_n = 0;
++static bool s_pure_ready = false;
++static void VmPureInit()
++{
++    s_pure_ready = true;
++    for (const char *nm : s_pure_names)
++    {
++        const uint32_t idx = simp.GetIndexOfAny(AGS::Common::String(nm));
++        const ScriptImport *imp = (idx == UINT32_MAX) ? nullptr : simp.GetByIndex(idx);
++        if (!imp || imp->Value.Type != kScValStaticFunction) continue;
++        const void *f = reinterpret_cast<const void*>(imp->Value.SPfn);
++        const unsigned slot = (reinterpret_cast<uintptr_t>(f) >> 4) & 63;
++        if (!s_pure_tab[slot]) s_pure_tab[slot] = f;
++        else if (s_pure_tab[slot] != f && s_pure_over_n < 32) s_pure_over[s_pure_over_n++] = f;
++    }
++}
++static inline bool VmIsPure(const void *f)
++{
++    if (s_pure_tab[(reinterpret_cast<uintptr_t>(f) >> 4) & 63] == f) return true;
++    for (int i = 0; i < s_pure_over_n; ++i) if (s_pure_over[i] == f) return true;
++    return false;
++}
++// Lever 2's hooks, lazy: the memo holds entries only between a hit test and the next thing that may change
++// what it reads, and only then (dos_cmemo_live) do the hooks do any work.
++//  - every engine call from the fast loop names its function in dos_vm_curcall (nullptr for object, plugin
++//    and other calls) and clears it on return; a hit test may use the memo only when the innermost engine
++//    call from the VM is on the whitelist (dos_cmemo_curpure), so nothing is memoised inside any other call
++//    or outside the VM;
++//  - a non-whitelisted engine call, a generic step that may write engine state, the line hook, the pending
++//    events check and every VM entry and exit invalidate (bump the generation) -- when the memo is live.
++// No bump is needed after a call returns: the bump came before it, nothing is memoised inside a non-whitelisted
++// call, and a nested VM run bumps on its own exit. Out of line so the fast loop keeps no value live across the
++// call (a first version with locals here cost the loop its register allocation: +0.32 ms/tick at fixed cycles).
++__attribute__((noinline)) static void dos_memo_bump()
++{
++    ++dos_cmemo_gen;
++    dos_cmemo_live = 0;
++}
++__attribute__((noinline)) static void dos_memo_check(const void *fn)
++{
++    if (!(fn && VmIsPure(fn)))
++        dos_memo_bump();
++}
++bool dos_cmemo_curpure() { return dos_vm_curcall && s_pure_ready && VmIsPure(dos_vm_curcall); }
++#define VM_MEMO_CALL_BEGIN(FN) do { dos_vm_curcall = (const void *)(FN); if (dos_cmemo_live) dos_memo_check(dos_vm_curcall); } while (0)
++#define VM_MEMO_CALL_END() (dos_vm_curcall = nullptr)
++#define VM_MEMO_BUMP() do { if (dos_cmemo_live) dos_memo_bump(); } while (0)
+ 
+ int dos_vm_sccmd_argc(int op);          // cc_instance.cpp, patch 0359
+ bool dos_vm_sccmd_argisreg(int op, int k);
+@@ -163,7 +226,7 @@ int ccInstance::DosVmMode()
+         else if (e && strcmp(e, "fastgeneric") == 0) mode = kDosVm_FastGeneric;
+         if (e && *e)
+             Debug::Printf("DOS-PORT vmmode DOSAGS_VM=%s mode=%d", e, mode);
+-        dos_englev_init(); // lever 1: read DOSAGS_ENGLEV once, at the first script load
++        dos_englev_init(); // levers 1 + 2: read DOSAGS_ENGLEV once, at the first script load
+     }
+     return mode;
+ }
+@@ -894,7 +957,14 @@ ccInstError ccInstance::DosVmEnter(int32_t curpc)
+ #endif
+         )
+         return DosVmRun(curpc);
+-    return Run(curpc);
++    // a legacy Run (an ineligible script) has no memo hooks: no memo while it runs
++    const void *const keep = dos_vm_curcall;
++    dos_vm_curcall = nullptr;
++    VM_MEMO_BUMP();
++    const ccInstError r = Run(curpc);
++    VM_MEMO_BUMP();
++    dos_vm_curcall = keep;
++    return r;
+ }
+ 
+ ccInstError ccInstance::DosVmRun(int32_t curpc)
+@@ -925,7 +995,40 @@ ccInstError ccInstance::DosVmRun(int32_t curpc)
+     fr.funcstart[0] = _pc;
+     fr.timeout = std::chrono::milliseconds(_timeoutCheckMs);
+     _lastAliveTs = FastClock::now();
+-    return DosVmLoop(&fr, curpc);
++    // lever 2: the whitelist is resolved at the first fast run; no memo entry survives a VM entry or exit
++    if (dos_englev_on && !s_pure_ready)
++        VmPureInit();
++    const void *const memo_keep = dos_vm_curcall;
++    dos_vm_curcall = nullptr;
++    VM_MEMO_BUMP();
++    const ccInstError r = DosVmLoop(&fr, curpc);
++    VM_MEMO_BUMP();
++    dos_vm_curcall = memo_keep;
++    return r;
++}
++
++// lever 2: a generic step may write engine state (an object field) or call the engine: it invalidates,
++// unless it is a memory read, or a write into the script's own memory (its stack, a global variable, its
++// global data block). A read through an object or array (CCCharacter/CCStaticArray/... Read*) is a plain read.
++// Out of line, so DosVmStep stays small enough for the fast loop to inline it: with this test inline, GCC
++// stopped inlining DosVmStep and every generic step paid an extra call (+0.094 ms/tick at fixed cycles,
++// levers off -- LEVERS-REPORT.md section 9).
++__attribute__((noinline)) static void dos_memo_step(const intptr_t *code, uint32_t codesize, int32_t pc, ScriptValueType mar)
++{
++    const int op = (pc >= 0 && static_cast<uint32_t>(pc) < codesize) ?
++        static_cast<int>(code[pc] & INSTANCE_ID_REMOVEMASK) : -1;
++    bool keep = (op == SCMD_MEMREAD || op == SCMD_MEMREADB || op == SCMD_MEMREADW);
++    if (op == SCMD_WRITELIT || op == SCMD_MEMWRITE || op == SCMD_MEMWRITEB || op == SCMD_MEMWRITEW)
++        keep = (mar == kScValStackPtr || mar == kScValGlobalVar || mar == kScValData);
++    if (!keep)
++        dos_memo_bump();
++}
++
++int ccInstance::DosVmStep(DosVmFrame &fr, int32_t pc)
++{
++    if (__builtin_expect(dos_cmemo_live != 0, 0))
++        dos_memo_step(fr.codeInst->_code, fr.codeInst->_codesize, pc, _registers[SREG_MAR].Type);
++    return DosVmStepBody(fr, pc);
+ }
+ 
+ // One instruction with Run()'s own semantics, reading the ORIGINAL code (fr.codeInst->_code).
+@@ -934,7 +1037,7 @@ ccInstError ccInstance::DosVmRun(int32_t curpc)
+ // `return kInstErr_None` -> return 1, `return kInstErr_Generic` -> return -1, Run() -> DosVmEnter()
+ // (a nested CALLAS picks its own VM), FixupArgument -> its copy above, the lab-only 0230 counter
+ // block dropped. Returns 0 to continue at _pc, 1 when Run() would return kInstErr_None, -1 error.
+-int ccInstance::DosVmStep(DosVmFrame &fr, int32_t pc)
++int ccInstance::DosVmStepBody(DosVmFrame &fr, int32_t pc)
+ {
+     _pc = pc;
+     ScriptOperation codeOp;
+@@ -2021,7 +2124,9 @@ h_linenum: // SCMD_LINENUM; the hook is a call-out
+     if (new_line_hook)
+     {
+         _pc = VM_PC();
++        VM_MEMO_CALL_BEGIN(nullptr);
+         new_line_hook(this, currentline);
++        VM_MEMO_CALL_END();
+         ip += 2;
+         VM_ABORTED_EXIT();
+         VM_DISPATCH();
+@@ -2263,7 +2368,9 @@ h_jmp: // SCMD_JMP, with Run()'s backward-jump watchdog
+                     FastClock::now() - _lastAliveTs) > fr->timeout))
+             {
+                 _pc = pc_after;
++                VM_MEMO_CALL_BEGIN(nullptr);
+                 sys_evt_process_pending();
++                VM_MEMO_CALL_END();
+                 _lastAliveTs = FastClock::now();
+                 ip += ip[1];
+                 VM_ABORTED_EXIT();
+@@ -2313,6 +2420,7 @@ h_callext: // SCMD_CALLEXT: Run()'s text, with _pc synced before the call and th
+         }
+         dos_port_work[kDW_ScriptExt]++;   // patch 0230, every build
+         RuntimeScriptValue return_value;
++        VM_MEMO_CALL_BEGIN(reg1.Type == kScValStaticFunction && !fr->next_call_needs_object ? reinterpret_cast<const void*>(reg1.SPfn) : nullptr);
+         if (reg1.Type == kScValPluginFunction)
+         {
+             if (fr->next_call_needs_object)
+@@ -2351,6 +2459,7 @@ h_callext: // SCMD_CALLEXT: Run()'s text, with _pc synced before the call and th
+         {
+             cc_error("invalid pointer type for function call: %d", reg1.Type);
+         }
++        VM_MEMO_CALL_END();
+         if (ccError.HasError) // cc_has_error(), inline (lever 3)
+             return kInstErr_Generic;
+         _registers[SREG_AX] = return_value;
+@@ -2427,7 +2536,9 @@ h_s_farcall: // farpush ax; setfuncargs N; movl ax,IMPORT; farcall ax; farsubsp
+                 prval->DirectPtr();         // a no-op on every other value (runtimescriptvalue.cpp:201-219)
+         }
+         dos_port_work[kDW_ScriptExt]++;
++        VM_MEMO_CALL_BEGIN(_registers[SREG_AX].SPfn);
+         const RuntimeScriptValue return_value = _registers[SREG_AX].SPfn(fr->fcs->GetHead(), fr->num_args_to_func);
++        VM_MEMO_CALL_END();
+         if (ccError.HasError) // cc_has_error(), inline (lever 3)
+             return kInstErr_Generic;
+         _registers[SREG_AX] = return_value;
+-- 
+2.47.3
+

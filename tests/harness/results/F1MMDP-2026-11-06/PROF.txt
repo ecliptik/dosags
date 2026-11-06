@@ -1,0 +1,128 @@
+hz=1024 rtc_ticks=148787 pm_samples=148787 other=0 dropped=0 tickmarks=5001
+v4: rtc_ticks 148787 = samples 148787 + dropped 0 + lost_pending 0  (lost share 0.0%)
+window ticks 40-4999: samples 143524
+.text [0x19e8,0x4f2400): samples outside = 0  OK
+
+BUCKETS (share of window samples):
+  script event                 103108   71.84%   not-in-PM   0.0%
+  logic, non-script             25744   17.94%   not-in-PM   0.1%
+  render/scene                  13189    9.19%   not-in-PM   0.0%
+  outside update_game_once       1483    1.03%   not-in-PM  16.1%
+
+TOP 25 in "logic, non-script" (25744 samples):
+    7.99%  cum   7.99%     2056  ___wrap_uclock
+    6.22%  cum  14.21%     1601  __Z22update_character_scalei
+    5.64%  cum  19.85%     1452  .text
+    4.98%  cum  24.83%     1283  __ZL26FixupCharacterLoopAndFrameP13CharacterInfob
+    4.62%  cum  29.45%     1190  __Z26UpdateCharacterMoveAndAnimP13CharacterInfoP15CharacterExtrasRSt6vectorIiSaIiEE
+    4.18%  cum  33.64%     1077  __Z23UpdateCharacterFollowerP13CharacterInfoRSt6vectorIiSaIiEERi
+    4.11%  cum  37.74%     1058  __Z14UpdateGameOncebPN3AGS6Engine22IDriverDependantBitmapEiib
+    3.32%  cum  41.07%      855  __Z15GetCharIDAtRoomiii
+    2.49%  cum  43.55%      640  __Z13process_eventPK8AGSEvent
+    2.37%  cum  45.92%      609  __ZL26UpdateDrawableObjectStatesbii
+    2.30%  cum  48.21%      591  __Z19update_game_objectsv
+    1.75%  cum  49.97%      451  __Z24UpdateCharacterAnimatingP13CharacterInfoP15CharacterExtrasRi
+    1.55%  cum  51.51%      398  __Z21UpdateCharacterMovingP13CharacterInfoP15CharacterExtrasRi
+    1.53%  cum  53.04%      394  _malloc
+    1.47%  cum  54.51%      379  __ZNK3AGS6Common6Bitmap8GetPixelEii
+    1.38%  cum  55.89%      355  __Z18room_to_mask_coordi
+    1.37%  cum  57.26%      353  _SDL_AddEvent
+    1.30%  cum  58.56%      334  __doprnt
+    1.25%  cum  59.82%      323  __Z19UpdateCharacterIdleP13CharacterInfoP15CharacterExtrasRi
+    1.18%  cum  61.00%      304  _SDL_PeepEventsInternal.constprop.0
+    1.18%  cum  62.17%      303  __Z17RunScriptFunctionP10ccInstanceRKN3AGS6Common6StringEmPK18RuntimeScriptValue
+    0.99%  cum  63.16%      255  Run:head/prologue
+    0.97%  cum  64.14%      251  _mv2freelist
+    0.92%  cum  65.06%      237  __ZNK3AGS6Common7GUIMain16IsInteractableAtEii
+    0.91%  cum  65.97%      234  _DOSVESA_PumpEvents
+  -> top-15 named cover 54.5% of "logic, non-script"
+
+TOP 25 in "script event" (103108 samples):
+   31.45%  cum  31.45%    32425  Run:head/prologue
+    6.61%  cum  38.06%     6815  Run:SCMD_LITTOREG
+    5.46%  cum  43.52%     5630  Run:SCMD_SUB
+    4.23%  cum  47.75%     4361  Run:SCMD_LOOPCHECKOFF
+    4.05%  cum  51.80%     4181  Run:SCMD_POPREG
+    3.63%  cum  55.43%     3745  Run:SCMD_CALLEXT
+    3.01%  cum  58.44%     3104  Run:SCMD_PUSHREG
+    2.97%  cum  61.41%     3060  Run:SCMD_CALL
+    2.59%  cum  64.01%     2674  Run:SCMD_MEMREAD
+    2.54%  cum  66.55%     2623  Run:SCMD_REGTOREG
+    2.22%  cum  68.77%     2293  __ZN18RuntimeScriptValue9DirectPtrEv
+    2.03%  cum  70.80%     2093  __Z15GetCharIDAtRoomiii
+    1.86%  cum  72.66%     1917  Run:SCMD_PUSHREAL
+    1.83%  cum  74.49%     1889  .text
+    1.36%  cum  75.86%     1406  __ZNK13SystemImports10GetByIndexEm
+    1.12%  cum  76.98%     1157  __doprnt
+    1.05%  cum  78.03%     1078  Run:SCMD_ADD
+    0.90%  cum  78.93%      933  __Z8GetGUIAtiii
+    0.90%  cum  79.83%      931  Run:SCMD_WRITELIT
+    0.85%  cum  80.69%      879  Run:SCMD_RET
+    0.78%  cum  81.46%      802  Run:SCMD_MEMWRITE
+    0.70%  cum  82.17%      725  __Z12cc_has_errorv
+    0.65%  cum  82.81%      666  Run:SCMD_SUBREALSTACK
+    0.64%  cum  83.46%      664  Run:SCMD_ISEQUAL
+    0.56%  cum  84.02%      580  Run:SCMD_LINENUM
+  -> top-15 named cover 75.9% of "script event"
+
+TOP 25 in "render/scene" (13189 samples):
+   51.11%  cum  51.11%     6741  __linear_draw_sprite16
+    3.53%  cum  54.64%      465  ___wrap_uclock
+    3.47%  cum  58.10%      457  big_move
+    3.20%  cum  61.30%      422  .text
+    2.93%  cum  64.24%      387  __Z21update_invalid_regionPN3AGS6Common6BitmapES2_RK10DirtyRectsb.part.0
+    2.79%  cum  67.03%      368  __ZN3AGS6Engine4ALSW25SDLRendererGraphicsDriver7PresentEiiNS_6Common11GraphicFlipE
+    2.74%  cum  69.76%      361  __ZN3AGS6Engine4ALSW25SDLRendererGraphicsDriver17RenderSpriteBatchERKNS1_13ALSpriteBatchEmPNS_6Common6BitmapEii
+    2.01%  cum  71.77%      265  __Z30prepare_characters_for_drawingv
+    1.94%  cum  73.71%      256  __Z20construct_game_sceneb
+    1.60%  cum  75.31%      211  __ZN3AGS6Engine4ALSW25SDLRendererGraphicsDriver15InitSpriteBatchEmRKNS0_15SpriteBatchDescE
+    1.40%  cum  76.71%      184  __Z25dos_port_dirty_add_screeniiii
+    1.25%  cum  77.96%      165  __Z28update_room_invreg_and_resetiPN3AGS6Common6BitmapES2_b
+    1.18%  cum  79.13%      155  _DOSVESA_UpdateWindowFramebuffer
+    1.18%  cum  80.31%      155  __Z21draw_gui_and_overlaysv
+    0.99%  cum  81.30%      131  __Z23invalidate_rect_on_surfiiiiR10DirtyRects
+    0.96%  cum  82.26%      126  __ZN3AGS6Engine4ALSW25SDLRendererGraphicsDriver18RenderToBackBufferEv
+    0.86%  cum  83.11%      113  __Z29update_black_invreg_and_resetPN3AGS6Common6BitmapE
+    0.74%  cum  83.85%       97  align_mod_4
+    0.66%  cum  84.51%       87  __ZN3AGS6Engine18GraphicsDriverBase16BeginSpriteBatchERKNS0_15SpriteBatchDescE
+    0.57%  cum  85.08%       75  __ZL20construct_object_gfxPK9ViewFrameiRK4SizeiRK11ObjectCacheRS5_R10ObjTexturebb.constprop.0
+    0.45%  cum  85.53%       59  __ZN3AGS6Engine7GfxUtil26DrawSpriteWithTransparencyEPNS_6Common6BitmapEPKS3_iii
+    0.41%  cum  85.94%       54  __Z18invalidate_rect_dsiiiib
+    0.41%  cum  86.34%       54  __ZN3AGS6Engine4ALSW25SDLRendererGraphicsDriver10DrawSpriteEiiPNS0_22IDriverDependantBitmapE
+    0.41%  cum  86.75%       54  _set_clip_rect
+    0.40%  cum  87.16%       53  small_move
+  -> top-15 named cover 81.3% of "render/scene"
+
+Inside Run (79085 samples) by block:
+   41.32%    32680  Run:head/prologue
+    8.73%     6902  Run:SCMD_LITTOREG
+    7.12%     5630  Run:SCMD_SUB
+    5.54%     4381  Run:SCMD_LOOPCHECKOFF
+    5.31%     4200  Run:SCMD_POPREG
+    4.77%     3776  Run:SCMD_CALLEXT
+    3.98%     3151  Run:SCMD_PUSHREG
+    3.87%     3060  Run:SCMD_CALL
+    3.50%     2771  Run:SCMD_MEMREAD
+    3.33%     2634  Run:SCMD_REGTOREG
+    2.43%     1923  Run:SCMD_PUSHREAL
+    1.37%     1083  Run:SCMD_ADD
+    1.18%      931  Run:SCMD_WRITELIT
+    1.13%      897  Run:SCMD_RET
+    1.01%      802  Run:SCMD_MEMWRITE
+    0.86%      677  Run:SCMD_SUBREALSTACK
+    0.84%      667  Run:SCMD_ISEQUAL
+    0.78%      615  Run:SCMD_LINENUM
+    0.61%      486  Run:SCMD_SUBREG
+    0.48%      380  Run:SCMD_GTE
+    0.31%      249  Run:SCMD_JMP
+    0.29%      228  Run:SCMD_JZ
+    0.19%      154  Run:SCMD_MEMREADB
+    0.19%      149  Run:SCMD_THISBASE
+    0.18%      140  Run:SCMD_MEMWRITEB
+    0.17%      131  Run:SCMD_ADDREG
+    0.13%      101  Run:SCMD_MUL
+    0.11%       87  Run:SCMD_NOTEQUAL
+    0.10%       78  Run:SCMD_OR
+    0.07%       55  Run:SCMD_AND
+    0.05%       36  Run:SCMD_LESSTHAN
+    0.04%       31  Run:SCMD_GREATER

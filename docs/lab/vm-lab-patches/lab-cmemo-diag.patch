@@ -1,0 +1,220 @@
+diff -ruN s6c/Engine/ac/character.cpp s6/Engine/ac/character.cpp
+--- a/Engine/ac/character.cpp	2026-11-06 03:36:01.397904961 -0800
++++ b/Engine/ac/character.cpp	2026-11-06 03:36:01.393905019 -0800
+@@ -2632,6 +2632,7 @@
+             {
+ #ifdef DOSAGS_VMTRACE
+                 ++dos_cm_hit;
++                dos_cm_diag_hit(static_cast<int>(&m - dos_cmemo));
+                 if (dos_englev_shadow())
+                 {
+                     ++dos_cm_check;
+@@ -2649,7 +2650,14 @@
+                 return m.result;
+             }
+         }
++#ifdef DOSAGS_VMTRACE
++        for (const DosCharMemo &m : dos_cmemo)
++            if (m.gen != dos_cmemo_gen && m.x == x && m.y == y && m.hit == hit_options) { dos_cm_diag_miss(); break; }
++#endif
+         const int r = GetCharIDAtRoomImpl(x, y, hit_options);
++#ifdef DOSAGS_VMTRACE
++        dos_cm_diag_store(static_cast<int>(dos_cmemo_next & 3));
++#endif
+         DosCharMemo &m = dos_cmemo[dos_cmemo_next++ & 3];
+         m.gen = dos_cmemo_gen; m.x = x; m.y = y; m.hit = hit_options; m.result = r; m.lowest = char_lowest_yp;
+         dos_cmemo_live = 1;
+diff -ruN s6c/Engine/main/dos_englev.h s6/Engine/main/dos_englev.h
+--- a/Engine/main/dos_englev.h	2026-11-06 03:36:01.397904961 -0800
++++ b/Engine/main/dos_englev.h	2026-11-06 03:36:01.389905075 -0800
+@@ -16,6 +16,9 @@
+ void dos_englev_init();
+ bool dos_englev_shadow();           // lab: DOSAGS_ENGLEV_SHADOW=1 in a -DDOSAGS_VMTRACE build
+ #ifdef DOSAGS_VMTRACE
++void dos_cm_diag_miss();
++void dos_cm_diag_store(int slot);
++void dos_cm_diag_hit(int slot);
+ extern unsigned long dos_el_skip, dos_el_check, dos_el_bad, dos_cm_look, dos_cm_hit, dos_cm_check, dos_cm_bad;
+ extern unsigned long dos_rand_calls;
+ #endif
+diff -ruN s6c/Engine/script/cc_instance_vm.cpp s6/Engine/script/cc_instance_vm.cpp
+--- a/Engine/script/cc_instance_vm.cpp	2026-11-06 03:36:01.397904961 -0800
++++ b/Engine/script/cc_instance_vm.cpp	2026-11-06 03:36:01.393905019 -0800
+@@ -135,17 +135,91 @@
+ // No bump is needed after a call returns: the bump came before it, nothing is memoised inside a non-whitelisted
+ // call, and a nested VM run bumps on its own exit. Out of line so the fast loop keeps no value live across the
+ // call (a first version with locals here cost the loop its register allocation: +0.32 ms/tick at fixed cycles).
++#ifdef DOSAGS_VMTRACE
++// lab only: which bump last invalidated the memo (site, function), for the miss histogram below
++static int s_cm_cursite = 0; static const void *s_cm_curfn = nullptr;
++static int s_cm_bsite = 0; static const void *s_cm_bfn = nullptr;
++static const void *s_cm_pfn[32]; static unsigned s_cm_pn[32]; static int s_cm_pfn_n = 0;
++static void dos_cm_pure_seen(const void *f)
++{
++    int i = 0;
++    for (; i < s_cm_pfn_n; ++i) if (s_cm_pfn[i] == f) break;
++    if (i == s_cm_pfn_n && s_cm_pfn_n < 32) { s_cm_pfn[i] = f; s_cm_pn[i] = 0; ++s_cm_pfn_n; }
++    if (i < 32) ++s_cm_pn[i];
++}
++static unsigned s_cm_snap[4][32]; static unsigned s_cm_need[32]; static unsigned s_cm_hits = 0;
++static void dos_cm_dump();
++void dos_cm_diag_store(int slot) { for (int i = 0; i < 32; ++i) s_cm_snap[slot & 3][i] = s_cm_pn[i]; }
++void dos_cm_diag_hit(int slot)
++{
++    for (int i = 0; i < s_cm_pfn_n; ++i) if (s_cm_pn[i] != s_cm_snap[slot & 3][i]) ++s_cm_need[i];
++    if (++s_cm_hits % 1000 == 0) dos_cm_dump();
++}
++#define VM_MEMO_SITE(S, P) (s_cm_cursite = (S), s_cm_curfn = (const void *)(P))
++#define VM_MEMO_BUMPED(S, P) (s_cm_bsite = (S), s_cm_bfn = (P))
++#else
++#define VM_MEMO_SITE(S, P) ((void)0)
++#define VM_MEMO_BUMPED(S, P) ((void)0)
++#endif
+ __attribute__((noinline)) static void dos_memo_bump()
+ {
++#ifdef DOSAGS_VMTRACE
++    VM_MEMO_BUMPED(s_cm_cursite, s_cm_curfn);
++#endif
+     ++dos_cmemo_gen;
+     dos_cmemo_live = 0;
+ }
+ __attribute__((noinline)) static void dos_memo_check(const void *fn)
+ {
+-    if (!(fn && VmIsPure(fn)))
+-        dos_memo_bump();
++    if (fn && VmIsPure(fn))
++    {
++#ifdef DOSAGS_VMTRACE
++        dos_cm_pure_seen(fn);
++#endif
++        return;
++    }
++    dos_memo_bump();
+ }
+ bool dos_cmemo_curpure() { return dos_vm_curcall && s_pure_ready && VmIsPure(dos_vm_curcall); }
++#ifdef DOSAGS_VMTRACE
++// called by GetCharIDAtRoom on a miss whose (x, y, hit) matches a stale memo entry
++struct DosCmMiss { int site; const void *fn; unsigned n; };
++static DosCmMiss s_cm_miss[48]; static int s_cm_miss_n = 0; static unsigned s_cm_miss_tot = 0;
++static const char *VmImportName(const void *f)
++{
++    if (!f) return "-";
++    for (uint32_t i = 0;; ++i)
++    {
++        const ScriptImport *imp = simp.GetByIndex(i);
++        if (!imp) break;
++        if (imp->Value.Ptr == f && !imp->Name.IsEmpty()) return imp->Name.GetCStr();
++    }
++    return "?";
++}
++void dos_cm_diag_miss()
++{
++    ++s_cm_miss_tot;
++    int i = 0;
++    for (; i < s_cm_miss_n; ++i)
++        if (s_cm_miss[i].site == s_cm_bsite && s_cm_miss[i].fn == s_cm_bfn) break;
++    if (i == s_cm_miss_n && s_cm_miss_n < 48) { s_cm_miss[i].site = s_cm_bsite; s_cm_miss[i].fn = s_cm_bfn; s_cm_miss[i].n = 0; ++s_cm_miss_n; }
++    if (i < 48) ++s_cm_miss[i].n;
++    if (s_cm_miss_tot % 1000 == 0) dos_cm_dump();
++}
++static void dos_cm_dump()
++{
++    {
++        AGS::Common::Debug::Printf(AGS::Common::kDbgMsg_Info, "DOS-PORT cmdump hits=%u misses_stale=%u", s_cm_hits, s_cm_miss_tot);
++        for (int k = 0; k < s_cm_pfn_n; ++k)
++            AGS::Common::Debug::Printf(AGS::Common::kDbgMsg_Info, "DOS-PORT cmpure n=%u needed=%u fn=%s", s_cm_pn[k], s_cm_need[k], VmImportName(s_cm_pfn[k]));
++        AGS::Common::Debug::Printf(AGS::Common::kDbgMsg_Info, "DOS-PORT cmmiss tot=%u", s_cm_miss_tot);
++        for (int k = 0; k < s_cm_miss_n; ++k)
++            AGS::Common::Debug::Printf(AGS::Common::kDbgMsg_Info, "DOS-PORT cmmiss site=%d n=%u fn=%s op=%u",
++                s_cm_miss[k].site, s_cm_miss[k].n, (s_cm_miss[k].site % 100 == 5) ? "-" : VmImportName(s_cm_miss[k].fn),
++                (unsigned)(uintptr_t)s_cm_miss[k].fn);
++    }
++}
++#endif
+ #define VM_MEMO_CALL_BEGIN(FN) do { dos_vm_curcall = (const void *)(FN); if (dos_cmemo_live) dos_memo_check(dos_vm_curcall); } while (0)
+ #define VM_MEMO_CALL_END() (dos_vm_curcall = nullptr)
+ #define VM_MEMO_BUMP() do { if (dos_cmemo_live) dos_memo_bump(); } while (0)
+@@ -995,18 +1069,26 @@
+     fr.funcstart[0] = _pc;
+     fr.timeout = std::chrono::milliseconds(_timeoutCheckMs);
+     _lastAliveTs = FastClock::now();
+-    // lever 2: the whitelist is resolved at the first fast run; no memo entry survives a VM entry or exit
++    // lever 2: the memo window is open while this loop runs (and closed again around engine calls)
+     if (dos_englev_on && !s_pure_ready)
+         VmPureInit();
+     const void *const memo_keep = dos_vm_curcall;
+     dos_vm_curcall = nullptr;
++    VM_MEMO_SITE(6, nullptr);
+     VM_MEMO_BUMP();
+     const ccInstError r = DosVmLoop(&fr, curpc);
++    VM_MEMO_SITE(7, nullptr);
+     VM_MEMO_BUMP();
+     dos_vm_curcall = memo_keep;
+     return r;
+ }
+ 
++// One instruction with Run()'s own semantics, reading the ORIGINAL code (fr.codeInst->_code).
++// The switch below is cc_instance.cpp's Run() switch (lines 713-1705 at patch 0354), transformed
++// mechanically: Run()'s locals -> fr.*, `continue` -> return 0 (the handler already set _pc),
++// `return kInstErr_None` -> return 1, `return kInstErr_Generic` -> return -1, Run() -> DosVmEnter()
++// (a nested CALLAS picks its own VM), FixupArgument -> its copy above, the lab-only 0230 counter
++// block dropped. Returns 0 to continue at _pc, 1 when Run() would return kInstErr_None, -1 error.
+ // lever 2: a generic step may write engine state (an object field) or call the engine: it invalidates,
+ // unless it is a memory read, or a write into the script's own memory (its stack, a global variable, its
+ // global data block). A read through an object or array (CCCharacter/CCStaticArray/... Read*) is a plain read.
+@@ -1021,7 +1103,10 @@
+     if (op == SCMD_WRITELIT || op == SCMD_MEMWRITE || op == SCMD_MEMWRITEB || op == SCMD_MEMWRITEW)
+         keep = (mar == kScValStackPtr || mar == kScValGlobalVar || mar == kScValData);
+     if (!keep)
++    {
++        VM_MEMO_SITE(5, (uintptr_t)op);
+         dos_memo_bump();
++    }
+ }
+ 
+ int ccInstance::DosVmStep(DosVmFrame &fr, int32_t pc)
+@@ -1031,12 +1116,6 @@
+     return DosVmStepBody(fr, pc);
+ }
+ 
+-// One instruction with Run()'s own semantics, reading the ORIGINAL code (fr.codeInst->_code).
+-// The switch below is cc_instance.cpp's Run() switch (lines 713-1705 at patch 0354), transformed
+-// mechanically: Run()'s locals -> fr.*, `continue` -> return 0 (the handler already set _pc),
+-// `return kInstErr_None` -> return 1, `return kInstErr_Generic` -> return -1, Run() -> DosVmEnter()
+-// (a nested CALLAS picks its own VM), FixupArgument -> its copy above, the lab-only 0230 counter
+-// block dropped. Returns 0 to continue at _pc, 1 when Run() would return kInstErr_None, -1 error.
+ int ccInstance::DosVmStepBody(DosVmFrame &fr, int32_t pc)
+ {
+     _pc = pc;
+@@ -2124,6 +2203,7 @@
+     if (new_line_hook)
+     {
+         _pc = VM_PC();
++        VM_MEMO_SITE(3, nullptr);
+         VM_MEMO_CALL_BEGIN(nullptr);
+         new_line_hook(this, currentline);
+         VM_MEMO_CALL_END();
+@@ -2368,6 +2448,7 @@
+                     FastClock::now() - _lastAliveTs) > fr->timeout))
+             {
+                 _pc = pc_after;
++                VM_MEMO_SITE(4, nullptr);
+                 VM_MEMO_CALL_BEGIN(nullptr);
+                 sys_evt_process_pending();
+                 VM_MEMO_CALL_END();
+@@ -2420,6 +2501,7 @@
+         }
+         dos_port_work[kDW_ScriptExt]++;   // patch 0230, every build
+         RuntimeScriptValue return_value;
++        VM_MEMO_SITE(1, reg1.Ptr);
+         VM_MEMO_CALL_BEGIN(reg1.Type == kScValStaticFunction && !fr->next_call_needs_object ? reinterpret_cast<const void*>(reg1.SPfn) : nullptr);
+         if (reg1.Type == kScValPluginFunction)
+         {
+@@ -2536,6 +2618,7 @@
+                 prval->DirectPtr();         // a no-op on every other value (runtimescriptvalue.cpp:201-219)
+         }
+         dos_port_work[kDW_ScriptExt]++;
++        VM_MEMO_SITE(2, _registers[SREG_AX].Ptr);
+         VM_MEMO_CALL_BEGIN(_registers[SREG_AX].SPfn);
+         const RuntimeScriptValue return_value = _registers[SREG_AX].SPfn(fr->fcs->GetHead(), fr->num_args_to_func);
+         VM_MEMO_CALL_END();

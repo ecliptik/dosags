@@ -1,0 +1,371 @@
+From 1900d01450cdbdf72e8fe6ca24f155d6226e5701 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 5 Nov 2026 15:36:40 -0800
+Subject: [PATCH] DOS-PORT: patch 0355 -- MIDI-only audio (model C) when the
+ Sound Blaster cannot open
+
+Without a Sound Blaster (no BLASTER variable, no DSP, or the stream would not open)
+sys_audio_init() returned false, engine_init_audio() set AudioEnabled=false, and ALL
+audio was off -- so an AdLib-only (OPL at 388h) or MPU-401-only machine played no music,
+although opl3_sink and waveblaster_sink drive their ports directly and need no SB. Found
+on the 486 (dosags R4 ADLC16, PicoGUS in AdLib mode: "No BLASTER environment variable"
+-> "Audio is disabled").
+
+Model C, reached only from those two SB-path failure returns and only for a hint naming
+a MIDI backend that needs no SB (unset/auto/opl3, wb): the audio core and the MIDI
+backend keep running; the mixer opens with NO PCM device (pcm=none@11025m16) and drains
+active voices against uclock() at the device rate in 512-sample chunks, discarding them,
+so a clip still ends after its real duration (a pump gap is credited at most 5 chunks,
+~232 ms, about the SB path's queued depth). MIDI ticks on the main-loop poll: the ISR
+replay and the RTC pump are both released by the SB IRQ, which does not exist here. Every
+new branch is behind g_null_open, set only by the model C init: the SB and GUS paths are
+unchanged (DOSBox-X: same 52-key audio_vital_status, number-normalised STDOUT identical).
+Logs "DOS audio mode: MIDI-only (model C) ...", one "DOS-PORT midionly voice=..." line per
+finished clip and a drained_chunks line at shutdown.
+
+DOSBox-X (fixed 40000, 5 Days room 3): sbtype=none + OPL2 / OPL3 and MPU-401-only all play
+music (events=1234, midi_tick=poll), clips release after their length (+8..81 ms), exit 0.
+Not covered: a stale BLASTER with no card (SDL opens the SB with dsp_ver=255; pre-existing).
+---
+ Engine/platform/base/sys_main.cpp       |  34 +++++-
+ Engine/platform/dos/dos_audio_mixer.cpp | 149 ++++++++++++++++++++++--
+ Engine/platform/dos/dos_audio_mixer.h   |  15 +++
+ 3 files changed, 189 insertions(+), 9 deletions(-)
+
+diff --git a/Engine/platform/base/sys_main.cpp b/Engine/platform/base/sys_main.cpp
+index 97e64f878..20adfcf8f 100644
+--- a/Engine/platform/base/sys_main.cpp
++++ b/Engine/platform/base/sys_main.cpp
+@@ -308,6 +308,36 @@ void sys_renderer_set_output(const String &name)
+ // too, not just PCM. Attempting-and-failing-into-model-B is what this fix
+ // replaces; GUS now takes its own branch that never attempts the SB/
+ // SDL_INIT_AUDIO path to begin with.
++//
++// DOS-PORT patch 0355 (model C, MIDI-only): reached ONLY from the two SB-path
++// failure returns below (no BLASTER / no DSP answered / the stream would not
++// open), never on the GUS path and never when the SB opens. Before it, those
++// returns disabled ALL audio, so an AdLib-only (OPL at 388h) or MPU-401-only
++// machine played no music although its MIDI sinks need no SB at all
++// (opl3_sink and waveblaster_sink drive their ports directly; the MPU port
++// defaults to 330h without BLASTER). Model C keeps the audio core and the MIDI
++// backend running and opens the mixer with NO PCM device: PCM voices are
++// drained against uclock() at the device rate and discarded, so a clip still
++// ends after its real duration (see dos_audio_mixer_init_midi_only()). The
++// MIDI tick is the main-loop poll: the ISR replay (patch 0207) and the RTC
++// pump (kind 3) are both released by the SB IRQ, which does not exist here
++// (SDL_DOSMidiDeferEnable() refuses without an open SB device and
++// SDL_DOSMidiDeferIrqNow() stays 0, so MidiIsrBegin() already picks poll).
++// Only for a hint naming a MIDI backend this port can open without the SB --
++// unset/auto/opl3 (OPL) or wb (MPU-401); "none", "adlib" (fails closed, see
++// dos_midi_backend.h) or anything else keep the old all-audio-off result.
++static bool sys_audio_init_midi_only(const char *backend_hint)
++{
++    const char *h = (backend_hint && backend_hint[0]) ? backend_hint : "auto";
++    if (SDL_strcasecmp(h, "auto") != 0 && SDL_strcasecmp(h, "opl3") != 0 && SDL_strcasecmp(h, "wb") != 0)
++        return false;
++    if (!dos_audio_mixer_init_midi_only())
++        return false;
++    Debug::Printf(kDbgMsg_Info, "DOS audio mode: MIDI-only (model C) -- no Sound Blaster PCM device; "
++        "MIDI backend %s, main-loop poll tick; PCM clips are silent and end after their real duration", h);
++    return true;
++}
++
+ bool sys_audio_init(const String &driver_name)
+ {
+     (void)driver_name;
+@@ -366,13 +396,13 @@ bool sys_audio_init(const String &driver_name)
+     if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
+     {
+         Debug::Printf(kDbgMsg_Error, "Failed to init SDL audio subsystem: %s", SDL_GetError());
+-        return false;
++        return sys_audio_init_midi_only(backend_hint); // DOS-PORT patch 0355: model C, else false as before
+     }
+     if (!dos_audio_mixer_init())
+     {
+         Debug::Printf(kDbgMsg_Error, "Failed to open DOS audio device");
+         SDL_QuitSubSystem(SDL_INIT_AUDIO);
+-        return false;
++        return sys_audio_init_midi_only(backend_hint); // DOS-PORT patch 0355: model C, else false as before
+     }
+     gl_SysMainInfo.SDLSubsystems |= SDL_INIT_AUDIO;
+     Debug::Printf(kDbgMsg_Info, "DOS audio device opened: %s", dos_audio_mixer_status_string());
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index b45cf58ce..062d4cac4 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -21,6 +21,7 @@
+ #include <SDL3/SDL_dosaudio_pump.h>
+ #include <SDL3/SDL_dosmidi_tick.h> // SDL_DOSMidiDeferStats, patch 0251 probe
+ #include <stdlib.h>
++#include <time.h> // uclock(), DOS-PORT patch 0355 (model C drain clock)
+ #include "debug/out.h"
+ #include "platform/dos/dos_midi_backend.h"
+ 
+@@ -108,6 +109,10 @@ const int MIX_CHUNK_SAMPLES = 512; // ~46 ms at 11025 Hz mono
+ const int MIX_CHUNK_BYTES = MIX_CHUNK_SAMPLES * static_cast<int>(sizeof(int16_t));
+ const int TARGET_QUEUED_BYTES = MIX_CHUNK_BYTES * 4; // ~186 ms ahead
+ const int MAX_PUMP_ITERS = 8; // defense-in-depth against a runaway top-up loop
++// DOS-PORT patch 0355: model C credits a pump gap with at most this many chunks
++// (~232 ms): TARGET_QUEUED_BYTES (4 chunks) plus the one in flight -- about what
++// the SB path has mixed ahead when the main loop stalls. See dos_audio_mixer.h.
++const int NULL_MAX_GAP_CHUNKS = 5;
+ 
+ // GUS path only: half-buffer chunk size for each voice's own
+ // gus_pcm_stream. Must be >= GUS_DMA_UPLOAD_MIN (4096, gus_pcm_stream.c's
+@@ -120,6 +125,21 @@ const size_t GUS_STREAM_CHUNK_BYTES = 4096u;
+ Voice g_voices[DOS_AUDIO_MIXER_MAX_VOICES];
+ SDL_AudioStream *g_stream = nullptr; // SB path only
+ bool g_gus_open = false;             // GUS path only -- "the mixer is open" analog to g_stream != nullptr
++// DOS-PORT patch 0355 (model C, MIDI-only): the mixer is open with no PCM device
++// (dos_audio_mixer_init_midi_only()); voices are drained against uclock() and
++// discarded. g_null_last_uc = uclock() at the last drain, g_null_due = samples
++// owed to the voices and not yet drained (< one chunk between pumps),
++// g_null_capped = pump gaps longer than the cap below.
++bool g_null_open = false;
++uclock_t g_null_last_uc = 0;
++uint64_t g_null_due = 0;
++uint64_t g_null_frac = 0; // remainder of the uclock -> sample conversion, in uclock ticks x rate
++uint32_t g_null_capped = 0;
++// Per-voice witness (model C only): samples drained, and uclock() when the
++// voice was first made active; logged at release as one "midionly voice" line,
++// so a clip's lifetime can be read against its real duration.
++uint32_t g_null_vsamples[DOS_AUDIO_MIXER_MAX_VOICES] = {};
++uclock_t g_null_vstart[DOS_AUDIO_MIXER_MAX_VOICES] = {};
+ int g_underruns = 0;
+ // DOS-PORT patch 0252: PCM chunk accounting. Every chunk mixed while a voice
+ // was active. SDL 0192 keeps the SB silence gate off while content is active,
+@@ -196,7 +216,7 @@ void format_status_string(char *buf, size_t bufsize)
+     const SDL_AudioFormat fmt = dos_audio_mixer_format();
+     const int bits = static_cast<int>(SDL_AUDIO_BITSIZE(fmt));
+     const char chan_letter = (DOS_AUDIO_MIXER_CHANNELS == 1) ? 'm' : 's';
+-    const char *device = g_gus_backend ? "gus" : "sb";
++    const char *device = g_gus_backend ? "gus" : (g_null_open ? "none" : "sb"); // DOS-PORT patch 0355
+     char midi_fragment[1136]; // DOS-PORT (patch 0275): 320 -> 400, room for plan_behind_at=; patch 0331: -> 640; patch 0333: -> 768; patch 0341: -> 1088 (worst case 1060 B with the RTC pump's and 0330-0333's fields, LAB-JOURNEYS 8.37); patch 0346: -> 1136 (preroll=, <= 48 B)
+     // DOS-PORT (Sound milestone, S4): dos_midi_backend owns the real
+     // "midi=<backend>,events=<n>" fragment now -- S1 hardcoded ";midi=none"
+@@ -205,7 +225,7 @@ void format_status_string(char *buf, size_t bufsize)
+     // DOS-PORT: 48 -> 96 (patch 0347), -> 128 (patch 0348), -> 160 (patch 0350: the six fields' "name=" strings are
+     // 78 B, plus 6 x 10 digits = 138 B + NUL).
+     char irq_fragment[160];
+-    if (g_gus_backend)
++    if (g_gus_backend || g_null_open) // DOS-PORT patch 0355: no SB IRQ in model C either
+         std::snprintf(irq_fragment, sizeof(irq_fragment),
+             "pcm_irqs=NA,silent_irqs=NA,start_latency_irqs=NA,primes=NA,prime_retries=NA,topup_holds=NA");
+     else
+@@ -215,7 +235,7 @@ void format_status_string(char *buf, size_t bufsize)
+             (unsigned)g_start_latency_irqs, (unsigned)g_primes,
+             (unsigned)g_prime_retries, (unsigned)g_topup_holds); // DOS-PORT patches 0347, 0348, 0349
+     char ring_fragment[160];
+-    if (g_gus_backend)
++    if (g_gus_backend || g_null_open) // DOS-PORT patch 0355: no SB ring in model C either
+         std::snprintf(ring_fragment, sizeof(ring_fragment),
+             "overwrites=NA,ring_max_ms=NA,skipped_silent=NA,idle_pauses=NA,underflow_pads=NA,partial_pulls=NA");
+     else
+@@ -254,7 +274,7 @@ SDL_AudioFormat dos_audio_mixer_format()
+ 
+ bool dos_audio_mixer_init()
+ {
+-    if (g_stream || g_gus_open)
++    if (g_stream || g_gus_open || g_null_open) // DOS-PORT patch 0355: g_null_open
+         return true;
+ 
+     const char *hint = SDL_GetHint("SDL_HINT_DOS_AUDIO_BACKEND");
+@@ -333,11 +353,43 @@ bool dos_audio_mixer_init()
+     return true;
+ }
+ 
++// DOS-PORT patch 0355 (model C, MIDI-only): see dos_audio_mixer.h. Reached only
++// from sys_audio_init() after the SB path failed, never with GUS selected.
++bool dos_audio_mixer_init_midi_only()
++{
++    if (g_stream || g_gus_open || g_null_open)
++        return true;
++    g_gus_backend = false; // S16, as on the SB path
++    for (auto &v : g_voices)
++        v = Voice();
++    g_underruns = 0;
++    g_drains = 0;
++    g_mixed_chunks = g_mixed_zero = g_mixed_quiet = 0;
++    g_null_last_uc = uclock();
++    g_null_due = 0;
++    g_null_frac = 0;
++    g_null_capped = 0;
++    for (int i = 0; i < DOS_AUDIO_MIXER_MAX_VOICES; i++)
++    {
++        g_null_vsamples[i] = 0;
++        g_null_vstart[i] = 0;
++    }
++    g_null_open = true;
++    Debug::Printf(kDbgMsg_Info, "DOSAudioMixer: no PCM device (model C): %d voices drained silently at %d Hz mono, "
++        "pump gaps credited up to %d ms", DOS_AUDIO_MIXER_MAX_VOICES, DOS_AUDIO_MIXER_RATE,
++        NULL_MAX_GAP_CHUNKS * MIX_CHUNK_SAMPLES * 1000 / DOS_AUDIO_MIXER_RATE);
++    return true;
++}
++
+ void dos_audio_mixer_shutdown()
+ {
+-    if (!g_stream && !g_gus_open)
++    if (!g_stream && !g_gus_open && !g_null_open) // DOS-PORT patch 0355: g_null_open
+         return;
+     format_status_string(g_last_status, sizeof(g_last_status));
++    if (g_null_open) // DOS-PORT patch 0355
++        Debug::Printf(kDbgMsg_Info, "DOS-PORT midionly drained_chunks=%u underruns=%d drains=%d capped_gaps=%u",
++            (unsigned)g_mixed_chunks, g_underruns, g_drains, (unsigned)g_null_capped);
++    g_null_open = false;
+     if (g_stream)
+     {
+         SDL_DestroyAudioStream(g_stream);
+@@ -354,7 +406,7 @@ void dos_audio_mixer_shutdown()
+ 
+ bool dos_audio_mixer_is_open()
+ {
+-    return g_stream != nullptr || g_gus_open;
++    return g_stream != nullptr || g_gus_open || g_null_open; // DOS-PORT patch 0355: g_null_open
+ }
+ 
+ int dos_audio_mixer_voice_acquire()
+@@ -390,6 +442,17 @@ void dos_audio_mixer_voice_release(int voice)
+ {
+     if (voice < 0 || voice >= DOS_AUDIO_MIXER_MAX_VOICES)
+         return;
++    if (g_null_open && g_voices[voice].used) // DOS-PORT patch 0355: model C lifetime witness
++    {
++        const unsigned active_ms = g_null_vstart[voice] != 0
++            ? (unsigned)((uclock() - g_null_vstart[voice]) * 1000 / UCLOCKS_PER_SEC) : 0u;
++        Debug::Printf(kDbgMsg_Info, "DOS-PORT midionly voice=%d released samples=%u audio_ms=%u active_ms=%u tick=%u",
++            voice, (unsigned)g_null_vsamples[voice],
++            (unsigned)((uint64_t)g_null_vsamples[voice] * 1000u / DOS_AUDIO_MIXER_RATE), active_ms,
++            (unsigned)get_loop_counter());
++        g_null_vsamples[voice] = 0;
++        g_null_vstart[voice] = 0;
++    }
+     if (g_voices[voice].gus_stream)
+         gus_pcm_stream_close(g_voices[voice].gus_stream);
+     g_voices[voice] = Voice();
+@@ -431,6 +494,8 @@ void dos_audio_mixer_voice_set_active(int voice, bool active)
+     if (voice < 0 || voice >= DOS_AUDIO_MIXER_MAX_VOICES || !g_voices[voice].used)
+         return;
+     g_voices[voice].active = active;
++    if (g_null_open && active && g_null_vstart[voice] == 0) // DOS-PORT patch 0355: model C lifetime witness
++        g_null_vstart[voice] = uclock();
+     if (g_voices[voice].gus_stream)
+         gus_pcm_stream_set_active(g_voices[voice].gus_stream, active);
+ }
+@@ -653,9 +718,79 @@ static bool dos_topup_would_hole()
+     return false;
+ }
+ 
++// DOS-PORT patch 0355 (model C, MIDI-only): what mix_one_chunk() does to the
++// voices, without a device: per MIX_CHUNK_SAMPLES of uclock() time since the last
++// pump (gap capped at NULL_MAX_GAP_CHUNKS chunks), take up to one chunk from each
++// active voice and discard it, counting underruns/drains/mixed as mix_one_chunk()
++// does. With no voice active the time owed is dropped, as an idle SB device plays
++// silence and the next sound starts fresh.
++static void dos_null_drain()
++{
++    const uclock_t now = uclock();
++    uclock_t d = now - g_null_last_uc;
++    g_null_last_uc = now;
++    if (d < 0)
++        d = 0;
++    const uint64_t cap = (uint64_t)NULL_MAX_GAP_CHUNKS * MIX_CHUNK_SAMPLES;
++    const uint64_t num = (uint64_t)d * DOS_AUDIO_MIXER_RATE + g_null_frac;
++    g_null_due += num / UCLOCKS_PER_SEC;
++    g_null_frac = num % UCLOCKS_PER_SEC;
++    if (g_null_due > cap)
++    {
++        g_null_due = cap;
++        g_null_frac = 0;
++        g_null_capped++;
++    }
++    while (g_null_due >= (uint64_t)MIX_CHUNK_SAMPLES)
++    {
++        g_null_due -= MIX_CHUNK_SAMPLES;
++        bool any_active = false, any_underrun = false, any_drain = false;
++        for (int i = 0; i < DOS_AUDIO_MIXER_MAX_VOICES; i++)
++        {
++            Voice &v = g_voices[i];
++            if (!v.used || !v.active)
++                continue;
++            any_active = true;
++            const size_t avail_samples = (v.ring.size() - v.read_pos) / sizeof(int16_t);
++            const size_t take = std::min<size_t>(avail_samples, static_cast<size_t>(MIX_CHUNK_SAMPLES));
++            if (take == 0)
++            {
++                if (v.source_done)
++                    any_drain = true;
++                else
++                    any_underrun = true;
++                continue;
++            }
++            v.read_pos += take * sizeof(int16_t);
++            g_null_vsamples[i] += (uint32_t)take;
++            if (v.read_pos >= v.ring.size())
++            {
++                v.ring.clear();
++                v.read_pos = 0;
++            }
++        }
++        if (!any_active)
++        {
++            g_null_due = 0;
++            g_null_frac = 0;
++            break;
++        }
++        if (any_underrun)
++            g_underruns++;
++        else if (any_drain)
++            g_drains++;
++        g_mixed_chunks++;
++    }
++}
++
+ void dos_audio_mixer_pump()
+ {
+     dos_midi_stream_sample();   // DOS-PORT patch 0253: once per tick
++    if (g_null_open) // DOS-PORT patch 0355: model C -- no SB device to mix into or to pump
++    {
++        dos_null_drain();
++        return;
++    }
+     if (g_gus_backend)
+     {
+         // No software mixdown: each voice's own gus_pcm_stream drives an
+@@ -795,7 +930,7 @@ int dos_audio_mixer_underrun_count()
+ 
+ const char *dos_audio_mixer_status_string()
+ {
+-    if (!g_stream && !g_gus_open)
++    if (!g_stream && !g_gus_open && !g_null_open) // DOS-PORT patch 0355: g_null_open
+         return g_last_status; // "NA" if never opened, else the shutdown-time snapshot
+     static char buf[1632];   // patch 0252: 512 -> 640; patch 0275: 640 -> 768; patch 0331: -> 1024; patch 0333: -> 1280; patch 0341: -> 1472; patch 0346: -> 1520; patch 0347: -> 1552; patch 0348: -> 1600; patch 0349: -> 1632 (see g_last_status)
+     format_status_string(buf, sizeof(buf));
+diff --git a/Engine/platform/dos/dos_audio_mixer.h b/Engine/platform/dos/dos_audio_mixer.h
+index 9bf18a5de..e3adcc7a4 100644
+--- a/Engine/platform/dos/dos_audio_mixer.h
++++ b/Engine/platform/dos/dos_audio_mixer.h
+@@ -105,6 +105,21 @@ SDL_AudioFormat dos_audio_mixer_format();
+ // own shared/audio/gus_pcm_stream.
+ bool dos_audio_mixer_init();
+ 
++// DOS-PORT patch 0355 (model C, MIDI-only): opens the mixer with NO PCM device,
++// for sys_audio_init() when the SB cannot open and the backend is not gus.
++// Voices work exactly as on the SB path (acquire/write/queued/stop), but
++// dos_audio_mixer_pump() drains every active voice against uclock() at
++// DOS_AUDIO_MIXER_RATE in MIX_CHUNK_SAMPLES steps and discards the samples, so
++// a clip reaches PlayStateFinished after its real duration (AudioPlayer::
++// Poll(): decoder EOS and an empty voice). A pump gap is credited at most
++// NULL_MAX_GAP_CHUNKS chunks (~232 ms), about what the SB path has queued ahead
++// (TARGET_QUEUED_BYTES + one chunk): after a longer main-loop stall the SB
++// device plays silence and the clip resumes where it was, so model C does the
++// same. dos_audio_mixer_format() stays S16 (decode cost as on the SB path).
++// Status: "pcm=none@...", the SB-only fields NA as under GUS; mixed= counts
++// the chunks drained. Never reached on the SB or GUS paths.
++bool dos_audio_mixer_init_midi_only();
++
+ // Closes the audio stream/device and releases all voices. Safe to call
+ // even if never successfully opened.
+ void dos_audio_mixer_shutdown();
+-- 
+2.47.3
+

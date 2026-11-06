@@ -1,0 +1,122 @@
+From b2df021795a25dcb0262f2aef4ab3006d403e0df Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 6 Nov 2026 03:36:30 -0800
+Subject: [PATCH 365/365] DOS-PORT: patch 0365 -- the fast script VM and engine
+ levers 1 + 2 by default; env keeps the fallbacks
+
+Round L5 met the 99% line on the 486 with the fast VM (all six superinstructions) and levers 1-3
+on: MMD character select 99.90% displayed x2 at 40.00 ticks/s (levers off 91.28 / 91.24%), 5 Days
+S16 99.52%. So in both flavours: DOSAGS_VM unset (or any unknown value) is the fast loop, and
+DOSAGS_VM=legacy is upstream's Run(); DOSAGS_ENGLEV unset is on and DOSAGS_ENGLEV=0 is off;
+DOSAGS_VM_FUSE stays all six by default. The "vmmode" and "englev" witness lines are now printed
+on every run, naming "(default)" when the variable is unset. DOSAGS_ENGLEV and DOSAGS_VM_FUSE join
+the RUNMANIFEST env allowlist, so an arm that sets either hashes differently.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P4db4MSiR2PYUDFdrDdJe2
+---
+ Engine/main/dos_englev.h         |  4 ++--
+ Engine/main/quit.cpp             |  4 +++-
+ Engine/script/cc_instance.h      |  7 ++++---
+ Engine/script/cc_instance_vm.cpp | 15 ++++++++-------
+ 4 files changed, 17 insertions(+), 13 deletions(-)
+
+diff --git a/Engine/main/dos_englev.h b/Engine/main/dos_englev.h
+index 44e3a40af..82aa8912d 100644
+--- a/Engine/main/dos_englev.h
++++ b/Engine/main/dos_englev.h
+@@ -1,4 +1,4 @@
+-// DOS-PORT patch 0363 -- engine levers outside the VM (LEVERS-REPORT.md), behind DOSAGS_ENGLEV=1 (default 0 = off):
++// DOS-PORT patch 0363 -- engine levers outside the VM (LEVERS-REPORT.md), on by default; DOSAGS_ENGLEV=0 turns them off:
+ //   lever 1: skip the per-tick move/animate update of a character it provably cannot change (update.cpp)
+ //   lever 2: memoise GetCharIDAtRoom inside whitelisted engine calls from the fast VM, invalidated by every
+ //            engine call off the whitelist, by every generic VM step that may write engine state, and on
+@@ -8,7 +8,7 @@
+ #define DOS_ENGLEV_H
+ #ifdef __DJGPP__
+ #include <stdint.h>
+-extern bool dos_englev_on;          // DOSAGS_ENGLEV=1, read once at engine start (dos_englev_init)
++extern bool dos_englev_on;          // DOSAGS_ENGLEV != 0, read once at the first script load
+ extern uint32_t dos_cmemo_gen;      // lever 2: bumped on anything that may change what GetCharIDAtRoom reads
+ extern int dos_cmemo_live;          // lever 2: 1 while the memo holds an entry of the current generation
+ extern const void *dos_vm_curcall;  // lever 2: the static API function the fast VM is calling, else nullptr
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 20e73982b..d73ebb3de 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -409,6 +409,7 @@ void quit(const char *quitmsg)
+             // variables contribute nothing, so older cells' hashes stand.
+             "DOSAGS_BREAK_0193",      // patch 0195: control for the screen-equality gate; a diagnostic
+             "DOSAGS_CLOCK_CROSSCHECK",
++            "DOSAGS_ENGLEV",          // engine levers 1 + 2 (on by default; 0 = off)
+             "DOSAGS_FIXED_TIMESTEP",
+             "DOSAGS_FORCE_COLOR_DEPTH",
+             "DOSAGS_FREEZE_MS",       // patch 0195: stalls at chosen ticks for an emulated-screen capture
+@@ -417,7 +418,8 @@ void quit(const char *quitmsg)
+             "DOSAGS_PRESENT_NO_SKIP", // patch 0099: forces real presents -- changes every fps figure
+             "DOSAGS_PRESENT_VERIFY",  // patch 0192: reads the surface twice per present -- a diagnostic, never a timed cell
+             "DOSAGS_TAS_AUTO_EXIT_TICK",
+-            "DOSAGS_VM",              // patch 0359: script VM mode (decode/check at load; later the fast loop)
++            "DOSAGS_VM",              // patch 0359: script VM mode (fast by default; legacy = upstream's Run())
++            "DOSAGS_VM_FUSE",         // superinstruction mask (all six by default)
+             "DOS_PORT_ENVIRONMENT",
+             // patch 0099: the backend's presentation-path switches. They
+             // change what every present costs, so a cell run with them must
+diff --git a/Engine/script/cc_instance.h b/Engine/script/cc_instance.h
+index c6394a14c..0636d70e8 100644
+--- a/Engine/script/cc_instance.h
++++ b/Engine/script/cc_instance.h
+@@ -196,9 +196,10 @@ public:
+     void    CopyGlobalData(const std::vector<uint8_t> &data);
+ 
+ #ifdef __DJGPP__
+-    // DOS-PORT patch 0359: DOSAGS_VM, read once: 0 = legacy (unset/"legacy": nothing is decoded),
+-    // 1 = "decode" (decode at load and log), 2 = "check" (decode, then verify the decoded stream
+-    // against the bytecode and the legacy fixup semantics, and log the mismatches).
++    // DOS-PORT patch 0359: DOSAGS_VM, read once: 3 = fast (the default: unset or any unknown value),
++    // 0 = "legacy" (upstream's Run(), nothing is decoded), 1 = "decode" (decode at load and log),
++    // 2 = "check" (decode, then verify the decoded stream against the bytecode and the legacy fixup
++    // semantics, and log the mismatches), 4 = "fastgeneric" (every instruction by the stepper).
+     static int DosVmMode();
+     enum { kDosVm_Legacy = 0, kDosVm_Decode = 1, kDosVm_Check = 2, kDosVm_Fast = 3, kDosVm_FastGeneric = 4 };
+ #ifdef DOSAGS_VMTRACE
+diff --git a/Engine/script/cc_instance_vm.cpp b/Engine/script/cc_instance_vm.cpp
+index 8ddb78a8d..2377d0a49 100644
+--- a/Engine/script/cc_instance_vm.cpp
++++ b/Engine/script/cc_instance_vm.cpp
+@@ -78,9 +78,8 @@ void dos_englev_init()
+     if (done) return;
+     done = true;
+     const char *e = getenv("DOSAGS_ENGLEV");
+-    dos_englev_on = (e && e[0] == '1');
+-    if (e && *e)
+-        Debug::Printf("DOS-PORT englev DOSAGS_ENGLEV=%s on=%d", e, dos_englev_on ? 1 : 0);
++    dos_englev_on = !(e && e[0] == '0'); // default on; DOSAGS_ENGLEV=0 is the fallback
++    Debug::Printf("DOS-PORT englev DOSAGS_ENGLEV=%s on=%d", (e && *e) ? e : "(default)", dos_englev_on ? 1 : 0);
+ }
+ bool dos_englev_shadow()
+ {
+@@ -218,14 +217,16 @@ int ccInstance::DosVmMode()
+     if (mode < 0)
+     {
+         const char *e = getenv("DOSAGS_VM");
+-        mode = kDosVm_Legacy;
+-        if (e && strcmp(e, "decode") == 0) mode = kDosVm_Decode;
++        // default (unset, or any value not named here): the fast loop with every superinstruction;
++        // "legacy" is the fallback to upstream's Run(), the others are lab modes
++        mode = kDosVm_Fast;
++        if (e && strcmp(e, "legacy") == 0) mode = kDosVm_Legacy;
++        else if (e && strcmp(e, "decode") == 0) mode = kDosVm_Decode;
+         else if (e && strcmp(e, "check") == 0) mode = kDosVm_Check;
+         else if (e && strcmp(e, "fast") == 0) mode = kDosVm_Fast;
+         else if (e && strcmp(e, "fastnofuse") == 0) { mode = kDosVm_Fast; s_vm_nofuse = true; }
+         else if (e && strcmp(e, "fastgeneric") == 0) mode = kDosVm_FastGeneric;
+-        if (e && *e)
+-            Debug::Printf("DOS-PORT vmmode DOSAGS_VM=%s mode=%d", e, mode);
++        Debug::Printf("DOS-PORT vmmode DOSAGS_VM=%s mode=%d", (e && *e) ? e : "(default)", mode);
+         dos_englev_init(); // levers 1 + 2: read DOSAGS_ENGLEV once, at the first script load
+     }
+     return mode;
+-- 
+2.47.3
+

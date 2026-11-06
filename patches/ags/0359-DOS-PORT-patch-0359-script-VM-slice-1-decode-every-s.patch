@@ -1,0 +1,531 @@
+From fd1658a712dbef04799b7169dc18e93afb2dfbe5 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 6 Nov 2026 03:36:30 -0800
+Subject: [PATCH 359/365] DOS-PORT: patch 0359 -- script VM slice 1: decode
+ every script once at load (inert unless DOSAGS_VM asks)
+
+MMD is logic-bound on the 486: legacy ccInstance::Run() re-decodes every instruction (argument
+fetch, per-argument fixup switch, sccmd_info lookups) on every execution, and that was most of
+MMD's 20.5 ms/tick of script VM time (VMPROF, PLAN-FPS lever V). This patch is the first, inert
+slice of the replacement (docs/lab/VM-DESIGN.md 2.2-2.3): at the end of ResolveImportFixups each
+primary instance's code is decoded ONCE into an index-parallel stream on its ResolvedScriptData
+(dcode: the resolved operand words, dstart: a bit per instruction start), with the legacy fixup
+semantics applied at load. New file Engine/script/cc_instance_vm.cpp; DJGPP only.
+
+DOSAGS_VM selects, read once: unset/legacy = nothing is decoded (this patch changes nothing);
+decode = decode and log one "DOS-PORT vmdecode" line per script; check = also re-derive every
+decoded instruction independently and log mismatches. "DOSAGS_VM" joins the RUNMANIFEST env
+allowlist. Freed streams are counted ("vmfree" lines).
+
+Lab (docs/lab/VM-SLICE1.md): check mode 0 mismatches over 99k instructions on MMD character select,
+AGS Quest (incl. restore) and 5 Days room 3; MMD decodes in ~0.17 s for ~0.54 MB; aq-journeys unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P4db4MSiR2PYUDFdrDdJe2
+---
+ Engine/CMakeLists.txt            |   1 +
+ Engine/main/quit.cpp             |   1 +
+ Engine/script/cc_instance.cpp    |  20 ++
+ Engine/script/cc_instance.h      |  24 ++
+ Engine/script/cc_instance_vm.cpp | 381 +++++++++++++++++++++++++++++++
+ 5 files changed, 427 insertions(+)
+ create mode 100644 Engine/script/cc_instance_vm.cpp
+
+diff --git a/Engine/CMakeLists.txt b/Engine/CMakeLists.txt
+index 4f162298c..d761d3f5f 100644
+--- a/Engine/CMakeLists.txt
++++ b/Engine/CMakeLists.txt
+@@ -418,6 +418,7 @@ target_sources(engine
+     resource/resource.h
+     script/cc_instance.cpp
+     script/cc_instance.h
++    script/cc_instance_vm.cpp
+     script/executingscript.cpp
+     script/executingscript.h
+     script/exports.cpp
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index ff7c15349..20e73982b 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -417,6 +417,7 @@ void quit(const char *quitmsg)
+             "DOSAGS_PRESENT_NO_SKIP", // patch 0099: forces real presents -- changes every fps figure
+             "DOSAGS_PRESENT_VERIFY",  // patch 0192: reads the surface twice per present -- a diagnostic, never a timed cell
+             "DOSAGS_TAS_AUTO_EXIT_TICK",
++            "DOSAGS_VM",              // patch 0359: script VM mode (decode/check at load; later the fast loop)
+             "DOS_PORT_ENVIRONMENT",
+             // patch 0099: the backend's presentation-path switches. They
+             // change what every present costs, so a cell run with them must
+diff --git a/Engine/script/cc_instance.cpp b/Engine/script/cc_instance.cpp
+index a9bb5f607..e9a0bb7c7 100644
+--- a/Engine/script/cc_instance.cpp
++++ b/Engine/script/cc_instance.cpp
+@@ -2211,6 +2211,12 @@ bool ccInstance::ResolveImportFixups()
+         if (import->InstancePtr != nullptr && (_code[fixup + 1] & INSTANCE_ID_REMOVEMASK) == SCMD_CALLEXT)
+             _code[fixup + 1] = SCMD_CALLAS | (import->InstancePtr->_loadedInstanceId << INSTANCE_ID_SHIFT);
+     }
++#ifdef __DJGPP__
++    // DOS-PORT patch 0359: the last step of every primary instance's creation (script.cpp, room.cpp),
++    // after the CALLEXT->CALLAS rewrite above and before any fork; `_code` is not written after this.
++    if (DosVmMode() > 0)
++        DosVmDecode();
++#endif
+     return true;
+ }
+ 
+@@ -2558,3 +2564,17 @@ void ccInstance::DumpInstruction(const ScriptOperation &op) const
+ }
+ 
+ #endif // DEBUG_CC_EXEC
++
++#ifdef __DJGPP__
++// DOS-PORT patch 0359: read-only views of the opcode table for cc_instance_vm.cpp (sccmd_info has
++// internal linkage). Defined at the end of this file so Run() and its helpers are untouched.
++int dos_vm_sccmd_argc(int op)
++{
++    return sccmd_info[op].ArgCount;
++}
++
++bool dos_vm_sccmd_argisreg(int op, int k)
++{
++    return sccmd_info[op].ArgIsReg[k];
++}
++#endif
+diff --git a/Engine/script/cc_instance.h b/Engine/script/cc_instance.h
+index 8f84bc136..ac84d8110 100644
+--- a/Engine/script/cc_instance.h
++++ b/Engine/script/cc_instance.h
+@@ -191,6 +191,13 @@ public:
+     // copies not more than the allocated size of global data
+     void    CopyGlobalData(const std::vector<uint8_t> &data);
+ 
++#ifdef __DJGPP__
++    // DOS-PORT patch 0359: DOSAGS_VM, read once: 0 = legacy (unset/"legacy": nothing is decoded),
++    // 1 = "decode" (decode at load and log), 2 = "check" (decode, then verify the decoded stream
++    // against the bytecode and the legacy fixup semantics, and log the mismatches).
++    static int DosVmMode();
++#endif
++
+ private:
+     bool    _Create(PScript scri, const ccInstance * joined);
+     // free the memory associated with the instance
+@@ -203,6 +210,12 @@ private:
+     bool    ResolveExports(const ccScript *scri);
+     // Registers this script's resolved exports as imports in the symbol import table
+     bool    ImportScriptExports(const ccScript *scri);
++#ifdef __DJGPP__
++    // DOS-PORT patch 0359: build _scriptData->dcode/dstart (cc_instance_vm.cpp)
++    void    DosVmDecode();
++    // DOS-PORT patch 0359: independent re-derivation of every decoded instruction; returns mismatches
++    long    DosVmCheck(long *by_cat, uint32_t *n_instr) const;
++#endif
+ 
+     // Searches for the function among this script's exports,
+     // on success returns its starting position in bytecode, and number of arguments;
+@@ -266,6 +279,17 @@ private:
+         ScriptSymbolsMap        export_lookup;
+         // Array of real import indexes used in script
+         std::vector<uint32_t>   resolved_imports;
++#ifdef __DJGPP__
++        // DOS-PORT patch 0359 (script VM slice 1, VM-DESIGN.md 2.2-2.3): the decoded stream, built
++        // once per primary instance at the end of ResolveImportFixups and shared by forks like
++        // `code`. Index-parallel to `code` (+3 zero words): dcode[pc] holds the handler kind of the
++        // instruction starting at pc, dcode[pc+1..pc+argc] its pre-processed operands; dstart has
++        // one bit per code word, set where an instruction starts. Empty unless DOSAGS_VM asks for it;
++        // nothing executes it yet (the legacy Run() is untouched).
++        std::vector<intptr_t>   dcode;
++        std::vector<uint32_t>   dstart;
++        bool                    decoded_ok = false;
++#endif
+     };
+     std::shared_ptr<ResolvedScriptData> _scriptData;
+ 
+diff --git a/Engine/script/cc_instance_vm.cpp b/Engine/script/cc_instance_vm.cpp
+new file mode 100644
+index 000000000..c2c338832
+--- /dev/null
++++ b/Engine/script/cc_instance_vm.cpp
+@@ -0,0 +1,381 @@
++//=============================================================================
++//
++// DOS-PORT patch 0359 -- script VM slice 1: decode each script once at load into an
++// index-parallel stream (docs/lab/VM-DESIGN.md 2.2-2.3), and check it.
++//
++// Inert unless DOSAGS_VM is set: with DOSAGS_VM unset (or "legacy") ResolveImportFixups makes
++// one cached getenv() and nothing else, and no memory is allocated. Nothing executes the
++// decoded stream yet; ccInstance::Run() is untouched.
++//
++//   DOSAGS_VM=decode  decode every primary instance at load; one "vmdecode" log line each
++//   DOSAGS_VM=check   the same, then re-derive every instruction independently of the decoder
++//                     (its own walk over the ORIGINAL ccScript code, the legacy fixup text, field
++//                     by field RuntimeScriptValue comparison) and log a "vmcheck" line
++//
++// Layout (VM-DESIGN 2.2). For an instruction at pc with argc arguments:
++//   dcode[pc]          its handler kind: bits 0-7 the opcode as Run() executes it (the
++//                      CALLEXT->CALLAS rewrite included), bits 8-15 a variant (kVmV_*);
++//                      slice 2 maps kinds to handler label addresses
++//   dcode[pc+1+k]      argument k, pre-processed BY OPCODE:
++//                        register argument  -> reg * sizeof(RuntimeScriptValue)
++//                        jzi/jnzi/jmpi      -> word delta (arg + 2) when the target is an
++//                                              instruction start inside the code (variant 0),
++//                                              else the raw word (variant kVmV_Slow)
++//                        LITTOREG/WRITELIT argument 2, by its fixup type:
++//                          none / FUNCTION  -> the int (variant 0)
++//                          GLOBALDATA       -> &((ScriptVariable*)word)->RValue (kVmV_Gvar)
++//                          STRING           -> _strings + word (kVmV_Str)
++//                          IMPORT           -> the import INDEX, looked up at run time (kVmV_Imp)
++//                          STACK / other    -> raw word (kVmV_Slow: the generic stepper)
++//                        anything else      -> the raw word, exactly what Run() reads
++//   dcode[n..n+2]      zero padding
++// A script with an opcode >= CC_NUM_SCCMDS, an instruction running past the end, or a register
++// argument outside 0..CC_NUM_REGISTERS-1 is NOT decoded (decoded_ok = false): it would always
++// run the legacy Run(), keeping today's behaviour by construction.
++//
++//=============================================================================
++#ifdef __DJGPP__
++
++#include "script/cc_instance.h"
++#include <stdlib.h>
++#include <string.h>
++#include <time.h> // uclock()
++#include "debug/out.h"
++#include "script/cc_common.h"
++#include "script/script_runtime.h" // simp
++
++using namespace AGS::Common;
++
++int dos_vm_sccmd_argc(int op);          // cc_instance.cpp, patch 0359
++bool dos_vm_sccmd_argisreg(int op, int k);
++
++enum DosVmVariant
++{
++    kVmV_Plain = 0,
++    kVmV_Gvar  = 1,
++    kVmV_Str   = 2,
++    kVmV_Imp   = 3,
++    kVmV_Slow  = 4,
++};
++
++static inline intptr_t VmKind(int op, int variant) { return static_cast<intptr_t>(op | (variant << 8)); }
++static inline bool IsJump(int op) { return op == SCMD_JZ || op == SCMD_JNZ || op == SCMD_JMP; }
++static inline bool HasFixedArg2(int op) { return op == SCMD_LITTOREG || op == SCMD_WRITELIT; }
++static inline unsigned long UclockUs(uclock_t d) { return static_cast<unsigned long>((d * 1000000LL) / UCLOCKS_PER_SEC); }
++
++// running totals over the whole run, printed on every line so the last one is the summary
++static unsigned long g_vm_scripts = 0, g_vm_ineligible = 0, g_vm_bytes = 0, g_vm_decode_us = 0;
++static unsigned long g_vm_check_mismatch = 0, g_vm_check_us = 0;
++
++int ccInstance::DosVmMode()
++{
++    static int mode = -1;
++    if (mode < 0)
++    {
++        const char *e = getenv("DOSAGS_VM");
++        if (e && strcmp(e, "decode") == 0)
++            mode = 1;
++        else if (e && strcmp(e, "check") == 0)
++            mode = 2;
++        else
++            mode = 0;
++        if (e && *e)
++            Debug::Printf("DOS-PORT vmmode DOSAGS_VM=%s mode=%s", e,
++                mode == 2 ? "check" : (mode == 1 ? "decode" : "legacy"));
++    }
++    return mode;
++}
++
++void ccInstance::DosVmDecode()
++{
++    ResolvedScriptData &sd = *_scriptData;
++    const uclock_t t0 = uclock();
++    const uint32_t n = _codesize;
++    const intptr_t *code = _code;
++    const uint8_t *fix = _code_fixups;
++
++    sd.dcode.assign(static_cast<size_t>(n) + 3, 0);
++    sd.dstart.assign(static_cast<size_t>(n) / 32 + 1, 0u);
++    sd.decoded_ok = false;
++
++    // pass 1: instruction starts and eligibility (the same walk as Run(): op word, argc, next)
++    const char *why = "none";
++    uint32_t why_pc = 0, n_instr = 0;
++    bool ok = true;
++    for (uint32_t pc = 0; pc < n; )
++    {
++        const int op = static_cast<int>(code[pc] & INSTANCE_ID_REMOVEMASK);
++        if (op < 0 || op >= CC_NUM_SCCMDS) { ok = false; why = "opcode"; why_pc = pc; break; }
++        const int argc = dos_vm_sccmd_argc(op);
++        if (static_cast<uint32_t>(pc + argc) >= n) { ok = false; why = "truncated"; why_pc = pc; break; }
++        for (int k = 0; k < argc; ++k)
++        {
++            if (dos_vm_sccmd_argisreg(op, k))
++            {
++                const intptr_t r = code[pc + 1 + k];
++                if (r < 0 || r >= CC_NUM_REGISTERS) { ok = false; why = "register"; why_pc = pc; break; }
++            }
++        }
++        if (!ok) break;
++        sd.dstart[pc >> 5] |= 1u << (pc & 31);
++        ++n_instr;
++        pc += argc + 1;
++    }
++
++    // pass 2: kinds and operands
++    unsigned long n_movl[5] = { 0, 0, 0, 0, 0 }, n_jslow = 0, n_callas = 0, n_otherfix = 0, n_null = 0;
++    if (ok)
++    {
++        for (uint32_t pc = 0; pc < n; )
++        {
++            const int op = static_cast<int>(code[pc] & INSTANCE_ID_REMOVEMASK);
++            const int argc = dos_vm_sccmd_argc(op);
++            int variant = kVmV_Plain;
++            if (op == SCMD_CALLAS) ++n_callas;
++            if (op == 0) ++n_null;
++            for (int k = 0; k < argc; ++k)
++            {
++                const uint32_t at = pc + 1 + k;
++                const intptr_t v = code[at];
++                intptr_t out = v;
++                if (dos_vm_sccmd_argisreg(op, k))
++                {
++                    out = v * static_cast<intptr_t>(sizeof(RuntimeScriptValue));
++                }
++                else if (IsJump(op))
++                {
++                    const long long target = static_cast<long long>(pc) + 2 + v;
++                    if (target >= 0 && target < n && (sd.dstart[target >> 5] >> (target & 31) & 1u))
++                        out = v + 2;
++                    else
++                    {
++                        variant = kVmV_Slow;
++                        ++n_jslow;
++                    }
++                }
++                else if (HasFixedArg2(op) && k == 1)
++                {
++                    switch (fix[at])
++                    {
++                    case FIXUP_NOFIXUP:
++                    case FIXUP_FUNCTION:
++                        variant = kVmV_Plain;
++                        break;
++                    case FIXUP_GLOBALDATA:
++                        variant = kVmV_Gvar;
++                        out = reinterpret_cast<intptr_t>(&reinterpret_cast<ScriptVariable*>(v)->RValue);
++                        break;
++                    case FIXUP_STRING:
++                        variant = kVmV_Str;
++                        out = reinterpret_cast<intptr_t>(_strings + v);
++                        break;
++                    case FIXUP_IMPORT:
++                        variant = kVmV_Imp;
++                        break;
++                    default:
++                        variant = kVmV_Slow;
++                        break;
++                    }
++                    if (op == SCMD_LITTOREG) ++n_movl[variant];
++                }
++                else if (fix[at] != FIXUP_NOFIXUP)
++                {
++                    ++n_otherfix; // Run() ignores fixups here and reads the word as it is; so do we
++                }
++                sd.dcode[at] = out;
++            }
++            sd.dcode[pc] = VmKind(op, variant);
++            pc += argc + 1;
++        }
++        sd.decoded_ok = true;
++    }
++    else
++    {
++        // not eligible: free the memory, this instance runs the legacy loop only
++        std::vector<intptr_t>().swap(sd.dcode);
++        std::vector<uint32_t>().swap(sd.dstart);
++        ++g_vm_ineligible;
++    }
++
++    const uclock_t t1 = uclock();
++    const unsigned long bytes = sd.dcode.capacity() * sizeof(intptr_t) + sd.dstart.capacity() * sizeof(uint32_t);
++    const unsigned long dus = UclockUs(t1 - t0);
++    ++g_vm_scripts;
++    g_vm_bytes += bytes;
++    g_vm_decode_us += dus;
++    Debug::Printf("DOS-PORT vmdecode script=%s inst=%d words=%u instrs=%u ok=%d why=%s at=%u bytes=%lu decode_us=%lu"
++        " movl_int=%lu movl_gvar=%lu movl_str=%lu movl_imp=%lu movl_slow=%lu jump_slow=%lu callas=%lu null_ops=%lu"
++        " otherfix=%lu tot_scripts=%lu tot_ineligible=%lu tot_bytes=%lu tot_decode_us=%lu",
++        _instanceof->GetScriptName().c_str(), _loadedInstanceId, n, n_instr, ok ? 1 : 0, why, why_pc, bytes, dus,
++        n_movl[0], n_movl[1], n_movl[2], n_movl[3], n_movl[4], n_jslow, n_callas, n_null,
++        n_otherfix, g_vm_scripts, g_vm_ineligible, g_vm_bytes, g_vm_decode_us);
++
++    if (DosVmMode() == 2 && sd.decoded_ok)
++    {
++        long cat[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
++        uint32_t walked = 0;
++        const uclock_t c0 = uclock();
++        const long mism = DosVmCheck(cat, &walked);
++        const unsigned long cus = UclockUs(uclock() - c0);
++        g_vm_check_mismatch += static_cast<unsigned long>(mism);
++        g_vm_check_us += cus;
++        Debug::Printf("DOS-PORT vmcheck script=%s instrs=%u mismatches=%ld start=%ld op=%ld reg=%ld jump=%ld fixval=%ld raw=%ld pad=%ld"
++            " check_us=%lu tot_mismatches=%lu tot_check_us=%lu",
++            _instanceof->GetScriptName().c_str(), walked, mism, cat[0], cat[1], cat[2], cat[3], cat[4], cat[5], cat[6],
++            cus, g_vm_check_mismatch, g_vm_check_us);
++    }
++}
++
++// The legacy value of LITTOREG/WRITELIT's second argument: SetInt32(word), then FixupArgument
++// (cc_instance.cpp:536-584), its text repeated here for the cases that resolve at load.
++// Returns false for FIXUP_STACK/unknown types (no load-time value exists; those must be kVmV_Slow).
++static bool LegacyArg2(RuntimeScriptValue &arg, int fixup, intptr_t code, const char *strings)
++{
++    arg.SetInt32(static_cast<int32_t>(code));
++    switch (fixup)
++    {
++    case FIXUP_NOFIXUP:
++        return true;
++    case FIXUP_GLOBALDATA:
++        arg.SetGlobalVar(&reinterpret_cast<ScriptVariable*>(code)->RValue);
++        return true;
++    case FIXUP_FUNCTION:
++        arg.SetInt32(static_cast<int32_t>(code));
++        return true;
++    case FIXUP_STRING:
++        arg.SetStringLiteral(strings + code);
++        return true;
++    case FIXUP_IMPORT:
++        {
++            const ScriptImport *import = simp.GetByIndex(static_cast<uint32_t>(code));
++            if (import)
++                arg = import->Value; // on a missing import the int stays, as in Run()
++        }
++        return true;
++    default:
++        return false;
++    }
++}
++
++// What the decoded form says the value is, by variant
++static bool DecodedArg2(RuntimeScriptValue &arg, int variant, intptr_t d)
++{
++    switch (variant)
++    {
++    case kVmV_Plain:
++        arg.SetInt32(static_cast<int32_t>(d));
++        return true;
++    case kVmV_Gvar:
++        arg.SetGlobalVar(reinterpret_cast<RuntimeScriptValue*>(d));
++        return true;
++    case kVmV_Str:
++        arg.SetStringLiteral(reinterpret_cast<const char*>(d));
++        return true;
++    case kVmV_Imp:
++        {
++            arg.SetInt32(static_cast<int32_t>(d));
++            const ScriptImport *import = simp.GetByIndex(static_cast<uint32_t>(d));
++            if (import)
++                arg = import->Value;
++        }
++        return true;
++    default:
++        return false;
++    }
++}
++
++static bool SameValue(const RuntimeScriptValue &a, const RuntimeScriptValue &b)
++{
++    return a.Type == b.Type && a.IValue == b.IValue && a.Ptr == b.Ptr && a.MgrPtr == b.MgrPtr && a.Size == b.Size;
++}
++
++// Categories: 0 start bits, 1 opcode/kind, 2 register operand, 3 jump, 4 fixed-up value, 5 raw
++// operand, 6 padding. Independent of DosVmDecode: the walk runs over the ORIGINAL bytecode
++// (_instanceof->code, never written by fixups), registers are checked by pointer arithmetic on
++// _registers, jump targets against this walk's own start set, fixed-up values by comparing the
++// RuntimeScriptValue the legacy text builds with the one the decoded form implies.
++long ccInstance::DosVmCheck(long *cat, uint32_t *n_instr) const
++{
++    const ResolvedScriptData &sd = *_scriptData;
++    const std::vector<int32_t> &orig = _instanceof->code;
++    const uint32_t n = static_cast<uint32_t>(orig.size());
++    long bad = 0;
++    if (n != _codesize || sd.dcode.size() != static_cast<size_t>(n) + 3)
++    {
++        cat[1]++;
++        return 1;
++    }
++    std::vector<bool> start(n, false);
++    uint32_t walked = 0;
++    for (uint32_t pc = 0; pc < n; )
++    {
++        const int op = static_cast<int>(orig[pc] & INSTANCE_ID_REMOVEMASK);
++        start[pc] = true;
++        ++walked;
++        pc += 1 + dos_vm_sccmd_argc(op);
++    }
++    *n_instr = walked;
++    for (uint32_t pc = 0; pc < n; ++pc)
++    {
++        const bool bit = (sd.dstart[pc >> 5] >> (pc & 31)) & 1u;
++        if (bit != static_cast<bool>(start[pc])) { cat[0]++; bad++; }
++    }
++    for (uint32_t pc = 0; pc < n; )
++    {
++        const int op_exec = static_cast<int>(_code[pc] & INSTANCE_ID_REMOVEMASK); // what Run() switches on
++        const int op_orig = static_cast<int>(orig[pc] & INSTANCE_ID_REMOVEMASK);
++        const int argc = dos_vm_sccmd_argc(op_orig);
++        const intptr_t kind = sd.dcode[pc];
++        const int variant = static_cast<int>((kind >> 8) & 0xFF);
++        if ((kind & 0xFF) != op_exec || dos_vm_sccmd_argc(op_exec) != argc ||
++            (kind & ~static_cast<intptr_t>(0xFFFF)) != 0) { cat[1]++; bad++; }
++        for (int k = 0; k < argc; ++k)
++        {
++            const uint32_t at = pc + 1 + k;
++            const intptr_t v = _code[at];   // the word Run() reads
++            const intptr_t d = sd.dcode[at];
++            if (dos_vm_sccmd_argisreg(op_exec, k))
++            {
++                const char *want = reinterpret_cast<const char*>(&_registers[v]);
++                const char *got = reinterpret_cast<const char*>(_registers) + d;
++                if (want != got) { cat[2]++; bad++; }
++            }
++            else if (op_exec == SCMD_JZ || op_exec == SCMD_JNZ || op_exec == SCMD_JMP)
++            {
++                const long long target = static_cast<long long>(pc) + v + argc + 1; // Run(): _pc += arg; _pc += argc + 1
++                const bool valid = target >= 0 && target < n && start[static_cast<size_t>(target)];
++                if (valid)
++                {
++                    if (variant != kVmV_Plain || static_cast<long long>(pc) + d != target) { cat[3]++; bad++; }
++                }
++                else
++                {
++                    if (variant != kVmV_Slow || d != v) { cat[3]++; bad++; }
++                }
++            }
++            else if ((op_exec == SCMD_LITTOREG || op_exec == SCMD_WRITELIT) && k == 1)
++            {
++                RuntimeScriptValue want, got;
++                const bool lw = LegacyArg2(want, _code_fixups[at], v, _strings);
++                const bool lg = DecodedArg2(got, variant, d);
++                if (lw != lg) { cat[4]++; bad++; }
++                else if (lw && !SameValue(want, got)) { cat[4]++; bad++; }
++                else if (!lw && (variant != kVmV_Slow || d != v)) { cat[4]++; bad++; }
++            }
++            else
++            {
++                if (d != v) { cat[5]++; bad++; }
++            }
++        }
++        // a variant is only legal on the ops that have one
++        const bool may_vary = op_exec == SCMD_JZ || op_exec == SCMD_JNZ || op_exec == SCMD_JMP ||
++            op_exec == SCMD_LITTOREG || op_exec == SCMD_WRITELIT;
++        if (!may_vary && variant != kVmV_Plain) { cat[1]++; bad++; }
++        pc += 1 + argc;
++    }
++    for (size_t i = n; i < sd.dcode.size(); ++i)
++        if (sd.dcode[i] != 0) { cat[6]++; bad++; }
++    return bad;
++}
++
++#endif // __DJGPP__
+-- 
+2.47.3
+

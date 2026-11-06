@@ -1,0 +1,46 @@
+F1MMDP-2026-11-06: ticks=4999 dropped=0  tick_rate whole-run 35.14  steady 35.37
+  >100 tick#0     lc=1      ugo   950.1 ms = logic   846.3 + render  103.8 + scene   0.0  events=R
+  50+  tick#1     lc=2      ugo    68.2 ms = logic    68.2 + render    0.0 + scene   0.0  events=-
+  50+  tick#6     lc=7      ugo    51.4 ms = logic    25.4 + render   11.3 + scene  14.7  events=-
+PROFILE F1MMDP-2026-11-06: ticks=4999 dropped=0  tick_rate whole-run 35.14  steady 35.37
+  >100 tick#0     lc=1      ugo   950.1 ms = logic   846.3 + render  103.8 + scene   0.0  events=R
+  50+  tick#1     lc=2      ugo    68.2 ms = logic    68.2 + render    0.0 + scene   0.0  events=-
+  50+  tick#6     lc=7      ugo    51.4 ms = logic    25.4 + render   11.3 + scene  14.7  events=-
+  lc=1 ugo 950.1 ms: samples 3198  DECODE 0.1%  libc-leaf 5.5%  ccInstance::Run 3.2%
+       34.5%   1103  dp_prof_busy_start
+       17.9%    572  ScreenFadeSoftware::Draw()
+       16.2%    518  <marker>
+        5.3%    170  big_move
+        3.2%    103  ccInstance::Run(long)
+        3.0%     95  AGS::Engine::Pathfinding::FindNearestWalkablePoint(AGS::Common::Bitmap*, Point const&, Point&, Rect 
+        2.1%     66  AGS::Common::BufferedStream::Write(void const*, unsigned long)
+        2.1%     66  lzwexpand(unsigned char const*, unsigned long, unsigned char*, unsigned long)
+        1.5%     48  AGS::Common::cunpackbitl(unsigned char*, unsigned long, AGS::Common::Stream*) [clone .isra.0]
+        1.1%     34  std::vector<unsigned char, std::allocator<unsigned char> >::_M_default_append(unsigned long)
+        1.0%     33  walkbehinds_recalc()
+        0.6%     18  memcpy
+  lc=2 ugo 68.2 ms  <- largest non-entry tick: samples 99  DECODE 0.0%  libc-leaf 0.0%  ccInstance::Run 15.2%
+       25.3%     25  <marker>
+       15.2%     15  ccInstance::Run(long)
+       12.1%     12  __wrap_uclock
+        7.1%      7  WaitForNextFrame()
+        7.1%      7  __divdi3
+        4.0%      4  putc
+        4.0%      4  _doprnt
+        3.0%      3  __dpmi_int
+        2.0%      2  AGSPlatformDriver::WriteStdOut(char const*, ...)
+        2.0%      2  GetCharIDAtRoom(int, int, int)
+        1.0%      1  malloc
+        1.0%      1  searchfree
+  longest loop-counter intervals (samples ~ ms at 1024 Hz):
+   lc 0->1: 3198 samples (~3123 ms)  DECODE 0.1%  FILEIO 8.2%  Run 3.2%  libc-leaf 5.5%  top: dp_prof_busy_start 34%; ScreenFadeSoftware::Draw() 18%; <marker> 16%; big_move 5%; ccInstance::Run(long) 3%
+   lc 1->2: 99 samples (~97 ms)  DECODE 0.0%  FILEIO 4.0%  Run 15.2%  libc-leaf 0.0%  top: <marker> 25%; ccInstance::Run(long) 15%; __wrap_uclock 12%; WaitForNextFrame() 7%; __divdi3 7%
+   lc 6->7: 53 samples (~52 ms)  DECODE 0.0%  FILEIO 0.0%  Run 26.4%  libc-leaf 26.4%  top: big_move 26%; ccInstance::Run(long) 26%; _linear_draw_sprite16 11%; _linear_hline16 6%; __wrap_uclock 4%
+   lc 3619->3620: 41 samples (~40 ms)  DECODE 2.4%  FILEIO 9.8%  Run 36.6%  libc-leaf 2.4%  top: ccInstance::Run(long) 37%; _linear_draw_sprite16 15%; _doprnt 10%; <marker> 5%; GetCharIDAtRoom(int, int, int) 5%
+   lc 1788->1789: 40 samples (~39 ms)  DECODE 0.0%  FILEIO 10.0%  Run 32.5%  libc-leaf 0.0%  top: ccInstance::Run(long) 32%; _linear_draw_sprite16 10%; _doprnt 8%; <marker> 5%; __dpmi_get_free_memory_information 2%
+   lc 1789->1790: 39 samples (~38 ms)  DECODE 0.0%  FILEIO 7.7%  Run 43.6%  libc-leaf 5.1%  top: ccInstance::Run(long) 44%; _linear_draw_sprite16 13%; _doprnt 8%; GetCharIDAtRoom(int, int, int) 5%; dofree 5%
+   lc 3616->3617: 38 samples (~37 ms)  DECODE 0.0%  FILEIO 2.6%  Run 44.7%  libc-leaf 2.6%  top: ccInstance::Run(long) 45%; _linear_draw_sprite16 13%; __wrap_uclock 5%; RuntimeScriptValue::DirectPtr() 5%; room_to_mask_coord(int) 3%
+   lc 4884->4885: 37 samples (~36 ms)  DECODE 0.0%  FILEIO 2.7%  Run 51.4%  libc-leaf 0.0%  top: ccInstance::Run(long) 51%; _linear_draw_sprite16 16%; dos_midi_stream_sample() 3%; SDL_CompareAndSwapAtomicInt 3%; UpdateCharacterMoving(CharacterInfo*, Ch 3%
+   lc 4877->4878: 37 samples (~36 ms)  DECODE 0.0%  FILEIO 0.0%  Run 32.4%  libc-leaf 0.0%  top: ccInstance::Run(long) 32%; _linear_draw_sprite16 14%; SystemImports::GetByIndex(unsigned long) 8%; __wrap_uclock 3%; __divdi3 3%
+   lc 4729->4730: 37 samples (~36 ms)  DECODE 0.0%  FILEIO 2.7%  Run 43.2%  libc-leaf 0.0%  top: ccInstance::Run(long) 43%; _linear_draw_sprite16 14%; GetCharIDAtRoom(int, int, int) 5%; SDL_CompareAndSwapAtomicInt 3%; FixupCharacterLoopAndFrame(CharacterInfo 3%
+  click ticks: none

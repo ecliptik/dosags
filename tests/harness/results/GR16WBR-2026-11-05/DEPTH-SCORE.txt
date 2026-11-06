@@ -1,0 +1,21 @@
+pump: no PCM play logged
+control: no PCM play logged
+GR16WBR-seg01.ogg        floor -67.7 dB, capture 926.8 s, held run 310.00-419.00 s (E) | clk 162.960 s -> W 100.00 s | window 317.00-417.00 s (START 317.00)
+GR16WBP-seg01.ogg        floor -67.5 dB, capture 856.0 s, held run 239.75-348.50 s (E) | clk 163.535 s -> W 100.00 s | window 246.50-346.50 s (START 246.50)
+min(W) = 100.00 s (the B window)
+bar 2 clock: clk=162960/163s ratio 0.9998 (+-0.6% RTC resolution); clk_uc=162960/162994 real_period_us=46122
+bar 3 pump ran: isr_writes=16972 vs model 16993 for 162.960 s of song (99.9%); rs_skipped=2242 vs model 2242
+gate A (24/24.2):
+  A1 late_writes=0 PASS (0)
+  A2 plan_behind=0 [target cells only] PASS (0)
+  A3 qfull=0 PASS (0)
+  A4 stuck repairs=0 PASS (0/0/0/0)
+  A5 0.95<=clk ratio<=1.02 PASS (0.9998)
+  A6 isr_writes>=95% of model PASS (99.9%)
+gate A: PASS
+GR16WBR-seg01.ogg          start  317.00 phase    9.89 s corr 0.73 | render onsets 89 | best F1 0.744 (k 1.5: 126 onsets, 80 matched, P 0.63 R 0.90) | F1 by k 0.65/0.74/0.74/0.71/0.65
+GR16WBP-seg01.ogg          start  246.50 phase    9.80 s corr 0.60 | render onsets 89 | best F1 0.779 (k 2.0: 83 onsets, 67 matched, P 0.81 R 0.75) | F1 by k 0.64/0.78/0.78/0.71/0.67   [control, information]
+B over min(W) 100.00 s: chroma 0.963 (lag 0.0 s) vs bar 0.627; transposed 0.369, reversed 0.731; pump onsets in the control's rests 0 -> PASS
+D: pump 0.744 (bar 0.70) -> PASS; control 0.779 (information)
+A: PASS
+VERDICT: PASS

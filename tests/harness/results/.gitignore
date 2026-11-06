@@ -15,3 +15,19 @@
 # save's sha256 in SAVE-SHA256.txt per result dir. (Saves tracked before this line are left as they are.)
 AGSSAVE.*
 agssave.*
+# Operator decision 2026-11-06 (AGS Quest licence, tests/harness/packages/agsquest/LICENSE-NOTES.md: "No screenshot of
+# this package's rendered content is ever committed"): no image from an AGS Quest cell (AQ*, F1AQ*) enters git. Record
+# each image's sha256 in the cell's IMAGE-SHA256.txt instead. Case-insensitive (PH0n.BMP is uppercase).
+# Tag convention (2026-11-06, sdlports): every AGS Quest cell's tag contains "AQ" (AQ*, JAQ*, F1AQK, N7AQ ...) and no
+# other cell's does, so the rule matches any round prefix. A new AGS Quest cell must keep "AQ" in its tag.
+*AQ*/**/*.[bB][mM][pP]
+*AQ*/**/*.[pP][nN][gG]
+*AQ*/**/*.[jJ][pP][gG]
+*AQ*/**/*.[jJ][pP][eE][gG]
+*AQ*/**/*.[gG][iI][fF]
+# Operator decision 2026-11-06 (relayed by sdlports): these three dirs' send/collect witness frames show the old echoing
+# FTP session with a credential; untracked from HEAD (no history rewrite), kept on disk, sha256 in IMAGE-SHA256.txt.
+# Never pick a README or gallery frame from them. New frames: tests/harness/witness-ftp-check.sh before committing.
+IO41-2026-09-28/WITNESS-*.jpg
+IOA0-2026-09-28/WITNESS-*.jpg
+IOES-2026-09-28/WITNESS-*.jpg

@@ -23,6 +23,7 @@ overwrites 0, late_writes 0, silent_irqs 0 outside room loads).
 - Amendment 2026-09-29, before any data: "pcm_irqs exact" gets a REPORTED accounting line, pcm_irqs + inflight
   vs mixed from audio_vital_status (0 = every mixed chunk was played or is in flight); not scored.
 - The camera witness is not scriptable: every MET is "subject to camera CLEAN".
+- Amendment 2026-11-05 (F1): late_writes absent is not a missing field when midi=none or midi_tick=poll.
 VOID: binary_sha12 != --stamp, exit_code != 0, build_dirty != 0, last room !=
 --room, a missing field, or (--msgskip) not exactly one "DOS-PORT msgskip n=1".
 """
@@ -67,6 +68,10 @@ def cell(d, args):
     for k in ("pcm_irqs", "silent_irqs", "start_latency_irqs", "overwrites", "underruns", "late_writes"):
         m = re.search(r"\b" + k + r"=(\d+)", avs)
         c[k] = int(m.group(1)) if m else None
+        # Amendment 2026-11-05 (PLAN-FPS F1, before any F1 data): late_writes is a MIDI ISR-mode field; with midi=none
+        # (no MIDI device opened: digital-only games, silent rooms) or midi_tick=poll it is absent by design, not missing.
+        if c[k] is None and k == "late_writes" and re.search(r"\bmidi=none\b|\bmidi_tick=poll\b", avs):
+            continue
         if c[k] is None and k != "start_latency_irqs":  # absent before ags 0347; the stamp check catches that
             errs.append("missing " + k)
     acc = {k: (int(m.group(1)) if m else None) for k in ("mixed", "inflight")

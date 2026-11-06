@@ -1,0 +1,10 @@
+span 357.75-457.75 s (held run 338.25-459.75, W 100.00); floor -68.7 dB from 485-545 s
+K1 locked: 0 digital-zero frames -> PASS
+K2 no long gap: render phase 85.68 s (corr 0.26); longest run at the floor while the render plays: 171 frames (1.98 s; limit 10) -> FAIL
+K3 PCM present: sound 3 spectrogram match 0.40 vs reversed-clip null 0.43 (margin >= 0.05) -> FAIL
+M1 pitch: best shift -24 cents (corr 0.382; limit +-15) -> FAIL
+M2 music identity: chroma 0.472 vs transposed 0.616 / reversed 0.466 (margin >= 0.05) -> FAIL
+K4 sources audible: 19 windows; low >= 48.3 dB, high >= 43.2 dB over the floor -> PASS
+K5 counters: pcm_irqs=NA silent_irqs=NA start_latency_irqs=NA overwrites=NA underruns=0 midi=gus late_writes=NA
+D (information): GUSS0-seg01.ogg            start  357.75 phase   85.66 s corr 0.27 | render onsets 83 | best F1 0.357 (k 1.5: 180 onsets, 47 matched, P 0.26 R 0.57) | F1 by k 0.33/0.36/0.35/0.32/0.28
+CAPTURE CHECK (K1-K4, M1, M2): FAIL

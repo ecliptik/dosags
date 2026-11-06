@@ -1,0 +1,308 @@
+diff -ruN s6/Common/debug/debugmanager.cpp raw/Common/debug/debugmanager.cpp
+--- a/Common/debug/debugmanager.cpp	2026-11-06 03:36:07.117823418 -0800
++++ b/Common/debug/debugmanager.cpp	2026-11-06 03:36:01.365905418 -0800
+@@ -17,6 +17,10 @@
+ #include "util/memory_compat.h"
+ #include "util/string_types.h"
+ 
++#ifdef DOSAGS_LEVERCOUNT
++extern unsigned long dos_lc[]; // DOS-PORT 0359 probe: kLC_DbgPrint = 2 (LAB ONLY)
++#endif
++
+ namespace AGS
+ {
+ namespace Common
+@@ -323,6 +327,9 @@
+ 
+ void DebugManager::Print(MessageGroupHandle group_id, MessageType mt, const String &text)
+ {
++#ifdef DOSAGS_LEVERCOUNT
++    ++::dos_lc[2];
++#endif
+     std::lock_guard<std::mutex> lk(_mutex);
+     assert(group_id < _groups.size());
+     if (group_id >= _groups.size())
+diff -ruN s6/Common/util/string.cpp raw/Common/util/string.cpp
+--- a/Common/util/string.cpp	2026-11-06 03:36:07.121823361 -0800
++++ b/Common/util/string.cpp	2026-11-06 03:36:01.217907528 -0800
+@@ -18,6 +18,9 @@
+ #include "util/math.h"
+ #include "util/stream.h"
+ #include "util/string.h"
++#ifdef DOSAGS_LEVERCOUNT
++extern unsigned long dos_lc[]; // dos_levercount.h kLC_Fmt = 0 (LAB ONLY)
++#endif
+ #include "util/string_compat.h"
+ #include "utf8.h"
+ 
+@@ -593,6 +596,9 @@
+     fcstr = fcstr ? fcstr : "";
+     va_list argptr_cpy;
+     va_copy(argptr_cpy, argptr);
++#ifdef DOSAGS_LEVERCOUNT
++    ++dos_lc[0];
++#endif
+     size_t length = vsnprintf(nullptr, 0u, fcstr, argptr);
+     ReserveAndShift(false, length);
+     vsprintf(_cstr + _len, fcstr, argptr_cpy);
+@@ -737,6 +743,9 @@
+     fcstr = fcstr ? fcstr : "";
+     va_list argptr_cpy;
+     va_copy(argptr_cpy, argptr);
++#ifdef DOSAGS_LEVERCOUNT
++    ++dos_lc[0];
++#endif
+     size_t length = vsnprintf(nullptr, 0u, fcstr, argptr);
+     ReserveAndShift(false, Math::Surplus(length, _len));
+     vsprintf(_cstr, fcstr, argptr_cpy);
+diff -ruN s6/Engine/ac/character.cpp raw/Engine/ac/character.cpp
+--- a/Engine/ac/character.cpp	2026-11-06 03:36:01.393905019 -0800
++++ b/Engine/ac/character.cpp	2026-11-06 03:36:01.361905474 -0800
+@@ -18,7 +18,11 @@
+ #include <cstdio>
+ #include <math.h>
+ #include "ac/character.h"
++#include "main/dos_levercount.h" // DOS-PORT 0359 probe (lab only)
+ #include "main/dos_englev.h"     // DOS-PORT 0364 levers 1 + 2
++#ifdef DOSAGS_LEVERCOUNT
++#include <array>
++#endif
+ #include "ac/common.h"
+ #include "ac/gamesetupstruct.h"
+ #include "ac/display.h"
+@@ -2570,6 +2574,10 @@
+         return; // not enabled, or in a different room
+ 
+     CharacterExtras &chex = charextra[charid];
++#ifdef DOSAGS_LEVERCOUNT
++    DOS_LC(kLC_CharScale);
++    const int lc_in[9] = { chin.x, chin.y, chin.z, chin.view, chin.loop, chin.frame, chin.flags, chex.zoom, chin.room };
++#endif
+     if (chin.view < 0)
+     {
+         quitprintf("!The character '%s' was turned on in the current room (room %d) but has not been assigned a view number.",
+@@ -2607,6 +2615,16 @@
+     chin.acty = atyp;
+     chex.zoom = zoom;
+     chex.zoom_offs = zoom_offs;
++#ifdef DOSAGS_LEVERCOUNT
++    {
++        static std::vector<std::array<int, 15>> last;
++        if (last.size() < (size_t)game.numcharacters) last.resize(game.numcharacters, std::array<int, 15>{{ -9999 }});
++        std::array<int, 15> now = {{ lc_in[0], lc_in[1], lc_in[2], lc_in[3], lc_in[4], lc_in[5], lc_in[6], lc_in[7], lc_in[8],
++            chex.width, chex.height, chin.actx, chin.acty, chex.zoom, chex.zoom_offs }};
++        if (last[charid] == now) DOS_LC(kLC_CharScaleSame);
++        last[charid] = now;
++    }
++#endif
+ }
+ 
+ #ifdef __DJGPP__
+@@ -2671,6 +2689,17 @@
+ int GetCharIDAtRoom(int x, int y, int hit_options)
+ #endif
+ {
++#ifdef DOSAGS_LEVERCOUNT
++    {
++        DOS_LC(kLC_CharIdAt);
++        static unsigned long at_tick = ~0ul; static int nk = 0; static int keys[32][3];
++        if (at_tick != dos_lc_tick) { at_tick = dos_lc_tick; nk = 0; }
++        bool rep = false;
++        for (int k = 0; k < nk; ++k) if (keys[k][0] == x && keys[k][1] == y && keys[k][2] == hit_options) rep = true;
++        if (rep) DOS_LC(kLC_CharIdAtRepeat);
++        else if (nk < 32) { keys[nk][0] = x; keys[nk][1] = y; keys[nk][2] = hit_options; ++nk; }
++    }
++#endif
+     const bool only_clickable = (hit_options & kHit_Interactable) != 0;
+     int cc,sppic,lowestyp=0,lowestwas=-1;
+     for (cc=0;cc<game.numcharacters;cc++) {
+@@ -2687,6 +2716,7 @@
+             continue;
+         }
+ 
++        DOS_LC(kLC_CharIdAtChars);
+         sppic=views[chin->view].loops[chin->loop].frames[chin->frame].pic;
+         int usewid = charextra[cc].width;
+         int usehit = charextra[cc].height;
+diff -ruN s6/Engine/ac/characterinfo_engine.cpp raw/Engine/ac/characterinfo_engine.cpp
+--- a/Engine/ac/characterinfo_engine.cpp	2026-11-06 03:36:07.105823589 -0800
++++ b/Engine/ac/characterinfo_engine.cpp	2026-11-06 03:36:01.365905418 -0800
+@@ -12,6 +12,7 @@
+ //
+ //=============================================================================
+ #include "ac/characterinfo.h"
++#include "main/dos_levercount.h" // DOS-PORT 0359 probe (lab only)
+ #include "ac/common.h"
+ #include "ac/gamesetupstruct.h"
+ #include "ac/global_game.h" // GetGameSpeed
+@@ -73,6 +74,7 @@
+ // Fixups loop and frame values, in case any of them are set to a value out of the valid range
+ static void FixupCharacterLoopAndFrame(CharacterInfo *chi, bool switch_from_bad_loop = true)
+ {
++    DOS_LC(kLC_FixupLoop);
+     // If current loop property exceeds number of loops,
+     // or if selected loop has no frames, then try select any first loop that has frames.
+     // NOTE: although this may seem like a weird solution to a problem,
+@@ -106,6 +108,7 @@
+ void UpdateCharacterMoveAndAnim(CharacterInfo *chi, CharacterExtras *chex, std::vector<int> &followingAsSheep)
+ {
+     if (chi->on != 1) return;
++    DOS_LC(kLC_MoveAndAnim);
+     
+     // Update turning
+     bool is_turning = UpdateCharacterTurning(chi, chex);
+@@ -197,6 +200,7 @@
+ 
+ void UpdateCharacterMoving(CharacterInfo *chi, CharacterExtras *chex, int &doing_nothing)
+ {
++    DOS_LC(kLC_Moving);
+     if (chi->is_moving() && (chi->room == displayed_room))
+     {
+       const bool was_move_direct = mls[chi->get_movelist_id()].IsStageDirect();
+@@ -292,6 +296,7 @@
+ 
+ bool UpdateCharacterAnimating(CharacterInfo *chi, CharacterExtras *chex, int &doing_nothing)
+ {
++    DOS_LC(kLC_Animating);
+ 	// not moving, but animating
+     if (((chi->is_animating()) || (chi->is_idling())) &&
+         (!chi->is_moving() || chi->is_moving_no_anim()) &&
+@@ -382,6 +387,7 @@
+ 
+ void UpdateCharacterFollower(CharacterInfo *chi, std::vector<int> &followingAsSheep, int &doing_nothing)
+ {
++    DOS_LC(kLC_Follower);
+     const CharacterExtras *chex = &charextra[chi->index_id];
+     const int following = chex->following;
+     const int distaway  = chex->follow_dist;
+@@ -466,6 +472,7 @@
+ 
+ void UpdateCharacterIdle(CharacterInfo *chi, CharacterExtras *chex, int &doing_nothing)
+ {
++    DOS_LC(kLC_Idle);
+ 	// no idle animation, so skip this bit
+     if (chi->idleview < 1) ;
+     // currently playing idle anim
+diff -ruN s6/Engine/ac/global_gui.cpp raw/Engine/ac/global_gui.cpp
+--- a/Engine/ac/global_gui.cpp	2026-11-06 03:36:07.101823646 -0800
++++ b/Engine/ac/global_gui.cpp	2026-11-06 03:36:01.361905474 -0800
+@@ -21,6 +21,7 @@
+ #include "ac/gamestate.h"
+ #include "ac/global_game.h"
+ #include "ac/global_gui.h"
++#include "main/dos_levercount.h" // DOS-PORT 0359 probe (lab only)
+ #include "ac/gui.h"
+ #include "ac/guicontrol.h"
+ #include "ac/mouse.h"
+@@ -288,6 +289,7 @@
+ 
+ int GetGUIAt(int x,int y, int hit_options)
+ {
++    DOS_LC(kLC_GuiAt);
+     const bool only_clickable = (hit_options & kHit_Interactable) != 0;
+     data_to_game_coords(&x, &y);
+     // Test in the opposite order (from closer to further)
+diff -ruN s6/Engine/debug/debug.cpp raw/Engine/debug/debug.cpp
+--- a/Engine/debug/debug.cpp	2026-11-06 03:36:07.113823475 -0800
++++ b/Engine/debug/debug.cpp	2026-11-06 03:36:01.365905418 -0800
+@@ -26,6 +26,7 @@
+ #include "ac/runtime_defines.h"
+ #include "debug/agseditordebugger.h"
+ #include "debug/debug_log.h"
++#include "main/dos_levercount.h" // DOS-PORT 0359 probe (lab only)
+ #include "debug/debugger.h"
+ #include "debug/debugmanager.h"
+ #include "debug/out.h"
+@@ -391,6 +392,7 @@
+ // Prepends message text with current room number and running script info, then logs result
+ static void debug_script_print_impl(const String &msg, MessageType mt)
+ {
++    DOS_LC(kLC_DbgScriptPrint);
+     String script_ref;
+     ccInstance *curinst = ccInstance::GetCurrentInstance();
+     if (curinst != nullptr)
+diff -ruN s6/Engine/main/dos_levercount.h raw/Engine/main/dos_levercount.h
+--- a/Engine/main/dos_levercount.h	1969-12-31 16:00:00.000000000 -0800
++++ b/Engine/main/dos_levercount.h	2026-11-06 03:36:01.361905474 -0800
+@@ -0,0 +1,29 @@
++// DOS-PORT patch 0359 probe (LAB ONLY, make AGS_RUNSTATS_DEF=-DDOSAGS_LEVERCOUNT): calls-per-tick counts for
++// the levers outside the VM (MMD-REMAINDER.md levers 1, 2, 3, 4). Never in a measured binary.
++#ifndef DOS_LEVERCOUNT_H
++#define DOS_LEVERCOUNT_H
++#ifdef DOSAGS_LEVERCOUNT
++enum
++{
++    kLC_Fmt,            // String::FromFormatV / FormatV (each is two vsnprintf passes)
++    kLC_DbgScriptPrint, // debug_script_print_impl (debug_script_log / _warn / _print)
++    kLC_DbgPrint,       // DebugManager::Print (every Debug::Printf, already formatted)
++    kLC_ScriptSprintf,  // ScriptSprintf (StrFormat, String.Format, ...)
++    kLC_CharIdAt,       // GetCharIDAtRoom
++    kLC_CharIdAtRepeat, // ... with the same (x, y, hit_options) as an earlier call in the same tick
++    kLC_CharIdAtChars,  // ... characters that reach the sprite test
++    kLC_CharScale,      // update_character_scale (past its on/room check)
++    kLC_CharScaleSame,  // ... with inputs AND outputs equal to that character's previous call
++    kLC_FixupLoop,      // FixupCharacterLoopAndFrame
++    kLC_MoveAndAnim,    // UpdateCharacterMoveAndAnim (past its on check)
++    kLC_Follower, kLC_Idle, kLC_Animating, kLC_Moving,
++    kLC_GuiAt,          // GetGUIAt
++    kLC_Count
++};
++extern unsigned long dos_lc[kLC_Count];
++extern unsigned long dos_lc_tick;
++#define DOS_LC(i) (++dos_lc[(i)])
++#else
++#define DOS_LC(i)
++#endif
++#endif
+diff -ruN s6/Engine/main/game_run.cpp raw/Engine/main/game_run.cpp
+--- a/Engine/main/game_run.cpp	2026-11-06 03:36:01.389905075 -0800
++++ b/Engine/main/game_run.cpp	2026-11-06 03:36:01.361905474 -0800
+@@ -1329,9 +1329,29 @@
+ }
+ #endif
+ 
++#ifdef DOSAGS_LEVERCOUNT
++#include "main/dos_levercount.h"
++unsigned long dos_lc[kLC_Count];
++unsigned long dos_lc_tick = 0;
++static void dp_levercount()
++{
++    dos_lc_tick = GameTimer.LoopCounter;
++    if (dos_lc_tick % 250 != 0) return;
++    Debug::Printf("DOS-PORT levercount tick=%lu fmt=%lu dbgscript=%lu dbgprint=%lu scriptsprintf=%lu charidat=%lu charidat_repeat=%lu"
++        " charidat_chars=%lu charscale=%lu charscale_same=%lu fixuploop=%lu moveandanim=%lu follower=%lu idle=%lu animating=%lu"
++        " moving=%lu guiat=%lu", dos_lc_tick, dos_lc[kLC_Fmt], dos_lc[kLC_DbgScriptPrint], dos_lc[kLC_DbgPrint],
++        dos_lc[kLC_ScriptSprintf], dos_lc[kLC_CharIdAt], dos_lc[kLC_CharIdAtRepeat], dos_lc[kLC_CharIdAtChars],
++        dos_lc[kLC_CharScale], dos_lc[kLC_CharScaleSame], dos_lc[kLC_FixupLoop], dos_lc[kLC_MoveAndAnim], dos_lc[kLC_Follower],
++        dos_lc[kLC_Idle], dos_lc[kLC_Animating], dos_lc[kLC_Moving], dos_lc[kLC_GuiAt]);
++}
++#endif
++
+ static void game_loop_update_loop_counter()
+ {
+     GameTimer.LoopCounter++;
++#ifdef DOSAGS_LEVERCOUNT
++    dp_levercount(); // patch 0360 probe, LAB ONLY
++#endif
+ #ifdef DOSAGS_VMTRACE
+     dp_statewit(); // patch 0360, LAB ONLY
+ #endif
+diff -ruN s6/Engine/script/script_api.cpp raw/Engine/script/script_api.cpp
+--- a/Engine/script/script_api.cpp	2026-11-06 03:36:07.109823532 -0800
++++ b/Engine/script/script_api.cpp	2026-11-06 03:36:01.365905418 -0800
+@@ -19,6 +19,7 @@
+ #include "script/cc_common.h"
+ #include "script/runtimescriptvalue.h"
+ #include "script/script_api.h"
++#include "main/dos_levercount.h" // DOS-PORT 0359 probe (lab only)
+ 
+ using namespace AGS::Common;
+ 
+@@ -130,6 +131,7 @@
+ size_t ScriptSprintf(char *buffer, size_t buf_length, const char *format,
+                           const RuntimeScriptValue *sc_args, int32_t sc_argc, va_list *varg_ptr)
+ {
++    DOS_LC(kLC_ScriptSprintf);
+     assert((!buffer && buf_length == 0u) || (buffer && buf_length > 0u));
+     assert(format);
+     assert(sc_args || varg_ptr || sc_argc == 0);

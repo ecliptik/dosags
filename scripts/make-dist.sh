@@ -28,6 +28,8 @@ while [[ $# -gt 0 ]]; do
 done
 die() { echo "make-dist: $*" >&2; exit 1; }
 [[ "$VERSION" =~ ^[A-Za-z0-9._-]+$ ]] || die "bad --version '$VERSION'"
+# The zip step runs inside the staged tree, so a relative --out must be made absolute first.
+mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 
 EXE=build/ags-release/ags.exe
 CWS_EXE=vendor/cwsdpmi/cwsdpmi.exe
@@ -35,7 +37,10 @@ CWS_DOC=vendor/cwsdpmi/cwsdpmi.doc
 AGS_LIC=vendor/ags/License.txt
 AGS_COPY=vendor/ags/Copyright.txt
 FTL=vendor/ags/Common/libsrc/freetype-2.1.3/docs/FTL.txt
-for f in "$EXE" "$CWS_EXE" "$CWS_DOC" "$AGS_LIC" "$AGS_COPY" "$FTL" LICENSE THIRD-PARTY.md docs/dist/README.TXT; do
+OPL3BANK=.sdl-dos-ports/shared/audio/opl3bank.dat
+OPL3BANK_SHA=8c7a17a017a213f5f4c63a631fa2eb06b33640b1c49e5e3faf0eb203d25a354b
+DMXOPL_LIC=docs/dist/licenses/DMXOPL-LICENSE.txt
+for f in "$EXE" "$CWS_EXE" "$CWS_DOC" "$AGS_LIC" "$AGS_COPY" "$FTL" "$OPL3BANK" "$DMXOPL_LIC" LICENSE THIRD-PARTY.md docs/dist/README.TXT; do
     [[ -s "$f" ]] || die "missing $f"
 done
 # The CWSDPMI bytes are pinned (vendor/binaries.manifest): refuse anything else.
@@ -44,6 +49,9 @@ while read -r path _url sha; do
     got=$(sha256sum "$path" | cut -d' ' -f1)
     [[ "$got" == "$sha" ]] || die "$path sha256 $got does not match vendor/binaries.manifest ($sha)"
 done < vendor/binaries.manifest
+
+# The OPL3 bank is the hub's DMXOPL-generated file (THIRD-PARTY.md / LICENSE-REVIEW.md); refuse other bytes.
+[[ "$(sha256sum "$OPL3BANK" | cut -d' ' -f1)" == "$OPL3BANK_SHA" ]] || die "$OPL3BANK is not the reviewed bank ($OPL3BANK_SHA)"
 
 # The release exe must come from a clean, release-flavour build of the
 # recorded patch series.
@@ -62,6 +70,7 @@ crlf() { sed 's/\r$//; s/$/\r/'; }
 
 install -m 0644 "$EXE"     "$STAGE/AGS.EXE"
 install -m 0644 "$CWS_EXE" "$STAGE/CWSDPMI.EXE"
+install -m 0644 "$OPL3BANK" "$STAGE/OPL3BANK.DAT"
 crlf < "$CWS_DOC"  > "$STAGE/CWSDPMI.DOC"
 crlf < LICENSE     > "$STAGE/LICENSE.TXT"
 crlf < "$AGS_LIC"  > "$STAGE/ARTISTIC.TXT"
@@ -100,6 +109,8 @@ use, modify, redistribute, and generally hack it about in any way you
 like, and you do not have to give us anything in return." Thanks to the
 Allegro developers. See LICENSE-REVIEW.md in the source repository.
 EOF
+    sect "OPL3BANK.DAT: DMXOPL GM FM bank (MIT) -- github.com/sneakernets/DMXOPL @ e83c144a2e6d, LICENSE"
+    cat "$DMXOPL_LIC"
     sect "sdl-dos-ports shared modules (MIT) -- .sdl-dos-ports/LICENSE"
     cat .sdl-dos-ports/LICENSE
     sect "DJGPP C library and GCC runtime"

@@ -1,0 +1,686 @@
+From fae8503b2abfbc0f802c00e1c50bde5d470bbbe7 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 6 Nov 2026 03:36:30 -0800
+Subject: [PATCH 361/365] DOS-PORT: patch 0361 -- script VM slice 3: six
+ superinstructions and two divisions off the hot path
+
+MMD's hottest instruction sequences, each fused into one handler that lives in the opcode slot of
+its first instruction (entering the group anywhere else runs the single handlers, so jumps into a
+group stay exact): farcall (farpush; setfuncargs; movl ax,IMPORT; farcall; farsubsp), localload and
+localstore (mov sp,mar; subi mar,K; memread4/memwrite4), pushmovlpop, popbinmov (pop bx; sub|add|
+cmpeq|gte; mov bx,ax) and cmpmovjz. DOSAGS_VM_FUSE=<mask> selects them (default all six, 0x3F;
+fastnofuse/fastgeneric use none). Two divisions by sizeof(...) go: SystemImports::GetByIndexFast()
+compares byte offsets instead, and the far-call stack pop count is computed without a division.
+
+Lab-only (-DDOSAGS_VMTRACE): DOSAGS_VM_SHADOW=1 replays every superinstruction through the stepper
+on a snapshot and compares; the line/call-point digest (vmsync, folded at sourceline, farcall, call
+and ret) is the comparison for fused arms, whose per-instruction trace differs by construction.
+
+Lab (docs/lab/VM-SLICE3.md): shadow 0 mismatches over ~4.66M superinstruction executions; digests
+EQUAL on the four fixtures; aq-journeys 10/10; MMD CS 9.256 -> 4.308 ms/tick at fixed 40k (2.15x).
+486: round E 91.52 / 91.56% displayed (slice 2 86.94%); round C4 falsified the 8 KB cache suspect
+(masks 0x3F/0x03/0x00: 90.16 / 88.72 / 87.52%), so all six stay.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P4db4MSiR2PYUDFdrDdJe2
+---
+ Engine/main/game_run.cpp         |  15 +-
+ Engine/script/cc_instance.h      |   8 +
+ Engine/script/cc_instance_vm.cpp | 452 ++++++++++++++++++++++++++++++-
+ Engine/script/systemimports.h    |  14 +
+ 4 files changed, 480 insertions(+), 9 deletions(-)
+
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index dcddb44a5..c37c22f06 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1275,8 +1275,9 @@ static void game_loop_update_background_animation()
+ // DOS-PORT patch 0360, LAB ONLY (make AGS_RUNSTATS_DEF=-DDOSAGS_VMTRACE): the determinism witness
+ // of LAB-MMD probe 0292 (state digests every 25 ticks; DOSAGS_WIT_PERTURB_TICK=N nudges the player
+ // one pixel at tick N, the control) carrying the VM trace digest of cc_instance_vm.cpp.
+-extern uint32_t dos_vmtrace_h, dos_vmtrace_tick;
+-extern unsigned long dos_vmtrace_n;
++extern uint32_t dos_vmtrace_h, dos_vmtrace_tick, dos_vmsync_h;
++extern unsigned long dos_vmtrace_n, dos_vmsync_n, dos_vmshadow_n, dos_vmshadow_bad;
++extern unsigned long dos_vmfuse_n[];
+ static uint32_t dp_fnv(uint32_t h, const void *p, size_t n)
+ {
+     const uint8_t *b = static_cast<const uint8_t*>(p);
+@@ -1313,10 +1314,16 @@ static void dp_statewit()
+     if (gameinst) { const auto &g = gameinst->GetGlobalData(); if (!g.empty()) hd = dp_fnv(hd, g.data(), g.size()); }
+     if (roominst) { const auto &r = roominst->GetGlobalData(); if (!r.empty()) hr = dp_fnv(hr, r.data(), r.size()); }
+     const int pc = game.playercharacter;
+-    Debug::Printf("DOS-PORT statewit tick=%lu room=%d chars=%08lx objs=%08lx gints=%08lx gdata=%08lx rdata=%08lx player=%d,%d vmtrace=%08lx vmops=%lu",
++    // slice 3: vmsync = the line/call-point digest; fz = superinstruction executions (farcall,
++    // localload, localstore, pushmovlpop, popbinmov, cmpmovjz); shadow = checks/mismatches
++    const unsigned long *fz = dos_vmfuse_n; // indices: kVmH_SFarCall.. in cc_instance_vm.cpp (41..54)
++    Debug::Printf("DOS-PORT statewit tick=%lu room=%d chars=%08lx objs=%08lx gints=%08lx gdata=%08lx rdata=%08lx player=%d,%d vmtrace=%08lx vmops=%lu"
++        " vmsync=%08lx syncn=%lu fz=%lu,%lu,%lu,%lu,%lu,%lu shadow=%lu/%lu",
+         (unsigned long)tick, displayed_room, (unsigned long)hc, (unsigned long)ho, (unsigned long)hg,
+         (unsigned long)hd, (unsigned long)hr, pc >= 0 ? game.chars[pc].x : -1, pc >= 0 ? game.chars[pc].y : -1,
+-        (unsigned long)dos_vmtrace_h, dos_vmtrace_n);
++        (unsigned long)dos_vmtrace_h, dos_vmtrace_n, (unsigned long)dos_vmsync_h, dos_vmsync_n,
++        fz[41], fz[42], fz[43], fz[44], fz[45] + fz[46] + fz[47] + fz[48],
++        fz[49] + fz[50] + fz[51] + fz[52] + fz[53] + fz[54], dos_vmshadow_n, dos_vmshadow_bad);
+ }
+ #endif
+ 
+diff --git a/Engine/script/cc_instance.h b/Engine/script/cc_instance.h
+index 896d567a0..fabfb551c 100644
+--- a/Engine/script/cc_instance.h
++++ b/Engine/script/cc_instance.h
+@@ -32,6 +32,7 @@
+ using namespace AGS;
+ #ifdef __DJGPP__
+ struct DosVmFrame; // DOS-PORT patch 0360, cc_instance_vm.cpp
++struct DosVmSnap;  // (lab only, -DDOSAGS_VMTRACE)
+ #endif
+ 
+ #define INSTF_SHAREDATA     1
+@@ -203,6 +204,13 @@ public:
+ #ifdef DOSAGS_VMTRACE
+     // LAB ONLY: fold the VM state before an instruction into the trace digest
+     void    DosVmTraceFold(const ccInstance *codeInst, int32_t pc, int32_t op) const;
++    void    DosVmTraceFoldState(const ccInstance *codeInst, int32_t pc, int32_t op) const;
++    void    DosVmSyncFold(const ccInstance *codeInst, int32_t pc, int32_t op) const;
++    static bool DosVmShadowOn();
++    void    DosVmShadowBegin(const DosVmFrame &fr);
++    void    DosVmShadowEnd(DosVmFrame &fr, int32_t pc0, int k);
++    void    DosVmSnapTake(DosVmSnap &sn, const DosVmFrame &fr) const;
++    void    DosVmSnapPut(const DosVmSnap &sn, DosVmFrame &fr);
+ #endif
+ #endif
+ 
+diff --git a/Engine/script/cc_instance_vm.cpp b/Engine/script/cc_instance_vm.cpp
+index 26fbaf45c..c4305ff35 100644
+--- a/Engine/script/cc_instance_vm.cpp
++++ b/Engine/script/cc_instance_vm.cpp
+@@ -84,11 +84,16 @@ enum DosVmHandler
+     kVmH_Jz, kVmH_Jnz, kVmH_Jmp, kVmH_Push, kVmH_Pop, kVmH_Mul, kVmH_CallExt, kVmH_PushReal,
+     kVmH_SubRealStack, kVmH_NumFuncArgs, kVmH_ThisBase, kVmH_CheckBounds, kVmH_CheckNull,
+     kVmH_CheckNullReg,
++    // slice 3: superinstructions (VM-DESIGN 2.6)
++    kVmH_SFarCall, kVmH_SLocalLoad, kVmH_SLocalStore, kVmH_SPushMovlPop,
++    kVmH_SPopSubMov, kVmH_SPopAddMov, kVmH_SPopEqMov, kVmH_SPopGteMov,
++    kVmH_SEqJz, kVmH_SNeJz, kVmH_SGtJz, kVmH_SLtJz, kVmH_SGteJz, kVmH_SLteJz,
+     kVmH_Count
+ };
+ 
+ static const void *s_vm_handlers[kVmH_Count];
+ static bool s_vm_handlers_ready = false;
++static bool s_vm_nofuse = false; // DOSAGS_VM=fastnofuse
+ 
+ static inline intptr_t VmKind(int op, int variant) { return static_cast<intptr_t>(op | (variant << 8)); }
+ static inline unsigned long UclockUs(uclock_t d) { return static_cast<unsigned long>((d * 1000000LL) / UCLOCKS_PER_SEC); }
+@@ -127,7 +132,8 @@ int ccInstance::DosVmMode()
+         mode = kDosVm_Legacy;
+         if (e && strcmp(e, "decode") == 0) mode = kDosVm_Decode;
+         else if (e && strcmp(e, "check") == 0) mode = kDosVm_Check;
+-        else if (e && (strcmp(e, "fast") == 0 || strcmp(e, "fastnofuse") == 0)) mode = kDosVm_Fast;
++        else if (e && strcmp(e, "fast") == 0) mode = kDosVm_Fast;
++        else if (e && strcmp(e, "fastnofuse") == 0) { mode = kDosVm_Fast; s_vm_nofuse = true; }
+         else if (e && strcmp(e, "fastgeneric") == 0) mode = kDosVm_FastGeneric;
+         if (e && *e)
+             Debug::Printf("DOS-PORT vmmode DOSAGS_VM=%s mode=%d", e, mode);
+@@ -235,6 +241,115 @@ static inline intptr_t VmHandlerOf(intptr_t kind)
+     return reinterpret_cast<intptr_t>(s_kind_handler[(kind & 0xFF) * (kVmV_Slow + 1) + ((kind >> 8) & 0xFF)]);
+ }
+ 
++
++// ---- slice 3: superinstructions -------------------------------------------------------------
++// DOSAGS_VM_FUSE=<mask> (default all in fast mode; 0 in fastnofuse/fastgeneric) selects them:
++enum
++{
++    kVmF_FarCall    = 0x01, // farpush ax; setfuncargs N; movl ax,IMPORT; farcall ax; farsubsp M
++    kVmF_LocalLoad  = 0x02, // mov sp,mar; subi mar,K; memread4 R
++    kVmF_LocalStore = 0x04, // mov sp,mar; subi mar,K; memwrite4 R
++    kVmF_PushMovlPop= 0x08, // push ax; movl ax,L (no fixup / FUNCTION); pop bx
++    kVmF_PopBinMov  = 0x10, // pop bx; sub|add|cmpeq|gte bx,ax; mov bx,ax
++    kVmF_CmpMovJz   = 0x20, // cmpeq|cmpne|gt|lt|gte|lte bx,ax; mov bx,ax; jzi (valid target)
++    kVmF_All        = 0x3F
++};
++static unsigned VmFuseMask()
++{
++    static int m = -1;
++    if (m < 0)
++    {
++        const char *e = getenv("DOSAGS_VM_FUSE");
++        m = e ? static_cast<int>(strtol(e, nullptr, 0)) & kVmF_All : kVmF_All;
++        if (s_vm_nofuse || ccInstance::DosVmMode() == ccInstance::kDosVm_FastGeneric)
++            m = 0;
++        if (ccInstance::DosVmMode() >= ccInstance::kDosVm_Fast)
++            Debug::Printf("DOS-PORT vmfuse mask=0x%02x", m);
++    }
++    return static_cast<unsigned>(m);
++}
++
++// A superinstruction lives in the opcode slot of its FIRST instruction; every constituent keeps its
++// own single handler in its own slot, so entering the group anywhere but its start runs the singles.
++// Operands are read from the constituents' own decoded slots (by opcode, VM-DESIGN 2.2).
++static void VmFusePass(const intptr_t *code, const uint8_t *fix, intptr_t *dc, const uint32_t *starts,
++    uint32_t n, const char *name)
++{
++    const unsigned mask = VmFuseMask();
++    if (!mask) return;
++    unsigned long sites[kVmH_Count] = { 0 };
++#define OPAT(p) static_cast<int>(code[(p)] & INSTANCE_ID_REMOVEMASK)
++#define ISSTART(p) ((starts[(p) >> 5] >> ((p) & 31)) & 1u)
++    for (uint32_t pc = 0; pc < n; pc += 1 + s_argc[OPAT(pc)])
++    {
++        const int op0 = OPAT(pc);
++        int h = -1;
++        if ((mask & kVmF_FarCall) && op0 == SCMD_PUSHREAL && pc + 10 < n && code[pc + 1] == SREG_AX &&
++            OPAT(pc + 2) == SCMD_NUMFUNCARGS && code[pc + 3] >= 0 &&
++            OPAT(pc + 4) == SCMD_LITTOREG && code[pc + 5] == SREG_AX && fix[pc + 6] == FIXUP_IMPORT &&
++            OPAT(pc + 7) == SCMD_CALLEXT && code[pc + 8] == SREG_AX &&
++            OPAT(pc + 9) == SCMD_SUBREALSTACK && code[pc + 10] >= 0)
++            h = kVmH_SFarCall;
++        else if ((mask & (kVmF_LocalLoad | kVmF_LocalStore)) && op0 == SCMD_REGTOREG && pc + 7 < n &&
++            code[pc + 1] == SREG_SP && code[pc + 2] == SREG_MAR &&
++            OPAT(pc + 3) == SCMD_SUB && code[pc + 4] == SREG_MAR &&
++            (code[pc + 7] == SREG_AX || code[pc + 7] == SREG_BX || code[pc + 7] == SREG_CX || code[pc + 7] == SREG_DX))
++        {
++            if ((mask & kVmF_LocalLoad) && OPAT(pc + 6) == SCMD_MEMREAD) h = kVmH_SLocalLoad;
++            else if ((mask & kVmF_LocalStore) && OPAT(pc + 6) == SCMD_MEMWRITE) h = kVmH_SLocalStore;
++        }
++        else if ((mask & kVmF_PushMovlPop) && op0 == SCMD_PUSHREG && pc + 6 < n && code[pc + 1] == SREG_AX &&
++            OPAT(pc + 2) == SCMD_LITTOREG && code[pc + 3] == SREG_AX &&
++            (fix[pc + 4] == FIXUP_NOFIXUP || fix[pc + 4] == FIXUP_FUNCTION) &&
++            OPAT(pc + 5) == SCMD_POPREG && code[pc + 6] == SREG_BX)
++            h = kVmH_SPushMovlPop;
++        else if ((mask & kVmF_PopBinMov) && op0 == SCMD_POPREG && pc + 7 < n && code[pc + 1] == SREG_BX &&
++            code[pc + 3] == SREG_BX && code[pc + 4] == SREG_AX &&
++            OPAT(pc + 5) == SCMD_REGTOREG && code[pc + 6] == SREG_BX && code[pc + 7] == SREG_AX)
++        {
++            switch (OPAT(pc + 2))
++            {
++            case SCMD_SUBREG:  h = kVmH_SPopSubMov; break;
++            case SCMD_ADDREG:  h = kVmH_SPopAddMov; break;
++            case SCMD_ISEQUAL: h = kVmH_SPopEqMov; break;
++            case SCMD_GTE:     h = kVmH_SPopGteMov; break;
++            default: break;
++            }
++        }
++        else if ((mask & kVmF_CmpMovJz) && pc + 7 < n && code[pc + 1] == SREG_BX && code[pc + 2] == SREG_AX &&
++            OPAT(pc + 3) == SCMD_REGTOREG && code[pc + 4] == SREG_BX && code[pc + 5] == SREG_AX &&
++            OPAT(pc + 6) == SCMD_JZ)
++        {
++            const long long target = static_cast<long long>(pc) + 6 + 2 + code[pc + 7];
++            if (target >= 0 && target < n && ISSTART(static_cast<uint32_t>(target)))
++            {
++                switch (op0)
++                {
++                case SCMD_ISEQUAL:  h = kVmH_SEqJz; break;
++                case SCMD_NOTEQUAL: h = kVmH_SNeJz; break;
++                case SCMD_GREATER:  h = kVmH_SGtJz; break;
++                case SCMD_LESSTHAN: h = kVmH_SLtJz; break;
++                case SCMD_GTE:      h = kVmH_SGteJz; break;
++                case SCMD_LTE:      h = kVmH_SLteJz; break;
++                default: break;
++                }
++            }
++        }
++        if (h >= 0)
++        {
++            dc[pc] = reinterpret_cast<intptr_t>(s_vm_handlers[h]);
++            ++sites[h];
++        }
++    }
++#undef OPAT
++#undef ISSTART
++    Debug::Printf("DOS-PORT vmfusesites script=%s farcall=%lu localload=%lu localstore=%lu pushmovlpop=%lu"
++        " popbinmov=%lu cmpmovjz=%lu", name, sites[kVmH_SFarCall], sites[kVmH_SLocalLoad], sites[kVmH_SLocalStore],
++        sites[kVmH_SPushMovlPop],
++        sites[kVmH_SPopSubMov] + sites[kVmH_SPopAddMov] + sites[kVmH_SPopEqMov] + sites[kVmH_SPopGteMov],
++        sites[kVmH_SEqJz] + sites[kVmH_SNeJz] + sites[kVmH_SGtJz] + sites[kVmH_SLtJz] + sites[kVmH_SGteJz] + sites[kVmH_SLteJz]);
++}
++
+ void ccInstance::DosVmDecode()
+ {
+     VmTableInit();
+@@ -401,6 +516,8 @@ void ccInstance::DosVmDecode()
+                     sd.dcode[pc] = VmHandlerOf(sd.dcode[pc]);
+         }
+     }
++    if (fast && sd.decoded_ok)
++        VmFusePass(_code, _code_fixups, sd.dcode.data(), sd.dstart.data(), n, _instanceof->GetScriptName().c_str());
+ }
+ 
+ // The legacy value of LITTOREG/WRITELIT's second argument: SetInt32(word), then FixupArgument
+@@ -570,6 +687,7 @@ struct DosVmCallStack
+         initial_count = std::max<size_t>(1u, initial_count);
+         _entries.resize(initial_count);
+         _head = _entries.data() + initial_count;
++        _end = _head;
+     }
+ 
+     inline RuntimeScriptValue *GetHead() { return _head; }
+@@ -584,10 +702,17 @@ struct DosVmCallStack
+             std::copy(_entries.begin(), _entries.begin() + _entries.size(), expansion.begin() + _entries.size());
+             _entries = std::move(expansion);
+             _head = _entries.data() + _entries.size() / 2;
++            _end = _entries.data() + _entries.size();
+         }
+         *(--_head) = value;
+     }
+ 
++    // slice 3: the same questions without the division by sizeof(RuntimeScriptValue)
++    // GetSize() >= n, for n >= 0
++    inline bool HasAtLeast(int32_t n) const { return _head + n <= _end; }
++    // PopCount(n) for n >= 0
++    inline void PopCountFast(int32_t n) { RuntimeScriptValue *h = _head + n; _head = (h > _end) ? _end : h; }
++
+     inline void PopCount(size_t count)
+     {
+         count = std::min(count, static_cast<size_t>(_entries.data() + _entries.size() - _head));
+@@ -596,6 +721,7 @@ struct DosVmCallStack
+ 
+     std::vector<RuntimeScriptValue> _entries;
+     RuntimeScriptValue *_head = nullptr;
++    RuntimeScriptValue *_end = nullptr; // _entries.data() + _entries.size()
+ };
+ 
+ // Every Run() local the fast loop does not keep in a register
+@@ -1812,6 +1938,23 @@ int ccInstance::DosVmStep(DosVmFrame &fr, int32_t pc)
+ #define VM_TRACE()
+ #endif
+ #define VM_DISPATCH() do { VM_TRACE(); goto *reinterpret_cast<const void*>(*ip); } while (0)
++#ifdef DOSAGS_VMTRACE
++// a superinstruction of K instructions: the trace counted its first one at dispatch; count the rest
++// (vmops stays an instruction count) and the superinstruction itself (vmfz)
++extern unsigned long dos_vmtrace_n, dos_vmfuse_n[kVmH_Count];
++#define VM_FUSED(H, K) do { dos_vmtrace_n += (K) - 1; dos_vmfuse_n[H]++; } while (0)
++#define VM_SHADOW_ON() (DosVmShadowOn())
++#define VM_SHADOW_BEGIN() const bool vm_shadow = DosVmShadowOn(); if (vm_shadow) DosVmShadowBegin(*fr)
++#define VM_SHADOW_END(PC0, K) if (vm_shadow) DosVmShadowEnd(*fr, (PC0), (K))
++#define VM_SYNC(PC, OP) DosVmSyncFold(fr->codeInst, (PC), (OP))
++#define VM_COUNT_MORE(N) (dos_vmtrace_n += (N))
++#else
++#define VM_COUNT_MORE(N)
++#define VM_FUSED(H, K)
++#define VM_SHADOW_BEGIN()
++#define VM_SHADOW_END(PC0, K)
++#define VM_SYNC(PC, OP)
++#endif
+ #define VM_NEXT(n) do { ip += (n); VM_DISPATCH(); } while (0)
+ #define VM_ABORTED_EXIT() if (_flags & INSTF_ABORTED) { _pc = VM_PC(); return kInstErr_None; }
+ #define VM_SP (_registers[SREG_SP])
+@@ -1827,7 +1970,10 @@ ccInstError ccInstance::DosVmLoop(DosVmFrame *fr, int32_t startpc)
+             &&h_greater, &&h_lessthan, &&h_gte, &&h_lte, &&h_and, &&h_or, &&h_xorreg, &&h_call,
+             &&h_jz, &&h_jnz, &&h_jmp, &&h_push, &&h_pop, &&h_mul, &&h_callext, &&h_pushreal,
+             &&h_subrealstack, &&h_numfuncargs, &&h_thisbase, &&h_checkbounds, &&h_checknull,
+-            &&h_checknullreg };
++            &&h_checknullreg,
++            &&h_s_farcall, &&h_s_localload, &&h_s_localstore, &&h_s_pushmovlpop,
++            &&h_s_popsubmov, &&h_s_popaddmov, &&h_s_popeqmov, &&h_s_popgtemov,
++            &&h_s_eqjz, &&h_s_nejz, &&h_s_gtjz, &&h_s_ltjz, &&h_s_gtejz, &&h_s_ltejz };
+         for (int i = 0; i < kVmH_Count; ++i)
+             s_vm_handlers[i] = tbl[i];
+         s_vm_handlers_ready = true;
+@@ -1963,7 +2109,7 @@ h_movl_str: // FIXUP_STRING: operand is _strings + offset
+     VM_NEXT(3);
+ h_movl_imp: // FIXUP_IMPORT: operand is the import index, looked up now as Run() does
+     {
+-        const ScriptImport *import = simp.GetByIndex(static_cast<uint32_t>(ip[2]));
++        const ScriptImport *import = simp.GetByIndexFast(static_cast<uint32_t>(ip[2]));
+         if (!import)
+             goto h_generic;
+         VM_REG(ip[1]) = import->Value;
+@@ -2194,9 +2340,9 @@ h_pushreal: // SCMD_PUSHREAL
+ h_subrealstack: // SCMD_SUBREALSTACK; the after-CALLAS case goes through the stepper
+     {
+         const int32_t arg_lit = static_cast<int32_t>(ip[1]);
+-        if (fr->fcs->GetSize() < static_cast<uint32_t>(arg_lit) || fr->was_just_callas >= 0)
++        if (arg_lit < 0 || !fr->fcs->HasAtLeast(arg_lit) || fr->was_just_callas >= 0)
+             goto h_generic;
+-        fr->fcs->PopCount(arg_lit);
++        fr->fcs->PopCountFast(arg_lit);
+         VM_NEXT(2);
+     }
+ h_numfuncargs: // SCMD_NUMFUNCARGS
+@@ -2222,6 +2368,155 @@ h_checknullreg: // SCMD_CHECKNULLREG
+         goto h_generic;
+     VM_NEXT(2);
+ 
++
++// ---- slice 3: superinstructions (VM-DESIGN 2.6). Check every precondition first; on a failure
++// leave through h_generic, which runs the FIRST constituent with Run()'s text and continues singly.
++h_s_farcall: // farpush ax; setfuncargs N; movl ax,IMPORT; farcall ax; farsubsp M   (2+2+3+2+2 words)
++    {
++        DosVmCallStack &fcs = *fr->fcs;
++        const int32_t nargs = static_cast<int32_t>(ip[3]);
++        const int32_t npop = static_cast<int32_t>(ip[10]);
++        const ScriptImport *import = simp.GetByIndexFast(static_cast<uint32_t>(ip[6]));
++        // after the push the stack holds one more value; farsubsp must find npop of them
++        if (!import || import->Value.Type != kScValStaticFunction || fr->next_call_needs_object ||
++            (npop > 0 && !fcs.HasAtLeast(npop - 1)))
++            goto h_generic;
++        RuntimeScriptValue &ax = _registers[SREG_AX];
++        VM_SHADOW_BEGIN();
++        fcs.Push(ax);                       // farpush ax
++        fr->num_args_to_func = nargs;       // setfuncargs N
++        ax = import->Value;                 // movl ax, IMPORT
++        VM_SHADOW_END(VM_PC(), 3);
++        VM_SYNC(VM_PC() + 7, SCMD_CALLEXT); // the farcall's own sync point, before the call
++        VM_FUSED(kVmH_SFarCall, 4);         // farpush..farcall counted before the call, as Run() traces them
++                                            // (a blocking call prints statewit lines from inside it)
++        // farcall ax: Run()'s CALLEXT for a static function without an object (checked above)
++        _pc = VM_PC() + 7;
++        fr->was_just_callas = -1;
++        for (RuntimeScriptValue *prval = fr->fcs->GetHead() + fr->num_args_to_func;
++            --prval >= fr->fcs->GetHead();)
++        {
++            if (prval->Type == kScValGlobalVar || prval->Type == kScValStackPtr || prval->Ptr != nullptr)
++                prval->DirectPtr();         // a no-op on every other value (runtimescriptvalue.cpp:201-219)
++        }
++        dos_port_work[kDW_ScriptExt]++;
++        const RuntimeScriptValue return_value = _registers[SREG_AX].SPfn(fr->fcs->GetHead(), fr->num_args_to_func);
++        if (cc_has_error())
++            return kInstErr_Generic;
++        _registers[SREG_AX] = return_value;
++        fr->next_call_needs_object = 0;
++        fr->num_args_to_func = -1;
++        ip += 9;                            // at farsubsp, where Run() tests the abort flag
++        VM_ABORTED_EXIT();
++        fr->fcs->PopCountFast(npop);        // farsubsp M (was_just_callas is -1)
++        VM_COUNT_MORE(1);
++        VM_NEXT(2);
++    }
++
++#define VM_LOCAL_WALK() \
++        RuntimeScriptValue &mar = _registers[SREG_MAR]; \
++        { \
++            const int32_t arg_lit = static_cast<int32_t>(ip[5]); \
++            int32_t total_off = 0; \
++            RuntimeScriptValue *stack_entry = VM_SP.RValue; \
++            while (total_off < arg_lit && stack_entry > _stackBegin) \
++            { \
++                stack_entry--; \
++                total_off += stack_entry->Size; \
++            } \
++            mar.SetStackPtr(stack_entry); \
++            mar.IValue += total_off - arg_lit; \
++        }
++h_s_localload: // mov sp,mar; subi mar,K; memread4 R   (3+3+2 words)
++    {
++        if (VM_SP.Type != kScValStackPtr) // mov makes MAR a copy of SP; subi walks only for a stack pointer
++            goto h_generic;
++        VM_SHADOW_BEGIN();
++        VM_LOCAL_WALK();
++        VM_REG(ip[7]) = mar.ReadValue();
++        VM_SHADOW_END(VM_PC(), 3);
++        VM_FUSED(kVmH_SLocalLoad, 3);
++        VM_NEXT(8);
++    }
++h_s_localstore: // mov sp,mar; subi mar,K; memwrite4 R
++    {
++        if (VM_SP.Type != kScValStackPtr)
++            goto h_generic;
++        VM_SHADOW_BEGIN();
++        VM_LOCAL_WALK();
++        mar.WriteValue(VM_REG(ip[7]));
++        VM_SHADOW_END(VM_PC(), 3);
++        VM_FUSED(kVmH_SLocalStore, 3);
++        VM_NEXT(8);
++    }
++#undef VM_LOCAL_WALK
++
++h_s_pushmovlpop: // push ax; movl ax,L; pop bx   (2+3+2 words)
++    {
++        RuntimeScriptValue *slot = VM_SP.RValue;
++        if ((slot + 1 - _stackBegin) >= CC_STACK_SIZE ||
++            (_stackdataPtr + sizeof(int32_t) - _stackdataBegin) >= CC_STACK_DATA_SIZE ||
++            VM_SP.Type != kScValStackPtr || slot->Type == kScValData)
++            goto h_generic;
++        VM_SHADOW_BEGIN();
++        RuntimeScriptValue &ax = _registers[SREG_AX];
++        RuntimeScriptValue &bx = _registers[SREG_BX];
++        bx = ax;                  // push ax (slot = ax, Size 4) ... pop bx (bx = slot)
++        bx.Size = 4;
++        slot->Invalidate();       // pop's Invalidate of the slot; SP and the data pointer end where they began
++        ax.SetInt32(static_cast<int32_t>(ip[4])); // movl ax, L
++        VM_SHADOW_END(VM_PC(), 3);
++        VM_FUSED(kVmH_SPushMovlPop, 3);
++        VM_NEXT(7);
++    }
++
++#define VM_POPBINMOV(LABEL, H, EXPR) \
++LABEL: /* pop bx; OP bx,ax; mov bx,ax   (2+3+3 words) */ \
++    { \
++        if (VM_SP.RValue - 1 < _stackBegin) \
++            goto h_generic; \
++        VM_SHADOW_BEGIN(); \
++        RuntimeScriptValue &reg1 = _registers[SREG_BX]; \
++        const RuntimeScriptValue &reg2 = _registers[SREG_AX]; \
++        RuntimeScriptValue *slot = VM_SP.RValue - 1; \
++        VM_SP.RValue = slot; \
++        _stackdataPtr -= sizeof(int32_t); \
++        reg1 = *slot; \
++        slot->Invalidate(); \
++        EXPR; \
++        _registers[SREG_AX] = reg1; \
++        VM_SHADOW_END(VM_PC(), 3); \
++        VM_FUSED(H, 3); \
++        VM_NEXT(8); \
++    }
++    VM_POPBINMOV(h_s_popsubmov, kVmH_SPopSubMov, reg1.IValue -= reg2.IValue)
++    VM_POPBINMOV(h_s_popaddmov, kVmH_SPopAddMov, reg1.IValue += reg2.IValue)
++    VM_POPBINMOV(h_s_popeqmov, kVmH_SPopEqMov, reg1.SetInt32AsBool(reg1 == reg2))
++    VM_POPBINMOV(h_s_popgtemov, kVmH_SPopGteMov, reg1.SetInt32AsBool(reg1.IValue >= reg2.IValue))
++#undef VM_POPBINMOV
++
++#define VM_CMPJZ(LABEL, H, COND) \
++LABEL: /* OP bx,ax; mov bx,ax; jzi d   (3+3+2 words; d is relative to the jzi slot) */ \
++    { \
++        VM_SHADOW_BEGIN(); \
++        RuntimeScriptValue &reg1 = _registers[SREG_BX]; \
++        const RuntimeScriptValue &reg2 = _registers[SREG_AX]; \
++        reg1.SetInt32AsBool(COND); \
++        _registers[SREG_AX] = reg1; \
++        VM_SHADOW_END(VM_PC(), 2); /* the jump moves no state; it is checked by the trace gates */ \
++        VM_FUSED(H, 3); \
++        if (_registers[SREG_AX].IsNull()) \
++            VM_NEXT(6 + ip[7]); \
++        VM_NEXT(8); \
++    }
++    VM_CMPJZ(h_s_eqjz, kVmH_SEqJz, reg1 == reg2)
++    VM_CMPJZ(h_s_nejz, kVmH_SNeJz, reg1 != reg2)
++    VM_CMPJZ(h_s_gtjz, kVmH_SGtJz, reg1.IValue > reg2.IValue)
++    VM_CMPJZ(h_s_ltjz, kVmH_SLtJz, reg1.IValue < reg2.IValue)
++    VM_CMPJZ(h_s_gtejz, kVmH_SGteJz, reg1.IValue >= reg2.IValue)
++    VM_CMPJZ(h_s_ltejz, kVmH_SLteJz, reg1.IValue <= reg2.IValue)
++#undef VM_CMPJZ
++
+ h_generic_untraced: // ip is at an instruction the trace has not seen yet (a non-start target)
+     VM_TRACE();
+ h_generic: // the instruction at ip, and any that follow until an instruction start, by the stepper
+@@ -2260,7 +2555,39 @@ uint32_t dos_vmtrace_h = 2166136261u;
+ unsigned long dos_vmtrace_n = 0;
+ uint32_t dos_vmtrace_tick = 0;
+ 
++unsigned long dos_vmfuse_n[kVmH_Count];
++uint32_t dos_vmsync_h = 2166136261u;
++unsigned long dos_vmsync_n = 0;
++unsigned long dos_vmshadow_n = 0, dos_vmshadow_bad = 0;
++
++// slice 3: the line/call-point digest -- the same fold, only at instructions where fused and
++// unfused execution coincide: sourceline, farcall, callscr, call, ret (a superinstruction never
++// contains one except farcall, whose fused handler folds it itself before the call)
++static inline bool IsSyncOp(int32_t op)
++{
++    return op == SCMD_LINENUM || op == SCMD_CALLEXT || op == SCMD_CALLAS || op == SCMD_CALL || op == SCMD_RET;
++}
++
++void ccInstance::DosVmSyncFold(const ccInstance *codeInst, int32_t pc, int32_t op) const
++{
++    const uint32_t keep_h = dos_vmtrace_h;
++    const unsigned long keep_n = dos_vmtrace_n;
++    dos_vmtrace_h = dos_vmsync_h;
++    DosVmTraceFoldState(codeInst, pc, op);
++    dos_vmsync_h = dos_vmtrace_h;
++    dos_vmsync_n++;
++    dos_vmtrace_h = keep_h;
++    dos_vmtrace_n = keep_n;
++}
++
+ void ccInstance::DosVmTraceFold(const ccInstance *codeInst, int32_t pc, int32_t op) const
++{
++    if (IsSyncOp(op))
++        DosVmSyncFold(codeInst, pc, op);
++    DosVmTraceFoldState(codeInst, pc, op);
++}
++
++void ccInstance::DosVmTraceFoldState(const ccInstance *codeInst, int32_t pc, int32_t op) const
+ {
+     uint32_t h = dos_vmtrace_h;
+ #define VT(v) h = (h ^ static_cast<uint32_t>(v)) * 16777619u
+@@ -2302,6 +2629,121 @@ bool dos_vmtrace_control_fire()
+     done = true;
+     return true;
+ }
++
++// slice 3: the shadow check (LAB ONLY, DOSAGS_VM_SHADOW=1 in a -DDOSAGS_VMTRACE build). At a
++// superinstruction: snapshot the VM state (S0), run it natively (S1), restore S0, run its
++// constituents one by one with DosVmStep -- Run()'s own text -- (S2), compare S1 with S2 field for
++// field, count a mismatch, and go on from S2. State: the 8 registers, the stack entries up to two
++// past SP, the stack data up to 8 bytes past its pointer, the frame's scalars and arrays, the
++// engine-call argument stack (content and position), the call-stack depth and the line numbers.
++struct DosVmSnap
++{
++    RuntimeScriptValue regs[CC_NUM_REGISTERS];
++    std::vector<RuntimeScriptValue> stack;
++    std::vector<uint8_t> data;
++    uint8_t *dataptr = nullptr;
++    DosVmFrame frame;
++    std::vector<RuntimeScriptValue> fcs_entries;
++    ptrdiff_t fcs_head = 0, fcs_end = 0;
++    uint32_t callsz = 0;
++    int line = 0, curline = 0;
++};
++static DosVmSnap s_snap0, s_snap1, s_snap2;
++static size_t s_snap_stackn = 0, s_snap_datan = 0;
++
++bool ccInstance::DosVmShadowOn()
++{
++    static int on = -1;
++    if (on < 0) { const char *e = getenv("DOSAGS_VM_SHADOW"); on = (e && e[0] == '1') ? 1 : 0; }
++    return on != 0;
++}
++
++void ccInstance::DosVmSnapTake(DosVmSnap &sn, const DosVmFrame &fr) const
++{
++    for (int i = 0; i < CC_NUM_REGISTERS; ++i) sn.regs[i] = _registers[i];
++    sn.stack.assign(_stackBegin, _stackBegin + s_snap_stackn);
++    sn.data.assign(_stackdataBegin, _stackdataBegin + s_snap_datan);
++    sn.dataptr = _stackdataPtr;
++    sn.frame = fr;
++    sn.fcs_entries = fr.fcs->_entries;
++    sn.fcs_head = fr.fcs->_head - fr.fcs->_entries.data();
++    sn.fcs_end = fr.fcs->_end - fr.fcs->_entries.data();
++    sn.callsz = _callStackSize;
++    sn.line = _lineNumber;
++    sn.curline = currentline;
++}
++
++void ccInstance::DosVmSnapPut(const DosVmSnap &sn, DosVmFrame &fr)
++{
++    for (int i = 0; i < CC_NUM_REGISTERS; ++i) _registers[i] = sn.regs[i];
++    std::copy(sn.stack.begin(), sn.stack.end(), _stackBegin);
++    std::copy(sn.data.begin(), sn.data.end(), _stackdataBegin);
++    _stackdataPtr = sn.dataptr;
++    DosVmCallStack *fcs = fr.fcs;
++    fr = sn.frame;
++    fr.fcs = fcs;
++    fcs->_entries = sn.fcs_entries;
++    fcs->_head = fcs->_entries.data() + sn.fcs_head;
++    fcs->_end = fcs->_entries.data() + sn.fcs_end;
++    _callStackSize = sn.callsz;
++    _lineNumber = sn.line;
++    currentline = sn.curline;
++}
++
++static bool SameRsv(const RuntimeScriptValue &a, const RuntimeScriptValue &b)
++{
++    return a.Type == b.Type && a.IValue == b.IValue && a.Ptr == b.Ptr && a.MgrPtr == b.MgrPtr && a.Size == b.Size;
++}
++
++static bool SnapEqual(const DosVmSnap &a, const DosVmSnap &b)
++{
++    for (int i = 0; i < CC_NUM_REGISTERS; ++i) if (!SameRsv(a.regs[i], b.regs[i])) return false;
++    if (a.stack.size() != b.stack.size() || a.data != b.data || a.dataptr != b.dataptr) return false;
++    for (size_t i = 0; i < a.stack.size(); ++i) if (!SameRsv(a.stack[i], b.stack[i])) return false;
++    const DosVmFrame &x = a.frame, &y = b.frame;
++    if (x.curnest != y.curnest || x.num_args_to_func != y.num_args_to_func ||
++        x.next_call_needs_object != y.next_call_needs_object || x.was_just_callas != y.was_just_callas ||
++        x.loopIterationCheckDisabled != y.loopIterationCheckDisabled || x.loopIterations != y.loopIterations ||
++        x.loopCheckIterations != y.loopCheckIterations ||
++        memcmp(x.thisbase, y.thisbase, sizeof(x.thisbase)) || memcmp(x.funcstart, y.funcstart, sizeof(x.funcstart)))
++        return false;
++    if (a.fcs_end - a.fcs_head != b.fcs_end - b.fcs_head) return false;
++    for (ptrdiff_t i = 0; i < a.fcs_end - a.fcs_head; ++i)
++        if (!SameRsv(a.fcs_entries[a.fcs_head + i], b.fcs_entries[b.fcs_head + i])) return false;
++    return a.callsz == b.callsz && a.line == b.line && a.curline == b.curline;
++}
++
++void ccInstance::DosVmShadowBegin(const DosVmFrame &fr)
++{
++    // the window: entries to two past SP, data to 8 bytes past its pointer, fixed for this check
++    const ptrdiff_t spi = _registers[SREG_SP].RValue - _stackBegin;
++    s_snap_stackn = static_cast<size_t>(std::min<ptrdiff_t>(CC_STACK_SIZE, std::max<ptrdiff_t>(0, spi + 2)));
++    const ptrdiff_t di = _stackdataPtr - _stackdataBegin;
++    s_snap_datan = static_cast<size_t>(std::min<ptrdiff_t>(CC_STACK_DATA_SIZE, std::max<ptrdiff_t>(0, di + 8)));
++    DosVmSnapTake(s_snap0, fr);
++}
++
++void ccInstance::DosVmShadowEnd(DosVmFrame &fr, int32_t pc0, int k)
++{
++    const int32_t keep_pc = _pc;
++    DosVmSnapTake(s_snap1, fr);
++    DosVmSnapPut(s_snap0, fr);
++    int32_t pc = pc0;
++    for (int i = 0; i < k; ++i)
++    {
++        if (DosVmStep(fr, pc) != 0) { dos_vmshadow_bad++; break; }
++        pc = _pc;
++    }
++    DosVmSnapTake(s_snap2, fr);
++    ++dos_vmshadow_n;
++    if (!SnapEqual(s_snap1, s_snap2))
++    {
++        if (dos_vmshadow_bad < 10)
++            Debug::Printf("DOS-PORT vmshadow MISMATCH inst=%d pc=%d k=%d", fr.codeInst->_loadedInstanceId, pc0, k);
++        ++dos_vmshadow_bad;
++    }
++    _pc = keep_pc;
++}
+ #endif
+ 
+ #endif // __DJGPP__
+diff --git a/Engine/script/systemimports.h b/Engine/script/systemimports.h
+index 082251333..06dceb882 100644
+--- a/Engine/script/systemimports.h
++++ b/Engine/script/systemimports.h
+@@ -92,6 +92,20 @@ public:
+     const ScriptImport *GetByName(const String &name) const;
+     // Gets an import by its linear index
+     const ScriptImport *GetByIndex(uint32_t index) const;
++#ifdef __DJGPP__
++    // DOS-PORT patch 0361: GetByIndex for the VM's fast loop -- the same answer (nullptr exactly when
++    // index >= size()), compared in bytes so there is no division by sizeof(ScriptImport)
++    inline const ScriptImport *GetByIndexFast(uint32_t index) const
++    {
++        if (_imports.empty())
++            return nullptr;
++        const char *b = reinterpret_cast<const char*>(_imports.data());
++        const char *e = reinterpret_cast<const char*>(&_imports.back() + 1);
++        if (static_cast<uint64_t>(index) * sizeof(ScriptImport) >= static_cast<uint64_t>(e - b))
++            return nullptr;
++        return &_imports[index];
++    }
++#endif
+     // Searches for an import's name by its representation
+     String FindName(const RuntimeScriptValue &value) const;
+ 
+-- 
+2.47.3
+

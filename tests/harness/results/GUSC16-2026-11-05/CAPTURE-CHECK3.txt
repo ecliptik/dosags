@@ -1,0 +1,10 @@
+span 372.50-472.50 s (held run 353.00-474.50, W 100.00); floor -68.8 dB from 500-560 s
+K1 locked: 0 digital-zero frames -> PASS
+K2 no long gap: render phase 85.82 s (corr 0.32); longest run at the floor while the render plays: 88 frames (1.02 s; limit 10) -> FAIL
+K3 PCM present: sound 3 spectrogram match 0.42 vs reversed-clip null 0.43 (margin >= 0.05) -> FAIL
+M1 pitch: best shift -23 cents (corr 0.383; limit +-15) -> FAIL
+M2 music identity: chroma 0.470 vs transposed 0.602 / reversed 0.469 (margin >= 0.05) -> FAIL
+K4 sources audible: 19 windows; low >= 49.5 dB, high >= 44.1 dB over the floor -> PASS
+K5 counters: pcm_irqs=NA silent_irqs=NA start_latency_irqs=NA overwrites=NA underruns=39631 midi=gus late_writes=NA
+D (information): GUSC16-seg01.ogg           start  372.50 phase   85.82 s corr 0.32 | render onsets 83 | best F1 0.400 (k 2.5: 82 onsets, 33 matched, P 0.40 R 0.40) | F1 by k 0.35/0.39/0.39/0.40/0.38
+CAPTURE CHECK (K1-K4, M1, M2): FAIL

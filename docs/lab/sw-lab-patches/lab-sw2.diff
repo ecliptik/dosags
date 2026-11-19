@@ -1,0 +1,676 @@
+diff --git a/Common/util/bufferedstream.cpp b/Common/util/bufferedstream.cpp
+index f8046045f..7f02ca593 100644
+--- a/Common/util/bufferedstream.cpp
++++ b/Common/util/bufferedstream.cpp
+@@ -17,6 +17,7 @@
+ #include "util/bufferedstream.h"
+ #include "util/stdio_compat.h"
+ #include "util/string.h"
++#include "util/dos_sw_lab.h"
+ 
+ namespace AGS
+ {
+@@ -89,6 +90,10 @@ void BufferedStream::FlushBuffer(soff_t position)
+     if (!_base)
+         return;
+ 
++#if defined(__DJGPP__) && !defined(DOSAGS_RELEASE)
++    if (dos_sw_active)   // LAB-SW
++        dos_sw_bs_flush(_bufferPosition, _buffer.size(), position);
++#endif
+     size_t sz = _buffer.size() > 0 ? _base->Write(_buffer.data(), _buffer.size()) : 0u;
+     _buffer.clear(); // will start from the clean buffer next time
+     _bufferPosition += sz;
+@@ -190,6 +195,10 @@ int32_t BufferedStream::ReadByte()
+ 
+ size_t BufferedStream::Write(const void *buffer, size_t size)
+ {
++#if defined(__DJGPP__) && !defined(DOSAGS_RELEASE)
++    if (dos_sw_active)   // LAB-SW
++        dos_sw_bs_write(_position, size);
++#endif
+     const uint8_t *from = static_cast<const uint8_t*>(buffer);
+     while (size > 0)
+     {
+diff --git a/Common/util/dos_sw_lab.h b/Common/util/dos_sw_lab.h
+new file mode 100644
+index 000000000..b8256ad8f
+--- /dev/null
++++ b/Common/util/dos_sw_lab.h
+@@ -0,0 +1,23 @@
++// LAB-SW (lab only, never a patch): counters and a call trace for the restart-point save write.
++// DOSAGS_SW unset/0 = off (one test per hook). =1 counters + trace (SWTRACE.TXT). =2 also a dry
++// serialisation into memory after the real write, compared byte for byte with the file.
++#ifndef __AGS_CN_UTIL__DOS_SW_LAB_H
++#define __AGS_CN_UTIL__DOS_SW_LAB_H
++#ifdef __DJGPP__
++#include <stddef.h>
++#ifdef __cplusplus
++extern "C" {
++#endif
++extern volatile int dos_sw_active;   // 1 only inside the slot-999 SaveGame()
++int  dos_sw_mode_get(void);
++void dos_sw_begin(void);
++void dos_sw_end(void);
++void dos_sw_bs_write(long long pos, size_t size);                    // BufferedStream::Write (logical)
++void dos_sw_bs_flush(long long bufpos, size_t size, long long topos); // BufferedStream::FlushBuffer
++void dos_sw_fs_event(char kind, long a, long b, unsigned long long dt); // FileStream: O/W/S/C/F
++void dos_sw_dump(const char *path, long savegame_ms, const char *extra);
++#ifdef __cplusplus
++}
++#endif
++#endif
++#endif
+diff --git a/Common/util/filestream.cpp b/Common/util/filestream.cpp
+index c7312ca68..ed3045a5a 100644
+--- a/Common/util/filestream.cpp
++++ b/Common/util/filestream.cpp
+@@ -58,6 +58,145 @@ static bool dos_readdirect_ok(FILE *f)
+         !(f->_flag & (_IOWRT | _IORW | _IOUNGETC | _IOEOF | _IOERR)) && (__file_handle_modes[fileno(f)] & O_BINARY);
+ }
+ #endif
++#if defined(__DJGPP__) && !defined(DOSAGS_RELEASE)
++// ---- LAB-SW (lab only, never a patch): restart-point save write counters and trace ----
++#include <stdio.h>
++#include <string.h>
++#include <time.h>
++#include <dpmi.h>
++#include "util/dos_sw_lab.h"
++extern "C" {
++volatile int dos_sw_active = 0;
++static int dos_sw_mode = -1;
++struct DosSwRec { char k; unsigned char ah, al, cf; long a, b, c, d; unsigned long t, dt; };
++struct DosSwRun { long long pos; long long len; long calls; };
++#define DOS_SW_MAX 4096
++#define DOS_SW_RUNS 4096
++static DosSwRec dos_sw_rec[DOS_SW_MAX];
++static DosSwRun dos_sw_run[DOS_SW_RUNS];
++static int dos_sw_n = 0, dos_sw_nrun = 0;
++static long dos_sw_lost = 0, dos_sw_runlost = 0;
++static uclock_t dos_sw_t0 = 0, dos_sw_t1 = 0;
++static long dos_sw_bs_n = 0; static long long dos_sw_bs_bytes = 0; static long dos_sw_bs_hist[24];
++static long dos_sw_i21_n[256]; static unsigned long long dos_sw_i21_t[256];
++static long dos_sw_fw_n = 0; static unsigned long long dos_sw_fw_t = 0; static long long dos_sw_fw_bytes = 0;
++static long dos_sw_fs_n = 0; static unsigned long long dos_sw_fs_t = 0;
++static unsigned long long dos_sw_open_t = 0, dos_sw_close_t = 0;
++static int dos_sw_in = 0;
++int dos_sw_mode_get(void)
++{
++    if (dos_sw_mode < 0)
++    {
++        const char *e = getenv("DOSAGS_SW");
++        dos_sw_mode = (e && e[0] >= '1' && e[0] <= '9') ? (e[0] - '0') : 0;
++    }
++    return dos_sw_mode;
++}
++static DosSwRec *dos_sw_new(char k)
++{
++    if (dos_sw_n >= DOS_SW_MAX) { dos_sw_lost++; return nullptr; }
++    DosSwRec *r = &dos_sw_rec[dos_sw_n++];
++    memset(r, 0, sizeof(*r)); r->k = k; return r;
++}
++void dos_sw_begin(void)
++{
++    dos_sw_n = dos_sw_nrun = 0; dos_sw_lost = dos_sw_runlost = 0;
++    dos_sw_bs_n = 0; dos_sw_bs_bytes = 0; memset(dos_sw_bs_hist, 0, sizeof(dos_sw_bs_hist));
++    memset(dos_sw_i21_n, 0, sizeof(dos_sw_i21_n)); memset(dos_sw_i21_t, 0, sizeof(dos_sw_i21_t));
++    dos_sw_fw_n = 0; dos_sw_fw_t = 0; dos_sw_fw_bytes = 0; dos_sw_fs_n = 0; dos_sw_fs_t = 0;
++    dos_sw_open_t = dos_sw_close_t = 0;
++    dos_sw_t0 = uclock();
++    dos_sw_active = 1;
++}
++void dos_sw_end(void) { dos_sw_active = 0; dos_sw_t1 = uclock(); }
++void dos_sw_bs_write(long long pos, size_t size)
++{
++    dos_sw_bs_n++; dos_sw_bs_bytes += (long long)size;
++    int b;
++    if (size <= 16) b = (int)size; else if (size <= 64) b = 17; else if (size <= 256) b = 18; else if (size <= 1024) b = 19;
++    else if (size <= 4096) b = 20; else if (size < 8192) b = 21; else b = 22;
++    dos_sw_bs_hist[b]++;
++    if (dos_sw_nrun > 0 && dos_sw_run[dos_sw_nrun - 1].pos + dos_sw_run[dos_sw_nrun - 1].len == pos)
++    { dos_sw_run[dos_sw_nrun - 1].len += (long long)size; dos_sw_run[dos_sw_nrun - 1].calls++; return; }
++    if (dos_sw_nrun >= DOS_SW_RUNS) { dos_sw_runlost++; return; }
++    dos_sw_run[dos_sw_nrun].pos = pos; dos_sw_run[dos_sw_nrun].len = (long long)size; dos_sw_run[dos_sw_nrun].calls = 1; dos_sw_nrun++;
++}
++void dos_sw_bs_flush(long long bufpos, size_t size, long long topos)
++{
++    DosSwRec *r = dos_sw_new('B'); if (!r) return;
++    r->a = (long)bufpos; r->b = (long)size; r->c = (long)topos; r->t = (unsigned long)(uclock() - dos_sw_t0);
++}
++void dos_sw_fs_event(char kind, long a, long b, unsigned long long dt)
++{
++    if (kind == 'W') { dos_sw_fw_n++; dos_sw_fw_t += dt; dos_sw_fw_bytes += a; }
++    else if (kind == 'S') { dos_sw_fs_n++; dos_sw_fs_t += dt; }
++    else if (kind == 'O') dos_sw_open_t += dt;
++    else if (kind == 'C') dos_sw_close_t += dt;
++    DosSwRec *r = dos_sw_new(kind); if (!r) return;
++    r->a = a; r->b = b; r->dt = (unsigned long)dt; r->t = (unsigned long)(uclock() - dos_sw_t0);
++}
++int __real___dpmi_int(int vector, __dpmi_regs *regs);
++int __wrap___dpmi_int(int vector, __dpmi_regs *regs)
++{
++    if (!dos_sw_active || vector != 0x21 || dos_sw_in)
++        return __real___dpmi_int(vector, regs);
++    dos_sw_in = 1;
++    const unsigned char ah = regs->h.ah, al = regs->h.al;
++    const unsigned short bx = regs->x.bx, cx = regs->x.cx, dx = regs->x.dx;
++    const uclock_t t = uclock();
++    const int ret = __real___dpmi_int(vector, regs);
++    const uclock_t dt = uclock() - t;
++    dos_sw_i21_n[ah]++; dos_sw_i21_t[ah] += (unsigned long long)dt;
++    DosSwRec *r = dos_sw_new('D');
++    if (r)
++    {
++        r->ah = ah; r->al = al; r->cf = (unsigned char)(regs->x.flags & 1);
++        r->a = bx; r->b = cx; r->c = dx; r->d = (long)(((unsigned long)regs->x.dx << 16) | regs->x.ax);
++        r->t = (unsigned long)(t - dos_sw_t0); r->dt = (unsigned long)dt;
++    }
++    dos_sw_in = 0;
++    return ret;
++}
++static double dos_sw_ms(unsigned long long u) { return (double)u * 1000.0 / (double)UCLOCKS_PER_SEC; }
++void dos_sw_dump(const char *path, long savegame_ms, const char *extra)
++{
++    FILE *f = fopen(path, "w");
++    if (!f) return;
++    unsigned long long i21t = 0; long i21n = 0;
++    for (int i = 0; i < 256; i++) { i21n += dos_sw_i21_n[i]; i21t += dos_sw_i21_t[i]; }
++    fprintf(f, "swlab v1 savegame_ms=%ld bracket_ms=%.3f recs=%d lost=%ld runs=%d runlost=%ld\n", savegame_ms,
++        dos_sw_ms(dos_sw_t1 - dos_sw_t0), dos_sw_n, dos_sw_lost, dos_sw_nrun, dos_sw_runlost);
++    fprintf(f, "bs_writes=%ld bs_bytes=%lld\n", dos_sw_bs_n, dos_sw_bs_bytes);
++    fprintf(f, "bs_hist");
++    for (int i = 1; i < 23; i++) fprintf(f, " %d:%ld", i, dos_sw_bs_hist[i]);
++    fprintf(f, "  (17=17-64 18=65-256 19=257-1K 20=1K-4K 21=4K-8K 22=>=8K)\n");
++    fprintf(f, "fwrite_n=%ld fwrite_bytes=%lld fwrite_ms=%.3f fseek_n=%ld fseek_ms=%.3f open_ms=%.3f close_ms=%.3f\n",
++        dos_sw_fw_n, dos_sw_fw_bytes, dos_sw_ms(dos_sw_fw_t), dos_sw_fs_n, dos_sw_ms(dos_sw_fs_t),
++        dos_sw_ms(dos_sw_open_t), dos_sw_ms(dos_sw_close_t));
++    fprintf(f, "int21_n=%ld int21_ms=%.3f\n", i21n, dos_sw_ms(i21t));
++    for (int i = 0; i < 256; i++)
++        if (dos_sw_i21_n[i]) fprintf(f, "int21 ah=%02X n=%ld ms=%.3f\n", i, dos_sw_i21_n[i], dos_sw_ms(dos_sw_i21_t[i]));
++    if (extra) fprintf(f, "%s\n", extra);
++    fprintf(f, "# k t_us dt_us ...\n");
++    for (int i = 0; i < dos_sw_n; i++)
++    {
++        const DosSwRec &r = dos_sw_rec[i];
++        const double tu = dos_sw_ms(r.t) * 1000.0, du = dos_sw_ms(r.dt) * 1000.0;
++        if (r.k == 'D')
++            fprintf(f, "D %.0f %.1f ah=%02X al=%02X bx=%ld cx=%ld dx=%ld cf=%d out=%lu\n", tu, du, r.ah, r.al, r.a, r.b, r.c, r.cf,
++                (unsigned long)r.d);
++        else if (r.k == 'B')
++            fprintf(f, "B %.0f 0 bufpos=%ld size=%ld topos=%ld\n", tu, r.a, r.b, r.c);
++        else
++            fprintf(f, "%c %.0f %.1f a=%ld b=%ld\n", r.k, tu, du, r.a, r.b);
++    }
++    fprintf(f, "# runs pos len calls\n");
++    for (int i = 0; i < dos_sw_nrun; i++)
++        fprintf(f, "L %lld %lld %ld\n", dos_sw_run[i].pos, dos_sw_run[i].len, dos_sw_run[i].calls);
++    fclose(f);
++}
++} // extern "C"
++#endif
+ 
+ namespace AGS
+ {
+@@ -105,6 +244,15 @@ void FileStream::Close()
+ {
+     if (_file && _ownHandle)
+     {
++#if defined(__DJGPP__) && !defined(DOSAGS_RELEASE)
++        if (dos_sw_active)
++        {   // LAB-SW
++            const uclock_t t = uclock();
++            fclose(_file);
++            dos_sw_fs_event('C', 0, 0, (unsigned long long)(uclock() - t));
++        }
++        else
++#endif
+         fclose(_file);
+     }
+     _file = nullptr;
+@@ -122,6 +270,9 @@ void FileStream::Close()
+ 
+ bool FileStream::Flush()
+ {
++#if defined(__DJGPP__) && !defined(DOSAGS_RELEASE)
++    if (dos_sw_active) dos_sw_fs_event('F', 0, 0, 0);   // LAB-SW
++#endif
+     return fflush(_file) == 0;
+ }
+ 
+@@ -195,11 +346,23 @@ int32_t FileStream::ReadByte()
+ 
+ size_t FileStream::Write(const void *buffer, size_t size)
+ {
++#if defined(__DJGPP__) && !defined(DOSAGS_RELEASE)
++    if (dos_sw_active)
++    {   // LAB-SW
++        const uclock_t t = uclock();
++        const size_t n = fwrite(buffer, sizeof(uint8_t), size, _file);
++        dos_sw_fs_event('W', (long)size, (long)n, (unsigned long long)(uclock() - t));
++        return n;
++    }
++#endif
+     return fwrite(buffer, sizeof(uint8_t), size, _file);
+ }
+ 
+ int32_t FileStream::WriteByte(uint8_t val)
+ {
++#if defined(__DJGPP__) && !defined(DOSAGS_RELEASE)
++    if (dos_sw_active) dos_sw_fs_event('Y', 1, 0, 0);   // LAB-SW: never expected
++#endif
+     return fputc(val, _file);
+ }
+ 
+@@ -214,6 +377,15 @@ soff_t FileStream::Seek(soff_t offset, StreamSeek origin)
+     default: return -1;
+     }
+ 
++#if defined(__DJGPP__) && !defined(DOSAGS_RELEASE)
++    if (dos_sw_active)
++    {   // LAB-SW
++        const uclock_t t = uclock();
++        const soff_t r = (ags_fseek(_file, (file_off_t)offset, stdclib_origin) == 0) ? ags_ftell(_file) : -1;
++        dos_sw_fs_event('S', (long)offset, (long)r, (unsigned long long)(uclock() - t));
++        return r;
++    }
++#endif
+     return (ags_fseek(_file, (file_off_t)offset, stdclib_origin) == 0) ?
+         ags_ftell(_file) : -1;
+ }
+@@ -223,7 +395,14 @@ void FileStream::Open(const String &file_name, FileOpenMode open_mode, StreamMod
+     String mode = File::GetCMode(open_mode, work_mode);
+     if (mode.IsEmpty())
+         throw std::runtime_error("Error determining open mode");
++#if defined(__DJGPP__) && !defined(DOSAGS_RELEASE)
++    const uclock_t _sw_t = dos_sw_active ? uclock() : 0;
++#endif
+     _file = ags_fopen(file_name.GetCStr(), mode.GetCStr());
++#if defined(__DJGPP__) && !defined(DOSAGS_RELEASE)
++    if (dos_sw_active)   // LAB-SW
++        dos_sw_fs_event('O', _file ? fileno(_file) : -1, (long)mode[0], (unsigned long long)(uclock() - _sw_t));
++#endif
+     if (_file == nullptr)
+         throw std::runtime_error("Error opening file.");
+     _ownHandle = true;
+diff --git a/Engine/CMakeLists.txt b/Engine/CMakeLists.txt
+index d761d3f5f..58249d9e4 100644
+--- a/Engine/CMakeLists.txt
++++ b/Engine/CMakeLists.txt
+@@ -677,6 +677,9 @@ if (DOS)
+     # DJGPP's __FSEXT open handler, so the loose-file listing in
+     # Common/util/stdio_compat.c sees them through these wrappers instead.
+     target_link_options(ags PRIVATE "-Wl,--wrap=rename" "-Wl,--wrap=mkdir")
++    if (NOT CMAKE_CXX_FLAGS MATCHES "DOSAGS_RELEASE")
++        target_link_options(ags PRIVATE "-Wl,--wrap=__dpmi_int")   # LAB-SW: the INT 21h tracer, instrumented flavour only
++    endif ()
+ endif ()
+ 
+ if (LINUX)
+diff --git a/Engine/ac/game.cpp b/Engine/ac/game.cpp
+index ddc0d0328..579f29f1f 100644
+--- a/Engine/ac/game.cpp
++++ b/Engine/ac/game.cpp
+@@ -60,6 +60,13 @@
+ #include "device/mousew32.h"
+ #include "font/fonts.h"
+ #include "game/savegame.h"
++#ifdef __DJGPP__
++#include "util/dos_sw_lab.h"
++#include "util/memorystream.h"
++#include <string.h>
++namespace AGS { namespace Engine { extern long dos_savemem_mem, dos_savemem_fallback, dos_savemem_stream, dos_savemem_short, dos_savemem_last_bytes; extern int dos_savemem_last_path; int dos_savemem_mode_get(); int dos_savemem_failknob(); } }
++namespace AGS { namespace Engine { HSaveError DosSwSaveGameToStream(AGS::Common::Stream *out, const AGS::Common::String &user_text, const AGS::Common::Bitmap *user_image, SaveCmpSelection select_cmp, bool compress_data); } }
++#endif
+ #include "gfx/bitmap.h"
+ #include "gfx/graphicsdriver.h"
+ #include "gui/guibutton.h"
+@@ -1364,10 +1371,17 @@ void save_game(int slotn, const String &descript, std::unique_ptr<Bitmap> &&imag
+                                   ? false : usetup.CompressSaves;
+ #else
+     const bool _dp_compress = usetup.CompressSaves;
++#endif
++#if defined(__DJGPP__) && !defined(DOSAGS_RELEASE)
++    const bool _sw = _dp_rp && dos_sw_mode_get() > 0;   // LAB-SW
++    if (_sw) dos_sw_begin();
+ #endif
+     HSaveError err = SaveGame(nametouse, descript, image.get(),
+              (SaveCmpSelection)(kSaveCmp_All & ~(game.options[OPT_SAVECOMPONENTSIGNORE] & kSaveCmp_ScriptIgnoreMask)),
+              _dp_compress);
++#if defined(__DJGPP__) && !defined(DOSAGS_RELEASE)
++    if (_sw) dos_sw_end();
++#endif
+     if (!err)
+     {
+         // FIXME: left this original Display call for the time being,
+@@ -1386,11 +1400,49 @@ void save_game(int slotn, const String &descript, std::unique_ptr<Bitmap> &&imag
+         dos_port_startup_timing.restart_savegame_ms =
+             (long)((uclock() - _dp_t) * 1000 / UCLOCKS_PER_SEC);
+ #endif
++#if defined(__DJGPP__) && !defined(DOSAGS_RELEASE)
++    if (_sw)
++    {   // LAB-SW: optional dry serialisation into memory, compared with the file, then the trace dump
++        char extra[256] = "dry=off";
++        if (dos_sw_mode_get() >= 2)
++        {
++            std::vector<uint8_t> mem; mem.reserve(256 * 1024);
++            const uclock_t t0 = uclock();
++            {
++                auto ms = std::make_unique<Stream>(std::make_unique<VectorStream>(mem, kStream_Write));
++                DosSwSaveGameToStream(ms.get(), descript, image.get(),
++                    (SaveCmpSelection)(kSaveCmp_All & ~(game.options[OPT_SAVECOMPONENTSIGNORE] & kSaveCmp_ScriptIgnoreMask)),
++                    _dp_compress);
++            }
++            const uclock_t t1 = uclock();
++            std::vector<uint8_t> disk;
++            FILE *f = fopen(nametouse.GetCStr(), "rb");
++            if (f)
++            {
++                uint8_t tmp[4096]; size_t n;
++                while ((n = fread(tmp, 1, sizeof(tmp), f)) > 0) disk.insert(disk.end(), tmp, tmp + n);
++                fclose(f);
++            }
++            const bool eq = (disk.size() == mem.size()) && (mem.empty() || memcmp(disk.data(), mem.data(), mem.size()) == 0);
++            snprintf(extra, sizeof(extra), "dry=on dry_ms=%.3f dry_bytes=%lu disk_bytes=%lu dry_equal=%d",
++                (double)(t1 - t0) * 1000.0 / UCLOCKS_PER_SEC, (unsigned long)mem.size(), (unsigned long)disk.size(), eq ? 1 : 0);
++        }
++        dos_sw_dump("SWTRACE.TXT", dos_port_startup_timing.restart_savegame_ms, extra);
++        Debug::Printf(kDbgMsg_Info, "DOS-PORT swlab mode=%d savegame_ms=%ld %s", dos_sw_mode_get(),
++            dos_port_startup_timing.restart_savegame_ms, extra);
++    }
++#endif
+ 
+ #ifdef __DJGPP__
+     // patch 0250: written. Before the event: run_on_event() runs on_event at
+     // once here, and whatever the game does in it is not write time.
+     dos_journey_save_done(slotn, true);
++    // LAB-SW lever 1 witness: one line per save, after the write is timed and recorded
++    Debug::Printf(kDbgMsg_Info, "DOS-PORT savemem DOSAGS_SAVEMEM mode=%d slot=%d path=%s bytes=%ld mem=%ld fallback=%ld stream=%ld short=%ld failknob=%d",
++        AGS::Engine::dos_savemem_mode_get(), slotn,
++        AGS::Engine::dos_savemem_last_path == 1 ? "mem" : AGS::Engine::dos_savemem_last_path == 2 ? "fallback" : "stream",
++        AGS::Engine::dos_savemem_last_bytes, AGS::Engine::dos_savemem_mem, AGS::Engine::dos_savemem_fallback,
++        AGS::Engine::dos_savemem_stream, AGS::Engine::dos_savemem_short, AGS::Engine::dos_savemem_failknob());
+ #endif
+     // call "After Save" event callback
+     run_on_event(kScriptEvent_GameSaved, slotn);
+diff --git a/Engine/game/savegame.cpp b/Engine/game/savegame.cpp
+index 09a41122e..db926716d 100644
+--- a/Engine/game/savegame.cpp
++++ b/Engine/game/savegame.cpp
+@@ -46,6 +46,15 @@
+ #include "gfx/ddb.h"
+ #include "gfx/graphicsdriver.h"
+ #include "game/savegame.h"
++#ifdef __DJGPP__
++#include <new>
++#include <time.h>
++#include <stdlib.h>
++#include "util/bufferedstream.h"
++#include "util/filestream.h"
++#include "util/memorystream.h"
++#include "util/dos_sw_lab.h"
++#endif
+ #include "game/savegame_components.h"
+ #include "game/savegame_internal.h"
+ #include "main/game_run.h"
+@@ -1259,9 +1268,107 @@ HSaveError WritePluginSaveData(Stream *out)
+     return HSaveError::None();
+ }
+ 
++#ifdef __DJGPP__
++// LAB-SW lever 1 (lab only, not yet a patch): DOSAGS_SAVEMEM -- serialise the whole save into memory, then write it
++// with one fopen "wb" + fwrite + fclose. =0 keeps the streaming path below untouched; unset or anything else = 1.
++//
++// Exact by construction: the same serialiser writes the same bytes into a VectorStream instead of a BufferedStream.
++// Both seek with clamping to [0, end] and overwrite in place, so every seek-back patch (component headers, the
++// FileFormat block at offset 39, WriteBitmap's size and its Seek(end_pos, kSeekEnd) = clamp to end) lands at the
++// same offset; DeflateStream takes either base through Release/AttachStreamBase. The file is opened FIRST, exactly
++// as today (same truncation, same failure point before any serialisation); only what sits behind the Stream changes.
++// If the memory cannot be had (bad_alloc while reserving or growing), the already-open FileStream is wrapped in the
++// usual BufferedStream and the streaming path runs from the start: the partial memory image is discarded, and the
++// only state a second serialisation re-touches is DoBeforeSave's (idempotent copies). Counted as a fallback.
++long dos_savemem_mem = 0, dos_savemem_fallback = 0, dos_savemem_stream = 0, dos_savemem_short = 0;
++long dos_savemem_last_bytes = 0; int dos_savemem_last_path = 0;   // 0 stream (=0), 1 memory, 2 fallback
++int dos_savemem_mode_get()
++{
++    static int m = -1;
++    if (m < 0)
++    {
++        const char *e = getenv("DOSAGS_SAVEMEM");
++        m = (e != nullptr && e[0] == '0') ? 0 : 1;
++    }
++    return m;
++}
++int dos_savemem_failknob()
++{
++#ifndef DOSAGS_RELEASE
++    static int k = -1;
++    if (k < 0)
++    {   // LAB knob: =1 the reservation fails; =2 the failure comes after the whole image was serialised
++        const char *e = getenv("DOSAGS_LAB_SAVEMEM_FAIL");
++        k = (e != nullptr && (e[0] == '1' || e[0] == '2')) ? (e[0] - '0') : 0;
++    }
++    return k;
++#else
++    return 0;
++#endif
++}
++
++static void dos_save_body(Stream *out, const String &user_text, const Bitmap *user_image,
++                          SaveCmpSelection select_cmp, bool compress_data)
++{   // StartSavegame() after its CreateFile, then SaveGame()'s own steps, unchanged
++    SavegameFileFormat format;
++    format.Flags = kSvgFmt_DeflateComponents * compress_data;
++    out->Write(SavegameSource::Signature.GetCStr(), SavegameSource::Signature.GetLength());
++    WriteDescription(out, user_text, user_image, format);
++    format.GameDataOffset = out->GetPosition();
++    SaveGameState(out, select_cmp, compress_data);
++    WriteFileFormat(out, format);
++}
++#endif
++
+ HSaveError SaveGame(const String &filename, const String &user_text, const Bitmap *user_image,
+                     SaveCmpSelection select_cmp, bool compress_data)
+ {
++#ifdef __DJGPP__
++    if (dos_savemem_mode_get() == 1)
++    {
++        std::unique_ptr<FileStream> fs;
++        try { fs.reset(new FileStream(filename, kFile_CreateAlways, kStream_Write)); }
++        catch (std::runtime_error) { fs = nullptr; }
++        if (!fs || !fs->IsValid())
++            return new SavegameError(kSvgErr_FileOpenFailed, String::FromFormat("Requested filename: %s.", filename.GetCStr()));
++        bool in_mem = true;
++        {
++            std::vector<uint8_t> mem;
++            try
++            {
++                const int knob = dos_savemem_failknob();
++                if (knob == 1) throw std::bad_alloc();
++                mem.reserve(256 * 1024);
++#ifndef DOSAGS_RELEASE
++                const uclock_t _sw_t = dos_sw_active ? uclock() : 0;
++#endif
++                {
++                    auto ms = std::make_unique<Stream>(std::make_unique<VectorStream>(mem, kStream_Write));
++                    dos_save_body(ms.get(), user_text, user_image, select_cmp, compress_data);
++                }
++#ifndef DOSAGS_RELEASE
++                if (dos_sw_active) dos_sw_fs_event('M', (long)mem.size(), 0, (unsigned long long)(uclock() - _sw_t));
++#endif
++                if (knob == 2) throw std::bad_alloc();
++            }
++            catch (const std::bad_alloc &) { in_mem = false; }
++            if (in_mem)
++            {
++                const size_t n = fs->Write(mem.data(), mem.size());
++                if (n != mem.size()) dos_savemem_short++;   // today's path ignores write results too
++                fs->Close();
++                dos_savemem_mem++; dos_savemem_last_path = 1; dos_savemem_last_bytes = (long)mem.size();
++                return HSaveError::None();
++            }
++        }   // the partial image is freed here, before the fallback serialises again
++        dos_savemem_fallback++; dos_savemem_last_path = 2;
++        std::unique_ptr<Stream> out(new Stream(std::make_unique<BufferedStream>(std::move(fs))));
++        dos_save_body(out.get(), user_text, user_image, select_cmp, compress_data);
++        dos_savemem_last_bytes = (long)out->GetLength();
++        return HSaveError::None();
++    }
++    dos_savemem_stream++; dos_savemem_last_path = 0;
++#endif
+     SavegameFileFormat format;
+     format.Flags = kSvgFmt_DeflateComponents * compress_data;
+     std::unique_ptr<Stream> out(StartSavegame(filename, user_text, user_image, format));
+@@ -1276,6 +1383,23 @@ HSaveError SaveGame(const String &filename, const String &user_text, const Bitma
+     return HSaveError::None();
+ }
+ 
++#ifdef __DJGPP__
++// LAB-SW (lab only): SaveGame() into a caller's stream -- the same steps as StartSavegame() + SaveGame()
++// minus File::CreateFile, for the dry serialisation compared with the file just written.
++HSaveError DosSwSaveGameToStream(Stream *out, const String &user_text, const Bitmap *user_image,
++                    SaveCmpSelection select_cmp, bool compress_data)
++{
++    SavegameFileFormat format;
++    format.Flags = kSvgFmt_DeflateComponents * compress_data;
++    out->Write(SavegameSource::Signature.GetCStr(), SavegameSource::Signature.GetLength());
++    WriteDescription(out, user_text, user_image, format);
++    format.GameDataOffset = out->GetPosition();
++    SaveGameState(out, select_cmp, compress_data);
++    WriteFileFormat(out, format);
++    return HSaveError::None();
++}
++#endif
++
+ //=============================================================================
+ //
+ // RestoredSaveInfo API
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index d0e5948ca..05f511afc 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -29,6 +29,44 @@
+ #include "main/dos_port_tick_timing.h" // DOS-PORT patch 0079
+ #include "main/dos_port_work.h"        // DOS-PORT patch 0230
+ #include "debug/out.h"                 // DOS-PORT patch 0366: the guiclip witness line
++#if defined(__DJGPP__) && !defined(DOSAGS_RELEASE)
++// LAB-SW (lab only): LAB-PLAY's gate, copied from docs/lab/r3-lab-patches/lab-r3-full.diff. DOSAGS_LAB_FRAMEHASH=1 records
++// (loop counter, FNV-1a of the virtual screen) after every composite; FHASH.TXT at exit.
++#include <stdlib.h>
++#include <stdio.h>
++extern uint32_t get_loop_counter();
++static int dos_lab_fh_mode = -1; static unsigned long *dos_lab_fh_buf = nullptr; static long dos_lab_fh_n = 0;
++static const long DOS_LAB_FH_CAP = 40000;
++static void dos_lab_fh_dump()
++{
++    FILE *f = fopen("FHASH.TXT", "w");
++    if (!f) return;
++    for (long i = 0; i < dos_lab_fh_n; ++i) fprintf(f, "%lu %08lx\n", dos_lab_fh_buf[2 * i], dos_lab_fh_buf[2 * i + 1]);
++    fclose(f);
++}
++static void dos_lab_fh_record(AGS::Common::Bitmap *virtualScreen)
++{
++    if (dos_lab_fh_mode < 0)
++    {
++        const char *e = getenv("DOSAGS_LAB_FRAMEHASH");
++        dos_lab_fh_mode = (e && e[0] == '1') ? 1 : 0;
++        if (dos_lab_fh_mode) { dos_lab_fh_buf = (unsigned long *)malloc(sizeof(unsigned long) * 2 * DOS_LAB_FH_CAP); atexit(dos_lab_fh_dump); }
++    }
++    if (dos_lab_fh_mode == 1 && dos_lab_fh_buf && dos_lab_fh_n < DOS_LAB_FH_CAP && virtualScreen)
++    {
++        unsigned long hsh = 2166136261UL;
++        const int bw = virtualScreen->GetWidth() * virtualScreen->GetBPP();
++        for (int y = 0; y < virtualScreen->GetHeight(); ++y)
++        {
++            const uint32_t *row = reinterpret_cast<const uint32_t *>(virtualScreen->GetScanLine(y));
++            for (int x = 0; x < bw / 4; ++x) { hsh ^= row[x]; hsh *= 16777619UL; hsh ^= hsh >> 15; }
++        }
++        dos_lab_fh_buf[2 * dos_lab_fh_n] = (unsigned long)get_loop_counter();
++        dos_lab_fh_buf[2 * dos_lab_fh_n + 1] = hsh & 0xFFFFFFFFUL;
++        dos_lab_fh_n++;
++    }
++}
++#endif
+ #endif
+ 
+ #ifdef __DJGPP__
+@@ -812,6 +850,9 @@ void SDLRendererGraphicsDriver::RenderToBackBuffer()
+     _stageVirtualScreen = virtualScreen;
+     _rendSpriteBatch = UINT32_MAX;
+     ClearDrawLists();
++#if defined(__DJGPP__) && !defined(DOSAGS_RELEASE)
++    dos_lab_fh_record(virtualScreen);   // LAB-SW: LAB-PLAY's frame digest, ported verbatim
++#endif
+ }
+ 
+ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch, size_t from, Bitmap *surface, int surf_offx, int surf_offy)
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 283f3a8bd..752f14089 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -2032,6 +2032,55 @@ static void dos_tick_clicks()
+ }
+ #endif
+ 
++#if defined(__DJGPP__) && !defined(DOSAGS_RELEASE)
++// LAB-SW (lab only). DOSAGS_LABCLICKS=lc:x:y[:b][,...]: LAB-PLAY's clicks, copied from lab-r3-full.diff (b=0 moves only).
++// DOSAGS_LAB_SAVEAT=lc:slot: a scripted normal save, SaveGameSlot(slot, "LABSAVE"), when the loop counter first reaches lc.
++static int dos_lc_mode = -1, dos_lc_n = 0, dos_lc_next = 0;
++static long dos_lc_t[64]; static int dos_lc_x[64], dos_lc_y[64], dos_lc_b[64];
++static void dos_lab_clicks()
++{
++    if (dos_lc_mode < 0)
++    {
++        dos_lc_mode = 0;
++        const char *e = getenv("DOSAGS_LABCLICKS");
++        while (e && *e && dos_lc_n < 64)
++        {
++            long t; int x, y, used = 0, b = 1, used2 = 0;
++            if (sscanf(e, "%ld:%d:%d%n", &t, &x, &y, &used) != 3) break;
++            e += used;
++            if (*e == ':' && sscanf(e, ":%d%n", &b, &used2) == 1) e += used2;
++            dos_lc_t[dos_lc_n] = t; dos_lc_x[dos_lc_n] = x; dos_lc_y[dos_lc_n] = y; dos_lc_b[dos_lc_n] = b; dos_lc_n++;
++            if (*e == ',') e++;
++        }
++        if (dos_lc_n > 0) { dos_lc_mode = 1; Debug::Printf("DOS-PORT labclicks n=%d", dos_lc_n); }
++    }
++    if (dos_lc_mode != 1 || dos_lc_next >= dos_lc_n)
++        return;
++    const long lc = (long)get_loop_counter();
++    if (lc < dos_lc_t[dos_lc_next])
++        return;
++    const int k = dos_lc_next++;
++    SetMousePosition(dos_lc_x[k], dos_lc_y[k]);
++    if (dos_lc_b[k]) SimulateMouseClick(kMouseLeft);
++    Debug::Printf("DOS-PORT labclick lc=%ld n=%d x=%d y=%d click=%d", lc, k + 1, dos_lc_x[k], dos_lc_y[k], dos_lc_b[k]);
++}
++static int dos_sa_mode = -1, dos_sa_slot = 0; static long dos_sa_lc = 0;
++static void dos_lab_saveat()
++{
++    if (dos_sa_mode < 0)
++    {
++        dos_sa_mode = 0;
++        const char *e = getenv("DOSAGS_LAB_SAVEAT");
++        if (e && sscanf(e, "%ld:%d", &dos_sa_lc, &dos_sa_slot) == 2) dos_sa_mode = 1;
++    }
++    if (dos_sa_mode != 1 || (long)get_loop_counter() < dos_sa_lc)
++        return;
++    dos_sa_mode = 2;
++    Debug::Printf("DOS-PORT labsave lc=%ld slot=%d", (long)get_loop_counter(), dos_sa_slot);
++    SaveGameSlot(dos_sa_slot, "LABSAVE", -1);
++}
++#endif
++
+ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int extra_x, int extra_y, bool skip_render_and_wait)
+ {
+     // DOS-PORT patch 0082: whole-function bracket, first line so it
+@@ -2055,6 +2104,10 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+ #ifdef __DJGPP__
+         DosPortTickScope _dos_port_input_scope(dos_port_tick_timing.input_poll);
+         dos_tick_clicks();   // patch 0247: no-op unless DOSAGS_TICKCLICKS is set
++#ifndef DOSAGS_RELEASE
++        dos_lab_clicks();    // LAB-SW (LAB-PLAY's clicks)
++        dos_lab_saveat();    // LAB-SW: scripted normal save
++#endif
+ #endif
+         sys_evt_process_pending();
+     }

@@ -1,0 +1,115 @@
+--- /home/claude/data/worktrees/dosags-ring/vendor/ags/Engine/main/game_run.cpp	2026-11-18 14:18:20.796533862 -0800
++++ /home/claude/data/tmp/claude-1001/-home-claude-git-dosags/8d15788e-024f-45ef-9590-8caefc025dbf/scratchpad/pa/dry/Engine/main/game_run.cpp	2026-11-18 21:07:34.480729269 -0800
+@@ -1676,6 +1676,44 @@
+ // patch 0163: set when a tick is recorded as a blocking stall, so the
+ // fixed-timestep loop can decline to carry debt across it.
+ static bool dos_tick_prev_was_stall = false;
++// ---- PACE-RIG (round RT; tests/harness/apply-pace-rig.py): the long-tick rule's threshold ----
++static long lab_pace_stall_us = -1;          // -1 unread, 0 off, else the threshold in us
++static long lab_pace_rebases = 0, lab_pace_forgiven = 0, lab_pace_max_forgiven = 0;
++static long lab_pace_max_short = 0;          // FIX-UP 1: the largest debt forgiven after a tick NOT over 250 ms
++static bool lab_pace_prev_long = false;      // FIX-UP 1: a tick over 250 ms ran since the last call
++static int lab_pace_nspin = 0, lab_pace_next = 0, lab_pace_in_spin = -1;
++static long lab_pace_want[32], lab_pace_ms[32], lab_pace_tick[32], lab_pace_self_ms[32];
++static int lab_pace_flagged[32];
++static void lab_pace_init()
++{
++    if (lab_pace_stall_us >= 0) return;
++    const char *e = getenv("DOSAGS_LAB_STALL_MS");
++    lab_pace_stall_us = (e && atol(e) > 0) ? atol(e) * 1000L : 0;
++    const char *sp = getenv("DOSAGS_LAB_SPIN");
++    while (sp && *sp && lab_pace_nspin < 32)
++    {
++        char *end = nullptr;
++        const long t = strtol(sp, &end, 10);
++        if (end == sp || *end != ':') break;
++        const long ms = strtol(end + 1, &end, 10);
++        lab_pace_want[lab_pace_nspin] = t; lab_pace_ms[lab_pace_nspin] = ms; lab_pace_tick[lab_pace_nspin] = -1;
++        lab_pace_self_ms[lab_pace_nspin] = -1; lab_pace_flagged[lab_pace_nspin] = 0; lab_pace_nspin++;
++        if (*end != ',') break;
++        sp = end + 1;
++    }
++}
++static void lab_pace_spin()
++{
++    lab_pace_init();
++    lab_pace_in_spin = -1;
++    if (lab_pace_next >= lab_pace_nspin || dos_tick_depth != 1) return;
++    const long lc = (long)get_loop_counter();
++    if (lc < lab_pace_want[lab_pace_next]) return;
++    lab_pace_tick[lab_pace_next] = lc;
++    const uclock_t t0 = uclock();
++    while ((long long)(uclock() - t0) * 1000LL / UCLOCKS_PER_SEC < lab_pace_ms[lab_pace_next]) { }
++    lab_pace_in_spin = lab_pace_next++;
++}
+ // DOS-PORT patch 0239: a screen transition (fade in/out, box-out, crossfade, dissolve) ran since the last
+ // fixed-timestep call. Set by ScreenTransition::Run (ac/screen.cpp) on every step; read and cleared in
+ // dos_run_tick_fixed(). DOSAGS_FADE_RESYNC=1 rebases the epoch when it is set; see the comment there.
+@@ -1803,6 +1841,14 @@
+                 dos_work_last[i] = w1[i];
+         }
+ #endif
++        if (lab_pace_in_spin >= 0 && dos_tick_depth == 0)   // PACE-RIG: the spun tick's own time, as the flag sees it
++        {
++            lab_pace_self_ms[lab_pace_in_spin] = (long)(self_us / 1000);
++            lab_pace_flagged[lab_pace_in_spin] = (lab_pace_stall_us > 0 && self_us > lab_pace_stall_us) ? 1 : 0;
++            lab_pace_in_spin = -1;
++        }
++        if (lab_pace_stall_us > 0 && self_us > lab_pace_stall_us && dos_tick_depth == 0)
++            dos_tick_prev_was_stall = true;                  // PACE-RIG: 0163's flag at the threshold
+         if (self_us > DOS_TICK_STALL_THRESHOLD_US)
+         {
+             if (dos_tick_stall_total < DOS_TICK_STALL_CAP)
+@@ -1824,6 +1870,7 @@
+             dos_tick_stall_total++;
+             dos_tick_stall_us += self_us;
+             dos_tick_prev_was_stall = true;   // patch 0163
++            lab_pace_prev_long = true;        // PACE-RIG FIX-UP 2: beside 0163's own flag (no depth condition, as it)
+             // patch 0141: what this one tick spent its own seconds on.
+             // script_vm is the discriminator the category question turns
+             // on -- a stall that is nearly all script_vm is a blocking
+@@ -1931,6 +1978,12 @@
+         dos_tick_sumcheck_fail, (long)dos_tick_sumcheck_worst_us);
+     fprintf(log, "DOS-PORT faderesync mode=%d transitions=%ld resyncs=%ld\n",   // patch 0239
+         dos_fade_resync_mode, dos_fade_seen, dos_fade_resyncs);
++    lab_pace_init();   // PACE-RIG
++    fprintf(log, "DOS-PORT labpace stall_ms=%ld rebases=%ld forgiven_ticks=%ld max_forgiven_ticks=%ld max_forgiven_short_ticks=%ld spins=%d\n",
++        lab_pace_stall_us / 1000, lab_pace_rebases, lab_pace_forgiven, lab_pace_max_forgiven, lab_pace_max_short, lab_pace_nspin);
++    for (int i = 0; i < lab_pace_nspin; ++i)
++        fprintf(log, "DOS-PORT labspin i=%d want_tick=%ld tick=%ld nominal_ms=%ld self_ms=%ld flagged=%d\n", i, lab_pace_want[i],
++            lab_pace_tick[i], lab_pace_ms[i], lab_pace_self_ms[i], lab_pace_flagged[i]);
+     fprintf(log, "DOS-PORT tick_rate_steady=%.2f ticks=%ld stall_ticks=%ld loop_ms=%ld stall_ms=%ld preloop_ms=%lu threshold_ms=%ld\n",
+         steady_rate, dos_tick_count, dos_tick_stall_total,
+         (long)(loop_us / 1000), (long)(dos_tick_stall_us / 1000),
+@@ -2041,6 +2094,7 @@
+     // named sub-phases actually accounts for the whole tick.
+ #ifdef __DJGPP__
+     DosTickStallScope _dos_tick_stall_scope; // patch 0093
++    lab_pace_spin();   // PACE-RIG: lab cells only (DOSAGS_LAB_SPIN); inside the tick's own time
+     DosPortTickScope _dos_port_update_once_scope(dos_port_tick_timing.update_game_once_total, kDosTickLogUgo); // patch 0315: coarse; 0316: logged
+ #endif
+     set_our_eip(1000);
+@@ -2533,14 +2587,22 @@
+         // defaulting on would confound the very thing it shares a binary
+         // with. Flip the default after 0163 has its own A/B.
+         if (hint < 0) { const char *h = getenv("DOSAGS_STALL_RESYNC");
+-                        hint = (h && h[0] == '1') ? 1 : 0; }
++                        hint = (h && h[0] == '1') ? 1 : 0;
++                        lab_pace_init(); if (lab_pace_stall_us > 0) hint = 1; }   // PACE-RIG: implied
+         if (hint && dos_tick_prev_was_stall)
+         {
++            {   // PACE-RIG: the ticks this rebase forgives
++                const long f = (long)((Clock::now() - epoch_ns) / tick_dur) - (long)(get_loop_counter() - epoch_tick);
++                if (f > 0) { lab_pace_forgiven += f; if (f > lab_pace_max_forgiven) lab_pace_max_forgiven = f;
++                             if (!lab_pace_prev_long && f > lab_pace_max_short) lab_pace_max_short = f; }   // FIX-UP 1
++                lab_pace_rebases++;
++            }
+             epoch_ns = Clock::now();
+             epoch_tick = get_loop_counter();
+             dos_stall_resyncs++;
+         }
+         dos_tick_prev_was_stall = false;
++        lab_pace_prev_long = false;   // PACE-RIG FIX-UP 1
+     }
+ 
+     // DOS-PORT patch 0239: do not repay the time a screen transition took.

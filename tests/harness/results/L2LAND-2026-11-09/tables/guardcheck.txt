@@ -1,0 +1,25 @@
+== Common/gui/guimain.cpp: 17 added lines in 4 blocks, 0 unguarded -> OK
+       1-8     guard @1           #ifdef __DJGPP__
+     259-261   guard @259         #ifdef __DJGPP__
+     267-269   guard @267         #ifdef __DJGPP__
+     278-280   guard @278         #ifdef __DJGPP__
+== Engine/ac/draw.cpp: 205 added lines in 8 blocks, 0 unguarded -> OK
+      62-66    guard @62          #ifdef __DJGPP__
+    3239-3426  guard @3223        // DOS-PORT patch 0372: DOSAGS_GUI_CTRL_MARK. A GUI that was composite
+    3429-3430  guard @3223        dos_gc2_mode();   // DOS-PORT patch 0372: the witness line, printed by
+    3442-3443  guard @3223        if (drawn_now && same && !g.HasChanged() && g.HasControlsChanged() && 
+    3527-3529  guard @3527        #ifdef __DJGPP__
+    3542-3544  guard @3542        #ifdef __DJGPP__
+    3690-3690  guard @3659        !dos_port_gui_was_changed[index] && (!dos_port_gui_was_ctrls[index] ||
+    3695-3695  guard @3659        if (_tracked && dos_gc2_ok[index] && !_skip) dos_gc2_late++;   // DOS-
+== Engine/ac/gui.cpp: 6 added lines in 2 blocks, 0 unguarded -> OK
+       1-3     guard @1           #ifdef __DJGPP__
+     129-131   guard @129         #ifdef __DJGPP__
+== Engine/gui/gui_engine.cpp: 12 added lines in 2 blocks, 0 unguarded -> OK
+       1-5     guard @1           #ifdef __DJGPP__
+     129-135   guard @129         #ifdef __DJGPP__
+== Engine/main/quit.cpp: 3 added lines in 3 blocks, 0 unguarded -> OK
+      37-37    guard @32          void dos_gc2_report(FILE *log);   // DOS-PORT patch 0372 (ac/draw.cpp)
+     420-420   guard @382         "DOSAGS_GUI_CTRL_MARK",   // DOS-PORT patch 0372: a GUI whose only cha
+     956-956   guard @382         dos_gc2_report(run_manifest_log);              // DOS-PORT patch 0372
+TOTAL unguarded: 0

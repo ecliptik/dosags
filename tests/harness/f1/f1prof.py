@@ -87,12 +87,21 @@ def main():
         print('-- no TICKS.BIN')
         return 0
     dropped, cap, recs = tl
+    # Group by TICK, not by loop counter: a tick's render/scene/room/input records are stamped with its own loop
+    # counter N, but its update_game_once close (kind 1) comes after the counter advances and is stamped N+1
+    # (dos_port_tick_timing.h, patch 0316). So tick N = every record up to and including the next kind-1
+    # record, whose lc - 1 is N. (Before 2026-11-06 this grouped by lc, pairing tick N-1's ugo with tick N's
+    # render and scene; found by LAB-R2. Medians barely move; per-tick logic and p95 do.)
     per = {}
     rooms, clicks = [], []
+    cur = [0, 0, 0]
     for lc, k, v in recs:
-        e = per.setdefault(lc, [0, 0, 0])
-        if k in (1, 2, 3):
-            e[k - 1] += v
+        if k == 1:
+            cur[0] += v
+            per[lc - 1] = cur
+            cur = [0, 0, 0]
+        elif k in (2, 3):
+            cur[k - 1] += v
         elif k == 4:
             rooms.append((lc, v))
         elif k in (5, 6):

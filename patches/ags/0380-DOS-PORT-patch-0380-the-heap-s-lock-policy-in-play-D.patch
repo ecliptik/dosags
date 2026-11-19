@@ -1,0 +1,179 @@
+From 3d619b73da4214e0a6beb30cb78ebe961a4edc28 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 13 Nov 2026 02:03:21 -0800
+Subject: [PATCH] DOS-PORT: patch 0380 -- the heap's lock policy in play:
+ DOSAGS_HEAP_UNLOCK=1 clears crt0's LOCK_MEMORY after init,
+ DOSAGS_HEAP_PREGROW_KB=N grows the heap once before play; both OFF by default
+ (TEMPORARY switches for the rig ABBA)
+
+WHY: SDL's DOS main defines _crt0_startup_flags = LOCK_MEMORY | NONMOVE_SBRK and only SDL_RunApp clears LOCK_MEMORY;
+AGS never calls SDL_RunApp, so the flag stays set in play (0x1080) and DJGPP's ___sbrk locks (DPMI 0600h) every new
+heap block whole, in one host call -- on the Gateway 486 a machine-wide stop. After 0377 two such commits remain on MS3:
+the room-2 load (768 pages, eager) and room-2 entry +43..+81 ticks (192 pages); the rig's press-17 / press-18 offset
+steps read +194..+386 / +150..+162 ms in rounds RN / RO's fixed cells. Lab study (move, lab-rb ce5d138d, from lab patch
+9001): UNLOCK makes the commits lazy (play's 192 -> 4 pages; the room-2 load still touches ~770, page by page);
+PREGROW 6,144 KB commits 1,552 pages at the hook and nothing after. DOSBox-X cannot show the time either saves (the
+load takes ~750 ms in every arm there); the rig must.
+
+WHAT: dos_heap_policy() in game_start.cpp, once after "Starting game" (engine and SDL up, before the save restore /
+first room): DOSAGS_HEAP_UNLOCK=1 (exactly "1") clears _CRT0_FLAG_LOCK_MEMORY; DOSAGS_HEAP_PREGROW_KB=N (1..65536)
+does malloc(N KB) + free. Both unset: no flag change and no allocation; the cost is two getenvs and two 0500h
+host calls at the hook (~0.3 ms each on the 486) and one 0500h call at exit. A "DOS-PORT heappolicy" log line
+there; at exit, dos_heap_policy_report() writes "DOS-PORT heappolicy_exit unlock= pregrow_kb= grown= crt0_flags=
+free_at_hook= hook_us= free_pages= phys_pages= unlocked_pages= paging_file_pages=" to RUNMANI.LOG (0500h at exit: the
+unlocked heap's pageability witness). Both env names join the env allowlist (env_block_sha differs per arm).
+ISR safety under UNLOCK: every ISR-touched object is locked explicitly, static, or conventional memory (lab-rb c8af8810
+AUDIT-ISR-LOCK.txt), so no ISR reads unlocked heap.
+
+REMOVAL: the switches are TEMPORARY. After the rig ABBA (OFF / UNLOCK / PREGROW on MS3, pre-registered), a later patch
+either makes the chosen policy unconditional and drops both getenvs and allowlist entries, or removes 0380 whole
+(exact revert, byte-identical to 0379's builds) if neither arm earns its place.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Engine/main/game_start.cpp | 85 ++++++++++++++++++++++++++++++++++++++
+ Engine/main/quit.cpp       |  4 ++
+ 2 files changed, 89 insertions(+)
+
+diff --git a/Engine/main/game_start.cpp b/Engine/main/game_start.cpp
+index dc3eb734e..66372dcb3 100644
+--- a/Engine/main/game_start.cpp
++++ b/Engine/main/game_start.cpp
+@@ -41,6 +41,12 @@
+ #include <time.h>  // uclock() -- patch 0105's pre-loop brackets
+ #include "main/dos_port_startup_timing.h"
+ #endif
++#ifdef __DJGPP__
++#include <crt0.h>   // _crt0_startup_flags, _CRT0_FLAG_LOCK_MEMORY -- DOS-PORT patch 0380
++#include <dpmi.h>   // __dpmi_get_free_memory_information -- DOS-PORT patch 0380
++#include <stdio.h>
++#include <stdlib.h>
++#endif
+ 
+ using namespace AGS::Common;
+ using namespace AGS::Engine;
+@@ -201,6 +207,82 @@ void start_game()
+ #endif
+ }
+ 
++#ifdef __DJGPP__
++// DOS-PORT patch 0380: the heap's lock policy in play, two env switches, BOTH OFF BY DEFAULT (the TEMPORARY switches of
++// a lever under test: when the rig ABBA settles a default, a later patch makes it unconditional or removes it, as 0379 did
++// for 0377's switch).
++// Why: SDL's DOS main defines _crt0_startup_flags = LOCK_MEMORY | NONMOVE_SBRK (src/main/dos/SDL_sysmain_runapp.c) and
++// only SDL_RunApp clears LOCK_MEMORY after startup -- AGS never calls SDL_RunApp, so the flag stays set (0x1080 in play)
++// and DJGPP's ___sbrk locks (DPMI 0600h) every heap block it takes: the whole block is committed and pinned in one host
++// call. On the Gateway 486 that is a machine-wide stop (IRQ0 unserviced) at each room load's growth (lab: the room-2 load
++// of MS3 commits 768 pages eagerly; the 192 pages at room-2 entry +43..+81 ticks are the press-18 step, ~150 ms on the
++// 486 after 0377). Lab study: lab-rb ce5d138d (move-lab/rj/lock/LOCKSTUDY.txt).
++//   DOSAGS_HEAP_UNLOCK=1        clear LOCK_MEMORY here (the SDL_RunApp mirror): later heap blocks are committed lazily,
++//                               page by page, unlocked (pageable). Every ISR-touched object is locked explicitly, static,
++//                               or conventional memory (lab-rb c8af8810 AUDIT-ISR-LOCK.txt), so no ISR reads the heap.
++//   DOSAGS_HEAP_PREGROW_KB=N    keep LOCK_MEMORY but grow the heap once here: malloc(N KB) + free (DJGPP's free never
++//                               returns pages to the host), so play reuses that already-locked memory. N in 1..65536.
++// Applied once, after engine and SDL init, before the save restore / first room. One "DOS-PORT heappolicy" line on the
++// log here, and one "DOS-PORT heappolicy_exit" line in RUNMANI.LOG at exit (dos_heap_policy_report, quit.cpp) with the
++// free / physical / unlocked / paging-file page counts then: the witness for the unlocked heap's pageability.
++static int g_heap_unlock = 0, g_heap_grown = 0;
++static long g_heap_pregrow_kb = 0, g_heap_us = -1;
++static int g_heap_flags0 = -1, g_heap_flags1 = -1;
++static unsigned long g_heap_free0 = 0, g_heap_free1 = 0;
++
++static unsigned long dos_heap_free_pages(__dpmi_free_mem_info *fi)
++{
++    return __dpmi_get_free_memory_information(fi) == 0 ? fi->total_number_of_free_pages : 0;
++}
++
++static void dos_heap_policy()
++{
++    const char *u = getenv("DOSAGS_HEAP_UNLOCK");
++    const char *g = getenv("DOSAGS_HEAP_PREGROW_KB");
++    g_heap_unlock = (u && u[0] == '1' && u[1] == 0) ? 1 : 0;
++    long kb = g ? atol(g) : 0;
++    if (kb < 0 || kb > 65536)
++        kb = 0;
++    g_heap_pregrow_kb = kb;
++    __dpmi_free_mem_info fi;
++    g_heap_free0 = dos_heap_free_pages(&fi);
++    g_heap_flags0 = _crt0_startup_flags;
++    const uclock_t t0 = uclock();
++    if (kb > 0)
++    {
++        void *p = malloc((size_t)kb * 1024u);
++        if (p)
++        {
++            free(p);
++            g_heap_grown = 1;
++        }
++    }
++    if (g_heap_unlock)
++        _crt0_startup_flags &= ~_CRT0_FLAG_LOCK_MEMORY;
++    const uclock_t t1 = uclock();
++    g_heap_flags1 = _crt0_startup_flags;
++    g_heap_free1 = dos_heap_free_pages(&fi);
++    g_heap_us = (long)((t1 - t0) * 1000000LL / UCLOCKS_PER_SEC);
++    Debug::Printf(kDbgMsg_Info, "DOS-PORT heappolicy unlock=%d pregrow_kb=%ld grown=%d crt0_flags=0x%x->0x%x free=%lu->%lu us=%ld",
++        g_heap_unlock, g_heap_pregrow_kb, g_heap_grown, g_heap_flags0, g_heap_flags1, g_heap_free0, g_heap_free1, g_heap_us);
++}
++
++// DOS-PORT patch 0380: the exit witness (RUNMANI.LOG). us= is uclock (PIT) time, blind to ticks lost while the host had
++// interrupts off; it is a lower bound on the pre-grow's cost, not a measure of it.
++void dos_heap_policy_report(FILE *log)
++{
++    if (!log)
++        return;
++    __dpmi_free_mem_info fi;
++    const int ok = __dpmi_get_free_memory_information(&fi) == 0;
++    fprintf(log, "DOS-PORT heappolicy_exit unlock=%d pregrow_kb=%ld grown=%d crt0_flags=0x%x->0x%x free_at_hook=%lu->%lu "
++        "hook_us=%ld free_pages=%lu phys_pages=%lu unlocked_pages=%lu paging_file_pages=%lu\n",
++        g_heap_unlock, g_heap_pregrow_kb, g_heap_grown, g_heap_flags0, g_heap_flags1, g_heap_free0, g_heap_free1, g_heap_us,
++        ok ? fi.total_number_of_free_pages : 0UL, ok ? fi.total_number_of_physical_pages : 0UL,
++        ok ? fi.total_number_of_unlocked_pages : 0UL, ok ? fi.size_of_paging_file_partition_in_pages : 0UL);
++}
++#endif
++
+ void initialize_start_and_play_game(int override_start_room, const String &load_save)
+ {
+     try { // BEGIN try for ALI3DEXception
+@@ -212,6 +294,9 @@ void initialize_start_and_play_game(int override_start_room, const String &load_
+ 
+         Debug::Printf(kDbgMsg_Info, "Engine initialization complete");
+         Debug::Printf(kDbgMsg_Info, "Starting game");
++#ifdef __DJGPP__
++        dos_heap_policy();   // DOS-PORT patch 0380 (off by default)
++#endif
+ 
+         start_game_load_savegame_on_startup(load_save);
+ 
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 741c63aad..bb6b71f7f 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -35,6 +35,7 @@
+ #include "media/audio/sdldecoder.h" // dos_pcm_cache_report(), patch 0216
+ namespace AGS { namespace Engine { void dos_rp_report(FILE *log); } } // DOS-PORT patch 0319 (route_finder_impl_legacy.cpp)
+ void dos_gc2_report(FILE *log);   // DOS-PORT patch 0372 (ac/draw.cpp)
++void dos_heap_policy_report(FILE *log); // DOS-PORT patch 0380 (main/game_start.cpp)
+ #include "main/dos_port_tick_timing.h" // DosPortTickTiming, patch 0079
+ #include <SDL3/SDL_dosident.h> // SDL_DOSVideoIsBankedMode()/SDL_DOSVideoGetBankSwitchCount(), patch 0085
+ #endif
+@@ -418,6 +419,8 @@ void quit(const char *quitmsg)
+             "DOSAGS_FREEZE_TICKS",
+             "DOSAGS_GUI_CLIP",        // patch 0366/0368: GUI composite (4 = R3 by default; 2 = R1; 0 = off; 1 = 0170's clip)
+             "DOSAGS_GUI_CTRL_MARK",   // DOS-PORT patch 0372: a GUI whose only change is controls marks their rects (on by default since 0373; 0 = off)
++            "DOSAGS_HEAP_PREGROW_KB", // patch 0380: grow the heap once before play (off by default; TEMPORARY switch)
++            "DOSAGS_HEAP_UNLOCK",     // patch 0380: clear crt0 LOCK_MEMORY before play (off by default; TEMPORARY switch)
+             "DOSAGS_MAX_SCALE",       // patch 0101: caps the render-frame scale (bake-off candidate c)
+             "DOSAGS_PRESENT_NO_SKIP", // patch 0099: forces real presents -- changes every fps figure
+             "DOSAGS_PRESENT_VERIFY",  // patch 0192: reads the surface twice per present -- a diagnostic, never a timed cell
+@@ -955,6 +958,7 @@ void quit(const char *quitmsg)
+             AGS::Engine::dos_rp_report(run_manifest_log); // DOS-PORT patch 0319
+             dos_gc2_report(run_manifest_log);              // DOS-PORT patch 0372
+             dos_audio_mixer_ring_report(run_manifest_log); // DOS-PORT patch 0377
++            dos_heap_policy_report(run_manifest_log);      // DOS-PORT patch 0380
+             // patch 0217: SDL 0198's IRQ-safe uclock() -- first = calls made with the caller's interrupt
+             // flag (the one that sets up the PIT), wrapped = calls made with interrupts off. 0/0 means the
+             // program was linked without -Wl,--wrap=uclock.
+-- 
+2.47.3
+

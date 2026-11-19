@@ -1,0 +1,65 @@
+== tests/harness/results/D8MP-2026-11-06
+stamp f3a8774e03c8 exit 0 rooms 1 2
+  DOS-PORT tick_rate=63.30 frames_skipped=3279
+  DOS-PORT tick_rate_steady=39.77 ticks=7003 stall_ticks=3 loop_ms=182223 stall_ms=6227 preloop_ms=0 threshold_ms=250
+  fps_p50=21.87
+  DOS-PORT fps_basis counts=render_passes render_passes=9161 presents_real=3756 presents_skipped=0 presents_palette_only=0
+-- tickstats, whole run (nested scopes overlap; ms/tick over 7003 game ticks)
+  phase                                   calls   total_ms   ms/call   ms/tick
+  game_tick_outer                          3725   182134.2    48.895    26.008
+  update_game_once_total                   7003   179130.1    25.579    25.579
+  process_events_dispatch                  7004    99065.9    14.144    14.146
+  script_vm                               14051    86796.8     6.177    12.394
+  render_to_screen                         3756    36473.0     9.711     5.208
+  render_to_screen_pertick                 3724    33262.6     8.932     4.750
+  render_backbuffer                        3756    30749.7     8.187     4.391
+  rb_sprite_time                          11264    29945.8     2.659     4.276
+  scene_construct                          3724    17622.1     4.732     2.516
+  sc_room_view                             3756    14613.4     3.891     2.087
+  sc_viewports                             3756     6428.1     1.711     0.918
+  sc_prep_chars                            3756     5619.5     1.496     0.802
+  drawable_object_states                  14009     4927.9     0.352     0.704
+  wait_next_frame                          3757     4186.1     1.114     0.598
+  input_handling                           7004     4175.8     0.596     0.596
+  bg_restore                               3756     4140.3     1.102     0.591
+  objects_scale                           14009     3834.2     0.274     0.548
+  catchup_audio_poll                       3278     3555.3     1.085     0.508
+  present_update_window                    3756     3219.2     0.857     0.460
+  rep_exec_wrapper                        14008     2991.0     0.214     0.427
+  game_objects_update                      7004     2762.4     0.394     0.394
+  ground_interactions                      7004     2243.3     0.320     0.320
+  input_poll                               7004     1832.2     0.262     0.262
+  gui_context_cursor                       7004     1446.6     0.207     0.207
+  sc_ui_view                               3756     1446.0     0.385     0.206
+  sc_preroom                               3756     1313.9     0.350     0.188
+  sc_screen_ovl                            3724      995.8     0.267     0.142
+  audio_sync                               7004      550.3     0.079     0.079
+  sc_prep_objects                          3756      470.5     0.125     0.067
+  end_of_tick                              7003      366.1     0.052     0.052
+  screen_overlay_vsync                     3756      345.0     0.092     0.049
+  present_get_win_surface                  3756      311.0     0.083     0.044
+  sc_draw_list                             3756      223.8     0.060     0.032
+  gui_poll                                 7004      218.7     0.031     0.031
+  sc_overlays                              3756       99.3     0.026     0.014
+  persistent_anims                         7004       71.7     0.010     0.010
+  room_check                               7004       59.5     0.008     0.008
+  present_sync_palette                     3756       42.6     0.011     0.006
+  present_flip_handling                    3756       21.3     0.006     0.003
+  present_blit                                1        8.0     7.983     0.001
+  fastblit_vmemcpy                            1        7.7     7.744     0.001
+  rep_exec_vm                                 6        3.5     0.587     0.001
+  fastblit_lock                               1        0.0     0.010     0.000
+  fastblit_hreplicate                         1        0.0     0.000     0.000
+  logic_coarse (ugo - render - scene) / ugo calls = 17.854 ms
+  busy/tick (ugo - wait_next_frame) = 24.981 ms; idle wait/tick = 0.598 ms
+  split/tick: logic excl. wait (ugo - render - scene - wait) 17.257 | scene 2.516 | render_to_screen 5.208 ms
+  phases recording: 44 (fine timing ON)
+-- TICKS.BIN: 14506 records, dropped 0, cap 50256; room entries [(5436, 1), (7715, 2)]; clicks/keys 21 (6208 6498 6727 7125 7473 7705 7753 8129 8466 8820 9113 9390 9745 10071 10304 10713 10981 11257 11615 11854 12282)
+   window loop ticks 5480..7714: 2235 ticks
+   (per-tick logic = ugo - render - scene INCLUDES the frame wait, which TICKS.BIN does not record separately)
+   ms/tick      mean   median      p95      max
+   logic       16.72    16.27    17.65   232.69
+   render       5.11     9.80    10.23    16.24
+   scene        2.90     5.27     5.84    27.12
+   ugo         24.74    31.38    33.11   232.69
+   ticks with ugo > 25 ms: 1143 (5481 5483 5485 5487 5488 5490 5492 5494 5496 5497 5499 5501 5503 5505 5507 5508 5510 5512 5514 5516 5517 5519 5521 5523 5525 5527 5529 5530 5532 5534)

@@ -1,0 +1,100 @@
+From 6db1521c4b076fcf11b340eabcb3adeefad291ba Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sun, 8 Nov 2026 09:33:13 -0800
+Subject: [PATCH 370/370] DOS-PORT: patch 0370 -- lever R2 (DOSAGS_CHAR_REUSE)
+ on by default: unset gives mode 2 (R2a + R2b)
+
+Why: the 486 round RD (dosags tests/harness/results/ROUNDRD-2026-11-08) measured R2 (0369, DOSAGS_CHAR_REUSE=2) at
++1.34 points displayed in Maniac Mansion Deluxe in play (97.7% -> 99.0%) against R3 alone. The operator decided to make
+it the default.
+
+What: DOSAGS_CHAR_REUSE unset, or any value other than exactly "0" or "1", now gives mode 2 (R2a + R2b), as
+DOSAGS_GUI_CLIP and DOSAGS_VM treat an unknown value as their default. Exactly "0" = off (the 0368 head); exactly "1" =
+R2a. So an unknown or mistyped value ("3", "off", "00") reads as mode 2 and fails toward the default: only an exact
+"0" turns R2 off. The startup witness keeps its format: "DOS-PORT charreuse DOSAGS_CHAR_REUSE=(default) mode=2" when unset. The
+0369 comments that said unset means off (the lever's header in ac/draw.cpp and the RUNMANIFEST env allowlist entry in
+main/quit.cpp) now say 2 is the default. Cleanup, no behaviour change on DOS: 0369's dos_cr_wb_gen bump in
+ac/dynobj/scriptdrawingsurface.cpp goes under __DJGPP__, like its definition in ac/walkbehind.cpp. 0319's
+dos_walkmask_gen line next to it stays unguarded: that counter and the pathfinder cache that reads it are built on
+every platform.
+
+Gates (DOSBox-X fixed 40000, every tick rendered, frame digest + PRESENT_VERIFY, seeded; dosags
+tests/harness/results/R2DEF-2026-11-08): the default vs explicit =2 frame-EQUAL on every loop counter of MMD fixtures
+G (3164), V (3964), GCL (7004), the intro (1299) and AGS Quest AutoPilot (3558); =0 EQUAL to 0369's default-off records
+and =1 EQUAL to 0369's =1 records (R2LAND-2026-11-07) on all five; 98,502 R2a verify checks, 0 mismatches. Controls
+DIFF: =0 vs the default in the witness, the skips and the restored / composited / presented pixels on all five (frames
+EQUAL, R2 being exact); no per-box redraw (3023/3164 G, 6487/7004 GCL); the key without the baseline under a forced
+baseline change (980). Under the default, each forced fallback EQUAL to its forced =0 arm and DIFF with its guard off:
+old-rect mark (590), 0366's latch (1440), whole invalidation (14), 0368's coarse flag (EQUAL, no off knob), a dynamic
+frame sprite edited in place (2989), the walk-behind mask edited (1847). =3 and =off read as mode 2, frame-EQUAL to the
+default. Release, default vs =0: 5 Days room 3, Trilby room 35, AGS Quest game output EQUAL; P9-shape MMD EQUAL to
+the 0369 release run with =2, and with =0 EQUAL to it unset. Both flavours byte-identical across two clean builds, the
+same size as 0369's.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Engine/ac/draw.cpp                        | 7 ++++---
+ Engine/ac/dynobj/scriptdrawingsurface.cpp | 6 +++++-
+ Engine/main/quit.cpp                      | 2 +-
+ 3 files changed, 10 insertions(+), 5 deletions(-)
+
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index b97184f5b..f4cf1c01f 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -2627,8 +2627,8 @@ bool construct_char_gfx(int charid, bool force_software)
+ }
+ 
+ #ifdef __DJGPP__
+-// DOS-PORT patch 0369 -- lever R2 (dosags docs/lab/LAB-R2.md section 6; LAB-R2B.md). DOSAGS_CHAR_REUSE: unset or 0 = off (the 0368
+-// head); 1 = R2a only; 2 = R2a + R2b. Software renderer only.
++// DOS-PORT patch 0369 -- lever R2 (dosags docs/lab/LAB-R2.md section 6; LAB-R2B.md). DOSAGS_CHAR_REUSE: 0 = off (the 0368
++// head); 1 = R2a only; 2 = R2a + R2b, the default since patch 0370 (unset or any other value). Software renderer only.
+ //  R2a, the prepared image. In MMD room 1 the three kids are key-same in 88.5% of frames, and each frame still re-copied
+ //   the cached image into the raw bitmap and re-ran the walk-behind crop-out. When the whole input key equals last
+ //   scene's (sprite and mirror, view/loop/frame, the six tint/light fields, zoom, width/height, final position and
+@@ -2698,7 +2698,8 @@ int dos_char_reuse_mode()
+     if (dos_cr_mode_v < 0)
+     {
+         const char *e = getenv("DOSAGS_CHAR_REUSE");
+-        dos_cr_mode_v = (e && e[0] == '1' && e[1] == 0) ? 1 : (e && e[0] == '2' && e[1] == 0) ? 2 : 0;
++        // patch 0370: unset or any other value = 2 (R2a + R2b, the default); exactly "0" = off, exactly "1" = R2a
++        dos_cr_mode_v = (e && e[0] == '0' && e[1] == 0) ? 0 : (e && e[0] == '1' && e[1] == 0) ? 1 : 2;
+         Debug::Printf("DOS-PORT charreuse DOSAGS_CHAR_REUSE=%s mode=%d", (e && *e) ? e : "(default)", dos_cr_mode_v);
+     }
+     return dos_cr_mode_v;
+diff --git a/Engine/ac/dynobj/scriptdrawingsurface.cpp b/Engine/ac/dynobj/scriptdrawingsurface.cpp
+index 1dd0759b1..6d095d85c 100644
+--- a/Engine/ac/dynobj/scriptdrawingsurface.cpp
++++ b/Engine/ac/dynobj/scriptdrawingsurface.cpp
+@@ -56,9 +56,13 @@ Bitmap* ScriptDrawingSurface::GetBitmapSurface()
+         // DOS-PORT patch 0319: every draw on a room mask goes through here first; a walkable-mask draw may change
+         // its pixels, so the pathfinder's cache must compare them again
+         if (roomMaskType == kRoomAreaWalkable) { extern unsigned long dos_walkmask_gen; dos_walkmask_gen++; }
++#ifdef __DJGPP__
+         // DOS-PORT patch 0369: a walk-behind draw changes what walkbehinds_cropout() reads even before the release's
+-        // walkbehinds_recalc(), so R2's key (the mask generation) moves here too
++        // walkbehinds_recalc(), so R2's key (the mask generation) moves here too. Under __DJGPP__ since patch 0370,
++        // like its definition in walkbehind.cpp (0319's line above stays unguarded: its counter and the pathfinder
++        // cache that reads it are built on every platform)
+         if (roomMaskType == kRoomAreaWalkBehind) { extern int dos_cr_wb_gen; dos_cr_wb_gen++; }
++#endif
+         return thisroom.GetMask(roomMaskType);
+     }
+     return nullptr;
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 6deaa9f3c..3ef4d7235 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -408,7 +408,7 @@ void quit(const char *quitmsg)
+             // that ran differently -- hashed like the rest. Unset
+             // variables contribute nothing, so older cells' hashes stand.
+             "DOSAGS_BREAK_0193",      // patch 0195: control for the screen-equality gate; a diagnostic
+-            "DOSAGS_CHAR_REUSE",      // patch 0369 R2: character reuse (0 off by default; 1 = R2a; 2 = R2a + R2b)
++            "DOSAGS_CHAR_REUSE",      // patch 0369 R2: character reuse (2 = R2a + R2b, on by default since 0370; 0 = off; 1 = R2a)
+             "DOSAGS_CLOCK_CROSSCHECK",
+             "DOSAGS_ENGLEV",          // engine levers 1 + 2 (on by default; 0 = off)
+             "DOSAGS_FIXED_TIMESTEP",
+-- 
+2.47.3
+

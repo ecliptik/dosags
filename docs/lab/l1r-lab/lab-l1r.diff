@@ -1,0 +1,226 @@
+diff --git a/Engine/ac/event.cpp b/Engine/ac/event.cpp
+index e3e356606..3b94a042a 100644
+--- a/Engine/ac/event.cpp
++++ b/Engine/ac/event.cpp
+@@ -240,6 +240,10 @@ struct DosPortEventScope
+ };
+ #endif
+ 
++#ifdef __DJGPP__
++void dos_route_prewarm();   // DOS-PORT lab L1R (ac/room.cpp)
++#endif
++
+ void process_event(const AGSEvent *evp)
+ {
+     const int room_was = play.room_changes;
+@@ -506,6 +510,9 @@ void process_event(const AGSEvent *evp)
+     }
+     else if (evp->Type == kAGSEvent_FadeIn)
+     {
++#ifdef __DJGPP__
++        dos_route_prewarm();   // DOS-PORT lab L1R: no-op unless DOSAGS_ROUTE_PREWARM=1
++#endif
+         current_fade_in_effect();
+     }
+     else if (evp->Type == kAGSEvent_GUI)
+diff --git a/Engine/ac/room.cpp b/Engine/ac/room.cpp
+index ae830f552..55ed7303f 100644
+--- a/Engine/ac/room.cpp
++++ b/Engine/ac/room.cpp
+@@ -1392,8 +1392,43 @@ void on_room_mask_surface_release(RoomAreaMask mask, bool modified)
+     RoomMaskDS[mask] = 0;
+ }
+ 
++#ifdef __DJGPP__
++// DOS-PORT lab L1R: DOSAGS_ROUTE_PREWARM (unset/0 = off, 1 = on); see dos_route_prewarm()
++static int dos_route_prewarm_mode_v = -1;
++long dos_route_prewarm_skipped = 0;   // FadeIns with the lever on but no legacy pathfinder / no room
++int dos_route_prewarm_mode()
++{
++    if (dos_route_prewarm_mode_v < 0)
++    {
++        const char *e = getenv("DOSAGS_ROUTE_PREWARM");
++        dos_route_prewarm_mode_v = (e && e[0] == '1' && e[1] == 0) ? 1 : 0;
++        Debug::Printf(kDbgMsg_Info, "DOS-PORT routeprewarm DOSAGS_ROUTE_PREWARM=%s mode=%d", e ? e : "(default)",
++            dos_route_prewarm_mode_v);
++    }
++    return dos_route_prewarm_mode_v;
++}
++// Called when the FadeIn event is processed (ac/event.cpp): after a room load (its BeforeFadein event has run) and after
++// a save restore, before the fade-in and before the room's first tick. Prepares the walkable mask for the player, as
++// move_character_impl() does for the player's walk, and has the pathfinder build its per-mask analysis for it.
++void dos_route_prewarm()
++{
++    if (dos_route_prewarm_mode() != 1)
++        return;
++    if (displayed_room < 0 || !room_pathfinder || game.playercharacter < 0)
++    {
++        dos_route_prewarm_skipped++;
++        return;
++    }
++    if (!room_pathfinder->DosPrewarm(prepare_walkable_areas(game.playercharacter)))
++        dos_route_prewarm_skipped++;
++}
++#endif
++
+ void init_room_pathfinder()
+ {
++#ifdef __DJGPP__
++    dos_route_prewarm_mode();   // DOS-PORT lab L1R: the witness line, once
++#endif
+     if (!room_pathfinder)
+         room_pathfinder = Pathfinding::CreateDefaultMaskPathfinder(loaded_game_file_version);
+ }
+diff --git a/Engine/ac/route_finder.h b/Engine/ac/route_finder.h
+index 50dd8beaf..28de9e2f9 100644
+--- a/Engine/ac/route_finder.h
++++ b/Engine/ac/route_finder.h
+@@ -73,6 +73,11 @@ public:
+     // to convert (divide) input coordinates, and resulting path back (multiply).
+     // Note that this may make routefinder to generate additional data, taking more time.
+     void SetWalkableArea(const AGS::Common::Bitmap *walkablearea, int coord_scale = 1);
++#ifdef __DJGPP__
++    // DOS-PORT lab L1R: build this finder's per-mask analysis for `mask` now, exactly as the first request on that mask
++    // would; false when the implementation keeps none. Requests still validate it against their own mask.
++    virtual bool DosPrewarm(const AGS::Common::Bitmap *mask) { (void)mask; return false; }
++#endif
+ 
+ protected:
+     // Update the implementation after a new walkable area is set
+diff --git a/Engine/ac/route_finder_impl_legacy.cpp b/Engine/ac/route_finder_impl_legacy.cpp
+index dd74cce62..790ba8c95 100644
+--- a/Engine/ac/route_finder_impl_legacy.cpp
++++ b/Engine/ac/route_finder_impl_legacy.cpp
+@@ -42,6 +42,13 @@ using namespace AGS::Common;
+ // DOS-PORT patch 0319: walkablearea.cpp's temp mask and its input serial (global scope)
+ extern Bitmap *walkable_areas_temp;
+ extern unsigned long dos_walktemp_serial;
++// DOS-PORT lab L1R: the pre-warm's counters (reported by dos_rp_report); mode and skipped live in ac/room.cpp
++extern int dos_route_prewarm_mode();
++extern long dos_route_prewarm_skipped;
++static long rp_pw_n = 0, rp_pw_builds = 0, rp_pw_built = 0, rp_pw_nowalk = 0;
++static long rp_pw_first_serial = 0, rp_pw_first_compare = 0, rp_pw_first_miss = 0, rp_pw_first_none = 0;
++static int rp_pw_pending = 0;
++static unsigned long long rp_pw_us = 0, rp_pw_max_us = 0;
+ 
+ // #define DEBUG_PATHFINDER
+ 
+@@ -345,6 +352,10 @@ void dos_rp_report(FILE *log)
+   if (log)
+     fprintf(log, "DOS-PORT rpcache fast=%d serial_hits=%lu compares=%lu label_answers=%lu verified=%lu serial_mismatch=%lu label_mismatch=%lu labels_ok=%d label_us=%lu\n",
+       rp_fast, rp_n_serial_hits, rp_n_compares, rp_n_label_answers, rp_n_verified, rp_n_serial_mismatch, rp_n_label_mismatch, rp_labels_ok ? 1 : 0, rp_label_us);
++  if (log) // DOS-PORT lab L1R
++    fprintf(log, "DOS-PORT routeprewarm_final mode=%d prewarms=%ld built=%ld matched=%ld nowalk=%ld skipped=%ld us=%llu max_us=%llu first_serial=%ld first_compare=%ld first_miss=%ld first_none=%ld pending=%d\n",
++      dos_route_prewarm_mode(), rp_pw_n, rp_pw_built, rp_pw_n - rp_pw_built, rp_pw_nowalk, dos_route_prewarm_skipped, rp_pw_us,
++      rp_pw_max_us, rp_pw_first_serial, rp_pw_first_compare, rp_pw_first_miss, rp_pw_first_none, rp_pw_pending);
+ }
+ static int is_route_possible_flood(Bitmap *tempw, int fromx, int fromy, int tox, int toy, const LegacyRouteFinder::PathfinderConfig &pfc);
+ 
+@@ -393,9 +404,11 @@ static int is_route_possible(const Bitmap *wallscreen, int fromx, int fromy, int
+       wallscreen == walkable_areas_temp && dos_walktemp_serial != 0 && dos_walktemp_serial == rp_cache_serial &&
+       rp_cache_src->GetWidth() == wallscreen->GetWidth() && rp_cache_src->GetHeight() == wallscreen->GetHeight();
+   bool hit = (rp_req_mask == wallscreen && rp_cache_src != nullptr && rp_cache_maxgran == pfc.MaxGranularity);
++  bool pw_by_serial = false; // DOS-PORT lab L1R: observed only
+   if (!hit && serial_hit)
+   {
+     hit = true;
++    pw_by_serial = true;
+     rp_n_serial_hits++;
+     if (rp_verify == 1)
+     {
+@@ -411,6 +424,13 @@ static int is_route_possible(const Bitmap *wallscreen, int fromx, int fromy, int
+     if (hit)
+       rp_cache_serial = (wallscreen == walkable_areas_temp) ? dos_walktemp_serial : 0; // 0319 (A)
+   }
++  if (rp_pw_pending) // DOS-PORT lab L1R: how the first request after a warm found the cache (counted, never acted on)
++  {
++    rp_pw_pending = 0;
++    if (!hit) rp_pw_first_miss++;
++    else if (pw_by_serial) rp_pw_first_serial++;
++    else rp_pw_first_compare++;
++  }
+   if (hit)
+   {
+     rp_req_mask = wallscreen; // DOS-PORT patch 0317
+@@ -509,6 +529,7 @@ static int is_route_possible(const Bitmap *wallscreen, int fromx, int fromy, int
+   walk_area_granularity[0] = pfc.MaxGranularity;
+ 
+   // DOS-PORT patch 0211: keep the analysis for the next call on the same mask
++  rp_pw_builds++; // DOS-PORT lab L1R: counted only
+   delete rp_cache_src;
+   delete rp_cache_norm;
+   rp_cache_src = BitmapHelper::CreateBitmapCopy(wallscreen, 8);
+@@ -558,6 +579,47 @@ static int is_route_possible(const Bitmap *wallscreen, int fromx, int fromy, int
+ // The part of is_route_possible that depends on the endpoints: flood from the source over the
+ // normalised mask (`tempw`, owned and deleted here) and, if the target is not reached, suggest the
+ // nearest walkable pixel to it. Split out unchanged by DOS-PORT patch 0211.
++#ifdef __DJGPP__
++// DOS-PORT lab L1R: run the first request's is_route_possible() now, on the mask that request will be given, with
++// source = destination = the first walkable pixel (a trivial question the analysis must still be built to answer).
++// rp_req_mask is cleared before and after, as FindRouteImpl clears it at the start of every request; suggestx/suggesty
++// and walk_area_granularity[] are rewritten by every request before they are read.
++bool LegacyRouteFinder::DosPrewarm(const Bitmap *mask)
++{
++  if (!mask || mask->GetColorDepth() != 8)
++    return false;
++  const uclock_t t0 = uclock();
++  int fx = -1, fy = -1;
++  for (int y = 0; y < mask->GetHeight() && fx < 0; y++)
++  {
++    const uint8_t *s = mask->GetScanLine(y);
++    for (int x = 0; x < mask->GetWidth(); x++)
++      if (s[x] > 0) { fx = x; fy = y; break; }
++  }
++  if (fx < 0)
++  {
++    rp_pw_nowalk++; // nothing walkable: a request would return before the analysis too
++    return false;
++  }
++  if (rp_pw_pending)
++    rp_pw_first_none++; // the previous warm was never asked about
++  rp_pw_pending = 0;
++  const long b0 = rp_pw_builds;
++  rp_req_mask = nullptr;
++  is_route_possible(mask, fx, fy, fx, fy, _pfc);
++  rp_req_mask = nullptr;
++  if (rp_pw_builds != b0)
++    rp_pw_built++;
++  rp_pw_n++;
++  rp_pw_pending = 1;
++  long long d = (long long)(uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC;
++  if (d < 0) d = 0;
++  rp_pw_us += (unsigned long long)d;
++  if ((unsigned long long)d > rp_pw_max_us) rp_pw_max_us = (unsigned long long)d;
++  return true;
++}
++#endif
++
+ static int is_route_possible_flood(Bitmap *tempw, int fromx, int fromy, int tox, int toy, const LegacyRouteFinder::PathfinderConfig &pfc)
+ {
+   tempw->FloodFill(fromx, fromy, 232);
+diff --git a/Engine/ac/route_finder_impl_legacy.h b/Engine/ac/route_finder_impl_legacy.h
+index 87bdc1879..b1e788e9f 100644
+--- a/Engine/ac/route_finder_impl_legacy.h
++++ b/Engine/ac/route_finder_impl_legacy.h
+@@ -32,6 +32,9 @@ public:
+     ~LegacyRouteFinder();
+ 
+     void Configure(GameDataVersion game_ver) override;
++#ifdef __DJGPP__
++    bool DosPrewarm(const Common::Bitmap *mask) override;   // DOS-PORT lab L1R
++#endif
+ 
+     // Configuration for the pathfinder
+     struct PathfinderConfig
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 6deaa9f3c..dec1fb351 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -419,6 +419,7 @@ void quit(const char *quitmsg)
+             "DOSAGS_MAX_SCALE",       // patch 0101: caps the render-frame scale (bake-off candidate c)
+             "DOSAGS_PRESENT_NO_SKIP", // patch 0099: forces real presents -- changes every fps figure
+             "DOSAGS_PRESENT_VERIFY",  // patch 0192: reads the surface twice per present -- a diagnostic, never a timed cell
++            "DOSAGS_ROUTE_PREWARM",   // lab L1R: route-cache pre-warm in the room-load / restore stall (off by default)
+             "DOSAGS_TAS_AUTO_EXIT_TICK",
+             "DOSAGS_VM",              // patch 0359: script VM mode (fast by default; legacy = upstream's Run())
+             "DOSAGS_VM_FUSE",         // superinstruction mask (all six by default)

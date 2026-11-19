@@ -1,0 +1,134 @@
+== 1. full latches (rbfull), lc >= 5437
+   16  why=invalidate_all_rects at=ac/screen.cpp:873>ac/draw.cpp:3823>ac/draw.cpp:1543 already=1 post=0 fn=-  lc: 7711
+   15  why=full_redraw requested at=ac/screen.cpp:873 already=0 post=0 fn=-  lc: 7711
+    1  why=in_room rect with no camera at=ac/draw.cpp:2710 already=0 post=0 fn=region1_a  lc: 7711
+    1  why=in_room rect with no camera at=ac/draw.cpp:2710 already=1 post=0 fn=region1_a  lc: 7711
+    1  why=invalidate_all_rects at=ac/room.cpp:1080>ac/draw.cpp:1543 already=1 post=0 fn=region1_a  lc: 7711
+    1  why=full_redraw requested at=ac/screen.cpp:873 already=1 post=0 fn=-  lc: 7711
+    1  why=invalidate_all_rects at=ac/screen.cpp:873>ac/draw.cpp:1361>ac/draw.cpp:1543 already=1 post=0 fn=-  lc: 7711
+    1  why=invalidate_all_camera_rects at=ac/screen.cpp:873>ac/draw_software.cpp:242 already=1 post=0 fn=-  lc: 7711
+    1  why=invalidate_all_rects at=ac/screen.cpp:864>ac/draw.cpp:1543 already=0 post=0 fn=-  lc: 7711
+
+== 2. whole-surface presents and R2b ff_full scenes
+rbpfull 18: 5442 7711 7717
+rbff 17: 5442 7711 7717
+
+== 3. slow / GUI-redraw / route ticks (ms; rbslow joined with rbroute)
+lc us script events scene render gui(ms/n) guis path(ms) irp dij(passes,scans) see(n) fn
+5442 34.3 4.1 4.5 19.9 8.6 10.2/2 3 0.0 - repeatedly_execute:3959@0
+6154 101.0 72.7 73.5 1.1 0.7 0.0/0 0 62.3 57.4 2.4(1,1) 0.1(4) repeatedly_execute:4115@0,on_mouse_click:68438@0
+6156 21.2 4.3 4.7 9.9 5.3 2.8/1 1 0.0 - repeatedly_execute:4120@0
+6409 37.1 28.8 29.5 1.0 0.6 0.0/0 0 20.3 0.4 14.2(38,17201) 4.2(42) repeatedly_execute:4125@0,on_mouse_click:24490@0
+6410 22.9 6.4 6.7 9.5 5.3 2.8/1 1 0.0 - repeatedly_execute:6195@0
+6411 20.5 4.3 4.7 9.1 5.4 2.8/1 1 0.0 - repeatedly_execute:4119@0
+7315 94.2 84.6 85.3 1.0 0.6 0.0/0 0 76.3 0.7 52.1(91,106608) 21.2(96) repeatedly_execute:4120@0,on_mouse_click:80285@0
+7319 21.1 4.3 4.6 9.8 5.5 2.8/1 1 0.0 - repeatedly_execute:4115@0
+7701 25.0 11.8 12.6 1.0 0.6 0.0/0 0 3.2 - repeatedly_execute:4121@0,on_mouse_click:7500@0
+7702 23.3 5.7 6.1 10.8 5.2 2.8/1 1 0.0 - repeatedly_execute:5576@0
+7704 20.9 4.3 4.7 9.8 5.3 2.8/1 1 0.0 - repeatedly_execute:4115@0
+7711 2362.9 50.4 1404.7 0.0 0.0 5.7/3 403 0.0 - region1_a:896647@0,room_a:46361@0
+7712 62.9 23.8 61.1 0.0 0.0 0.0/0 0 0.0 - room_c:19386@0,repeatedly_execute:4156@0
+7895 200.0 192.1 192.9 1.2 1.0 0.0/0 0 182.2 172.8 7.9(9,263) 0.4(12) repeatedly_execute:4162@0,on_mouse_click:187809@0
+7901 21.6 4.3 4.7 10.4 5.3 2.8/1 1 0.0 - repeatedly_execute:4157@0
+8665 29.9 4.2 4.5 13.4 5.4 7.5/1 2 0.0 - repeatedly_execute:4011@0
+8668 25.0 4.1 4.5 12.5 5.1 6.7/1 1 0.0 - repeatedly_execute:4027@0
+10003 27.0 4.9 5.7 8.2 5.2 2.4/1 2 0.0 - repeatedly_execute:4173@0
+10648 27.2 4.3 4.5 8.4 5.2 2.4/1 2 0.0 - repeatedly_execute:4032@0
+
+== 4. GUI change marks (rbguimark) and label changes (rblabel), lc >= 5437
+   14  mark gui=1 code=2 obj=-1 fn=region1_a pos=-  lc: 7711
+   11  mark gui=4 code=10 obj=0 fn=- pos=-  lc: 5437 6154 6640 7315 7711-7712 8231 10003 10648
+   11  mark gui=4 code=2 obj=-1 fn=- pos=-  lc: 5437 6154 6640 7315 7711-7712 8231 10003 10648
+    7  mark gui=0 code=10 obj=0 fn=repeatedly_execute pos=(unknown  lc: 5437 6155 6410 7316 7702 7896 8667
+    7  mark gui=0 code=2 obj=-1 fn=repeatedly_execute pos=(unknown  lc: 5437 6155 6410 7316 7702 7896 8667
+    6  mark gui=7 code=2 obj=-1 fn=region1_a pos=-  lc: 7711
+    5  mark gui=0 code=10 obj=0 fn=on_mouse_click pos=(unknown  lc: 6154 6409 7315 7701 7895
+    5  mark gui=0 code=2 obj=-1 fn=on_mouse_click pos=(unknown  lc: 6154 6409 7315 7701 7895
+    5  mark gui=3 code=2 obj=-1 fn=region1_a pos=-  lc: 7711
+    5  mark gui=6 code=2 obj=-1 fn=region1_a pos=-  lc: 7711
+    5  mark gui=14 code=2 obj=-1 fn=region1_a pos=-  lc: 7711
+    3  mark gui=9 code=2 obj=-1 fn=region1_a pos=-  lc: 7711
+    3  mark gui=13 code=2 obj=-1 fn=region1_a pos=-  lc: 7711
+    3  mark gui=1 code=10 obj=0 fn=- pos=-  lc: 8665 10003 10648
+    3  mark gui=1 code=2 obj=-1 fn=- pos=-  lc: 8665 10003 10648
+    2  mark gui=4 code=10 obj=0 fn=region1_a pos=-  lc: 7711
+    2  mark gui=4 code=2 obj=-1 fn=region1_a pos=-  lc: 7711
+    2  mark gui=8 code=2 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=1 code=10 obj=7 fn=repeatedly_execute pos=(unknown  lc: 5437
+    1  mark gui=1 code=2 obj=-1 fn=repeatedly_execute pos=(unknown  lc: 5437
+    1  mark gui=0 code=1 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=0 code=10 obj=0 fn=region1_a pos=-  lc: 7711
+    1  mark gui=0 code=2 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=1 code=1 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=1 code=10 obj=0 fn=region1_a pos=-  lc: 7711
+    1  mark gui=1 code=10 obj=1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=1 code=10 obj=2 fn=region1_a pos=-  lc: 7711
+    1  mark gui=1 code=10 obj=3 fn=region1_a pos=-  lc: 7711
+    1  mark gui=1 code=10 obj=4 fn=region1_a pos=-  lc: 7711
+    1  mark gui=1 code=10 obj=5 fn=region1_a pos=-  lc: 7711
+    1  mark gui=1 code=10 obj=6 fn=region1_a pos=-  lc: 7711
+    1  mark gui=1 code=10 obj=7 fn=region1_a pos=-  lc: 7711
+    1  mark gui=1 code=10 obj=8 fn=region1_a pos=-  lc: 7711
+    1  mark gui=1 code=10 obj=9 fn=region1_a pos=-  lc: 7711
+    1  mark gui=1 code=10 obj=10 fn=region1_a pos=-  lc: 7711
+    1  mark gui=1 code=10 obj=11 fn=region1_a pos=-  lc: 7711
+    1  mark gui=1 code=10 obj=12 fn=region1_a pos=-  lc: 7711
+    1  mark gui=1 code=10 obj=13 fn=region1_a pos=-  lc: 7711
+    1  mark gui=2 code=1 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=3 code=1 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=3 code=10 obj=0 fn=region1_a pos=-  lc: 7711
+    1  mark gui=3 code=10 obj=1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=3 code=10 obj=2 fn=region1_a pos=-  lc: 7711
+    1  mark gui=3 code=10 obj=3 fn=region1_a pos=-  lc: 7711
+    1  mark gui=3 code=10 obj=4 fn=region1_a pos=-  lc: 7711
+    1  mark gui=4 code=1 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=5 code=1 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=5 code=10 obj=0 fn=region1_a pos=-  lc: 7711
+    1  mark gui=5 code=2 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=6 code=1 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=6 code=10 obj=0 fn=region1_a pos=-  lc: 7711
+    1  mark gui=6 code=10 obj=1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=6 code=10 obj=2 fn=region1_a pos=-  lc: 7711
+    1  mark gui=6 code=10 obj=3 fn=region1_a pos=-  lc: 7711
+    1  mark gui=6 code=10 obj=4 fn=region1_a pos=-  lc: 7711
+    1  mark gui=7 code=1 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=7 code=10 obj=0 fn=region1_a pos=-  lc: 7711
+    1  mark gui=7 code=10 obj=1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=7 code=10 obj=2 fn=region1_a pos=-  lc: 7711
+    1  mark gui=7 code=10 obj=3 fn=region1_a pos=-  lc: 7711
+    1  mark gui=7 code=10 obj=4 fn=region1_a pos=-  lc: 7711
+    1  mark gui=7 code=10 obj=5 fn=region1_a pos=-  lc: 7711
+    1  mark gui=8 code=1 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=8 code=10 obj=0 fn=region1_a pos=-  lc: 7711
+    1  mark gui=8 code=10 obj=1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=9 code=1 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=9 code=10 obj=0 fn=region1_a pos=-  lc: 7711
+    1  mark gui=9 code=10 obj=1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=9 code=10 obj=2 fn=region1_a pos=-  lc: 7711
+    1  mark gui=10 code=1 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=11 code=1 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=11 code=10 obj=0 fn=region1_a pos=-  lc: 7711
+    1  mark gui=11 code=2 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=12 code=1 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=12 code=10 obj=0 fn=region1_a pos=-  lc: 7711
+    1  mark gui=12 code=2 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=13 code=1 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=13 code=10 obj=0 fn=region1_a pos=-  lc: 7711
+    1  mark gui=13 code=10 obj=1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=13 code=10 obj=2 fn=region1_a pos=-  lc: 7711
+    1  mark gui=14 code=1 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=14 code=10 obj=0 fn=region1_a pos=-  lc: 7711
+    1  mark gui=14 code=10 obj=1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=14 code=10 obj=2 fn=region1_a pos=-  lc: 7711
+    1  mark gui=14 code=10 obj=3 fn=region1_a pos=-  lc: 7711
+    1  mark gui=14 code=10 obj=4 fn=region1_a pos=-  lc: 7711
+    1  mark gui=15 code=1 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=15 code=10 obj=0 fn=region1_a pos=-  lc: 7711
+    1  mark gui=15 code=2 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=16 code=1 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=16 code=10 obj=0 fn=region1_a pos=-  lc: 7711
+    1  mark gui=16 code=2 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=17 code=1 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=18 code=1 obj=-1 fn=region1_a pos=-  lc: 7711
+    1  mark gui=18 code=10 obj=0 fn=region1_a pos=-  lc: 7711
+    1  mark gui=18 code=2 obj=-1 fn=region1_a pos=-  lc: 7711

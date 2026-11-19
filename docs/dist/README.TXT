@@ -105,10 +105,12 @@ KNOWN LIMITS
   second) at 8-, 16- and 32-bit colour. Other games and heavier rooms
   can be slower; game logic stays correct, the frame rate drops.
 - Script speed-ups. Game scripts run on a faster interpreter, and some
-  per-frame engine work that cannot change anything is skipped. If a
-  game behaves differently from its Windows version, try again with
-  SET DOSAGS_VM=legacy and SET DOSAGS_ENGLEV=0 (AGS's own interpreter,
-  no skipping).
+  per-frame engine work that cannot change anything is skipped, such as
+  redrawing interface panels and characters nothing has touched. If a
+  game behaves or draws differently from its Windows version, try again
+  with SET DOSAGS_VM=legacy, SET DOSAGS_ENGLEV=0, SET DOSAGS_GUI_CLIP=0,
+  SET DOSAGS_CHAR_REUSE=0 and SET DOSAGS_GUI_CTRL_MARK=0 (AGS's own
+  interpreter and drawing, no skipping).
 - OGG and MP3 audio are NOT decoded on DOS. Games whose music or speech
   is OGG/MP3 (most games made with AGS 3.x) play those clips silently
   unless the clips are first converted to WAV on a modern PC with the

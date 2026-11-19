@@ -1,0 +1,7 @@
+# RSA2 -- MS3 on the ags 0383 release, the confirmation pair (pre-registration, before any data)
+- Binary: rs0383.exe = the ags 0383 release (main 381118e9; DOSAGS_RELEASE=1; sha256 c68241073cb0dbcc6f0870c22ba31a0d904dd2261e72a44fbb7ba75f6cfb7f43, 8,673,058 B; stamp f2e183845d2f; RM0383-2026-11-17). No env switch: main's behaviour.
+- Play line: round RR's verbatim (DRIVE 6 ms, the calibrated values, 114 presses, AGSSAVE.007 f486d0e9..., ACSETUP-ON-512X384-ROUND.CFG, --no-fine-timing, TAS exit 12440).
+- Read by tests/harness/rs-read.py cell A (READ.txt); the term by rs-read.py verdict (VERDICT.txt). VALID: stamp f2e183845d2f; routestamp allocs >= 1 and peak_bytes 192000; exit_code=0 and ENGINE HAS SHUTDOWN; underruns = overwrites = 0; pairing PAIR-OK / PAIR-OK-114LATE; presses sent == planned.
+- Term 0383-CONFIRMS-RR (registered RSA1 + RSA2; RSA3 joins if valid): CONSISTENT if every valid A cell is within 239..494 skips and their mean within 279..449 (round RR's F: 359 / 324 / 409). Predicted: 324-409 skips, about 94-95% displayed, 114 journeys, PAIR-OK.
+- Watch (information): partial_waits (+2 expected), the press-3 second's skips, memory_min_free_kb (about 146,176 expected).
+- Round RS (pre-registration: ROUNDRS-2026-11-19/README.md, the rule; written 2026-11-18 before any data). One power-on, CAP_MIN 120. USB4VC firmware 0.5.109; pkt_partial / pkt_timeout / mouse.dropped and ev_in == pkt_built reported per cell; a partial voids an MS3 play cell from that press (rule M0).

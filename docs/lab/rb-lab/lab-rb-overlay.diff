@@ -1,0 +1,990 @@
+diff --git a/Common/ac/spritecache.cpp b/Common/ac/spritecache.cpp
+index 4523d6086..ace7c5687 100644
+--- a/Common/ac/spritecache.cpp
++++ b/Common/ac/spritecache.cpp
+@@ -1,3 +1,7 @@
++#include "util/dos_lab_rb.h"   // RB OVERLAY
++#ifdef __DJGPP__
++DosLabT dos_lab_t[kLabCount];   // RB OVERLAY (global scope)
++#endif
+ //=============================================================================
+ //
+ // Adventure Game Studio (AGS)
+@@ -367,6 +371,7 @@ size_t SpriteCache::CalcSize(const std::unique_ptr<Bitmap> &item)
+ 
+ Bitmap *SpriteCache::LoadSprite(sprkey_t index, bool lock)
+ {
++    DOS_LAB_SCOPE(kLabSprLoad);   // RB OVERLAY
+     assert((index >= 0) && ((size_t)index < _spriteData.size()));
+     if (index < 0 || (size_t)index >= _spriteData.size())
+         return nullptr;
+diff --git a/Common/data/assetmanager.cpp b/Common/data/assetmanager.cpp
+index 4d600176e..d737d4ad4 100644
+--- a/Common/data/assetmanager.cpp
++++ b/Common/data/assetmanager.cpp
+@@ -1,3 +1,4 @@
++#include "util/dos_lab_rb.h"   // RB OVERLAY
+ //=============================================================================
+ //
+ // Adventure Game Studio (AGS)
+@@ -356,6 +357,7 @@ AssetError AssetManager::RegisterAssetLib(const String &path, AssetLibEx *&out_l
+ 
+ std::unique_ptr<Stream> AssetManager::OpenAsset(const String &asset_name, const String &filter) const
+ {
++    DOS_LAB_SCOPE(kLabAsset);   // RB OVERLAY
+     for (const auto *lib : _activeLibs)
+     {
+         if (!lib->TestFilter(filter)) continue; // filter does not match
+diff --git a/Common/gui/guimain.cpp b/Common/gui/guimain.cpp
+index 7992f8fed..a06a3acf6 100644
+--- a/Common/gui/guimain.cpp
++++ b/Common/gui/guimain.cpp
+@@ -1,3 +1,6 @@
++#ifdef __DJGPP__
++void (*dos_lab_guimark_hook)(int, int, int) = nullptr;   // RB OVERLAY v5
++#endif
+ //=============================================================================
+ //
+ // Adventure Game Studio (AGS)
+@@ -243,16 +246,25 @@ void GUIMain::OnSpriteUpdate(int sprite_num)
+ 
+ void GUIMain::MarkChanged()
+ {
++#ifdef __DJGPP__
++    if (dos_lab_guimark_hook) dos_lab_guimark_hook(_id, 1, -1);   // RB OVERLAY v5
++#endif
+     _hasChanged = true;
+ }
+ 
+ void GUIMain::MarkControlChanged()
+ {
++#ifdef __DJGPP__
++    if (dos_lab_guimark_hook) dos_lab_guimark_hook(_id, 2, -1);   // RB OVERLAY v5
++#endif
+     _hasControlsChanged = true;
+ }
+ 
+ void GUIMain::NotifyControlPosition()
+ {
++#ifdef __DJGPP__
++    if (dos_lab_guimark_hook) dos_lab_guimark_hook(_id, 3, -1);   // RB OVERLAY v5
++#endif
+     // Force it to re-check for which control is under the mouse
+     _mouseWasAt.X = -1;
+     _mouseWasAt.Y = -1;
+@@ -261,6 +273,9 @@ void GUIMain::NotifyControlPosition()
+ 
+ void GUIMain::NotifyControlState(int objid, bool mark_changed)
+ {
++#ifdef __DJGPP__
++    if (dos_lab_guimark_hook && mark_changed) dos_lab_guimark_hook(_id, 4, objid);   // RB OVERLAY v5
++#endif
+     _mouseWasAt.X = -1;
+     _mouseWasAt.Y = -1;
+     _hasControlsChanged |= mark_changed;
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index b97184f5b..39e1349ab 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -1,3 +1,4 @@
++#include "util/dos_lab_rb.h"   // RB OVERLAY
+ //=============================================================================
+ //
+ // Adventure Game Studio (AGS)
+@@ -1537,7 +1538,7 @@ void texturecache_precache(uint32_t sprite_id)
+     texturecache.GetOrLoad(sprite_id, nullptr, has_alpha, false);
+ }
+ 
+-void invalidate_screen()
++void (invalidate_screen)()   // RB OVERLAY: parenthesized past the tag macro
+ {
+     invalidate_all_rects();
+ }
+@@ -1547,7 +1548,7 @@ void invalidate_camera_frame(int index)
+     invalidate_all_camera_rects(index);
+ }
+ 
+-void invalidate_rect(int x1, int y1, int x2, int y2, bool in_room)
++void (invalidate_rect)(int x1, int y1, int x2, int y2, bool in_room)   // RB OVERLAY v4
+ {
+     invalidate_rect_ds(x1, y1, x2, y2, in_room);
+ }
+@@ -2803,7 +2804,18 @@ static bool dos_cr_put(const SpriteListEntry &t)
+     {
+         if (dos_cr_nview > 1 || dos_cr_nview_pre != 1)                 { dos_cr_ff_multi++; dos_cr_ff++; }
+         else if (dos_cr_cam_moved)                                     { dos_cr_ff_cam++; dos_cr_ff++; }
+-        else if (dos_port_dirty.is_full || dos_port_dirty.carry_full)  { dos_cr_ff_full++; dos_cr_ff++; }
++        else if (dos_port_dirty.is_full || dos_port_dirty.carry_full)
++        {
++            dos_cr_ff_full++; dos_cr_ff++;
++            static long _rb_last = -1;   // RB OVERLAY: once per scene
++            if (_rb_last != dos_cr_scene)
++            {
++                _rb_last = dos_cr_scene;
++                Debug::Printf("DOS-PORT rbff lc=%ld scene=%ld is_full=%d carry_full=%d why=%s", (long)get_loop_counter(),
++                    dos_cr_scene, dos_port_dirty.is_full ? 1 : 0, dos_port_dirty.carry_full ? 1 : 0,
++                    dos_port_dirty.full_reason ? dos_port_dirty.full_reason : "-");
++            }
++        }
+         else if (dos_guiclip_latched_next())                           { dos_cr_ff_latch++; dos_cr_ff++; }
+         else if (dos_guiclip_coarse())                                 { dos_cr_ff_coarse++; dos_cr_ff++; }
+         else skip = true;
+@@ -3333,10 +3345,14 @@ void draw_gui_and_overlays()
+                     // non-sprite on guis with alpha-containing background would be transparent.
+                     gbg.Bmp->SetSupportAlphaInColors(game.HasAlphaInDrawingOps());
+ 
++                    {
++                    { extern unsigned long dos_lab_gui_mask; if (index < 32) dos_lab_gui_mask |= 1UL << index; }   // RB OVERLAY v3
++                    DOS_LAB_SCOPE(kLabGuiDraw);   // RB OVERLAY
+                     if (draw_with_controls)
+                         gui.DrawWithControls(gbg.Bmp.get());
+                     else
+                         gui.DrawSelf(gbg.Bmp.get());
++                    }
+ 
+                     const bool is_alpha = gui.HasAlphaChannel();
+                     if (is_alpha)
+@@ -3553,6 +3569,9 @@ void put_sprite_list_on_screen(bool in_room)
+ #endif
+             {   // patch 0175
+                 dos_port_dirty_source = in_room ? kDirtySrc_RoomSprite : kDirtySrc_UiSprite;
++                if ((long)t.DDB->GetWidth() * t.DDB->GetHeight() >= 20000)   // RB OVERLAY v4
++                    Debug::Printf("DOS-PORT rbbig lc=%ld in_room=%d x=%d y=%d w=%d h=%d drawindex=%u char=%d skipinv=%d", (long)get_loop_counter(),
++                        in_room ? 1 : 0, t.X, t.Y, t.DDB->GetWidth(), t.DDB->GetHeight(), (unsigned)t.DrawIndex, t.DosCharId, t.SkipInvalidate ? 1 : 0);
+                 invalidate_sprite(t.X, t.Y, t.DDB, in_room);
+                 dos_port_dirty_source = kDirtySrc_Other;
+             }
+@@ -3779,7 +3798,7 @@ static void construct_overlays()
+     }
+ }
+ 
+-void construct_game_scene(bool full_redraw)
++void (construct_game_scene)(bool full_redraw)   // RB OVERLAY
+ {
+     set_our_eip(3);
+ #ifdef __DJGPP__
+diff --git a/Engine/ac/draw.h b/Engine/ac/draw.h
+index 713f5d88b..f73029484 100644
+--- a/Engine/ac/draw.h
++++ b/Engine/ac/draw.h
+@@ -116,11 +116,19 @@ void texturecache_precache(uint32_t sprite_id);
+ 
+ // marks whole screen as needing a redraw
+ void invalidate_screen();
++#ifdef __DJGPP__   // RB OVERLAY: caller tag around every call
++void dos_lab_tag_push(const char *f, int l);
++void dos_lab_tag_pop();
++#define invalidate_screen() (dos_lab_tag_push(__FILE__, __LINE__), invalidate_screen(), dos_lab_tag_pop())
++#endif
+ // marks all the camera frame as needing a redraw
+ void invalidate_camera_frame(int index);
+ // marks certain rectangle on screen as needing a redraw
+ // in_room flag tells how to interpret the coordinates: as in-room coords or screen viewport coordinates.
+ void invalidate_rect(int x1, int y1, int x2, int y2, bool in_room);
++#ifdef __DJGPP__   // RB OVERLAY v4
++#define invalidate_rect(...) (dos_lab_tag_push(__FILE__, __LINE__), invalidate_rect(__VA_ARGS__), dos_lab_tag_pop())
++#endif
+ 
+ void mark_current_background_dirty();
+ 
+@@ -137,6 +145,9 @@ void update_shakescreen();
+ void render_graphics(Engine::IDriverDependantBitmap *extraBitmap = nullptr, int extraX = 0, int extraY = 0);
+ // Construct game scene, scheduling drawing list for the renderer
+ void construct_game_scene(bool full_redraw = false);
++#ifdef __DJGPP__   // RB OVERLAY
++#define construct_game_scene(...) (dos_lab_tag_push(__FILE__, __LINE__), construct_game_scene(__VA_ARGS__), dos_lab_tag_pop())
++#endif
+ // Construct final game screen elements; updates and draws mouse cursor
+ void construct_game_screen_overlay(bool draw_cursor = true);
+ // Construct engine overlay with debugging tools (fps, console)
+diff --git a/Engine/ac/draw_software.cpp b/Engine/ac/draw_software.cpp
+index 21553485d..511213b56 100644
+--- a/Engine/ac/draw_software.cpp
++++ b/Engine/ac/draw_software.cpp
+@@ -1,3 +1,4 @@
++#include "util/dos_lab_rb.h"   // RB OVERLAY
+ //=============================================================================
+ //
+ // Adventure Game Studio (AGS)
+@@ -248,7 +249,7 @@ void set_invalidrects_cameraoffs(int view_index, int x, int y)
+ static bool dos_port_break_0193();   // patch 0195: defined below
+ #endif
+ 
+-void invalidate_all_rects()
++void (invalidate_all_rects)()   // RB OVERLAY
+ {
+ #ifdef __DJGPP__
+     if (!dos_port_break_0193()) dos_port_dirty_set_full("invalidate_all_rects");   // patch 0193: the accumulator never heard of this
+@@ -261,7 +262,7 @@ void invalidate_all_rects()
+     }
+ }
+ 
+-void invalidate_all_camera_rects(int view_index)
++void (invalidate_all_camera_rects)(int view_index)   // RB OVERLAY
+ {
+ #ifdef __DJGPP__
+     if (!dos_port_break_0193()) dos_port_dirty_set_full("invalidate_all_camera_rects");   // patch 0193
+@@ -271,10 +272,39 @@ void invalidate_all_camera_rects(int view_index)
+     RoomCamRects[view_index].NumDirtyRegions = WHOLESCREENDIRTY;
+ }
+ 
++#ifdef __DJGPP__
++// GATE OVERLAY: DOSAGS_LAB_FORCE_WHOLE=N -- after every Nth room restore, the next room-rect mark takes the overflow
++// exit below (NumDirtyRegions = WHOLESCREENDIRTY, mark dropped), the path a 26th rect in one interval takes.
++static int dos_lab_force_n = -1; static long dos_lab_force_frames = 0; static bool dos_lab_force_next = false;
++extern long dos_lab_forced, dos_lab_probes;
++extern int dos_lab_spanmax_v;
++// GATE OVERLAY: DOSAGS_LAB_SPANMAX=N (spans per row before a stretch), DOSAGS_LAB_SPANPROBE=K[:Y] (two 2x2 marks)
++static int dos_lab_spanmax = -1, dos_lab_probe_k = 0, dos_lab_probe_y = -1; static long dos_lab_probe_frames = 0;
++static int dos_lab_spanmax_get()
++{
++    if (dos_lab_spanmax < 0)
++    {
++        const char *e = getenv("DOSAGS_LAB_SPANMAX");
++        dos_lab_spanmax = (e && atoi(e) >= 1 && atoi(e) <= MAX_SPANS_PER_ROW) ? atoi(e) : MAX_SPANS_PER_ROW;
++        dos_lab_spanmax_v = dos_lab_spanmax;
++        const char *p = getenv("DOSAGS_LAB_SPANPROBE");
++        if (p) { dos_lab_probe_k = atoi(p); const char *c = strchr(p, ':'); if (c) dos_lab_probe_y = atoi(c + 1); }
++    }
++    return dos_lab_spanmax;
++}
++#endif
+ void invalidate_rect_on_surf(int x1, int y1, int x2, int y2, DirtyRects &rects)
+ {
+     if (rects.DirtyRows.size() == 0)
+         return;
++#ifdef __DJGPP__
++    if (dos_lab_force_next && &rects != &BlackRects)
++    {
++        dos_lab_force_next = false; dos_lab_forced++;
++        rects.NumDirtyRegions = WHOLESCREENDIRTY;   // as the overflow branch: too many rects, whole surface dirty
++        return;
++    }
++#endif
+     if (rects.NumDirtyRegions >= MAXDIRTYREGIONS) {
+         // too many invalid rectangles, just mark the whole thing dirty
+         rects.NumDirtyRegions = WHOLESCREENDIRTY;
+@@ -323,7 +353,7 @@ void invalidate_rect_on_surf(int x1, int y1, int x2, int y2, DirtyRects &rects)
+                 }
+             }
+         }
+-        else if (dirtyRow[a].numSpans < MAX_SPANS_PER_ROW) {
++        else if (dirtyRow[a].numSpans < dos_lab_spanmax_get()) {   // GATE OVERLAY: AGS's MAX_SPANS_PER_ROW
+             dirtyRow[a].span[dirtyRow[a].numSpans].x1 = x1;
+             dirtyRow[a].span[dirtyRow[a].numSpans].x2 = x2;
+             dirtyRow[a].numSpans++;
+@@ -474,8 +504,10 @@ static void dos_port_boxset_add(DosPortDirtyBox *box, int &n, int cap, int x1, i
+     if (best_j < n) { box[best_j].x1 = x1; box[best_j].y1 = y1; box[best_j].x2 = x2; box[best_j].y2 = y2; }
+ }
+ 
++void dos_lab_big_note(int x1, int y1, int x2, int y2);   // RB OVERLAY v4
+ void dos_port_dirty_add_screen(int x1, int y1, int x2, int y2)
+ {
++    dos_lab_big_note(x1, y1, x2, y2);   // RB OVERLAY v4
+     dos_port_dirty.adds++;
+     // patch 0193: after this interval's background restore, a mark is repainted by the NEXT
+     // frame's restore, so it is kept for the next present too. Before the full-latch return
+@@ -595,8 +627,38 @@ void dos_port_dirty_add_screen(int x1, int y1, int x2, int y2)
+     }
+ }
+ 
++// RB OVERLAY: caller tags and the set_full logger
++static const char *dos_lab_tag_f[8]; static int dos_lab_tag_l[8]; static int dos_lab_tag_n = 0;
++void dos_lab_tag_push(const char *f, int l)
++{
++    if (dos_lab_tag_n < 8) { dos_lab_tag_f[dos_lab_tag_n] = f; dos_lab_tag_l[dos_lab_tag_n] = l; }
++    dos_lab_tag_n++;
++}
++void dos_lab_tag_pop() { if (dos_lab_tag_n > 0) dos_lab_tag_n--; }
++static const char *dos_lab_short(const char *f) { const char *p = strstr(f, "Engine/"); return p ? p + 7 : f; }
++extern void dos_lab_script_where(char *buf, int n);
++extern uint32_t get_loop_counter();
++long dos_lab_full_calls = 0;
++static void dos_lab_full_note(const char *why)
++{
++    dos_lab_full_calls++;
++    if (dos_lab_full_calls > 4000) return;
++    char tags[200]; tags[0] = 0;
++    const int n = dos_lab_tag_n < 8 ? dos_lab_tag_n : 8;
++    for (int i = 0; i < n; ++i)
++    {
++        const size_t l = strlen(tags);
++        snprintf(tags + l, sizeof(tags) - l, "%s%s:%d", i ? ">" : "", dos_lab_short(dos_lab_tag_f[i]), dos_lab_tag_l[i]);
++    }
++    if (n == 0) snprintf(tags, sizeof(tags), "-");
++    char w[128]; dos_lab_script_where(w, sizeof(w));
++    Debug::Printf("DOS-PORT rbfull lc=%ld why=\"%s\" at=%s already=%d post=%d %s", (long)get_loop_counter(), why, tags,
++        dos_port_dirty.is_full ? 1 : 0, dos_port_dirty.restore_seen ? 1 : 0, w);
++}
++
+ void dos_port_dirty_set_full(const char *why)
+ {
++    dos_lab_full_note(why);   // RB OVERLAY
+     if (dos_port_dirty.restore_seen)
+         dos_port_dirty.post_full = true;   // patch 0193: the next restore repaints all of it
+     if (!dos_port_dirty.is_full)
+@@ -651,6 +713,21 @@ void dos_port_dirty_merge_carry()
+     d.restore_seen = rs;
+ }
+ 
++void dos_lab_big_note(int x1, int y1, int x2, int y2)   // RB OVERLAY v4: marks >= 20000 px, with the caller tags
++{
++    static long _n = 0;
++    if ((long)(x2 - x1 + 1) * (y2 - y1 + 1) < 20000 || ++_n > 3000) return;
++    char tags[200]; tags[0] = 0;
++    const int n = dos_lab_tag_n < 8 ? dos_lab_tag_n : 8;
++    for (int i = 0; i < n; ++i)
++    {
++        const size_t l = strlen(tags);
++        snprintf(tags + l, sizeof(tags) - l, "%s%s:%d", i ? ">" : "", dos_lab_short(dos_lab_tag_f[i]), dos_lab_tag_l[i]);
++    }
++    Debug::Printf("DOS-PORT rbmark lc=%ld box=%d,%d-%d,%d src=%d post=%d at=%s", (long)get_loop_counter(), x1, y1, x2, y2,
++        dos_port_dirty_source, dos_port_dirty.restore_seen ? 1 : 0, n ? tags : "-");
++}
++
+ void dos_port_dirty_frame_reset()
+ {
+     // patch 0193: what was marked after this interval's restore is what the next restore repaints.
+@@ -958,6 +1035,8 @@ void update_room_invreg_and_reset(int view_index, Bitmap *ds, Bitmap *src, bool
+ #ifdef __DJGPP__
+     }
+     dos_port_dirty_note_restore();   // patch 0193: marks made from here on are repainted next frame
++    if (dos_lab_force_n < 0) { const char *e = getenv("DOSAGS_LAB_FORCE_WHOLE"); dos_lab_force_n = e ? atoi(e) : 0; }   // GATE OVERLAY
++    if (dos_lab_force_n > 0 && (++dos_lab_force_frames % dos_lab_force_n) == 0) dos_lab_force_next = true;
+ #ifndef DOSAGS_RELEASE   // patch 0351: no periodic bgstruct line in the release flavour
+     if ((dos_port_tick_timing.bg_calls % 500) == 0)
+         AGS::Common::Debug::Printf("DOS-PORT bgstruct calls=%ld whole=%ld px=%ld slow_px=%ld",
+@@ -966,4 +1045,16 @@ void update_room_invreg_and_reset(int view_index, Bitmap *ds, Bitmap *src, bool
+ #endif
+ #endif
+     RoomCamRects[view_index].Reset();
++#ifdef __DJGPP__
++    // GATE OVERLAY: span probe, AFTER the Reset (marks made before it are wiped): post-restore marks, like a sprite's
++    dos_lab_spanmax_get();
++    if (dos_lab_probe_k > 0 && (++dos_lab_probe_frames % dos_lab_probe_k) == 0)
++    {
++        const Rect &v = RoomCamRects[view_index].Viewport;
++        const int py = dos_lab_probe_y >= 0 ? v.Top + dos_lab_probe_y : v.Bottom - 1;
++        invalidate_rect_ds(v.Left, py, v.Left + 1, py + 1, false);
++        invalidate_rect_ds(v.Right - 1, py, v.Right, py + 1, false);
++        dos_lab_probes++;
++    }
++#endif
+ }
+diff --git a/Engine/ac/draw_software.h b/Engine/ac/draw_software.h
+index 0f1c84245..cac8ed34f 100644
+--- a/Engine/ac/draw_software.h
++++ b/Engine/ac/draw_software.h
+@@ -36,8 +36,16 @@ void dispose_invalid_regions(bool room_only);
+ void set_invalidrects_cameraoffs(int view_index, int x, int y);
+ // Mark the whole screen dirty
+ void invalidate_all_rects();
++#ifdef __DJGPP__   // RB OVERLAY
++void dos_lab_tag_push(const char *f, int l);
++void dos_lab_tag_pop();
++#define invalidate_all_rects() (dos_lab_tag_push(__FILE__, __LINE__), invalidate_all_rects(), dos_lab_tag_pop())
++#endif
+ // Mark the whole camera surface dirty
+ void invalidate_all_camera_rects(int view_index);
++#ifdef __DJGPP__   // RB OVERLAY
++#define invalidate_all_camera_rects(v) (dos_lab_tag_push(__FILE__, __LINE__), invalidate_all_camera_rects(v), dos_lab_tag_pop())
++#endif
+ // Mark certain rectangle dirty; in_room tells if coordinates are room viewport or screen coords
+ #ifdef __DJGPP__
+ // DOS-PORT patch 0124: screen-space dirty bbox for a narrowed present.
+diff --git a/Engine/ac/global_game.cpp b/Engine/ac/global_game.cpp
+index f74597d9e..5cb2bfef8 100644
+--- a/Engine/ac/global_game.cpp
++++ b/Engine/ac/global_game.cpp
+@@ -1,3 +1,4 @@
++#include "util/dos_lab_rb.h"   // RB OVERLAY
+ //=============================================================================
+ //
+ // Adventure Game Studio (AGS)
+@@ -1001,6 +1002,7 @@ void SetMultitasking (int mode) {
+ 
+ void RoomProcessClick(int xx, int yy, int mood)
+ {
++    DOS_LAB_SCOPE(kLabRoomClick);   // RB OVERLAY
+     int getloctype_index = -1;
+     int loctype = GetLocationTypeImpl(&getloctype_index, xx, yy, kHit_Interactable, true /* ignore gui */, false /* not allow hotspot0 */);
+     VpPoint vpt = play.ScreenToRoomDivDown(xx, yy);
+diff --git a/Engine/ac/label.cpp b/Engine/ac/label.cpp
+index 322c67ce2..f428c7867 100644
+--- a/Engine/ac/label.cpp
++++ b/Engine/ac/label.cpp
+@@ -1,3 +1,4 @@
++#include <string.h>
+ //=============================================================================
+ //
+ // Adventure Game Studio (AGS)
+@@ -37,6 +38,10 @@ void Label_SetText(GUILabel *labl, const char *newtx) {
+     newtx = get_translation(newtx);
+ 
+     if (labl->GetText() != newtx) {
++#ifdef __DJGPP__
++        { extern void dos_lab_label_note(int, int, int, int); dos_lab_label_note(labl->GetParentID(), labl->GetID(),
++            (int)labl->GetText().GetLength(), (int)strlen(newtx)); }   // RB OVERLAY v7
++#endif
+         labl->SetText(newtx);
+     }
+ }
+diff --git a/Engine/ac/route_finder.cpp b/Engine/ac/route_finder.cpp
+index 4f12bcc6c..f7fe651de 100644
+--- a/Engine/ac/route_finder.cpp
++++ b/Engine/ac/route_finder.cpp
+@@ -1,3 +1,8 @@
++#include "util/dos_lab_rb.h"   // RB OVERLAY
++#include <stdint.h>
++#include "debug/out.h"
++extern void dos_lab_script_where(char *buf, int n);   // RB OVERLAY
++extern uint32_t get_loop_counter();
+ //=============================================================================
+ //
+ // Adventure Game Studio (AGS)
+@@ -108,7 +113,23 @@ std::unique_ptr<MaskRouteFinder> CreateDefaultMaskPathfinder(GameDataVersion gam
+ bool FindRoute(MoveList &mls, IRouteFinder *finder, int srcx, int srcy, int dstx, int dsty,
+     int move_speed_x, int move_speed_y, bool exact_dest, bool ignore_walls)
+ {
++    DOS_LAB_SCOPE(kLabPath);   // RB OVERLAY
++    const uclock_t _rb_t0 = uclock();   // RB OVERLAY: v2 rbroute line
+     std::vector<Point> path;
++    struct RbRoute { const uclock_t t0; int sx, sy, dx, dy; const std::vector<Point> &p; ~RbRoute()
++    {
++        long long d = (long long)(uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC; if (d < 0) d = 0;
++        if (d >= 5000)
++        {
++            char w[128]; dos_lab_script_where(w, sizeof(w));
++            AGS::Common::Debug::Printf("DOS-PORT rbroute lc=%ld us=%ld src=%d,%d dst=%d,%d nodes=%d irp=%ld dij=%ld/%ld passes=%ld scans=%ld cells=%ld try=%ld/%ld see=%ld/%ld %s",
++                (long)get_loop_counter(), (long)d, sx, sy, dx, dy, (int)p.size(), (long)dos_lab_rf_irp_us, (long)dos_lab_rf_dij_us,
++                dos_lab_rf_dij_n, dos_lab_rf_passes, dos_lab_rf_scans, dos_lab_rf_cells, (long)dos_lab_rf_try_us, dos_lab_rf_try_n,
++                (long)dos_lab_rf_see_us, dos_lab_rf_see_n, w);
++        }
++    } } _rb_route{_rb_t0, srcx, srcy, dstx, dsty, path};
++    dos_lab_rf_irp_us = dos_lab_rf_dij_us = dos_lab_rf_try_us = dos_lab_rf_see_us = 0;   // v6
++    dos_lab_rf_passes = dos_lab_rf_scans = dos_lab_rf_cells = dos_lab_rf_see_n = dos_lab_rf_dij_n = dos_lab_rf_try_n = 0;
+     if (!finder->FindRoute(path, srcx, srcy, dstx, dsty, exact_dest, ignore_walls))
+         return false;
+ 
+diff --git a/Engine/ac/route_finder_impl_legacy.cpp b/Engine/ac/route_finder_impl_legacy.cpp
+index dd74cce62..1a68c9d97 100644
+--- a/Engine/ac/route_finder_impl_legacy.cpp
++++ b/Engine/ac/route_finder_impl_legacy.cpp
+@@ -1,3 +1,8 @@
++#include "util/dos_lab_rb.h"   // RB OVERLAY
++#ifdef __DJGPP__
++long long dos_lab_rf_irp_us = 0, dos_lab_rf_dij_us = 0, dos_lab_rf_try_us = 0, dos_lab_rf_see_us = 0;   // RB OVERLAY v6
++long dos_lab_rf_passes = 0, dos_lab_rf_scans = 0, dos_lab_rf_cells = 0, dos_lab_rf_see_n = 0, dos_lab_rf_dij_n = 0, dos_lab_rf_try_n = 0;
++#endif
+ //=============================================================================
+ //
+ // Adventure Game Studio (AGS)
+@@ -118,6 +123,7 @@ static void line_callback(BITMAP *bmpp, int x, int y, int /*d*/)
+ 
+ int can_see_from(const Bitmap *wallscreen, int x1, int y1, int x2, int y2)
+ {
++  DosLabAcc _rb_see(dos_lab_rf_see_us); dos_lab_rf_see_n++;   // RB OVERLAY v6
+   assert(wallscreen != nullptr);
+ 
+   line_failed = 0;
+@@ -378,6 +384,7 @@ static bool rp_cache_matches(const Bitmap *wallscreen, int maxgran)
+ 
+ static int is_route_possible(const Bitmap *wallscreen, int fromx, int fromy, int tox, int toy, const LegacyRouteFinder::PathfinderConfig &pfc)
+ {
++  DosLabAcc _rb_irp(dos_lab_rf_irp_us);   // RB OVERLAY v6
+   suggestx = -1;
+ 
+   // ensure it's a memory bitmap, so we can use direct access to line[] array
+@@ -735,6 +742,7 @@ static void round_down_coords(const Bitmap *wallscreen, int &tmpx, int &tmpy)
+ 
+ static int find_route_dijkstra(const Bitmap *wallscreen, int fromx, int fromy, int destx, int desty, const LegacyRouteFinder::PathfinderConfig &pfc)
+ {
++  DosLabAcc _rb_dij(dos_lab_rf_dij_us); dos_lab_rf_dij_n++;   // RB OVERLAY v6
+   int i, j;
+ 
+   assert(wallscreen != nullptr);
+@@ -794,6 +802,7 @@ static int find_route_dijkstra(const Bitmap *wallscreen, int fromx, int fromy, i
+   int DIRECTION_BONUS = 0;
+ 
+   while (foundAnswer < 0) {
++    dos_lab_rf_passes++; dos_lab_rf_scans += iteration; dos_lab_rf_cells = iteration;   // RB OVERLAY v6
+     min = 29999;
+     changeiter = iteration;
+     numfound = 0;
+@@ -1001,7 +1010,8 @@ findroutebk:
+   // if the new pathfinder failed, try the old one
+   pathbackstage = 0;
+   memset(&beenhere[0][0], 0, wallscreen->GetWidth() * wallscreen->GetHeight() * BEENHERE_SIZE);
+-  if (try_this_square(wallscreen, srcx, srcy, tox[0], toy[0]) == 0)
++  int _rb_tr; { DosLabAcc _rb_t(dos_lab_rf_try_us); dos_lab_rf_try_n++; _rb_tr = try_this_square(wallscreen, srcx, srcy, tox[0], toy[0]); }   // RB OVERLAY v6
++  if (_rb_tr == 0)
+     return 0;
+ 
+   return 1;
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index c02a8c618..ba479fb37 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -29,6 +29,9 @@
+ #include "main/dos_port_tick_timing.h" // DOS-PORT patch 0079
+ #include "main/dos_port_work.h"        // DOS-PORT patch 0230
+ #include "debug/out.h"                 // DOS-PORT patch 0366: the guiclip witness line
++extern uint32_t get_loop_counter();    // GATE OVERLAY
++long dos_lab_forced = 0, dos_lab_probes = 0;   // GATE OVERLAY (draw_software.cpp counts)
++int dos_lab_spanmax_v = 4;                     // GATE OVERLAY (draw_software.cpp sets)
+ #endif
+ 
+ #ifdef __DJGPP__
+@@ -98,12 +101,18 @@ static void dos_gc_set_latch(long &why)
+ // constructed then composites every flagged GUI in full (the latch, armed here, is consumed by this frame's render).
+ void dos_guiclip_note_fullrestore()
+ {
++    static int _noguard = -1;   // GATE OVERLAY: DOSAGS_LAB_NOGUARD=1 counts the fire but does not arm the latch
++    if (_noguard < 0) { const char *e = getenv("DOSAGS_LAB_NOGUARD"); _noguard = (e && e[0] == '1') ? 1 : 0; }
++    if (_noguard) { dos_gc_latch_fullrestore++; return; }
+     dos_gc_set_latch(dos_gc_latch_fullrestore);
+     dos_gc_latch_fr = 2;   // patch 0368: decays with the latch; only counts fb_whole
+ }
+ // patch 0368 guard (a): invalidate_rect_on_surf stretched a span across a gap (any DirtyRects: room camera or black).
+ void dos_guiclip_note_span_stretch()
+ {
++    static int _nocoarse = -1;   // GATE OVERLAY: DOSAGS_LAB_NOCOARSE=1 counts the stretch but does not record it
++    if (_nocoarse < 0) { const char *e = getenv("DOSAGS_LAB_NOCOARSE"); _nocoarse = (e && e[0] == '1') ? 1 : 0; }
++    if (_nocoarse) { dos_gc_span_stretch++; return; }
+     dos_gc_span_acc = 1;
+     dos_gc_span_stretch++;
+ }
+@@ -127,10 +136,13 @@ void dos_guiclip_summary(FILE *log)
+     if (!log) return;
+     fprintf(log, "DOS-PORT guiclip_final mode=%d flagged=%ld skipped=%ld skipped_px=%lld clipped=%ld full=%ld latched_full=%ld"
+         " latch_events=%ld latch_alias=%ld latch_buffer=%ld latch_tint=%ld latch_fullrestore=%ld"
+-        " boxed=%ld boxes=%ld fb_coarse=%ld fb_whole=%ld span_stretch=%ld coarse_restores=%ld\n",
++        " boxed=%ld boxes=%ld fb_coarse=%ld fb_whole=%ld span_stretch=%ld coarse_restores=%ld"
++        " lab_forced=%ld lab_noguard=%d lab_probes=%ld lab_nocoarse=%d lab_spanmax=%d\n",
+         dos_gc_mode, dos_gc_flagged, dos_gc_skipped, dos_gc_skipped_px, dos_gc_clipped, dos_gc_full, dos_gc_latched_full,
+         dos_gc_latch_events, dos_gc_latch_alias, dos_gc_latch_buffer, dos_gc_latch_tint, dos_gc_latch_fullrestore,
+-        dos_gc_boxed, dos_gc_boxes, dos_gc_fb_coarse, dos_gc_fb_whole, dos_gc_span_stretch, dos_gc_coarse_restores);
++        dos_gc_boxed, dos_gc_boxes, dos_gc_fb_coarse, dos_gc_fb_whole, dos_gc_span_stretch, dos_gc_coarse_restores,
++        dos_lab_forced, getenv("DOSAGS_LAB_NOGUARD") && getenv("DOSAGS_LAB_NOGUARD")[0] == '1' ? 1 : 0,
++        dos_lab_probes, getenv("DOSAGS_LAB_NOCOARSE") && getenv("DOSAGS_LAB_NOCOARSE")[0] == '1' ? 1 : 0, dos_lab_spanmax_v);
+ }
+ #endif
+ 
+@@ -874,6 +886,33 @@ void SDLRendererGraphicsDriver::RenderToBackBuffer()
+     _stageVirtualScreen = virtualScreen;
+     _rendSpriteBatch = UINT32_MAX;
+     ClearDrawLists();
++#ifdef __DJGPP__
++    {   // GATE OVERLAY: DOSAGS_LAB_FRAMEHASH=1 -> FHASH.TXT
++        static int fh_mode = -1; static unsigned long *fh_buf = nullptr; static long fh_n = 0;
++        static const long FH_CAP = 40000;
++        struct FhDump { static void dump() { FILE *f = fopen("FHASH.TXT", "w"); if (!f) return;
++            for (long i = 0; i < fh_n; ++i) fprintf(f, "%lu %08lx\n", fh_buf[2 * i], fh_buf[2 * i + 1]); fclose(f); } };
++        if (fh_mode < 0)
++        {
++            const char *e = getenv("DOSAGS_LAB_FRAMEHASH");
++            fh_mode = (e && e[0] == '1') ? 1 : 0;
++            if (fh_mode) { fh_buf = (unsigned long *)malloc(sizeof(unsigned long) * 2 * FH_CAP); atexit(FhDump::dump); }
++        }
++        if (fh_mode == 1 && fh_buf && fh_n < FH_CAP && virtualScreen)
++        {
++            unsigned long hsh = 2166136261UL;
++            const int bw = virtualScreen->GetWidth() * virtualScreen->GetBPP();
++            for (int y = 0; y < virtualScreen->GetHeight(); ++y)
++            {
++                const uint32_t *row = reinterpret_cast<const uint32_t *>(virtualScreen->GetScanLine(y));
++                for (int x = 0; x < bw / 4; ++x) { hsh ^= row[x]; hsh *= 16777619UL; hsh ^= hsh >> 15; }
++            }
++            fh_buf[2 * fh_n] = (unsigned long)::get_loop_counter();
++            fh_buf[2 * fh_n + 1] = hsh & 0xFFFFFFFFUL;
++            fh_n++;
++        }
++    }
++#endif
+ }
+ 
+ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch, size_t from, Bitmap *surface, int surf_offx, int surf_offy)
+@@ -1080,7 +1119,9 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+                 dos_gc_fb_coarse++;
+             else if (_gm == 4 && native_bmp)
+             {
+-                const int _nb = dos_port_dirty.nbox, _nt = _nb + dos_port_dirty.carry_nbox;
++                static int _gate_break = -1;   // GATE OVERLAY: DOSAGS_LAB_GUISKIP_BREAK=2 leaves the carry boxes out (control)
++                if (_gate_break < 0) { const char *b = getenv("DOSAGS_LAB_GUISKIP_BREAK"); _gate_break = (b && b[0] == '2') ? 1 : 0; }
++                const int _nb = dos_port_dirty.nbox, _nt = _nb + (_gate_break ? 0 : dos_port_dirty.carry_nbox);
+                 for (int _bi = 0; _bi < _nt; ++_bi)
+                 {
+                     const DosPortDirtyBox &_b = (_bi < _nb) ? dos_port_dirty.box[_bi] : dos_port_dirty.carry_box[_bi - _nb];
+@@ -1988,6 +2029,9 @@ void SDLRendererGraphicsDriver::Present(int xoff, int yoff, GraphicFlip flip)
+     SDL_Rect _dp_push = dst;
+     bool _dp_narrowed = false;
+     dos_port_dirty_merge_carry();   // patch 0193: last interval's marks are repainted by THIS frame's restore
++    if (dos_port_dirty.is_full)     // RB OVERLAY
++        Debug::Printf("DOS-PORT rbpfull lc=%ld why=%s", (long)get_loop_counter(),
++            dos_port_dirty.full_reason ? dos_port_dirty.full_reason : "-");
+     SDL_Rect _dp_rects[DOS_PORT_DIRTY_MAX_BOXES];   // patch 0129
+     int _dp_nrects = 0;
+     {
+diff --git a/Engine/gui/gui_engine.cpp b/Engine/gui/gui_engine.cpp
+index f86b6f9de..e2a1c7799 100644
+--- a/Engine/gui/gui_engine.cpp
++++ b/Engine/gui/gui_engine.cpp
+@@ -1,3 +1,6 @@
++#ifdef __DJGPP__
++extern void (*dos_lab_guimark_hook)(int, int, int);   // RB OVERLAY v5
++#endif
+ //=============================================================================
+ //
+ // Adventure Game Studio (AGS)
+@@ -121,6 +124,9 @@ size_t GUI::SplitLinesForDrawing(const String &text, bool is_translated, SplitLi
+ 
+ void GUIObject::MarkChanged()
+ {
++#ifdef __DJGPP__
++    if (dos_lab_guimark_hook) dos_lab_guimark_hook(_parentID, 10, _id);   // RB OVERLAY v5
++#endif
+     _hasChanged = true;
+     if (_parentID >= 0)
+         guis[_parentID].MarkControlChanged();
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 283f3a8bd..c8016dab4 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1,3 +1,4 @@
++#include "util/dos_lab_rb.h"   // RB OVERLAY
+ //=============================================================================
+ //
+ // Adventure Game Studio (AGS)
+@@ -2032,6 +2033,170 @@ static void dos_tick_clicks()
+ }
+ #endif
+ 
++#ifdef __DJGPP__
++static int dos_lc_mode = -1, dos_lc_n = 0, dos_lc_next = 0;   // GATE OVERLAY: DOSAGS_LABCLICKS
++static long dos_lc_t[64]; static int dos_lc_x[64], dos_lc_y[64], dos_lc_b[64];
++static int dos_ck_mode = -1, dos_ck_n = 0, dos_ck_next = 0; static long dos_ck_t[64];   // GATE OVERLAY: DOSAGS_LAB_CKPT
++static void dos_lab_clicks()
++{
++    if (dos_lc_mode < 0)
++    {
++        dos_lc_mode = 0;
++        const char *e = getenv("DOSAGS_LABCLICKS");
++        // RB OVERLAY: LAB-R2's preset (LAB-L1's GCL fixture, GCMP's 16 click ticks), as LAB-R2B spells it
++        static const char *k_gcl = "6178:250:135,6510:60:135,6974:250:135,7205:60:135,7543:250:135,7890:1:135,8118:40:130,"
++            "8519:300:130,8772:40:130,9253:300:130,9566:40:130,9935:300:130,10244:40:130,10722:300:130,11063:40:130,12136:300:130";
++        if (e && strcmp(e, "GCL") == 0) e = k_gcl;
++        // RB OVERLAY: H = RDMP's 14 post-restore click ticks, with positions chosen to repeat RDMP's game-log actions
++        // (room-1 walks to 204,98 / 319,98 / 34,128 / 0,128, GUI 10 x3, room-2 walk to 925,69, GUI 1 x5, room-2 exit at x 319)
++        static const char *k_h = "6154:204:98,6409:319:98,6640:160:8,6946:160:8,7315:34:128,7701:0:128,7895:285:69,8231:160:8,"
++            "8665:30:165,9070:30:165,9432:30:165,10003:319:101,10648:30:165,11751:30:165";
++        if (e && strcmp(e, "H") == 0) e = k_h;
++        while (e && *e && dos_lc_n < 64)
++        {
++            long t; int x, y, used = 0, b = 1, used2 = 0;
++            if (sscanf(e, "%ld:%d:%d%n", &t, &x, &y, &used) != 3) break;
++            e += used;
++            if (*e == ':' && sscanf(e, ":%d%n", &b, &used2) == 1) e += used2;
++            dos_lc_t[dos_lc_n] = t; dos_lc_x[dos_lc_n] = x; dos_lc_y[dos_lc_n] = y; dos_lc_b[dos_lc_n] = b; dos_lc_n++;
++            if (*e == ',') e++;
++        }
++        if (dos_lc_n > 0) { dos_lc_mode = 1; Debug::Printf("DOS-PORT labclicks n=%d", dos_lc_n); }
++    }
++#ifndef DOSAGS_RELEASE
++    if (dos_ck_mode < 0)
++    {
++        dos_ck_mode = 0;
++        const char *e = getenv("DOSAGS_LAB_CKPT");
++        while (e && *e && dos_ck_n < 64)
++        {
++            long t; int used = 0;
++            if (sscanf(e, "%ld%n", &t, &used) != 1) break;
++            dos_ck_t[dos_ck_n++] = t; e += used;
++            if (*e == ',') e++;
++        }
++        if (dos_ck_n > 0) dos_ck_mode = 1;
++    }
++    if (dos_ck_mode == 1 && dos_ck_next < dos_ck_n && (long)get_loop_counter() >= dos_ck_t[dos_ck_next])
++    {
++        dos_ck_next++;
++        Debug::Printf("DOS-PORT labck lc=%ld rbspr_us=%lld rbspr_calls=%ld rts_us=%lld rts_calls=%ld", (long)get_loop_counter(),
++            dos_port_tick_timing.rb_sprite_time.total_us, dos_port_tick_timing.rb_sprite_time.calls,
++            dos_port_tick_timing.render_to_screen_pertick.total_us, dos_port_tick_timing.render_to_screen_pertick.calls);
++    }
++#endif
++    if (dos_lc_mode != 1 || dos_lc_next >= dos_lc_n) return;
++    const long lc = (long)get_loop_counter();
++    if (lc < dos_lc_t[dos_lc_next]) return;
++    const int k = dos_lc_next++;
++    SetMousePosition(dos_lc_x[k], dos_lc_y[k]);
++    if (dos_lc_b[k]) SimulateMouseClick(kMouseLeft);
++    Debug::Printf("DOS-PORT labclick lc=%ld n=%d x=%d y=%d click=%d", lc, k + 1, dos_lc_x[k], dos_lc_y[k], dos_lc_b[k]);
++    {   // RB OVERLAY v2: the GUI table once, and the GUI under every lab click
++        static bool _rb_dumped = false;
++        if (!_rb_dumped)
++        {
++            _rb_dumped = true;
++            for (int g = 0; g < game.numgui; ++g)
++                Debug::Printf("DOS-PORT rbgui id=%d x=%d y=%d w=%d h=%d displayed=%d clickable=%d controls=%d", g, guis[g].GetX(),
++                    guis[g].GetY(), guis[g].GetWidth(), guis[g].GetHeight(), guis[g].IsDisplayed() ? 1 : 0,
++                    guis[g].IsClickable() ? 1 : 0, guis[g].GetControlCount());
++            for (int g = 0; g < game.numgui && g < 2; ++g)   // v7: GUI 0 and 1 controls, and the clip option
++                for (int c = 0; c < guis[g].GetControlCount(); ++c)
++                {
++                    GUIObject *o = guis[g].GetControl(c);
++                    Debug::Printf("DOS-PORT rbctl gui=%d id=%d type=%d x=%d y=%d w=%d h=%d visible=%d", g, c, (int)guis[g].GetControlType(c),
++                        o->GetX(), o->GetY(), o->GetWidth(), o->GetHeight(), o->IsVisible() ? 1 : 0);
++                }
++            Debug::Printf("DOS-PORT rbclip clipcontrols=%d", game.options[OPT_CLIPGUICONTROLS]);
++        }
++        int _rb_gui = -1;
++        for (int g = game.numgui - 1; g >= 0; --g)
++            if (guis[g].IsDisplayed() && guis[g].IsClickable() && dos_lc_x[k] >= guis[g].GetX() && dos_lc_y[k] >= guis[g].GetY() &&
++                dos_lc_x[k] < guis[g].GetX() + guis[g].GetWidth() && dos_lc_y[k] < guis[g].GetY() + guis[g].GetHeight())
++            { _rb_gui = g; break; }
++        Debug::Printf("DOS-PORT rbclick lc=%ld x=%d y=%d gui=%d", lc, dos_lc_x[k], dos_lc_y[k], _rb_gui);
++    }
++}
++#endif
++
++#ifdef __DJGPP__
++// RB OVERLAY: per-UpdateGameOnce breakdown of slow ticks (DOSAGS_LAB_SLOWMS, default 40 ms, inclusive wall time)
++static int dos_lab_tick_depth = 0;
++unsigned long dos_lab_gui_mask = 0;   // v3: GUIs redrawn (bit = index), reset per top-level tick
++static long dos_lab_slow_us = -1;
++struct DosLabTickScope
++{
++    long long s[28]; long long l[kLabCount]; long ln[kLabCount]; uclock_t t0; int fn0; long full0; long lc0; long long px0, pp0;
++    DosLabTickScope()
++    {
++        if (dos_lab_slow_us < 0) { const char *e = getenv("DOSAGS_LAB_SLOWMS"); dos_lab_slow_us = (e && atol(e) > 0) ? atol(e) * 1000 : 40000; }
++        dos_lab_tick_depth++;
++        if (dos_lab_tick_depth == 1) { dos_lab_fn_tick_n = 0; dos_lab_gui_mask = 0; }
++        px0 = dos_port_tick_timing.rb_sprite_px; pp0 = dos_port_dirty.px_narrow + dos_port_dirty.px_full;
++        const DosPortTickTiming &t = dos_port_tick_timing;
++        s[0] = t.script_vm.total_us;
++        s[1] = t.rep_exec_vm.total_us;
++        s[2] = t.process_events_dispatch.total_us;
++        s[3] = t.game_objects_update.total_us;
++        s[4] = t.input_handling.total_us;
++        s[5] = t.room_check.total_us;
++        s[6] = t.gui_poll.total_us;
++        s[7] = t.gui_context_cursor.total_us;
++        s[8] = t.ground_interactions.total_us;
++        s[9] = t.drawable_object_states.total_us;
++        s[10] = t.scene_construct.total_us;
++        s[11] = t.render_to_screen_pertick.total_us;
++        s[12] = t.wait_next_frame.total_us;
++        s[13] = t.audio_sync.total_us;
++        s[14] = t.persistent_anims.total_us;
++        s[15] = t.end_of_tick.total_us;
++        s[16] = t.rep_exec_wrapper.total_us;
++        s[17] = t.objects_scale.total_us;
++        s[18] = t.input_poll.total_us;
++        s[19] = t.sc_room_view.total_us;
++        s[20] = t.sc_ui_view.total_us;
++        s[21] = t.sc_overlays.total_us;
++        s[22] = t.sc_prep_chars.total_us;
++        s[23] = t.sc_draw_list.total_us;
++        s[24] = t.sc_viewports.total_us;
++        s[25] = t.bg_restore.total_us;
++        s[26] = t.rb_sprite_time.total_us;
++        s[27] = t.present_update_window.total_us;
++        for (int k = 0; k < kLabCount; ++k) { l[k] = dos_lab_t[k].us; ln[k] = dos_lab_t[k].n; }
++        fn0 = dos_lab_fn_tick_n; full0 = dos_lab_full_calls; lc0 = (long)get_loop_counter();
++        t0 = uclock();
++    }
++    ~DosLabTickScope()
++    {
++        long long us = (long long)(uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC; if (us < 0) us = 0;
++        if (us >= dos_lab_slow_us || dos_lab_t[kLabGuiDraw].n != ln[kLabGuiDraw] || dos_lab_full_calls != full0 ||
++            dos_lab_t[kLabPath].n != ln[kLabPath])   // v2: also every tick with a GUI redraw, a full latch or a FindRoute
++        {
++            const DosPortTickTiming &t = dos_port_tick_timing;
++            char fns[400]; fns[0] = 0;
++            for (int i = fn0; i < dos_lab_fn_tick_n; ++i)
++            {
++                const size_t len = strlen(fns);
++                snprintf(fns + len, sizeof(fns) - len, "%s%s:%ld@%d", i > fn0 ? "," : "", dos_lab_fn_tick[i].name,
++                         dos_lab_fn_tick[i].us, dos_lab_fn_tick[i].depth);
++            }
++            Debug::Printf("DOS-PORT rbslow lc=%ld d=%d us=%ld script=%ld repvm=%ld events=%ld objs=%ld input=%ld room=%ld guipoll=%ld gctx=%ld ground=%ld dstates=%ld scene=%ld render=%ld wait=%ld audio=%ld anims=%ld eot=%ld repw=%ld oscale=%ld ipoll=%ld sroom=%ld sui=%ld sovl=%ld schars=%ld sdraw=%ld svp=%ld bgr=%ld rbspr=%ld pres=%ld path=%ld/%ld gui=%ld/%ld spr=%ld/%ld snd=%ld/%ld asset=%ld/%ld rclick=%ld/%ld full=%ld guis=%lx sprpx=%ld prespx=%ld fn=%s",
++                lc0, dos_lab_tick_depth, (long)us, (long)(t.script_vm.total_us - s[0]), (long)(t.rep_exec_vm.total_us - s[1]), (long)(t.process_events_dispatch.total_us - s[2]), (long)(t.game_objects_update.total_us - s[3]), (long)(t.input_handling.total_us - s[4]), (long)(t.room_check.total_us - s[5]), (long)(t.gui_poll.total_us - s[6]), (long)(t.gui_context_cursor.total_us - s[7]), (long)(t.ground_interactions.total_us - s[8]), (long)(t.drawable_object_states.total_us - s[9]), (long)(t.scene_construct.total_us - s[10]), (long)(t.render_to_screen_pertick.total_us - s[11]), (long)(t.wait_next_frame.total_us - s[12]), (long)(t.audio_sync.total_us - s[13]), (long)(t.persistent_anims.total_us - s[14]), (long)(t.end_of_tick.total_us - s[15]), (long)(t.rep_exec_wrapper.total_us - s[16]), (long)(t.objects_scale.total_us - s[17]), (long)(t.input_poll.total_us - s[18]), (long)(t.sc_room_view.total_us - s[19]), (long)(t.sc_ui_view.total_us - s[20]), (long)(t.sc_overlays.total_us - s[21]), (long)(t.sc_prep_chars.total_us - s[22]), (long)(t.sc_draw_list.total_us - s[23]), (long)(t.sc_viewports.total_us - s[24]), (long)(t.bg_restore.total_us - s[25]), (long)(t.rb_sprite_time.total_us - s[26]), (long)(t.present_update_window.total_us - s[27]),
++                (long)(dos_lab_t[kLabPath].us - l[kLabPath]), dos_lab_t[kLabPath].n - ln[kLabPath],
++                (long)(dos_lab_t[kLabGuiDraw].us - l[kLabGuiDraw]), dos_lab_t[kLabGuiDraw].n - ln[kLabGuiDraw],
++                (long)(dos_lab_t[kLabSprLoad].us - l[kLabSprLoad]), dos_lab_t[kLabSprLoad].n - ln[kLabSprLoad],
++                (long)(dos_lab_t[kLabSndLoad].us - l[kLabSndLoad]), dos_lab_t[kLabSndLoad].n - ln[kLabSndLoad],
++                (long)(dos_lab_t[kLabAsset].us - l[kLabAsset]), dos_lab_t[kLabAsset].n - ln[kLabAsset],
++                (long)(dos_lab_t[kLabRoomClick].us - l[kLabRoomClick]), dos_lab_t[kLabRoomClick].n - ln[kLabRoomClick],
++                dos_lab_full_calls - full0, dos_lab_gui_mask, (long)(t.rb_sprite_px - px0),
++                (long)(dos_port_dirty.px_narrow + dos_port_dirty.px_full - pp0), fns[0] ? fns : "-");
++        }
++        dos_lab_tick_depth--;
++    }
++};
++#endif
++
+ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int extra_x, int extra_y, bool skip_render_and_wait)
+ {
+     // DOS-PORT patch 0082: whole-function bracket, first line so it
+@@ -2040,6 +2205,7 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+     // other per-tick phase, used to check whether the sum of all
+     // named sub-phases actually accounts for the whole tick.
+ #ifdef __DJGPP__
++    DosLabTickScope _dos_lab_tick_scope;     // RB OVERLAY: declared first, so it closes last
+     DosTickStallScope _dos_tick_stall_scope; // patch 0093
+     DosPortTickScope _dos_port_update_once_scope(dos_port_tick_timing.update_game_once_total, kDosTickLogUgo); // patch 0315: coarse; 0316: logged
+ #endif
+@@ -2055,6 +2221,7 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+ #ifdef __DJGPP__
+         DosPortTickScope _dos_port_input_scope(dos_port_tick_timing.input_poll);
+         dos_tick_clicks();   // patch 0247: no-op unless DOSAGS_TICKCLICKS is set
++        dos_lab_clicks();    // GATE OVERLAY
+ #endif
+         sys_evt_process_pending();
+     }
+diff --git a/Engine/media/audio/sound.cpp b/Engine/media/audio/sound.cpp
+index c63bc3648..ae1fa7f41 100644
+--- a/Engine/media/audio/sound.cpp
++++ b/Engine/media/audio/sound.cpp
+@@ -1,3 +1,4 @@
++#include "util/dos_lab_rb.h"   // RB OVERLAY
+ //=============================================================================
+ //
+ // Adventure Game Studio (AGS)
+@@ -104,6 +105,7 @@ void soundcache_precache(const AssetPath &apath)
+ 
+ std::unique_ptr<SoundClip> load_sound_clip(const AssetPath &apath, const char *extension_hint, bool loop)
+ {
++    DOS_LAB_SCOPE(kLabSndLoad);   // RB OVERLAY
+     size_t asset_size;
+     std::unique_ptr<Stream> s_in;
+     auto sounddata = SndCache.Get(apath.Name);
+diff --git a/Engine/script/script.cpp b/Engine/script/script.cpp
+index f008d8ff8..f6cae4514 100644
+--- a/Engine/script/script.cpp
++++ b/Engine/script/script.cpp
+@@ -1,3 +1,4 @@
++#include "util/dos_lab_rb.h"   // RB OVERLAY
+ //=============================================================================
+ //
+ // Adventure Game Studio (AGS)
+@@ -379,6 +380,55 @@ void QueueScriptFunction(ScriptType sc_type, const ScriptFunctionRef &fn_ref,
+     }
+ }
+ 
++#ifdef __DJGPP__
++// RB OVERLAY: the running script function stack and this tick's function records
++DosLabFnRec dos_lab_fn_tick[DOS_LAB_FN_CAP]; int dos_lab_fn_tick_n = 0;
++static const char *dos_lab_fn_stack[16]; static int dos_lab_fn_depth = 0;
++struct DosLabFnScope
++{
++    const char *nm; uclock_t t0;
++    explicit DosLabFnScope(const char *n) : nm(n), t0(uclock())
++    { if (dos_lab_fn_depth < 16) dos_lab_fn_stack[dos_lab_fn_depth] = n; dos_lab_fn_depth++; }
++    ~DosLabFnScope()
++    {
++        dos_lab_fn_depth--;
++        long long d = (long long)(uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC; if (d < 0) d = 0;
++        if (d >= 1000 && dos_lab_fn_tick_n < DOS_LAB_FN_CAP)
++        {
++            DosLabFnRec &r = dos_lab_fn_tick[dos_lab_fn_tick_n++];
++            snprintf(r.name, sizeof(r.name), "%s", nm); r.us = (long)d; r.depth = dos_lab_fn_depth;
++        }
++    }
++};
++void dos_lab_script_where(char *buf, int n)
++{
++    const char *fn = dos_lab_fn_depth > 0 ? dos_lab_fn_stack[(dos_lab_fn_depth < 16 ? dos_lab_fn_depth : 16) - 1] : "-";
++    ScriptPosition pos;
++    if (dos_lab_fn_depth > 0 && get_script_position(pos))
++        snprintf(buf, n, "fn=%s pos=%s:%d", fn, pos.Section.GetCStr(), pos.Line);
++    else
++        snprintf(buf, n, "fn=%s pos=-", fn);
++}
++#endif
++
++extern void (*dos_lab_guimark_hook)(int, int, int);   // RB OVERLAY v5
++extern uint32_t get_loop_counter();
++static void dos_lab_guimark(int g, int code, int obj)
++{
++    static long n = 0;
++    if (++n > 4000) return;
++    char w[128]; dos_lab_script_where(w, sizeof(w));
++    Debug::Printf("DOS-PORT rbguimark lc=%ld gui=%d code=%d obj=%d %s", (long)get_loop_counter(), g, code, obj, w);
++}
++void dos_lab_label_note(int g, int c, int oldlen, int newlen)   // RB OVERLAY v7
++{
++    static long n = 0;
++    if (++n > 4000) return;
++    char w[128]; dos_lab_script_where(w, sizeof(w));
++    Debug::Printf("DOS-PORT rblabel lc=%ld gui=%d ctrl=%d oldlen=%d newlen=%d %s", (long)get_loop_counter(), g, c, oldlen, newlen, w);
++}
++static struct DosLabGuimarkInit { DosLabGuimarkInit() { dos_lab_guimark_hook = dos_lab_guimark; } } dos_lab_guimark_init;
++
+ static bool DoRunScriptFuncCantBlock(ccInstance *sci, NonBlockingScriptFunction* funcToRun, bool hasTheFunc)
+ {
+     if (!hasTheFunc)
+@@ -395,6 +445,9 @@ static bool DoRunScriptFuncCantBlock(ccInstance *sci, NonBlockingScriptFunction*
+     // commit message.
+ #ifdef __DJGPP__
+     const uclock_t _dos_port_rep_exec_t0 = dos_port_fine_uclock(); // patch 0315
++#endif
++#ifdef __DJGPP__
++    DosLabFnScope _dos_lab_fn(funcToRun->FunctionName.GetCStr());   // RB OVERLAY
+ #endif
+     ccInstError result = sci->CallScriptFunction(funcToRun->FunctionName, funcToRun->ParamCount, funcToRun->Params);
+ #ifdef __DJGPP__
+@@ -477,6 +530,9 @@ RunScFuncResult RunScriptFunction(ccInstance *sci, const String &tsname, size_t
+     // execution" would swamp the real number with near-zero-cost misses.
+ #ifdef __DJGPP__
+     const uclock_t _dos_port_script_vm_t0 = dos_port_fine_uclock(); // patch 0315
++#endif
++#ifdef __DJGPP__
++    DosLabFnScope _dos_lab_fn(tsname.GetCStr());   // RB OVERLAY
+ #endif
+     const ccInstError inst_ret = curscript->Inst->CallScriptFunction(tsname, numParam, params);
+ #ifdef __DJGPP__
+diff --git a/Common/util/dos_lab_rb.h b/Common/util/dos_lab_rb.h
+new file mode 100644
+index 000000000..71c194f2d
+--- /dev/null
++++ b/Common/util/dos_lab_rb.h
+@@ -0,0 +1,38 @@
++// RB OVERLAY (lab only): brackets and per-tick script records for LAB-RB.
++#ifndef DOS_LAB_RB_H
++#define DOS_LAB_RB_H
++#ifdef __DJGPP__
++#include <time.h>
++struct DosLabT { long long us; long n; };
++enum { kLabPath = 0, kLabGuiDraw, kLabSprLoad, kLabSndLoad, kLabAsset, kLabRoomClick, kLabCount };
++extern DosLabT dos_lab_t[kLabCount];   // defined in Common/ac/spritecache.cpp
++struct DosLabScope
++{
++    int k; uclock_t t0;
++    explicit DosLabScope(int k_) : k(k_), t0(uclock()) {}
++    ~DosLabScope()
++    {
++        long long d = (long long)(uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC;
++        if (d < 0) d = 0;
++        dos_lab_t[k].us += d; dos_lab_t[k].n++;
++    }
++};
++#define DOS_LAB_SCOPE(k) DosLabScope _dos_lab_scope_##k(k)
++struct DosLabAcc   // v6: adds the scope's us to a counter
++{
++    long long &acc; uclock_t t0;
++    explicit DosLabAcc(long long &a) : acc(a), t0(uclock()) {}
++    ~DosLabAcc() { long long d = (long long)(uclock() - t0) * 1000000LL / UCLOCKS_PER_SEC; if (d > 0) acc += d; }
++};
++// v6: legacy route finder split, reset by Pathfinding::FindRoute (defined in Engine/ac/route_finder_impl_legacy.cpp)
++extern long long dos_lab_rf_irp_us, dos_lab_rf_dij_us, dos_lab_rf_try_us, dos_lab_rf_see_us;
++extern long dos_lab_rf_passes, dos_lab_rf_scans, dos_lab_rf_cells, dos_lab_rf_see_n, dos_lab_rf_dij_n, dos_lab_rf_try_n;
++struct DosLabFnRec { char name[32]; long us; int depth; };
++#define DOS_LAB_FN_CAP 16
++extern DosLabFnRec dos_lab_fn_tick[DOS_LAB_FN_CAP];   // defined in Engine/script/script.cpp
++extern int dos_lab_fn_tick_n;
++extern long dos_lab_full_calls;                       // defined in Engine/ac/draw_software.cpp
++#else
++#define DOS_LAB_SCOPE(k)
++#endif
++#endif

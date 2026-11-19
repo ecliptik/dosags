@@ -1,0 +1,19 @@
+ratchet 20261113T112153Z PASS: 1 pass (0 improved), 0 fail, 0 blocked, 0 quarantined
+
+ratchet.sh report
+run:    20261113T112153Z
+root:   /home/claude/data/worktrees/dosags-ring
+file:   /home/claude/data/worktrees/dosags-ring/tests/ratchet.yaml
+host:   claude
+state:  /home/claude/data/worktrees/dosags-ring/build/ratchet/state.tsv (not recorded: --no-record)
+lock:   /tmp/dos-port-dosbox.lock, exclusive per unit; no ps quiet-wait
+
+RUN                            KIND     STATUS         RC   WAIT   SECS  LOCK
+gate-alias                     capture  OK              1      0   1051  exclusive
+
+CHECK                              KIND     STATUS       VALUE        CMP   LIMIT      HISTORY       WAIT   SECS  NOTE
+screen-bench8-alias-512x384-anim12 capture  PASS         0            eq    0          -                0   1051  run=gate-alias
+
+HISTORY letters, oldest first, last 10 recorded results (BLOCKED/INTERRUPTED not counted):
+  P pass  I improved  F fail  E error  T timeout.  (q) = quarantined, never gating.
+

@@ -1,0 +1,776 @@
+Adventure Game Studio v3.6 Interpreter
+Copyright (c) 1999-2011 Chris Jones and 2011-2026 others
+Engine version 3.6.3.13, 32-bit LE
+
+Initializing backend libs
+SDL Version: 3.5.0
+DOS-PORT: SDL_DOS_ALLOW_DIRECT_FRAMEBUFFER=1 (from environment)
+DOS-PORT: SDL_DOS_PREFER_LFB=1 (port default)
+Initializing game data
+Using provided game data path: MANIAC.AGS
+Opened game data file: ac2game.dta
+Game data version: 25
+Compiled with: 2.60
+Startup directory: ./
+Data directory: ./
+Setting up game configuration
+User data directory: C:\DOSAGS
+Game : (room:-10) SetSaveGameDirectory: failed to create all subdirectories: ./C:\DOSAGS
+Was not able to init voice pack 'speech.vox': file not found or of unknown format.
+Registered asset libraries:
+- LIB:	c:/dosags/MANIAC.AGS
+	Filters: ,audio
+	Sub-files:
+	1:	
+	2:	
+	3:	
+	4:	
+	5:	
+- DIR:	c:/dosags/
+	Filters: ,audio,voice
+Initializing TTF renderer
+Initializing mouse: number of buttons reported is 3
+Initializing audio
+DOSAudioMixer: opened 11025 Hz mono S16, 8 voices
+DOS audio device opened: pcm=sb@11025m16,voices=8,underruns=0,drains=0,pcm_irqs=0,silent_irqs=0,start_latency_irqs=0,primes=0,prime_retries=0,topup_holds=0,overwrites=0,ring_max_ms=0/743,skipped_silent=0,idle_pauses=0,underflow_pads=0,partial_pulls=0,mixed=0,mixed_zero=0,mixed_quiet=0,inflight=0;midi=none,events=0,midi_tick=poll,late_max_ms=0,late_hist=0/0/0/0/0/0,late50=0,burst=0@0,clk=0/-1s
+AudioCore: DOS mixer status: pcm=sb@11025m16,voices=8,underruns=0,drains=0,pcm_irqs=0,silent_irqs=0,start_latency_irqs=0,primes=0,prime_retries=0,topup_holds=0,overwrites=0,ring_max_ms=0/743,skipped_silent=0,idle_pauses=0,underflow_pads=0,partial_pulls=0,mixed=0,mixed_zero=0,mixed_quiet=0,inflight=0;midi=none,events=0,midi_tick=poll,late_max_ms=0,late_hist=0/0/0/0/0/0,late50=0,burst=0@0,clk=0/-1s
+Sound cache set: 2048 KB
+Install exit handler
+Load game data
+Game title: 'Maniac Mansion Deluxe'
+Game uid (old format): `1050154255`
+Game guid: ''
+Game GUI version: 105
+Loaded font 0: agsfnt0.ttf, req size: 10; nominal h: 10, real h: 11, vextent: 0,11, aabb: 0,0 - 9,11
+Loaded font 1: agsfnt1.ttf, req size: 10; nominal h: 10, real h: 11, vextent: -1,11, aabb: 0,-1 - 11,11
+Loaded font 2: agsfnt2.ttf, req size: 10; nominal h: 10, real h: 12, vextent: -2,12, aabb: 0,-2 - 12,12
+Loaded font 3: agsfnt3.ttf, req size: 10; nominal h: 10, real h: 11, vextent: -1,11, aabb: 0,-1 - 11,11
+Loaded font 4: agsfnt4.ttf, req size: 9; nominal h: 9, real h: 11, vextent: 0,11, aabb: -1,1 - 10,11
+Loaded font 5: agsfnt5.ttf, req size: 9; nominal h: 9, real h: 11, vextent: 0,11, aabb: -1,1 - 10,11
+Loaded font 6: agsfnt6.ttf, req size: 8; nominal h: 8, real h: 10, vextent: 0,10, aabb: 0,1 - 9,10
+Loaded font 7: agsfnt7.ttf, req size: 9; nominal h: 9, real h: 11, vextent: 0,11, aabb: -1,1 - 10,11
+Loaded font 8: agsfnt8.ttf, req size: 9; nominal h: 9, real h: 11, vextent: 0,11, aabb: -1,1 - 10,11
+Loaded font 9: agsfnt9.ttf, req size: 10; nominal h: 10, real h: 11, vextent: 0,11, aabb: 0,0 - 9,11
+Loaded font 10: agsfnt10.ttf, req size: 10; nominal h: 10, real h: 10, vextent: 0,10, aabb: 0,0 - 13,10
+Loaded font 11: agsfnt11.ttf, req size: 10; nominal h: 10, real h: 11, vextent: -1,11, aabb: 0,-1 - 13,11
+Loaded font 12: agsfnt12.ttf, req size: 10; nominal h: 10, real h: 10, vextent: 0,10, aabb: 0,0 - 13,10
+Loaded font 13: agsfnt13.ttf, req size: 9; nominal h: 9, real h: 11, vextent: 0,12, aabb: -6,0 - 18,12
+Loaded font 14: agsfnt14.ttf, req size: 9; nominal h: 9, real h: 11, vextent: 0,11, aabb: 0,1 - 7,11
+Set game text language: 
+Set locale: 
+Initializing resolution settings
+Game native resolution: 320 x 200 (16 bit)
+Mouse cursor graphic area: (0,0)-(319,199) (320x200)
+Plugin 'AGSflashlight' could not be loaded (expected ''):
+	Failed to load a dynamic library. (Possible causes: file not found, file not readable, one of the dependencies not found.)
+Placeholder functions for the plugin 'AGSflashlight' found.
+Created global script
+DOS-PORT vmmode DOSAGS_VM=(default) mode=3
+DOS-PORT englev DOSAGS_ENGLEV=(default) on=1
+DOS-PORT vmdecode script= inst=0 words=130393 instrs=54343 ok=1 why=none at=0 bytes=537884 decode_us=269808 ns_per_word=2069 movl_int=6000 movl_gvar=575 movl_str=1139 movl_imp=5566 movl_slow=0 jump_slow=0 callas=0 null_ops=0 otherfix=0 tot_scripts=1 tot_ineligible=0 tot_words=130393 tot_decode_us=269808 alloc_bytes=537884 freed_bytes=0 live_bytes=537884 brk=0xbfe6f0
+DOS-PORT vmfuse mask=0x3f
+DOS-PORT vmfusesites script= farcall=3481 localload=679 localstore=70 pushmovlpop=1515 popbinmov=1524 cmpmovjz=953
+Checking for disk space
+Device display resolution: 640 x 480
+Graphic settings: driver: OGL, windowed: no, screen size: 512 x 384, game scale: round
+Graphic settings: refresh rate (optional): 0, vsync: 0
+Requested graphics driver 'OGL' not found, will try existing drivers instead
+Using graphics factory: Software
+DOS-PORT guiclip DOSAGS_GUI_CLIP=(default) mode=4
+DOS-PORT charreuse DOSAGS_CHAR_REUSE=(default) mode=2
+Created graphics driver: SDL 2D Software renderer
+Supported gfx modes for display 0 (16-bit): 
+	1024x768;800x600;640x480;512x384;
+Attempt to find nearest supported resolution for screen size 512 x 384 (16-bit) fullscreen, on display 0
+Attempt to switch gfx mode to 512 x 384 (16-bit) fullscreen, on display 0
+Window surface pixel format: SDL_PIXELFORMAT_RGB565
+Graphics driver set: SDL 2D Software renderer
+Graphics mode set: 512 x 384 (16-bit) fullscreen, on display 0
+Graphics mode set: refresh rate (optional): 0, vsync: 0
+Render frame set, render dest (96, 92, 415, 291 : 320 x 200)
+Requested gfx filter: StdScale
+Graphics filter set: 'StdScale', filter dest (96, 92, 415, 291 : 320 x 200)
+Using gfx filter: StdScale
+Mouse speed control: enabled, unit: 0.800000, user value: 1.000000
+Touch-to-mouse motion mode: absolute
+Mouse cursor graphic area: (96,92)-(415,291) (320x200)
+Multitasking mode set: 0
+Setting up window
+Multitasking mode set: 0
+Initialize sprites
+Sprite file info: compression: none, storage flags: 0x00000000, total sprites: 2055
+Sprite cache set: 4096 KB
+Initialize game settings
+DOS-PORT randseed mode=time value=1795032373
+Game text encoding: ASCII, text language: not set
+Precache view 99 (loops 0-0) with 10 frames, total = 0 ms, average file->mem = 0 ms, bm->tx = 0 ms,
+		loaded 0 sounds = 0 ms
+	Sprite cache: 0 -> 4 KB, texture cache: 0 -> 0 KB
+Precache view 99 (loops 0-0) with 10 frames, total = 0 ms, average file->mem = 0 ms, bm->tx = 0 ms,
+		loaded 0 sounds = 0 ms
+	Sprite cache: 4 -> 4 KB, texture cache: 0 -> 0 KB
+Precache view 99 (loops 0-0) with 10 frames, total = 0 ms, average file->mem = 0 ms, bm->tx = 0 ms,
+		loaded 0 sounds = 0 ms
+	Sprite cache: 4 -> 4 KB, texture cache: 0 -> 0 KB
+Precache view 99 (loops 0-0) with 10 frames, total = 0 ms, average file->mem = 0 ms, bm->tx = 0 ms,
+		loaded 0 sounds = 0 ms
+	Sprite cache: 4 -> 4 KB, texture cache: 0 -> 0 KB
+Precache view 99 (loops 0-0) with 10 frames, total = 0 ms, average file->mem = 0 ms, bm->tx = 0 ms,
+		loaded 0 sounds = 0 ms
+	Sprite cache: 4 -> 4 KB, texture cache: 0 -> 0 KB
+Precache view 99 (loops 0-0) with 10 frames, total = 0 ms, average file->mem = 0 ms, bm->tx = 0 ms,
+		loaded 0 sounds = 0 ms
+	Sprite cache: 4 -> 4 KB, texture cache: 0 -> 0 KB
+Precache view 99 (loops 0-0) with 10 frames, total = 0 ms, average file->mem = 0 ms, bm->tx = 0 ms,
+		loaded 0 sounds = 0 ms
+	Sprite cache: 4 -> 4 KB, texture cache: 0 -> 0 KB
+Precache view 99 (loops 0-0) with 10 frames, total = 0 ms, average file->mem = 0 ms, bm->tx = 0 ms,
+		loaded 0 sounds = 0 ms
+	Sprite cache: 4 -> 4 KB, texture cache: 0 -> 0 KB
+Precache view 99 (loops 0-0) with 10 frames, total = 0 ms, average file->mem = 0 ms, bm->tx = 0 ms,
+		loaded 0 sounds = 0 ms
+	Sprite cache: 4 -> 4 KB, texture cache: 0 -> 0 KB
+Precache view 0 (loops 0-3) with 28 frames, total = 50 ms, average file->mem = 1 ms, bm->tx = 0 ms,
+		loaded 0 sounds = 0 ms
+	Sprite cache: 4 -> 72 KB, texture cache: 0 -> 0 KB
+Runtime behavior switches:
+	smooth_walk = 0
+	gui_text_direction = 0
+	dialog_opt_text_alignment = 0
+Prepare to start game
+Game : (room:-10) Cursor mode set to 0
+Engine initialization complete
+Starting game
+Try restore save on start: 7
+Game : (room:-10) Transition-out in room -10
+Game : (room:-10) DOSAGS_XT t_ms=18024 phase=fadeout_begin room=-10
+Game : (room:-10) DOSAGS_XT fade_steps=0
+Restoring saved game './agssave.007'
+DOS-PORT vmfree bytes=537884 live=0 allocs=1 frees=1 brk=0xcab170
+Created global script
+DOS-PORT vmdecode script= inst=0 words=130393 instrs=54343 ok=1 why=none at=0 bytes=537884 decode_us=232298 ns_per_word=1781 movl_int=6000 movl_gvar=575 movl_str=1139 movl_imp=5566 movl_slow=0 jump_slow=0 callas=0 null_ops=0 otherfix=0 tot_scripts=2 tot_ineligible=0 tot_words=260786 tot_decode_us=502106 alloc_bytes=1075768 freed_bytes=537884 live_bytes=537884 brk=0xcb2e10
+DOS-PORT vmfusesites script= farcall=3481 localload=679 localstore=70 pushmovlpop=1515 popbinmov=1524 cmpmovjz=953
+Game : (room:1) Loading room 1
+Game : (room:1) DOSAGS_XT t_ms=19111 phase=load_begin room=1
+Game : (room:1) Mouse bounds constrained to (0,0)-(319,199)
+DOS-PORT vmdecode script= inst=1 words=8419 instrs=3446 ok=1 why=none at=0 bytes=34744 decode_us=14618 ns_per_word=1736 movl_int=674 movl_gvar=0 movl_str=35 movl_imp=347 movl_slow=0 jump_slow=0 callas=5 null_ops=0 otherfix=0 tot_scripts=3 tot_ineligible=0 tot_words=269205 tot_decode_us=516724 alloc_bytes=1110512 freed_bytes=537884 live_bytes=572628 brk=0xd74eb0
+DOS-PORT vmfusesites script= farcall=249 localload=4 localstore=0 pushmovlpop=63 popbinmov=49 cmpmovjz=49
+DOS-PORT routeprewarm DOSAGS_ROUTE_PREWARM=(default) mode=0
+Initialize legacy path finder library
+Game : (room:1) Now in room 1
+Game : (room:1) DOSAGS_XT t_ms=19670 phase=load_end room=1
+Game : (room:1) Cursor mode set to 0
+DOS-PORT fixed-timestep: ENABLED (logic decoupled from render)
+Game : (room:1) Transition-in in room 1
+Game : (room:1) DOSAGS_XT t_ms=19694 phase=fadein_begin room=1
+DOS-PORT guictrlmark DOSAGS_GUI_CTRL_MARK=(default) mode=1
+DOS-PORT vscreen alias ON x=96 y=92 320x200 pitch=1024
+Game : (room:1) DOSAGS_XT t_ms=21759 phase=fadein_end room=1
+DOS-PORT stallwhat tick=5437 self_ms=2104 children_ms=0 script_us=0 events_us=2069888 scene_us=0 rb_us=1540338 present_us=122958
+DOS-PORT skipframe owed=83 prev_us total=2104169 present=122958 rb=1540338 scene=0 script=0 events=2069888 sprite_px=1642208 present_px=1024000 sprites=110 maxspr=320x200
+Game : (room:1) [(unknown section):360] GUI 1 Button 7 normal set to slot 11
+DOS-PORT bgstruct calls=500 whole=17 px=1132459 slow_px=0
+DOS-PORT rbstruct calls=500 batches=3498 clears=0 clear_px=0 sprites=3491 sprite_px=24277037 clipped=485 flagged=2940 noflag=551 notvs=0 novalid=48 isfull=48 guimiss=2410 guihit=482 hitpx=39042 fullpx=2467840 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT dirtypresent narrow=483 full=17 px_narrow=80342 px_full=1088000 nocam=0 rej scaled=0 noscene=0 latched=17 norects=0 pal=0 clip=0 multi=483 px_multi=44459 px_multi_bbox=80342 boxes=486 out=0 whole=0 rowfr=483 px_bands=1416960 bands=484 mg0=486/128984 mg2k=484/131991 mg5k5=484/131991 mg12k=484/131991
+Game : (room:1) [(unknown section):1527] MoveCharacter: request move cDave: 203,136 to 319,120
+Game : (room:1) [(unknown section):115] Cursor mode set to 9
+DOS-PORT stallwhat tick=6020 self_ms=262 children_ms=0 script_us=250938 events_us=253000 scene_us=2919 rb_us=488 present_us=306
+DOS-PORT skipframe owed=1 prev_us total=51291 present=669 rb=1416 scene=4794 script=12546 events=13785 sprite_px=47119 present_px=8740 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=2 prev_us total=62153 present=37162 rb=2071 scene=4141 script=12782 events=14004 sprite_px=47119 present_px=6232 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=42332 present=658 rb=1780 scene=4530 script=25640 events=28060 sprite_px=47119 present_px=4180 sprites=7 maxspr=320x57
+Game : (room:1) [(unknown section):1500] MoveCharacter: request move cDave: 311,136 to 60,120
+DOS-PORT skipframe owed=1 prev_us total=42618 present=1089 rb=2371 scene=20863 script=12988 events=14215 sprite_px=47119 present_px=30720 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=49527 present=667 rb=1791 scene=3766 script=25592 events=28046 sprite_px=47119 present_px=19304 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=30930 present=646 rb=1807 scene=4858 script=12570 events=13802 sprite_px=47119 present_px=16796 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=48913 present=687 rb=1153 scene=4702 script=25251 events=27710 sprite_px=47119 present_px=11324 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=43905 present=670 rb=1139 scene=3768 script=25401 events=27859 sprite_px=47119 present_px=8360 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=30531 present=655 rb=1138 scene=4237 script=13069 events=14299 sprite_px=47119 present_px=4028 sprites=7 maxspr=320x57
+Game : (room:1) [(unknown section):1500] MoveCharacter: request move cDave: 55,136 to 319,120
+DOS-PORT skipframe owed=2 prev_us total=61346 present=653 rb=1204 scene=4959 script=39547 events=43175 sprite_px=47119 present_px=20672 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=42260 present=663 rb=1190 scene=4979 script=25735 events=28134 sprite_px=47119 present_px=18164 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=35773 present=666 rb=1160 scene=4974 script=12547 events=13790 sprite_px=47119 present_px=11780 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26667 present=614 rb=2012 scene=4099 script=12837 events=14075 sprite_px=47119 present_px=6080 sprites=7 maxspr=320x57
+Game : (room:1) [(unknown section):1500] MoveCharacter: request move cDave: 311,136 to 60,120
+DOS-PORT skipframe owed=4 prev_us total=122456 present=934 rb=2542 scene=20971 script=86606 events=89827 sprite_px=47119 present_px=30720 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=59691 present=674 rb=2120 scene=4666 script=37756 events=41397 sprite_px=47119 present_px=17708 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=41759 present=681 rb=2230 scene=3776 script=25125 events=27803 sprite_px=47119 present_px=15200 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=29502 present=649 rb=1149 scene=3814 script=12550 events=13758 sprite_px=47119 present_px=9500 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=49759 present=622 rb=1178 scene=4221 script=25027 events=27890 sprite_px=47119 present_px=2508 sprites=7 maxspr=320x57
+Game : (room:1) [(unknown section):1500] MoveCharacter: request move cDave: 55,136 to 319,120
+DOS-PORT skipframe owed=1 prev_us total=70255 present=692 rb=1439 scene=4939 script=38578 events=42242 sprite_px=47119 present_px=19988 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=41965 present=657 rb=1166 scene=5069 script=25306 events=27749 sprite_px=47119 present_px=17936 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=29761 present=654 rb=1156 scene=4686 script=12714 events=13945 sprite_px=47119 present_px=14516 sprites=7 maxspr=320x57
+DOS-PORT stallwhat tick=6440 self_ms=264 children_ms=0 script_us=12572 events_us=13794 scene_us=4666 rb_us=1154 present_us=239722
+DOS-PORT skipframe owed=1 prev_us total=31701 present=611 rb=1777 scene=4511 script=13071 events=14292 sprite_px=47119 present_px=4256 sprites=7 maxspr=320x57
+Game : (room:1) [(unknown section):1500] MoveCharacter: request move cDave: 311,136 to 60,120
+DOS-PORT skipframe owed=2 prev_us total=77026 present=1114 rb=2642 scene=20954 script=38075 events=41705 sprite_px=47119 present_px=30720 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=48433 present=685 rb=2327 scene=3865 script=25051 events=27496 sprite_px=47119 present_px=18620 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=50074 present=687 rb=1863 scene=4867 script=25694 events=28172 sprite_px=47119 present_px=16796 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=29583 present=662 rb=1143 scene=3778 script=12710 events=13951 sprite_px=47119 present_px=10868 sprites=7 maxspr=320x57
+DOS-PORT bgstruct calls=1000 whole=17 px=1907682 slow_px=0
+DOS-PORT rbstruct calls=1000 batches=6998 clears=0 clear_px=0 sprites=6991 sprite_px=47812985 clipped=803 flagged=5622 noflag=1369 notvs=0 novalid=48 isfull=48 guimiss=4586 guihit=988 hitpx=643789 fullpx=3959336 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT dirtypresent narrow=983 full=17 px_narrow=3927200 px_full=1088000 nocam=0 rej scaled=0 noscene=0 latched=17 norects=0 pal=0 clip=0 multi=983 px_multi=929123 px_multi_bbox=3927200 boxes=1311 out=0 whole=0 rowfr=983 px_bands=10080320 bands=1011 mg0=1311/1067352 mg2k=1282/1097063 mg5k5=1211/1370651 mg12k=1076/2543128
+DOS-PORT skipframe owed=1 prev_us total=59296 present=722 rb=1142 scene=5028 script=38110 events=41817 sprite_px=47119 present_px=4256 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=42806 present=622 rb=1176 scene=4213 script=25236 events=27685 sprite_px=47119 present_px=2508 sprites=7 maxspr=320x57
+Game : (room:1) [(unknown section):1500] MoveCharacter: request move cDave: 55,136 to 319,120
+DOS-PORT skipframe owed=2 prev_us total=60380 present=654 rb=1209 scene=4960 script=38463 events=42204 sprite_px=47119 present_px=20672 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=41675 present=663 rb=1190 scene=4829 script=25044 events=27456 sprite_px=47119 present_px=18164 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=27727 present=666 rb=1169 scene=4308 script=12512 events=13722 sprite_px=47119 present_px=13604 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=32080 present=612 rb=2005 scene=4252 script=12705 events=13945 sprite_px=47119 present_px=6080 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=48300 present=27570 rb=509 scene=2579 script=12514 events=13752 sprite_px=47119 present_px=256 sprites=7 maxspr=320x57
+Game : (room:1) [(unknown section):1500] MoveCharacter: request move cDave: 311,136 to 60,120
+DOS-PORT skipframe owed=2 prev_us total=78932 present=695 rb=2138 scene=4705 script=51778 events=56614 sprite_px=47119 present_px=18392 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=52455 present=815 rb=2360 scene=4686 script=25470 events=28127 sprite_px=47119 present_px=15656 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=29802 present=701 rb=1157 scene=3812 script=12698 events=13916 sprite_px=47119 present_px=12464 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=30182 present=676 rb=1140 scene=5056 script=12839 events=14067 sprite_px=47119 present_px=3116 sprites=7 maxspr=320x57
+Game : (room:1) [(unknown section):1500] MoveCharacter: request move cDave: 55,136 to 319,120
+DOS-PORT skipframe owed=2 prev_us total=60941 present=652 rb=1382 scene=4917 script=39175 events=42844 sprite_px=47119 present_px=20672 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=42308 present=662 rb=1190 scene=4834 script=25732 events=28158 sprite_px=47119 present_px=18164 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=51506 present=655 rb=1157 scene=4104 script=25103 events=27557 sprite_px=47119 present_px=14288 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=42055 present=647 rb=1164 scene=4110 script=25787 events=28239 sprite_px=47119 present_px=10184 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=30955 present=668 rb=2117 scene=4564 script=12866 events=14100 sprite_px=47119 present_px=6308 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26327 present=776 rb=1885 scene=4515 script=12863 events=14095 sprite_px=47119 present_px=2888 sprites=7 maxspr=320x57
+Game : (room:1) [(unknown section):1500] MoveCharacter: request move cDave: 311,136 to 60,120
+DOS-PORT skipframe owed=2 prev_us total=69225 present=673 rb=1794 scene=4713 script=37818 events=41754 sprite_px=47119 present_px=19532 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=30469 present=646 rb=1801 scene=4948 script=12559 events=13800 sprite_px=47119 present_px=16796 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=29849 present=652 rb=1145 scene=4953 script=12550 events=13788 sprite_px=47119 present_px=11324 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=47067 present=23018 rb=1224 scene=4119 script=12733 events=13939 sprite_px=47119 present_px=4712 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=49233 present=677 rb=1175 scene=5045 script=25111 events=27723 sprite_px=47119 present_px=3116 sprites=7 maxspr=320x57
+Game : (room:1) [(unknown section):1500] MoveCharacter: request move cDave: 55,136 to 319,120
+DOS-PORT skipframe owed=2 prev_us total=67180 present=693 rb=1204 scene=4949 script=38731 events=42595 sprite_px=47119 present_px=20444 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=42088 present=656 rb=1165 scene=5053 script=25446 events=27929 sprite_px=47119 present_px=17936 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=30648 present=670 rb=2117 scene=4510 script=12573 events=14053 sprite_px=47119 present_px=6308 sprites=7 maxspr=320x57
+Game : (room:1) [(unknown section):1500] MoveCharacter: request move cDave: 311,136 to 60,120
+DOS-PORT skipframe owed=2 prev_us total=87590 present=329 rb=511 scene=2741 script=75639 events=77662 sprite_px=47119 present_px=256 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=2 prev_us total=61478 present=838 rb=2254 scene=4704 script=37604 events=41283 sprite_px=47119 present_px=18620 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=45535 present=699 rb=1789 scene=4662 script=25450 events=27928 sprite_px=47119 present_px=16340 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=47731 present=678 rb=1724 scene=4959 script=25393 events=27847 sprite_px=47119 present_px=14288 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25785 present=639 rb=1165 scene=5083 script=12538 events=14028 sprite_px=47119 present_px=4484 sprites=7 maxspr=320x57
+Game : (room:1) [(unknown section):1500] MoveCharacter: request move cDave: 55,136 to 319,120
+DOS-PORT skipframe owed=1 prev_us total=60569 present=655 rb=1205 scene=4959 script=38680 events=42362 sprite_px=47119 present_px=20672 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=39843 present=672 rb=1169 scene=4411 script=12512 events=13726 sprite_px=47119 present_px=17708 sprites=7 maxspr=320x57
+DOS-PORT bgstruct calls=1500 whole=17 px=2856801 slow_px=0
+DOS-PORT rbstruct calls=1500 batches=10498 clears=0 clear_px=0 sprites=10491 sprite_px=71372485 clipped=1037 flagged=8223 noflag=2268 notvs=0 novalid=48 isfull=48 guimiss=6672 guihit=1503 hitpx=1401676 fullpx=5203592 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT dirtypresent narrow=1483 full=17 px_narrow=8598238 px_full=1088000 nocam=0 rej scaled=0 noscene=0 latched=17 norects=0 pal=0 clip=0 multi=1483 px_multi=2015241 px_multi_bbox=8598238 boxes=2199 out=0 whole=0 rowfr=1483 px_bands=20516800 bands=1545 mg0=2199/2201720 mg2k=2135/2270307 mg5k5=1987/2834567 mg12k=1691/5409264
+DOS-PORT skipframe owed=2 prev_us total=56032 present=26461 rb=4509 scene=4995 script=12516 events=13757 sprite_px=47119 present_px=14972 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=42484 present=675 rb=1169 scene=4523 script=25547 events=27970 sprite_px=47119 present_px=13148 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=30764 present=667 rb=2114 scene=4509 script=12721 events=13950 sprite_px=47119 present_px=6308 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=52682 present=612 rb=1818 scene=4521 script=26275 events=28713 sprite_px=47119 present_px=2888 sprites=7 maxspr=320x57
+Game : (room:1) [(unknown section):1500] MoveCharacter: request move cDave: 311,136 to 60,120
+DOS-PORT skipframe owed=2 prev_us total=60566 present=712 rb=1594 scene=4819 script=38545 events=42284 sprite_px=47119 present_px=20216 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=42797 present=698 rb=2104 scene=4868 script=25095 events=27558 sprite_px=47119 present_px=17708 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=29814 present=699 rb=1166 scene=4664 script=13003 events=14246 sprite_px=47119 present_px=13376 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=49299 present=24561 rb=1151 scene=4033 script=12707 events=13953 sprite_px=47119 present_px=5396 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=30628 present=675 rb=1146 scene=5064 script=12711 events=13957 sprite_px=47119 present_px=3116 sprites=7 maxspr=320x57
+Game : (room:1) [(unknown section):1500] MoveCharacter: request move cDave: 55,136 to 319,120
+DOS-PORT skipframe owed=1 prev_us total=60605 present=714 rb=1178 scene=4925 script=38564 events=42618 sprite_px=47119 present_px=20900 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=29445 present=628 rb=1188 scene=4824 script=12518 events=13735 sprite_px=47119 present_px=17936 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=30071 present=669 rb=1164 scene=4559 script=12708 events=13940 sprite_px=47119 present_px=11780 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=30881 present=668 rb=2416 scene=4556 script=12692 events=13925 sprite_px=47119 present_px=6308 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=46656 present=23973 rb=642 scene=2927 script=12867 events=14085 sprite_px=47119 present_px=128 sprites=7 maxspr=320x57
+Game : (room:1) [(unknown section):1500] MoveCharacter: request move cDave: 311,136 to 0,120
+DOS-PORT skipframe owed=2 prev_us total=86625 present=722 rb=1707 scene=5015 script=50836 events=56015 sprite_px=47119 present_px=24016 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=48234 present=660 rb=1862 scene=5435 script=25258 events=27710 sprite_px=47119 present_px=21052 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26139 present=661 rb=2003 scene=5057 script=12850 events=14356 sprite_px=47119 present_px=18772 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=28284 present=675 rb=1169 scene=4120 script=12734 events=13950 sprite_px=47119 present_px=14212 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26343 present=679 rb=1157 scene=4550 script=12882 events=14099 sprite_px=47119 present_px=6916 sprites=7 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25556 present=672 rb=1080 scene=4865 script=12910 events=14152 sprite_px=47119 present_px=3268 sprites=7 maxspr=320x57
+Game : (room:1) [(unknown section):5] Screen transition changed
+Game : (room:1) [(unknown section):6] Room change requested to room 2
+Game : (room:1) [(unknown section):6] cDave: stop moving
+Game : (room:1) [(unknown section):7] cDave: Face location 944,132
+Game : (room:1) Room change requested to room 2
+Game : (room:1) DOS-PORT room_transition t_ms=76775 event=start room=2
+Game : (room:1) Transition-out in room 1
+Game : (room:1) DOSAGS_XT t_ms=76898 phase=fadeout_begin room=1
+Game : (room:1) DOSAGS_XT fade_steps=0
+Game : (room:1) Unloading room 1
+DOS-PORT vmfree bytes=34744 live=537884 allocs=3 frees=2 brk=0xe0a110
+Game : (room:-10) Loading room 2
+Game : (room:-10) DOSAGS_XT t_ms=76917 phase=load_begin room=2
+Game : (room:2) Mouse bounds constrained to (0,0)-(319,199)
+DOS-PORT vmdecode script= inst=1 words=67794 instrs=28017 ok=1 why=none at=0 bytes=279664 decode_us=113109 ns_per_word=1668 movl_int=4759 movl_gvar=0 movl_str=133 movl_imp=3358 movl_slow=0 jump_slow=0 callas=229 null_ops=0 otherfix=0 tot_scripts=4 tot_ineligible=0 tot_words=336999 tot_decode_us=629833 alloc_bytes=1390176 freed_bytes=572628 live_bytes=817548 brk=0x10d4700
+DOS-PORT vmfusesites script= farcall=2073 localload=3 localstore=0 pushmovlpop=516 popbinmov=507 cmpmovjz=381
+Game : (room:2) Now in room 2
+Game : (room:2) DOSAGS_XT t_ms=78795 phase=load_end room=2
+Game : (room:2) [(unknown section):65] Walkable area 2 removed
+Game : (room:2) Transition-in in room 2
+Game : (room:2) DOSAGS_XT t_ms=78894 phase=fadein_begin room=2
+Game : (room:2) DOSAGS_XT t_ms=80749 phase=fadein_end room=2
+DOS-PORT stallwhat tick=7608 self_ms=3887 children_ms=0 script_us=70704 events_us=1858137 scene_us=0 rb_us=1542439 present_us=82164
+Game : (room:2) DOS-PORT room_transition t_ms=80659 event=ready room=2
+Game : (room:2) [DOS-PORT-STARTUP-BEGIN]
+Game : (room:2) schema_version=1
+Game : (room:2) subsystem_init_ms=242
+Game : (room:2) gamedata_asset_load_ms=8595
+Game : (room:2) script_vm_init_ms=3808
+Game : (room:2) gfxmode_init_ms=973
+Game : (room:2) sprite_index_init_ms=2527
+Game : (room:2) sprite_precache_ms=107
+Game : (room:2) sprite_precache_view_count=10
+Game : (room:2) sprite_precache_frame_count=118
+Game : (room:2) sprite_precache_slowest1_view=0 sprite_precache_slowest1_ms=50
+Game : (room:2) sprite_precache_slowest2_view=99 sprite_precache_slowest2_ms=0
+Game : (room:2) sprite_precache_slowest3_view=99 sprite_precache_slowest3_ms=0
+Game : (room:2) first_room_load_ms=61668
+Game : (room:2) preloop_game_start_script_ms=-1
+Game : (room:2) preloop_restart_point_ms=-1
+Game : (room:2) preloop_placeholder_fade_ms=-1
+Game : (room:2) preloop_room_load_ms=-1
+Game : (room:2) preloop_first_room_init_ms=-1
+Game : (room:2) preloop_skipmissed_ms=-1
+Game : (room:2) preloop_start_game_ms=-1
+Game : (room:2) restart_diskcheck_ms=-1
+Game : (room:2) restart_screenshot_ms=-1
+Game : (room:2) restart_savegame_ms=-1
+Game : (room:2) restart_total_ms=-1
+Game : (room:2) roomload_loadroom_ms=1436
+Game : (room:2) roomload_bgprep_ms=0
+Game : (room:2) roomload_maskprep_ms=202
+Game : (room:2) roomload_objsetup_ms=5
+Game : (room:2) roomload_script_ms=210
+Game : (room:2) roomload_lighttable_ms=0
+Game : (room:2) roomload_drawdata_ms=0
+Game : (room:2) roomload_total_ms=1875
+Game : (room:2) total_to_first_frame_ms=80659
+Game : (room:2) [DOS-PORT-STARTUP-END]
+Game : (room:2) [(unknown section):1432] Playing ambient sound 96 on channel 1
+DOS-PORT skipframe owed=1 prev_us total=43413 present=320 rb=1050 scene=2955 script=25763 events=28213 sprite_px=44960 present_px=324 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 945,132 to 830,120
+DOS-PORT stallwhat tick=7680 self_ms=362 children_ms=0 script_us=349415 events_us=351448 scene_us=2648 rb_us=1071 present_us=346
+DOS-PORT skipframe owed=1 prev_us total=27284 present=695 rb=1199 scene=4304 script=12820 events=14064 sprite_px=44960 present_px=22876 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26187 present=626 rb=1183 scene=4235 script=12853 events=14098 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] cDave: stop moving
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 870,132 to 929,120
+DOS-PORT skipframe owed=1 prev_us total=61766 present=716 rb=1155 scene=4498 script=38002 events=41660 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=61646 present=38123 rb=1198 scene=2600 script=12650 events=13873 sprite_px=44960 present_px=10728 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=63442 present=674 rb=1129 scene=5305 script=38440 events=42084 sprite_px=44960 present_px=22192 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=45065 present=675 rb=1154 scene=4953 script=25788 events=28238 sprite_px=44960 present_px=20140 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25270 present=574 rb=1326 scene=3897 script=12906 events=14147 sprite_px=44960 present_px=15808 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=1 prev_us total=45894 present=666 rb=1147 scene=4716 script=26306 events=28731 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26757 present=650 rb=1190 scene=4094 script=12892 events=14140 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=63395 present=714 rb=1128 scene=5041 script=38864 events=42550 sprite_px=44960 present_px=22420 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44605 present=700 rb=1145 scene=4923 script=25583 events=28061 sprite_px=44960 present_px=20368 sprites=8 maxspr=320x57
+DOS-PORT bgstruct calls=2000 whole=34 px=4760723 slow_px=0
+DOS-PORT rbstruct calls=2000 batches=13996 clears=0 clear_px=0 sprites=14209 sprite_px=95349405 clipped=1194 flagged=10428 noflag=3781 notvs=116 novalid=96 isfull=96 guimiss=8419 guihit=1797 hitpx=1962473 fullpx=6069294 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT dirtypresent narrow=1966 full=34 px_narrow=14718341 px_full=2176000 nocam=0 rej scaled=0 noscene=0 latched=34 norects=0 pal=0 clip=0 multi=1966 px_multi=2951379 px_multi_bbox=14718341 boxes=3011 out=0 whole=0 rowfr=1966 px_bands=30299200 bands=2074 mg0=3419/3477030 mg2k=3319/3585697 mg5k5=3079/4487025 mg12k=2453/9578285
+DOS-PORT skipframe owed=2 prev_us total=82369 present=683 rb=1161 scene=4889 script=51308 events=56169 sprite_px=44960 present_px=16720 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=41334 present=299 rb=1210 scene=2830 script=24179 events=26617 sprite_px=44960 present_px=36160 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=1 prev_us total=46569 present=688 rb=1171 scene=4746 script=25895 events=28295 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=27013 present=688 rb=1144 scene=4455 script=12644 events=13877 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=55115 present=338 rb=1205 scene=2599 script=42476 events=44512 sprite_px=44960 present_px=7164 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44452 present=693 rb=1156 scene=4110 script=25595 events=28211 sprite_px=44960 present_px=21280 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=24966 present=699 rb=1164 scene=4384 script=12656 events=13881 sprite_px=44960 present_px=18316 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=63753 present=972 rb=2425 scene=20496 script=26141 events=28586 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=43331 present=671 rb=1183 scene=4717 script=25595 events=28056 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=2 prev_us total=57076 present=31803 rb=1123 scene=4026 script=12803 events=14037 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=54935 present=338 rb=1197 scene=2600 script=42585 events=44668 sprite_px=44960 present_px=7164 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=46299 present=694 rb=1152 scene=4105 script=25813 events=28262 sprite_px=44960 present_px=21280 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=27236 present=681 rb=1168 scene=4827 script=12679 events=13924 sprite_px=44960 present_px=18772 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=63475 present=972 rb=2439 scene=20495 script=25583 events=28018 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44248 present=686 rb=1180 scene=4264 script=25648 events=28094 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=31208 present=602 rb=1202 scene=3348 script=12885 events=14108 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=44993 present=679 rb=1112 scene=5119 script=25702 events=28131 sprite_px=44960 present_px=22420 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=43737 present=678 rb=1149 scene=4045 script=25643 events=28130 sprite_px=44960 present_px=20596 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=42834 present=694 rb=1167 scene=4327 script=25313 events=27746 sprite_px=44960 present_px=17176 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=80794 present=1002 rb=2427 scene=20547 script=38797 events=42514 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=43278 present=657 rb=1156 scene=4595 script=25351 events=27809 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=27228 present=625 rb=1324 scene=4250 script=12945 events=14175 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=47085 present=698 rb=1178 scene=4895 script=26183 events=28635 sprite_px=44960 present_px=21736 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26438 present=638 rb=1186 scene=5082 script=12662 events=13888 sprite_px=44960 present_px=18088 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=63336 present=973 rb=2427 scene=20487 script=25556 events=28240 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT stallwhat tick=8296 self_ms=272 children_ms=0 script_us=12668 events_us=13894 scene_us=5174 rb_us=1144 present_us=246305
+DOS-PORT skipframe owed=1 prev_us total=27834 present=662 rb=1127 scene=4579 script=13353 events=14588 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=46646 present=667 rb=1139 scene=4906 script=25618 events=28056 sprite_px=44960 present_px=21508 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26528 present=681 rb=1164 scene=4820 script=12685 events=13927 sprite_px=44960 present_px=18772 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=80830 present=1001 rb=2427 scene=20793 script=38659 events=42354 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44655 present=659 rb=1160 scene=4878 script=25461 events=27922 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26788 present=621 rb=1169 scene=4236 script=13185 events=14391 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=2 prev_us total=82466 present=717 rb=1415 scene=4943 script=50796 events=55813 sprite_px=44960 present_px=21964 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=43681 present=678 rb=1133 scene=3967 script=25885 events=28339 sprite_px=44960 present_px=19228 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=58815 present=326 rb=1138 scene=2598 script=47052 events=49129 sprite_px=44960 present_px=10728 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=62713 present=667 rb=1177 scene=4667 script=38733 events=42427 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25553 present=687 rb=1174 scene=4044 script=12794 events=14033 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=61720 present=853 rb=1327 scene=4971 script=38353 events=42032 sprite_px=44960 present_px=22192 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=43747 present=697 rb=1161 scene=4039 script=25540 events=28251 sprite_px=44960 present_px=19912 sprites=8 maxspr=320x57
+DOS-PORT bgstruct calls=2500 whole=34 px=5573011 slow_px=0
+DOS-PORT rbstruct calls=2500 batches=17496 clears=0 clear_px=0 sprites=18209 sprite_px=117829405 clipped=1300 flagged=12124 noflag=6085 notvs=312 novalid=96 isfull=96 guimiss=9828 guihit=1888 hitpx=2405993 fullpx=6902574 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT dirtypresent narrow=2466 full=34 px_narrow=25128763 px_full=2176000 nocam=0 rej scaled=0 noscene=0 latched=34 norects=0 pal=0 clip=0 multi=2466 px_multi=3907703 px_multi_bbox=25128763 boxes=3782 out=0 whole=0 rowfr=2466 px_bands=40038720 bands=2666 mg0=5190/5169388 mg2k=5030/5345875 mg5k5=4647/6757343 mg12k=3457/15879984
+DOS-PORT skipframe owed=1 prev_us total=62279 present=32229 rb=4602 scene=3484 script=12662 events=13906 sprite_px=44960 present_px=10728 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=81413 present=721 rb=1165 scene=4488 script=51512 events=56423 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44293 present=661 rb=1166 scene=4443 script=25330 events=27961 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=2 prev_us total=64877 present=982 rb=2469 scene=21425 script=25954 events=28387 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44795 present=691 rb=1166 scene=5444 script=25300 events=27743 sprite_px=44960 present_px=20824 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26263 present=663 rb=1154 scene=4185 script=12954 events=14180 sprite_px=44960 present_px=16492 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=62688 present=716 rb=1145 scene=4596 script=39317 events=42977 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=43095 present=686 rb=1170 scene=4443 script=25571 events=28031 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=56963 present=32451 rb=1199 scene=2895 script=12945 events=14193 sprite_px=44960 present_px=7164 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=2 prev_us total=63896 present=685 rb=1150 scene=5016 script=38554 events=42242 sprite_px=44960 present_px=20824 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=45029 present=679 rb=1194 scene=5379 script=25520 events=27951 sprite_px=44960 present_px=18316 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=63641 present=973 rb=2428 scene=20951 script=25356 events=27825 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44352 present=668 rb=1183 scene=4670 script=25626 events=28083 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25390 present=587 rb=1195 scene=4619 script=12672 events=13901 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=44556 present=700 rb=1179 scene=5506 script=25318 events=27804 sprite_px=44960 present_px=21736 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=27445 present=680 rb=1170 scene=4831 script=12846 events=14075 sprite_px=44960 present_px=18772 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=71650 present=28186 rb=1140 scene=2599 script=27092 events=29678 sprite_px=44960 present_px=11324 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=81484 present=694 rb=1164 scene=4591 script=50992 events=55870 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44169 present=660 rb=1172 scene=4690 script=25323 events=27771 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=55517 present=337 rb=1200 scene=2649 script=42564 events=44609 sprite_px=44960 present_px=7164 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44309 present=694 rb=1408 scene=4064 script=25476 events=27934 sprite_px=44960 present_px=21280 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26230 present=667 rb=1155 scene=4187 script=12870 events=14107 sprite_px=44960 present_px=16492 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=1 prev_us total=61813 present=713 rb=1137 scene=4612 script=37971 events=41640 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26032 present=667 rb=1123 scene=3958 script=12947 events=14166 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44715 present=405 rb=1630 scene=2812 script=25468 events=28343 sprite_px=44960 present_px=7562 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=2 prev_us total=63875 present=687 rb=1150 scene=5133 script=38013 events=41967 sprite_px=44960 present_px=20824 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44867 present=675 rb=1465 scene=5226 script=25317 events=27783 sprite_px=44960 present_px=18316 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=58837 present=324 rb=1143 scene=2594 script=47022 events=49104 sprite_px=44960 present_px=10728 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44381 present=675 rb=1191 scene=4715 script=25642 events=28129 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25606 present=626 rb=1163 scene=4069 script=13133 events=14363 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=62498 present=716 rb=1129 scene=4996 script=38145 events=41876 sprite_px=44960 present_px=22420 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26741 present=691 rb=1161 scene=4019 script=13131 events=14390 sprite_px=44960 present_px=19684 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=53348 present=30643 rb=1212 scene=2873 script=11806 events=13047 sprite_px=44960 present_px=36160 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=80608 present=1004 rb=2425 scene=20691 script=37979 events=41697 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44429 present=657 rb=1159 scene=4546 script=25870 events=28320 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=54995 present=336 rb=1195 scene=2660 script=42389 events=44467 sprite_px=44960 present_px=7164 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44067 present=695 rb=1154 scene=4063 script=25654 events=28111 sprite_px=44960 present_px=21280 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=27417 present=677 rb=1172 scene=4827 script=12839 events=14061 sprite_px=44960 present_px=18772 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=1 prev_us total=59708 present=324 rb=1142 scene=2598 script=46936 events=49016 sprite_px=44960 present_px=10728 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44880 present=673 rb=1167 scene=4338 script=25595 events=28056 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT bgstruct calls=3000 whole=34 px=6425987 slow_px=0
+DOS-PORT rbstruct calls=3000 batches=20996 clears=0 clear_px=0 sprites=22209 sprite_px=140309405 clipped=1416 flagged=13811 noflag=8398 notvs=499 novalid=96 isfull=96 guimiss=11226 guihit=1990 hitpx=2897833 fullpx=7923374 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT dirtypresent narrow=2966 full=34 px_narrow=35770431 px_full=2176000 nocam=0 rej scaled=0 noscene=0 latched=34 norects=0 pal=0 clip=0 multi=2966 px_multi=4911331 px_multi_bbox=35770431 boxes=4563 out=0 whole=0 rowfr=2966 px_bands=49942080 bands=3264 mg0=6971/6909299 mg2k=6748/7160542 mg5k5=6226/9065722 mg12k=4468/22230341
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=3 prev_us total=115163 present=985 rb=2634 scene=21422 script=68364 events=72818 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=63301 present=678 rb=1132 scene=4907 script=38272 events=41929 sprite_px=44960 present_px=19912 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25782 present=693 rb=1175 scene=4339 script=12646 events=13867 sprite_px=44960 present_px=17176 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=1 prev_us total=43701 present=680 rb=1146 scene=4542 script=25559 events=27992 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=24972 present=627 rb=1447 scene=4032 script=12841 events=14069 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=55248 present=337 rb=1196 scene=2603 script=42510 events=44556 sprite_px=44960 present_px=7164 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44537 present=934 rb=1154 scene=4058 script=25327 events=27790 sprite_px=44960 present_px=21280 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44952 present=683 rb=1169 scene=4862 script=25338 events=27812 sprite_px=44960 present_px=19000 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=61028 present=355 rb=1247 scene=2873 script=37237 events=41007 sprite_px=44960 present_px=36160 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=62904 present=666 rb=1139 scene=4670 script=39112 events=42815 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=42548 present=668 rb=1145 scene=3943 script=25554 events=28003 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=55285 present=337 rb=1199 scene=2645 script=42541 events=44585 sprite_px=44960 present_px=7164 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44447 present=694 rb=1156 scene=4322 script=25354 events=27796 sprite_px=44960 present_px=21280 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25084 present=626 rb=1142 scene=4297 script=12669 events=13895 sprite_px=44960 present_px=16264 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=1 prev_us total=46684 present=690 rb=1342 scene=4706 script=25319 events=27720 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44217 present=690 rb=1133 scene=4591 script=25538 events=27942 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=60691 present=329 rb=1199 scene=2598 script=38440 events=42139 sprite_px=44960 present_px=10728 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=2 prev_us total=62379 present=986 rb=2466 scene=21741 script=25336 events=27779 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=43835 present=680 rb=1149 scene=4050 script=25618 events=28051 sprite_px=44960 present_px=20596 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25597 present=695 rb=1173 scene=4343 script=12616 events=13843 sprite_px=44960 present_px=17176 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=61085 present=867 rb=1138 scene=4593 script=37957 events=41649 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44049 present=687 rb=1167 scene=4438 script=25629 events=28112 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=56004 present=579 rb=1198 scene=2608 script=44000 events=46054 sprite_px=44960 present_px=7164 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44680 present=696 rb=1154 scene=4063 script=25899 events=28332 sprite_px=44960 present_px=21280 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26696 present=723 rb=1176 scene=5393 script=12900 events=14156 sprite_px=44960 present_px=17404 sprites=8 maxspr=320x57
+DOS-PORT stallwhat tick=9699 self_ms=256 children_ms=0 script_us=12985 events_us=14212 scene_us=4890 rb_us=1135 present_us=231014
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=1 prev_us total=47406 present=669 rb=1171 scene=4609 script=25568 events=28036 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=55663 present=338 rb=1200 scene=2769 script=43917 events=45931 sprite_px=44960 present_px=7164 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=63471 present=675 rb=1163 scene=5185 script=38542 events=42214 sprite_px=44960 present_px=21280 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25895 present=638 rb=1192 scene=5290 script=12668 events=13904 sprite_px=44960 present_px=18088 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=63734 present=970 rb=2429 scene=20495 script=26238 events=28733 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44882 present=672 rb=1181 scene=4715 script=25790 events=28248 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26551 present=661 rb=1116 scene=4583 script=12962 events=14183 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=3 prev_us total=96133 present=1004 rb=2468 scene=21780 script=55173 events=58495 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=63132 present=740 rb=1440 scene=5002 script=38218 events=41939 sprite_px=44960 present_px=20140 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=45174 present=698 rb=1200 scene=5126 script=25309 events=28066 sprite_px=44960 present_px=18088 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=1 prev_us total=63129 present=973 rb=2433 scene=20579 script=25597 events=28032 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44614 present=676 rb=1190 scene=4757 script=25347 events=27753 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25980 present=586 rb=1192 scene=4662 script=12640 events=13884 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=46069 present=699 rb=1177 scene=4896 script=25686 events=28122 sprite_px=44960 present_px=21736 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=27924 present=638 rb=1286 scene=4938 script=12971 events=14189 sprite_px=44960 present_px=19456 sprites=8 maxspr=320x57
+DOS-PORT bgstruct calls=3500 whole=34 px=7309823 slow_px=0
+DOS-PORT rbstruct calls=3500 batches=24496 clears=0 clear_px=0 sprites=26209 sprite_px=162789405 clipped=1517 flagged=15475 noflag=10734 notvs=663 novalid=96 isfull=96 guimiss=12639 guihit=2077 hitpx=3317673 fullpx=8788654 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT dirtypresent narrow=3466 full=34 px_narrow=46297673 px_full=2176000 nocam=0 rej scaled=0 noscene=0 latched=34 norects=0 pal=0 clip=0 multi=3466 px_multi=5948879 px_multi_bbox=46297673 boxes=5352 out=0 whole=0 rowfr=3466 px_bands=60094720 bands=3849 mg0=8760/8681251 mg2k=8473/9010822 mg5k5=7805/11436450 mg12k=5473/28700100
+DOS-PORT skipframe owed=2 prev_us total=58106 present=26690 rb=3165 scene=3502 script=12559 events=13779 sprite_px=44960 present_px=41280 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=80579 present=1005 rb=2418 scene=20671 script=38280 events=41967 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44862 present=657 rb=1156 scene=4588 script=25891 events=28335 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25059 present=700 rb=1126 scene=4029 script=13210 events=14436 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=46197 present=698 rb=1175 scene=4901 script=26416 events=28865 sprite_px=44960 present_px=21736 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26058 present=664 rb=1144 scene=4151 script=12651 events=13873 sprite_px=44960 present_px=18544 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=64215 present=970 rb=2432 scene=20512 script=26061 events=28532 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44643 present=670 rb=1178 scene=4719 script=25803 events=28291 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=53456 present=27321 rb=1159 scene=4246 script=12630 events=13895 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=29116 present=336 rb=1200 scene=2603 script=13611 events=14858 sprite_px=44960 present_px=4378 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=47341 present=668 rb=1141 scene=4952 script=26450 events=28916 sprite_px=44960 present_px=21508 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44581 present=670 rb=1138 scene=5055 script=25646 events=28133 sprite_px=44960 present_px=19684 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=61911 present=715 rb=1138 scene=4643 script=37941 events=41652 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44176 present=933 rb=1169 scene=4440 script=25542 events=28029 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=56811 present=336 rb=1199 scene=2604 script=43993 events=46044 sprite_px=44960 present_px=7164 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=46689 present=665 rb=1142 scene=4906 script=25576 events=28060 sprite_px=44960 present_px=21508 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26088 present=693 rb=1199 scene=4233 script=12652 events=13879 sprite_px=44960 present_px=17860 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=3 prev_us total=100674 present=971 rb=2432 scene=20732 script=61297 events=64545 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=2 prev_us total=62829 present=729 rb=1147 scene=4407 script=38806 events=42434 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=43756 present=688 rb=1190 scene=4065 script=25684 events=28183 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=62454 present=715 rb=1133 scene=5044 script=38252 events=41889 sprite_px=44960 present_px=22420 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44715 present=703 rb=1138 scene=4930 script=25829 events=28314 sprite_px=44960 present_px=20368 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=1 prev_us total=61064 present=334 rb=1143 scene=2594 script=48251 events=50289 sprite_px=44960 present_px=10728 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44564 present=669 rb=1166 scene=4348 script=25313 events=27781 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25344 present=686 rb=1143 scene=4063 script=12594 events=13827 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=2 prev_us total=54371 present=338 rb=1199 scene=2604 script=42455 events=44517 sprite_px=44960 present_px=7164 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44954 present=685 rb=1165 scene=5297 script=25549 events=27968 sprite_px=44960 present_px=20824 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26552 present=723 rb=1177 scene=5181 script=12656 events=13882 sprite_px=44960 present_px=17404 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=62580 present=667 rb=1138 scene=5233 script=38447 events=42169 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=43813 present=665 rb=1149 scene=3991 script=25611 events=28332 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=2 prev_us total=56759 present=336 rb=1200 scene=2648 script=43988 events=46064 sprite_px=44960 present_px=7164 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44480 present=688 rb=1166 scene=4989 script=25324 events=27806 sprite_px=44960 present_px=20824 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25711 present=637 rb=1205 scene=4327 script=12671 events=13893 sprite_px=44960 present_px=17632 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=41758 present=340 rb=1147 scene=2603 script=25807 events=28252 sprite_px=44960 present_px=7164 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=62283 present=715 rb=1140 scene=4602 script=38483 events=42225 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44295 present=844 rb=1169 scene=4482 script=25620 events=28097 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=55402 present=339 rb=1204 scene=2603 script=42260 events=44612 sprite_px=44960 present_px=7164 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44263 present=693 rb=1154 scene=4066 script=25526 events=27992 sprite_px=44960 present_px=21280 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=27162 present=681 rb=1167 scene=4829 script=12673 events=13929 sprite_px=44960 present_px=18772 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=63722 present=973 rb=2427 scene=20478 script=26145 events=28578 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44618 present=672 rb=1185 scene=5018 script=25343 events=27802 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44260 present=679 rb=1159 scene=4727 script=25543 events=27987 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT bgstruct calls=4000 whole=34 px=8169859 slow_px=0
+DOS-PORT rbstruct calls=4000 batches=27996 clears=0 clear_px=0 sprites=30209 sprite_px=185269405 clipped=1626 flagged=17153 noflag=13056 notvs=841 novalid=96 isfull=96 guimiss=14045 guihit=2171 hitpx=3773353 fullpx=9689774 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT dirtypresent narrow=3966 full=34 px_narrow=56904993 px_full=2176000 nocam=0 rej scaled=0 noscene=0 latched=34 norects=0 pal=0 clip=0 multi=3966 px_multi=6960043 px_multi_bbox=56904993 boxes=6142 out=0 whole=0 rowfr=3966 px_bands=70094720 bands=4441 mg0=10550/10428107 mg2k=10200/10829594 mg5k5=9378/13808906 mg12k=6482/35103966
+DOS-PORT skipframe owed=1 prev_us total=43206 present=752 rb=1197 scene=3082 script=25615 events=28060 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=2 prev_us total=64880 present=983 rb=2458 scene=21445 script=25912 events=28409 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44844 present=688 rb=1164 scene=4994 script=25764 events=28247 sprite_px=44960 present_px=20824 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26716 present=873 rb=1162 scene=4908 script=12660 events=13925 sprite_px=44960 present_px=16036 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=1 prev_us total=62838 present=714 rb=1140 scene=4643 script=38881 events=42521 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44562 present=659 rb=1154 scene=4555 script=25323 events=27808 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=2 prev_us total=54291 present=338 rb=1209 scene=2607 script=42553 events=44615 sprite_px=44960 present_px=7164 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44616 present=686 rb=1159 scene=5041 script=25302 events=28009 sprite_px=44960 present_px=20824 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25235 present=694 rb=1172 scene=4601 script=12787 events=14022 sprite_px=44960 present_px=17176 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=42918 present=584 rb=1144 scene=3043 script=25549 events=27988 sprite_px=44960 present_px=15124 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=1 prev_us total=46589 present=667 rb=1145 scene=4673 script=26347 events=28776 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=43808 present=667 rb=1144 scene=4148 script=25601 events=27996 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=2 prev_us total=62398 present=983 rb=2458 scene=21797 script=25307 events=27757 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44906 present=686 rb=1160 scene=4986 script=25664 events=28132 sprite_px=44960 present_px=20824 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26125 present=669 rb=1145 scene=5119 script=13138 events=14371 sprite_px=44960 present_px=16720 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=1 prev_us total=61839 present=714 rb=1309 scene=4641 script=37921 events=41836 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25371 present=688 rb=1143 scene=4003 script=12664 events=13891 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=43725 present=668 rb=1141 scene=4063 script=25716 events=28165 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=62983 present=674 rb=1128 scene=4926 script=39135 events=42774 sprite_px=44960 present_px=22192 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=45175 present=675 rb=1156 scene=5000 script=25818 events=28275 sprite_px=44960 present_px=20140 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=27272 present=630 rb=1164 scene=4855 script=12819 events=14034 sprite_px=44960 present_px=16036 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=1 prev_us total=46446 present=668 rb=1148 scene=4676 script=26310 events=28745 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=27896 present=686 rb=1142 scene=4442 script=12674 events=13896 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT stallwhat tick=11087 self_ms=287 children_ms=0 script_us=12656 events_us=13893 scene_us=21720 rb_us=2441 present_us=244296
+DOS-PORT skipframe owed=12 prev_us total=324989 present=244296 rb=2441 scene=21720 script=38227 events=41941 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=82186 present=1004 rb=2859 scene=20401 script=38222 events=41856 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=42536 present=683 rb=1166 scene=4436 script=25474 events=27866 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=27110 present=626 rb=1160 scene=4250 script=13003 events=14240 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=43638 present=676 rb=1128 scene=4343 script=26012 events=28443 sprite_px=44960 present_px=21964 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26696 present=679 rb=1170 scene=4823 script=12975 events=14203 sprite_px=44960 present_px=18772 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=80661 present=1004 rb=2425 scene=20812 script=38370 events=42041 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=61343 present=669 rb=1169 scene=4705 script=38243 events=41904 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44084 present=688 rb=1180 scene=4868 script=25319 events=27712 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=2 prev_us total=64316 present=984 rb=2463 scene=21645 script=25556 events=28007 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44987 present=686 rb=1165 scene=5040 script=25572 events=28018 sprite_px=44960 present_px=20824 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25146 present=666 rb=1151 scene=4193 script=12655 events=13878 sprite_px=44960 present_px=16492 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=1 prev_us total=65287 present=705 rb=1169 scene=4757 script=38585 events=42536 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=28289 present=687 rb=1143 scene=4441 script=13112 events=14365 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT bgstruct calls=4500 whole=34 px=8992975 slow_px=0
+DOS-PORT rbstruct calls=4500 batches=31496 clears=0 clear_px=0 sprites=34209 sprite_px=207749405 clipped=1735 flagged=18843 noflag=15366 notvs=1031 novalid=96 isfull=96 guimiss=15451 guihit=2265 hitpx=4232233 fullpx=10538414 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT dirtypresent narrow=4466 full=34 px_narrow=67502643 px_full=2176000 nocam=0 rej scaled=0 noscene=0 latched=34 norects=0 pal=0 clip=0 multi=4466 px_multi=7926035 px_multi_bbox=67502643 boxes=6922 out=0 whole=0 rowfr=4466 px_bands=79904320 bands=5036 mg0=12330/12130685 mg2k=11919/12603184 mg5k5=10952/16101728 mg12k=7490/41435392
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=3 prev_us total=97536 present=1064 rb=2633 scene=21417 script=55539 events=58971 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=2 prev_us total=63311 present=736 rb=1159 scene=4948 script=38746 events=42464 sprite_px=44960 present_px=20140 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=45903 present=670 rb=1203 scene=4574 script=25319 events=27762 sprite_px=44960 present_px=17860 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=61243 present=972 rb=2427 scene=20752 script=25317 events=27803 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44131 present=687 rb=1180 scene=4305 script=25319 events=27746 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=55723 present=338 rb=1202 scene=2650 script=42549 events=44631 sprite_px=44960 present_px=7164 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44309 present=696 rb=1158 scene=4229 script=25336 events=28052 sprite_px=44960 present_px=21280 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25684 present=640 rb=1205 scene=4331 script=12634 events=13872 sprite_px=44960 present_px=17632 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=98798 present=966 rb=2432 scene=20680 script=59798 events=63100 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=62535 present=666 rb=1162 scene=4446 script=38687 events=42374 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26557 present=649 rb=1191 scene=4095 script=12587 events=13820 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=62488 present=714 rb=1124 scene=5043 script=37999 events=41644 sprite_px=44960 present_px=22420 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26511 present=636 rb=1149 scene=4037 script=12962 events=14193 sprite_px=44960 present_px=19912 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44824 present=636 rb=1163 scene=5026 script=25574 events=28016 sprite_px=44960 present_px=16264 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=1 prev_us total=63584 present=707 rb=1169 scene=5010 script=38184 events=41821 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26377 present=685 rb=1144 scene=4708 script=12857 events=14105 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44522 present=366 rb=1307 scene=2831 script=26260 events=28802 sprite_px=44960 present_px=36160 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=2 prev_us total=66661 present=673 rb=1140 scene=4969 script=38834 events=42544 sprite_px=44960 present_px=21736 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=42114 present=681 rb=1138 scene=4009 script=25331 events=27818 sprite_px=44960 present_px=19228 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25373 present=588 rb=1130 scene=4974 script=12628 events=13851 sprite_px=44960 present_px=15352 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=1 prev_us total=46150 present=667 rb=1145 scene=4720 script=26380 events=28836 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26198 present=683 rb=1144 scene=4443 script=12955 events=14196 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=2 prev_us total=83570 present=1019 rb=2705 scene=21388 script=38176 events=41879 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44899 present=702 rb=1146 scene=4969 script=25797 events=28279 sprite_px=44960 present_px=20368 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25727 present=687 rb=1168 scene=4245 script=12662 events=13898 sprite_px=44960 present_px=16948 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=80441 present=1004 rb=2418 scene=20588 script=38759 events=42490 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44438 present=688 rb=1164 scene=4443 script=25739 events=28180 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26080 present=624 rb=1155 scene=4249 script=12825 events=14030 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=48154 present=700 rb=1174 scene=4896 script=26029 events=28516 sprite_px=44960 present_px=21736 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=25235 present=696 rb=1203 scene=4500 script=12661 events=13880 sprite_px=44960 present_px=17860 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=1 prev_us total=63518 present=973 rb=2435 scene=20535 script=25930 events=28362 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44965 present=677 rb=1190 scene=4708 script=25648 events=28103 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=51038 present=26334 rb=1170 scene=4248 script=12714 events=14189 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=54411 present=348 rb=1206 scene=2604 script=42252 events=44325 sprite_px=44960 present_px=7164 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44172 present=693 rb=1154 scene=4064 script=25591 events=28201 sprite_px=44960 present_px=21280 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=50256 present=696 rb=1131 scene=4880 script=25620 events=28062 sprite_px=44960 present_px=19456 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=59869 present=325 rb=1146 scene=2597 script=46966 events=49020 sprite_px=44960 present_px=10728 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44581 present=672 rb=1186 scene=4679 script=25797 events=28230 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=26637 present=649 rb=1187 scene=4256 script=12617 events=13851 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=64218 present=716 rb=1132 scene=4988 script=39232 events=43116 sprite_px=44960 present_px=22420 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44890 present=700 rb=1314 scene=4920 script=25655 events=28146 sprite_px=44960 present_px=20368 sprites=8 maxspr=320x57
+DOS-PORT bgstruct calls=5000 whole=34 px=9853591 slow_px=0
+DOS-PORT rbstruct calls=5000 batches=34996 clears=0 clear_px=0 sprites=38209 sprite_px=230229405 clipped=1847 flagged=20524 noflag=17685 notvs=1212 novalid=96 isfull=96 guimiss=16853 guihit=2363 hitpx=4705193 fullpx=11512494 bigmiss=0 bighit=0 bigisect=0 bigfull=0
+DOS-PORT dirtypresent narrow=4966 full=34 px_narrow=78043397 px_full=2176000 nocam=0 rej scaled=0 noscene=0 latched=34 norects=0 pal=0 clip=0 multi=4966 px_multi=8940223 px_multi_bbox=78043397 boxes=7701 out=0 whole=0 rowfr=4966 px_bands=89862080 bands=5630 mg0=14109/13880591 mg2k=13637/14422250 mg5k5=12525/18432806 mg12k=8499/47786013
+DOS-PORT stallwhat tick=12062 self_ms=280 children_ms=0 script_us=12664 events_us=13924 scene_us=5867 rb_us=220939 present_us=25733
+DOS-PORT skipframe owed=11 prev_us total=279990 present=25733 rb=220939 scene=5867 script=12664 events=13924 sprite_px=44960 present_px=15352 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=1 prev_us total=25563 present=649 rb=1190 scene=4096 script=12633 events=13867 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=1 prev_us total=63522 present=716 rb=1126 scene=5041 script=38398 events=42097 sprite_px=44960 present_px=22420 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44738 present=701 rb=1145 scene=4927 script=25815 events=28331 sprite_px=44960 present_px=20368 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=27622 present=667 rb=1144 scene=5167 script=12944 events=14180 sprite_px=44960 present_px=16720 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=65404 present=667 rb=1138 scene=4621 script=38711 events=42345 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=43969 present=667 rb=1149 scene=3993 script=25811 events=28225 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 924,133 to 830,120
+DOS-PORT skipframe owed=2 prev_us total=94177 present=403 rb=1199 scene=2816 script=68230 events=72988 sprite_px=44960 present_px=7562 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=62974 present=729 rb=1140 scene=4919 script=38703 events=42360 sprite_px=44960 present_px=20596 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44517 present=701 rb=1164 scene=4062 script=25877 events=28343 sprite_px=44960 present_px=18544 sprites=8 maxspr=320x57
+Game : (room:2) [(unknown section):1500] MoveCharacter: request move cDave: 825,133 to 929,120
+DOS-PORT skipframe owed=2 prev_us total=63284 present=974 rb=2427 scene=20726 script=25506 events=27943 sprite_px=44960 present_px=31680 sprites=8 maxspr=320x57
+DOS-PORT skipframe owed=1 prev_us total=44793 present=669 rb=1185 scene=4671 script=25702 events=28169 sprite_px=44960 present_px=22648 sprites=8 maxspr=320x57
+Quitting the game...
+Set game text language: 
+Set locale: 
+DOS-PORT vmfree bytes=279664 live=537884 allocs=4 frees=3 brk=0x118ff30
+DOS-PORT vmfree bytes=537884 live=0 allocs=4 frees=4 brk=0x118ff30
+***** ENGINE HAS SHUTDOWN
+DOS-PORT bgstruct_final calls=5315 whole=34 px=10186403 slow_px=0
+DOS-PORT bgspans n=309978 lt16=19575 lt64=288765 ge64=1638 mean_px=32
+DOS-PORT evtype none n=0 us=0
+DOS-PORT evtype script n=7116 us=93371254
+DOS-PORT evtype object n=14235 us=8299607
+DOS-PORT evtype fadein n=2 us=3927549
+DOS-PORT evtype gui n=0 us=0
+DOS-PORT evtype newroom n=0 us=0
+DOS-PORT evobj room n=7005 us=7187109
+DOS-PORT evobj hotspot n=7230 us=1112498
+DOS-PORT afterfadein gui_n=1 gui_us=23 log_n=1 log_us=38176 line_n=1 line_us=3127
+DOS-PORT afterfadein_script us=362
+DOS-PORT afterfadein onevent_n=1 onevent_us=1150 nested_us=0
+DOS-PORT dirtysrc other n=0 px=0
+DOS-PORT dirtysrc roomsprite n=13855 px=11436390
+DOS-PORT dirtysrc uisprite n=137 px=659025
+DOS-PORT dirtysrc cursor n=5283 px=1352448
+DOS-PORT dirtysrc screen n=0 px=0
+DOS-PORT dirtysrc carry n=14784 px=13065301
+DOS-PORT vblank vsync_leg=0 dac_leg=0 called=0 skipped=0
+DOS-PORT vblank2 vsync_leg=0 dac_leg=0 called=0 skipped=0
+DOS-PORT fade8 steps=0 interp_us=0 setpal_us=0
+DOS-PORT flushpath banked=0 lfb=0 vblank_entered=0 fb_created=1
+DOS-PORT objsetup setview_n=0 setview_us=0 animate_n=0 animate_us=0 visible_n=0 visible_us=0
+DOS-PORT scfile open_n=0 open_us=0 write_n=0 write_us=0 close_n=0 close_us=0
+DOS-PORT dirtycarry presents=5314 boxes=14784 full=0
+DOS-PORT guiskip flushed=3 late=0 hidden=0 props=0 flag=3
+DOS-PORT guiidem refused=0 alpha_binary=0 alpha_partial=0
+DOS-PORT wordscan=1
+DOS-PORT existfast mode=1 misses=37 stat=12 shadow=0 compared=0 mismatches=0
+DOS-PORT dircache mode=0 listings=0 entries=0 hits=0 events=2 drops=0 shadow=0 compared=0 mismatches=0
+DOS-PORT pakhandle opened=1 reused=21 fallback=0 closed=1
+DOS-PORT readdirect mode=1 reads=16 bytes=1381078 short=0 errors=0
+DOS-PORT guiflush idx=0 n=1
+DOS-PORT guiflush idx=1 n=1
+DOS-PORT guiflush idx=10 n=1
+DOS-PORT overskip mode=1 skipped=0 marked=0 refused=0 hidden=0 props=0 flag=0 late=0 end=0
+DOS-PORT bigguiopaque opaque=0 masked=0
+DOS-PORT biggui_final n=0 unchanged=0 changed=0 pct=0
+DOS-PORT screenshot n=0 us=0
+DOS-PORT evinteraction n=14235 us=6373304
+DOS-PORT evroom firstenter n=1 us=179
+DOS-PORT evroom beforefadein n=1 us=64381
+DOS-PORT evroom repexec n=7002 us=7036190
+DOS-PORT evroom afterfadein n=1 us=86359
+DOS-PORT blackfill skipped=3477 done=1838 px=833461 rects=1851 whole=1

@@ -1,0 +1,757 @@
+--- a/Engine/CMakeLists.txt
++++ b/Engine/CMakeLists.txt
+@@ -363,6 +363,7 @@
+     main/game_file.cpp
+     main/game_file.h
+     main/game_run.cpp
++    main/dos_l1prof.cpp
+     main/game_run.h
+     main/game_start.cpp
+     main/game_start.h
+--- a/Engine/ac/event.cpp
++++ b/Engine/ac/event.cpp
+@@ -43,6 +43,9 @@
+ #include "gfx/graphicsdriver.h"
+ #include "media/audio/audio_system.h"
+ #include "ac/timer.h"
++#ifdef __DJGPP__
++#include "main/dos_l1prof.h" // LAB-L1
++#endif
+ 
+ using namespace AGS::Common;
+ using namespace AGS::Engine;
+@@ -249,6 +252,11 @@
+         (evp->Type == kAGSEvent_Object &&
+          evp->Data.Object.ObjEvType == kObjEventType_Room)
+             ? (int)evp->Data.Object.ObjEvent : -1);
++    DosL1EvtScope _dos_l1_evt((int)evp->Type,   // LAB-L1: the event context of any script entry below
++        evp->Type == kAGSEvent_Object ? (int)evp->Data.Object.ObjEvType :
++        (evp->Type == kAGSEvent_Script ? (int)evp->Data.Script.CbType : -1),
++        (evp->Type == kAGSEvent_Object && evp->Data.Object.ObjEvType == kObjEventType_Room)
++            ? (int)evp->Data.Object.ObjEvent : -1);
+ #endif
+ 
+     RuntimeScriptValue rval_null;
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -25,7 +25,8 @@
+ #include <dpmi.h> // __dpmi_get_free_memory_information -- DOS-PORT memory KPI
+ #include <stdio.h> // FILE -- DOS-PORT patch 0093 (dos_port_yardstick_emit)
+ #include <time.h> // uclock_t/uclock()/UCLOCKS_PER_SEC -- DOS-PORT patch 0080
+-#include "main/dos_port_tick_timing.h" // DOS-PORT patch 0080
++#include "main/dos_port_tick_timing.h"
++#include "main/dos_l1prof.h" // LAB-L1 // DOS-PORT patch 0080
+ #ifdef __DJGPP__
+ int dos_port_tick_fine_flag = 0; // DOS-PORT patch 0315: set once in ags_entry_point; 0 (off) until then
+ 
+@@ -2127,6 +2128,8 @@
+ #ifdef __DJGPP__
+     DosTickStallScope _dos_tick_stall_scope; // patch 0093
+     DosPortTickScope _dos_port_update_once_scope(dos_port_tick_timing.update_game_once_total, kDosTickLogUgo); // patch 0315: coarse; 0316: logged
++    if (dos_l1_level) dos_l1_tick(get_loop_counter());   // LAB-L1
++    DosL1NestScope _dos_l1_nest;                         // LAB-L1: a game loop nested in a script entry (blocking)
+ #endif
+     set_our_eip(1000);
+ 
+--- a/Engine/main/main.cpp
++++ b/Engine/main/main.cpp
+@@ -609,6 +609,7 @@
+         dos_port_ticklog_init(getenv("DOSAGS_TICKLOG"));
+     }
+ #endif // DOSAGS_RELEASE
++    { extern void dos_l1_init(); dos_l1_init(); }   // LAB-L1
+ #endif
+     main_init(argc, argv);
+ 
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -937,6 +937,8 @@
+             {
+                 extern void dos_port_ticklog_dump(FILE *log);
+                 dos_port_ticklog_dump(run_manifest_log);   // patch 0316: TICKS.BIN when DOSAGS_TICKLOG is set
++                extern void dos_l1_dump();
++                dos_l1_dump();                             // LAB-L1: L1PROF.TXT when DOSAGS_L1PROF is set
+             }
+             dos_midi_stream_emit(run_manifest_log);    // patch 0253
+ 
+--- a/Engine/script/script.cpp
++++ b/Engine/script/script.cpp
+@@ -16,6 +16,7 @@
+ #ifdef __DJGPP__
+ #include <time.h> // uclock_t/uclock()/UCLOCKS_PER_SEC -- DOS-PORT patch 0079
+ #include "main/dos_port_tick_timing.h" // DOS-PORT patch 0079
++#include "main/dos_l1prof.h" // LAB-L1
+ #endif
+ #include "script/script.h"
+ #include "ac/common.h"
+@@ -395,9 +396,11 @@
+     // commit message.
+ #ifdef __DJGPP__
+     const uclock_t _dos_port_rep_exec_t0 = dos_port_fine_uclock(); // patch 0315
++    const int _dos_l1_tok = dos_l1_level ? dos_l1_entry_begin(1, sci, funcToRun->FunctionName.GetCStr()) : -1; // LAB-L1
+ #endif
+     ccInstError result = sci->CallScriptFunction(funcToRun->FunctionName, funcToRun->ParamCount, funcToRun->Params);
+ #ifdef __DJGPP__
++    if (_dos_l1_tok >= 0) dos_l1_entry_end(_dos_l1_tok); // LAB-L1
+     if (dos_port_tick_fine_on()) dos_port_tick_record_us(dos_port_tick_timing.rep_exec_vm, dos_port_tick_elapsed_us(_dos_port_rep_exec_t0)); // patch 0315
+ #endif
+ 
+@@ -477,9 +480,11 @@
+     // execution" would swamp the real number with near-zero-cost misses.
+ #ifdef __DJGPP__
+     const uclock_t _dos_port_script_vm_t0 = dos_port_fine_uclock(); // patch 0315
++    const int _dos_l1_tok = dos_l1_level ? dos_l1_entry_begin(0, curscript->Inst, tsname.GetCStr()) : -1; // LAB-L1
+ #endif
+     const ccInstError inst_ret = curscript->Inst->CallScriptFunction(tsname, numParam, params);
+ #ifdef __DJGPP__
++    if (_dos_l1_tok >= 0) dos_l1_entry_end(_dos_l1_tok); // LAB-L1
+     if (dos_port_tick_fine_on()) dos_port_tick_record_us(dos_port_tick_timing.script_vm, dos_port_tick_elapsed_us(_dos_port_script_vm_t0)); // patch 0315
+ #endif
+     if ((inst_ret != kInstErr_None) && (inst_ret != kInstErr_FuncNotFound) && (inst_ret != kInstErr_Aborted))
+--- a/Engine/script/cc_instance_vm.cpp
++++ b/Engine/script/cc_instance_vm.cpp
+@@ -149,6 +149,25 @@
+ #define VM_MEMO_CALL_END() (dos_vm_curcall = nullptr)
+ #define VM_MEMO_BUMP() do { if (dos_cmemo_live) dos_memo_bump(); } while (0)
+ 
++// LAB-L1 (lab worktree only): per-function / per-API attribution hooks, compiled only with DOSAGS_L1VM=1
++#ifndef DOSAGS_L1VM
++#define DOSAGS_L1VM 0
++#endif
++#if DOSAGS_L1VM
++#include "main/dos_l1prof.h"
++#define L1_EXT_BEGIN(P) do { if (dos_l1_vmon) dos_l1_ext_begin((const void *)(P)); } while (0)
++#define L1_EXT_END() do { if (dos_l1_vmon) dos_l1_ext_end(); } while (0)
++#define L1_AT_PC(CI, PC) do { if (dos_l1_vmon) dos_l1_at_pc((CI), (PC)); } while (0)
++#define L1_VM_ENTER(CI, PC, LEG) do { if (dos_l1_vmon) dos_l1_vm_enter((CI), (PC), (LEG)); } while (0)
++#define L1_VM_EXIT() do { if (dos_l1_vmon) dos_l1_vm_exit(); } while (0)
++#else
++#define L1_EXT_BEGIN(P)
++#define L1_EXT_END()
++#define L1_AT_PC(CI, PC)
++#define L1_VM_ENTER(CI, PC, LEG)
++#define L1_VM_EXIT()
++#endif
++
+ int dos_vm_sccmd_argc(int op);          // cc_instance.cpp, patch 0359
+ bool dos_vm_sccmd_argisreg(int op, int k);
+ extern new_line_hook_type new_line_hook;   // script_runtime.cpp
+@@ -962,7 +981,9 @@
+     const void *const keep = dos_vm_curcall;
+     dos_vm_curcall = nullptr;
+     VM_MEMO_BUMP();
++    L1_VM_ENTER(_runningInst, curpc, 1);
+     const ccInstError r = Run(curpc);
++    L1_VM_EXIT();
+     VM_MEMO_BUMP();
+     dos_vm_curcall = keep;
+     return r;
+@@ -1002,7 +1023,9 @@
+     const void *const memo_keep = dos_vm_curcall;
+     dos_vm_curcall = nullptr;
+     VM_MEMO_BUMP();
++    L1_VM_ENTER(fr.codeInst, curpc, 0);
+     const ccInstError r = DosVmLoop(&fr, curpc);
++    L1_VM_EXIT();
+     VM_MEMO_BUMP();
+     dos_vm_curcall = memo_keep;
+     return r;
+@@ -1029,6 +1052,27 @@
+ {
+     if (__builtin_expect(dos_cmemo_live != 0, 0))
+         dos_memo_step(fr.codeInst->_code, fr.codeInst->_codesize, pc, _registers[SREG_MAR].Type);
++#if DOSAGS_L1VM
++    if (dos_l1_vmon)
++    {
++        const int32_t op = static_cast<int32_t>(fr.codeInst->_code[pc] & INSTANCE_ID_REMOVEMASK);
++        if (op == SCMD_CALLEXT)
++        {
++            const intptr_t r = fr.codeInst->_code[pc + 1];
++            dos_l1_ext_begin((r >= 0 && r < CC_NUM_REGISTERS) ? _registers[r].Ptr : nullptr);
++            const int st = DosVmStepBody(fr, pc);
++            dos_l1_ext_end();
++            return st;
++        }
++        if (op == SCMD_CALL || op == SCMD_RET)
++        {
++            const int st = DosVmStepBody(fr, pc);
++            if (st == 0)
++                dos_l1_at_pc(fr.codeInst, _pc);
++            return st;
++        }
++    }
++#endif
+     return DosVmStepBody(fr, pc);
+ }
+ 
+@@ -2226,6 +2270,7 @@
+         _lineNumber = _callStackLineNumber[_callStackSize];
+         currentline = _lineNumber;
+         ip = fr->dbase + newpc;
++        L1_AT_PC(fr->codeInst, newpc);
+         if (newpc < 0 || static_cast<uint32_t>(newpc) >= fr->codesize || !VM_IS_START(newpc))
+             goto h_generic_untraced;
+         VM_DISPATCH();
+@@ -2324,6 +2369,7 @@
+             target += (reg1.IValue - fr->thisbase[fr->curnest]);
+         }
+         _pc = target;
++        L1_AT_PC(fr->codeInst, target);
+         fr->next_call_needs_object = 0;
+         if (fr->loopIterationCheckDisabled)
+             fr->loopIterationCheckDisabled++;
+@@ -2422,6 +2468,7 @@
+         dos_port_work[kDW_ScriptExt]++;   // patch 0230, every build
+         RuntimeScriptValue return_value;
+         VM_MEMO_CALL_BEGIN(reg1.Type == kScValStaticFunction && !fr->next_call_needs_object ? reinterpret_cast<const void*>(reg1.SPfn) : nullptr);
++        L1_EXT_BEGIN(reg1.Ptr);
+         if (reg1.Type == kScValPluginFunction)
+         {
+             if (fr->next_call_needs_object)
+@@ -2460,6 +2507,7 @@
+         {
+             cc_error("invalid pointer type for function call: %d", reg1.Type);
+         }
++        L1_EXT_END();
+         VM_MEMO_CALL_END();
+         if (ccError.HasError) // cc_has_error(), inline (lever 3)
+             return kInstErr_Generic;
+@@ -2538,7 +2586,9 @@
+         }
+         dos_port_work[kDW_ScriptExt]++;
+         VM_MEMO_CALL_BEGIN(_registers[SREG_AX].SPfn);
++        L1_EXT_BEGIN(_registers[SREG_AX].Ptr);
+         const RuntimeScriptValue return_value = _registers[SREG_AX].SPfn(fr->fcs->GetHead(), fr->num_args_to_func);
++        L1_EXT_END();
+         VM_MEMO_CALL_END();
+         if (ccError.HasError) // cc_has_error(), inline (lever 3)
+             return kInstErr_Generic;
+--- /dev/null
++++ b/Engine/main/dos_l1prof.h
+@@ -0,0 +1,49 @@
++// LAB-L1 (lab worktree ~/git/dosags-lab-l1 only, never a port patch): attribution of the script
++// interpreter's time on MMD in play. DOSAGS_L1PROF (read once):
++//   unset/0  off: every hook is one test of dos_l1_level
++//   1        entries: every script_vm entry (RunScriptFunction's CallScriptFunction) and every rep_exec_vm entry
++//            (DoRunScriptFuncCantBlock) is logged with its loop counter, instance, function name, event context
++//            (process_event's type/sub/room event), its us, and the us of game loops nested inside it (blocking)
++//   2        1 + buckets: exclusive time per script function, per engine API function called from scripts, and
++//            per (caller function, API) pair; needs an exe built with DOSAGS_L1VM=1 in cc_instance_vm.cpp
++// DOSAGS_L1WIN=lo:hi limits the level-2 buckets to loop ticks lo <= lc < hi (entries are always logged).
++// Output: L1PROF.TXT in the working directory at exit (quit.cpp, beside TICKS.BIN).
++#ifndef DOS_L1PROF_H
++#define DOS_L1PROF_H
++#ifdef __DJGPP__
++#include <stdint.h>
++class ccInstance;
++extern int dos_l1_level;
++extern int dos_l1_vmon;   // level >= 2: the VM hooks record
++void dos_l1_init();
++void dos_l1_tick(uint32_t lc);                 // once per UpdateGameOnce, at its top
++// entries
++int  dos_l1_entry_begin(int kind, const ccInstance *inst, const char *name);   // kind 0 = script_vm, 1 = rep_exec_vm
++void dos_l1_entry_end(int tok);
++// event context, set by process_event
++void dos_l1_evt_push(int type, int sub, int roomev, int *save);
++void dos_l1_evt_pop(const int *save);
++// nested game loop (UpdateGameOnce while an entry is open)
++int  dos_l1_nest_begin();
++void dos_l1_nest_end(int tok);
++// level 2, from the VM
++void dos_l1_vm_enter(const ccInstance *codeInst, int32_t pc, int legacy);
++void dos_l1_vm_exit();
++void dos_l1_at_pc(const ccInstance *codeInst, int32_t pc);
++void dos_l1_ext_begin(const void *fn);
++void dos_l1_ext_end();
++void dos_l1_dump();
++struct DosL1EvtScope
++{
++    int save[3];
++    DosL1EvtScope(int t, int s, int r) { if (dos_l1_level) dos_l1_evt_push(t, s, r, save); }
++    ~DosL1EvtScope() { if (dos_l1_level) dos_l1_evt_pop(save); }
++};
++struct DosL1NestScope
++{
++    int tok;
++    DosL1NestScope() : tok(dos_l1_level ? dos_l1_nest_begin() : -1) {}
++    ~DosL1NestScope() { if (tok >= 0) dos_l1_nest_end(tok); }
++};
++#endif
++#endif
+--- /dev/null
++++ b/Engine/main/dos_l1prof.cpp
+@@ -0,0 +1,474 @@
++// LAB-L1 (lab worktree only, never a port patch): see dos_l1prof.h.
++#ifdef __DJGPP__
++#include "main/dos_l1prof.h"
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <time.h> // uclock()
++#include <algorithm>
++#include <string>
++#include <unordered_map>
++#include <utility>
++#include <vector>
++#include "script/cc_instance.h"
++#include "script/cc_script.h"
++#include "script/cc_internal.h"
++#include "script/script_runtime.h" // simp
++#include "script/systemimports.h"
++#include "script/script.h"           // gameinst, roominst, moduleInst, dialogScriptsInst
++uint32_t get_loop_counter();          // main/game_run.h
++
++extern int displayed_room;   // ac/game.h
++int dos_l1_level = 0;
++int dos_l1_vmon = 0;
++
++namespace
++{
++struct L1Ent
++{
++    uint32_t lc0, lc1;
++    int16_t kind, depth, evt, evsub, evroom, pad;
++    int32_t name;
++    uint32_t us, nest_us, vm_us, api_us, oth_us, api_n, pr_us;
++};
++struct L1Open
++{
++    uclock_t t0, nest0;
++    uint64_t cat0[5];
++    uint32_t lc0, api_n0;
++    int32_t name;
++    int16_t kind, evt, evsub, evroom;
++};
++struct L1B
++{
++    std::string name;
++    int cat;          // 0 outside the VM, 1 a script function, 2 an engine API function, 3 a nested game loop
++    unsigned long n;  // switches into it (in the window)
++    uint64_t t;       // exclusive time (in the window), tsc
++};
++struct L1Pair { unsigned long n; uint64_t t; };
++struct L1FTab { std::vector<std::pair<int32_t, int>> fn; int unknown; };
++struct L1Ext { int saved; int api; uint64_t t0; };
++
++std::vector<L1Ent> s_ent;
++unsigned long s_ent_dropped = 0;
++L1Open s_open[64];
++int s_open_n = 0;
++std::vector<std::string> s_names;
++std::unordered_map<std::string, int> s_name_ix;
++int s_evt[3] = { -1, -1, -1 };
++long s_win_lo = 0, s_win_hi = 0x7FFFFFFFL;
++int s_inwin = 1;
++uint32_t s_lc = 0;
++int s_nest_depth = 0;
++uclock_t s_nest_t0 = 0, s_nest_t = 0;
++// level 2
++std::vector<L1B> s_b;
++int s_cur = 0;
++uint64_t s_last = 0;
++uint64_t s_cat_t[5] = { 0, 0, 0, 0, 0 };   // 4 = the probe's own bookkeeping
++unsigned long s_api_n = 0;
++std::unordered_map<const ccScript *, L1FTab> s_ftab;
++const ccScript *s_ftab_last_key = nullptr;
++L1FTab *s_ftab_last = nullptr;
++std::unordered_map<const void *, int> s_api;
++std::unordered_map<uint32_t, L1Pair> s_pair;
++L1Ext s_ext[128];
++int s_ext_n = 0;
++int s_vm_stack[256];
++int s_vm_n = 0;
++unsigned long s_legacy_runs = 0, s_vm_overflow = 0, s_ext_overflow = 0;
++long s_c_uclock_x1000 = 0, s_c_switch_x1000 = 0;
++int s_nest_saved[16];
++
++int intern(const std::string &s)
++{
++    auto it = s_name_ix.find(s);
++    if (it != s_name_ix.end())
++        return it->second;
++    const int id = (int)s_names.size();
++    s_names.push_back(s);
++    s_name_ix[s] = id;
++    return id;
++}
++
++std::string script_label(const ccScript *sc)
++{
++    if (!sc)
++        return "?";
++    char buf[48];
++    if (gameinst && gameinst->GetScript().get() == sc) return "game";
++    if (roominst && roominst->GetScript().get() == sc) { snprintf(buf, sizeof(buf), "room%d", displayed_room); return buf; }
++    if (dialogScriptsInst && dialogScriptsInst->GetScript().get() == sc) return "dialogs";
++    for (size_t i = 0; i < moduleInst.size(); ++i)
++        if (moduleInst[i] && moduleInst[i]->GetScript().get() == sc)
++        {
++            snprintf(buf, sizeof(buf), "mod%u%s%s", (unsigned)i, sc->GetScriptName().empty() ? "" : ":",
++                sc->GetScriptName().c_str());
++            return buf;
++        }
++    if (!sc->GetScriptName().empty())
++        return sc->GetScriptName();
++    if (!sc->sectionNames.empty())
++        return sc->sectionNames[0];
++    return "?";
++}
++std::string inst_label(const ccInstance *inst)
++{
++    if (!inst)
++        return "?";
++    return script_label(inst->GetScript().get());
++}
++// level 2 runs on the CPU time stamp counter: DOSBox-X's RDTSC (cputype pentium_slow) counts emulated cycles,
++// so it is emulated time, read in one instruction (uclock() costs ~5 us of emulated time a read). The ratio to
++// uclock is measured over the run (dos_l1_init -> dos_l1_dump).
++inline uint64_t l1_now()
++{
++    uint32_t lo, hi;
++    __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
++    return ((uint64_t)hi << 32) | lo;
++}
++uint64_t s_tsc0 = 0;
++uclock_t s_uc0 = 0;
++double s_tsc_per_us = 0.0;
++
++// Every hook reads the clock twice: l1_close() charges the running bucket up to its first read, the hook does its
++// bookkeeping, and l1_open() starts the next bucket at a second read; the time between the reads is the probe's
++// own (category 4), so the buckets carry no lookup or map cost.
++inline uint64_t l1_close()
++{
++    const uint64_t t = l1_now();
++    const uint64_t dt = t - s_last;
++    if (s_inwin)
++        s_b[s_cur].t += dt;
++    s_cat_t[s_b[s_cur].cat] += dt;
++    return t;
++}
++inline void l1_open(int b, uint64_t ta, int count = 1)
++{
++    const uint64_t tb = l1_now();
++    s_cat_t[4] += tb - ta;
++    s_last = tb;
++    s_cur = b;
++    if (s_inwin && count)
++        s_b[b].n++;
++}
++
++int new_bucket(const std::string &name, int cat)
++{
++    L1B b; b.name = name; b.cat = cat; b.n = 0; b.t = 0;
++    s_b.push_back(b);
++    return (int)s_b.size() - 1;
++}
++
++L1FTab &ftab_for(const ccScript *sc)
++{
++    if (sc == s_ftab_last_key && s_ftab_last)
++        return *s_ftab_last;
++    auto it = s_ftab.find(sc);
++    if (it == s_ftab.end())
++    {
++        L1FTab t;
++        const std::string sec = script_label(sc);
++        for (size_t i = 0; i < sc->exports.size() && i < sc->export_addr.size(); ++i)
++        {
++            const int32_t a = sc->export_addr[i];
++            if (((a >> 24) & 0xFF) != EXPORT_FUNCTION)
++                continue;
++            t.fn.push_back(std::make_pair(a & 0x00FFFFFF, new_bucket(sec + "::" + sc->exports[i], 1)));
++        }
++        std::sort(t.fn.begin(), t.fn.end());
++        t.unknown = new_bucket(sec + "::?", 1);
++        it = s_ftab.emplace(sc, std::move(t)).first;
++    }
++    s_ftab_last_key = sc;
++    s_ftab_last = &it->second;
++    return it->second;
++}
++
++int fn_bucket(const ccInstance *codeInst, int32_t pc)
++{
++    const ccScript *sc = codeInst ? codeInst->GetScript().get() : nullptr;
++    if (!sc)
++        return 0;
++    L1FTab &t = ftab_for(sc);
++    auto it = std::upper_bound(t.fn.begin(), t.fn.end(), std::make_pair(pc, 0x7FFFFFFF));
++    if (it == t.fn.begin())
++        return t.unknown;
++    --it;
++    return it->second;
++}
++
++int api_bucket(const void *fn)
++{
++    auto it = s_api.find(fn);
++    if (it != s_api.end())
++        return it->second;
++    std::string name;
++    for (uint32_t i = 0;; ++i)
++    {
++        const ScriptImport *imp = simp.GetByIndex(i);
++        if (!imp)
++            break;
++        if (imp->Value.Ptr == fn && imp->InstancePtr == nullptr)
++        {
++            name = imp->Name.GetCStr();
++            break;
++        }
++    }
++    if (name.empty())
++    {
++        char buf[32];
++        snprintf(buf, sizeof(buf), "api@%p", fn);
++        name = buf;
++    }
++    const int b = new_bucket(name, 2);
++    s_api[fn] = b;
++    return b;
++}
++
++unsigned long to_us(uclock_t t) { return (unsigned long)((long long)t * 1000000LL / UCLOCKS_PER_SEC); }
++unsigned long tsc_us(uint64_t t) { return s_tsc_per_us > 0 ? (unsigned long)((double)t / s_tsc_per_us) : 0UL; }
++} // namespace
++
++void dos_l1_init()
++{
++    static int done = 0;
++    if (done)
++        return;
++    done = 1;
++    const char *e = getenv("DOSAGS_L1PROF");
++    dos_l1_level = e ? atoi(e) : 0;
++    if (dos_l1_level <= 0)
++    {
++        dos_l1_level = 0;
++        return;
++    }
++    const char *w = getenv("DOSAGS_L1WIN");
++    if (w)
++    {
++        long lo = 0, hi = 0;
++        if (sscanf(w, "%ld:%ld", &lo, &hi) == 2) { s_win_lo = lo; s_win_hi = hi; }
++    }
++    s_ent.reserve(40000);
++    s_uc0 = uclock();
++    s_tsc0 = l1_now();
++    // calibration: the cost of one uclock() read, in uclock ticks x 1000
++    {
++        const uclock_t t0 = uclock();
++        uclock_t x = 0;
++        for (int i = 0; i < 4000; ++i)
++            x += uclock() & 1;
++        const uclock_t t1 = uclock();
++        s_c_uclock_x1000 = (long)(((long long)(t1 - t0) * 1000LL) / 4000LL) + (long)(x & 0);
++    }
++    new_bucket("OUTSIDE_VM", 0);           // bucket 0
++    new_bucket("NESTED_GAME_LOOP", 3);     // bucket 1
++    if (dos_l1_level >= 2)
++    {
++        dos_l1_vmon = 1;
++        // calibration: one bucket switch (uclock + bookkeeping), measured by 4000 switches 0 -> 0
++        s_last = l1_now();
++        const uint64_t t0 = l1_now();
++        for (int i = 0; i < 4000; ++i)
++        {
++            const uint64_t ta = l1_close();
++            l1_open(0, ta);
++        }
++        const uint64_t t1 = l1_now();
++        s_c_switch_x1000 = (long)(((t1 - t0) * 1000ULL) / 4000ULL);   // tsc ticks x 1000
++        s_b[0].n = 0; s_b[0].t = 0;
++        for (int i = 0; i < 5; ++i) s_cat_t[i] = 0;
++        s_last = l1_now();
++    }
++    printf("DOS-PORT l1prof level=%d win=%ld:%ld c_uclock_x1000=%ld c_switch_x1000=%ld\n", dos_l1_level, s_win_lo,
++        s_win_hi, s_c_uclock_x1000, s_c_switch_x1000);
++}
++
++void dos_l1_tick(uint32_t lc)
++{
++    s_lc = lc;
++    s_inwin = ((long)lc >= s_win_lo && (long)lc < s_win_hi) ? 1 : 0;
++}
++
++int dos_l1_entry_begin(int kind, const ccInstance *inst, const char *name)
++{
++    if (s_open_n >= 64)
++        return -1;
++    L1Open &o = s_open[s_open_n];
++    o.name = intern(inst_label(inst) + "|" + (name ? name : "?"));
++    o.kind = (int16_t)kind;
++    o.evt = (int16_t)s_evt[0]; o.evsub = (int16_t)s_evt[1]; o.evroom = (int16_t)s_evt[2];
++    o.lc0 = get_loop_counter();
++    o.api_n0 = s_api_n;
++    o.nest0 = s_nest_t;
++    o.t0 = uclock();
++    if (dos_l1_vmon)
++    {
++        const uint64_t ta = l1_close();   // close the running bucket so the snapshot below is exact
++        l1_open(s_cur, ta, 0);
++    }
++    for (int i = 0; i < 5; ++i) o.cat0[i] = s_cat_t[i];
++    return s_open_n++;
++}
++
++void dos_l1_entry_end(int tok)
++{
++    if (tok < 0)
++        return;
++    const uclock_t t1 = uclock();
++    if (dos_l1_vmon)
++    {
++        const uint64_t ta = l1_close();
++        l1_open(s_cur, ta, 0);
++    }
++    // close any inner entries that did not close (should not happen)
++    s_open_n = tok;
++    const L1Open &o = s_open[tok];
++    L1Ent r;
++    r.lc0 = o.lc0; r.lc1 = get_loop_counter();
++    r.kind = o.kind; r.depth = (int16_t)tok; r.evt = o.evt; r.evsub = o.evsub; r.evroom = o.evroom; r.pad = 0;
++    r.name = o.name;
++    r.us = (uint32_t)to_us(t1 - o.t0);
++    r.nest_us = (uint32_t)to_us(s_nest_t - o.nest0);
++    // vm/api/oth in raw tsc ticks (converted at the dump, when the tsc/us ratio is known)
++    r.vm_us = (uint32_t)(s_cat_t[1] - o.cat0[1]);
++    r.api_us = (uint32_t)(s_cat_t[2] - o.cat0[2]);
++    r.oth_us = (uint32_t)(s_cat_t[0] - o.cat0[0]);
++    r.pr_us = (uint32_t)(s_cat_t[4] - o.cat0[4]);
++    r.api_n = (uint32_t)(s_api_n - o.api_n0);
++    if (s_ent.size() < 200000)
++        s_ent.push_back(r);
++    else
++        s_ent_dropped++;
++}
++
++void dos_l1_evt_push(int type, int sub, int roomev, int *save)
++{
++    save[0] = s_evt[0]; save[1] = s_evt[1]; save[2] = s_evt[2];
++    s_evt[0] = type; s_evt[1] = sub; s_evt[2] = roomev;
++}
++void dos_l1_evt_pop(const int *save)
++{
++    s_evt[0] = save[0]; s_evt[1] = save[1]; s_evt[2] = save[2];
++}
++
++int dos_l1_nest_begin()
++{
++    if (s_open_n == 0)
++        return -1;   // a top-level tick, not nested in a script entry
++    const uclock_t now = uclock();
++    if (s_nest_depth == 0)
++        s_nest_t0 = now;
++    if (dos_l1_vmon && s_nest_depth < 16)
++    {
++        const uint64_t ta = l1_close();
++        s_nest_saved[s_nest_depth] = s_cur;
++        l1_open(1, ta);
++    }
++    s_nest_depth++;
++    return 1;
++}
++void dos_l1_nest_end(int)
++{
++    const uclock_t now = uclock();
++    s_nest_depth--;
++    if (s_nest_depth == 0)
++        s_nest_t += now - s_nest_t0;
++    if (dos_l1_vmon && s_nest_depth < 16)
++    {
++        const uint64_t ta = l1_close();
++        l1_open(s_nest_saved[s_nest_depth], ta);
++    }
++}
++
++void dos_l1_vm_enter(const ccInstance *codeInst, int32_t pc, int legacy)
++{
++    if (!dos_l1_vmon)
++        return;
++    if (legacy)
++        s_legacy_runs++;
++    if (s_vm_n >= 256) { s_vm_overflow++; return; }
++    const uint64_t ta = l1_close();
++    s_vm_stack[s_vm_n++] = s_cur;
++    l1_open(fn_bucket(codeInst, pc), ta);
++}
++void dos_l1_vm_exit()
++{
++    if (!dos_l1_vmon || s_vm_n <= 0)
++        return;
++    const uint64_t ta = l1_close();
++    l1_open(s_vm_stack[--s_vm_n], ta);
++}
++void dos_l1_at_pc(const ccInstance *codeInst, int32_t pc)
++{
++    if (!dos_l1_vmon)
++        return;
++    const uint64_t ta = l1_close();
++    l1_open(fn_bucket(codeInst, pc), ta);
++}
++void dos_l1_ext_begin(const void *fn)
++{
++    if (!dos_l1_vmon)
++        return;
++    s_api_n++;
++    if (s_ext_n >= 128) { s_ext_overflow++; return; }
++    const uint64_t now = l1_close();
++    const int b = api_bucket(fn);
++    s_ext[s_ext_n].saved = s_cur;
++    s_ext[s_ext_n].t0 = now;
++    s_ext[s_ext_n].api = b;
++    s_ext_n++;
++    l1_open(b, now);
++}
++void dos_l1_ext_end()
++{
++    if (!dos_l1_vmon || s_ext_n <= 0)
++        return;
++    const uint64_t now = l1_close();
++    const L1Ext &x = s_ext[--s_ext_n];
++    if (s_inwin)
++    {
++        const uint32_t key = ((uint32_t)x.saved << 16) | (uint32_t)(x.api & 0xFFFF);
++        L1Pair &p = s_pair[key];
++        p.n++;
++        p.t += now - x.t0;
++    }
++    l1_open(x.saved, now);
++}
++
++void dos_l1_dump()
++{
++    if (!dos_l1_level)
++        return;
++    if (dos_l1_vmon)
++        l1_close();
++    {
++        const uclock_t uc1 = uclock();
++        const uint64_t tsc1 = l1_now();
++        const double us = (double)(uc1 - s_uc0) * 1000000.0 / (double)UCLOCKS_PER_SEC;
++        s_tsc_per_us = us > 0 ? (double)(tsc1 - s_tsc0) / us : 0.0;
++    }
++    FILE *f = fopen("L1PROF.TXT", "wb");
++    if (!f)
++        return;
++    fprintf(f, "L1PROF v2 tsc_per_us=%.4f level=%d win=%ld:%ld uclocks_per_sec=%ld c_uclock_x1000=%ld c_switch_x1000=%ld legacy_runs=%lu "
++        "vm_overflow=%lu ext_overflow=%lu ents=%u dropped=%lu api_n=%lu probe_us=%lu\n", s_tsc_per_us, dos_l1_level, s_win_lo, s_win_hi,
++        (long)UCLOCKS_PER_SEC, s_c_uclock_x1000, s_c_switch_x1000, s_legacy_runs, s_vm_overflow, s_ext_overflow,
++        (unsigned)s_ent.size(), s_ent_dropped, s_api_n, tsc_us(s_cat_t[4]));
++    for (size_t i = 0; i < s_names.size(); ++i)
++        fprintf(f, "N %u %s\n", (unsigned)i, s_names[i].c_str());
++    for (const L1Ent &r : s_ent)
++        fprintf(f, "E %d %lu %lu %d %ld %d %d %d %lu %lu %lu %lu %lu %lu %lu\n", r.kind, (unsigned long)r.lc0,
++            (unsigned long)r.lc1, r.depth, (long)r.name, r.evt, r.evsub, r.evroom, (unsigned long)r.us,
++            (unsigned long)r.nest_us, tsc_us(r.vm_us), tsc_us(r.api_us), tsc_us(r.oth_us),
++            (unsigned long)r.api_n, tsc_us(r.pr_us));
++    for (size_t i = 0; i < s_b.size(); ++i)
++        if (s_b[i].n || s_b[i].t)
++            fprintf(f, "B %u %d %lu %lu %s\n", (unsigned)i, s_b[i].cat, s_b[i].n, tsc_us(s_b[i].t), s_b[i].name.c_str());
++    for (const auto &kv : s_pair)
++        fprintf(f, "P %u %u %lu %lu\n", (unsigned)(kv.first >> 16), (unsigned)(kv.first & 0xFFFF), kv.second.n,
++            tsc_us(kv.second.t));
++    fclose(f);
++}
++#endif

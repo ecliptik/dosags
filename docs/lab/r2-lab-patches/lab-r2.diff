@@ -1,0 +1,456 @@
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -2205,6 +2205,144 @@
+     return dst.get(); // return transformed result
+ }
+ 
++#ifdef __DJGPP__
++// LAB-R2 probe (lab worktree only, not a port patch). DOSAGS_R2P=1: per-character prep / blit timing, the cache path
++// each character takes each frame, input-key reuse counts, and lab TICKS.BIN kinds (7 wait_next_frame, 8 sc_prep_chars,
++// 9 character blit us per pass, 10 bg_restore, 13 rb_sprite_time us per pass, 14 character blit px per pass).
++// DOSAGS_R2P=lo:hi does all that and, for lo <= lc <= hi, hashes each character's final image, splits the restore's px
++// (kinds 11 total, 12 inside character rects) and logs one line per character per frame. It only reads game state.
++int dos_r2p_mode = -1;
++static long dos_r2p_lo = 0, dos_r2p_hi = -1;
++int dos_r2p()
++{
++    if (dos_r2p_mode < 0)
++    {
++        dos_r2p_mode = 0;
++        const char *e = getenv("DOSAGS_R2P");
++        if (e && sscanf(e, "%ld:%ld", &dos_r2p_lo, &dos_r2p_hi) == 2) dos_r2p_mode = 2;
++        else if (e && e[0] == '1') dos_r2p_mode = 1;
++        Debug::Printf("DOS-PORT r2p mode=%d lo=%ld hi=%ld", dos_r2p_mode, dos_r2p_lo, dos_r2p_hi);
++    }
++    return dos_r2p_mode;
++}
++int dos_r2p_detail()
++{
++    if (dos_r2p() != 2) return 0;
++    const long lc = (long)get_loop_counter();
++    return lc >= dos_r2p_lo && lc <= dos_r2p_hi;
++}
++int dos_r2_path = 0, dos_r2_xform = 0, dos_r2_tinted = 0, dos_r2_crop = -1;
++struct DosR2Key { int pic, view, loop, frame, tr, tg, tb, ta, tl, ll, zoom, mir, w, h, x, y, basel, transp; };
++struct DosR2Char
++{
++    long frames = 0, path[5] = {0, 0, 0, 0, 0}, xform = 0, tinted = 0, crop_called = 0, crop_changed = 0;
++    long key_same = 0, pos_same = 0, pic_same = 0, wbchg = 0, notified = 0;
++    long hashed = 0, img_same = 0, ks_img_diff = 0, kd_img_same = 0;
++    long long us_con = 0, us_prep = 0, us_blit = 0, px_blit = 0, n_blit = 0, px_img = 0;
++    DosR2Key prev; bool prev_valid = false; unsigned long prev_hash = 0; bool prev_hash_valid = false;
++    int w = 0, h = 0, spw = 0, sph = 0;
++};
++DosR2Char dos_r2c[64];
++const void *dos_r2_bmp[64]; int dos_r2_bmp_ch[64]; int dos_r2_nbmp = 0;
++const void *dos_r2_ddb[64]; int dos_r2_nddb = 0;
++long long dos_r2_pass_us = 0, dos_r2_pass_px = 0;
++static int dos_r2_last_room = -1000;
++static long long dos_r2_us(uclock_t a, uclock_t b) { return (long long)(b - a) * 1000000LL / UCLOCKS_PER_SEC; }
++static unsigned long dos_r2_hash(const Bitmap *b)
++{
++    unsigned long h = 2166136261UL;
++    const int bw = b->GetWidth() * b->GetBPP();
++    for (int y = 0; y < b->GetHeight(); ++y)
++    {
++        const unsigned char *row = b->GetScanLine(y);
++        for (int x = 0; x < bw; ++x) { h ^= row[x]; h *= 16777619UL; }
++    }
++    h ^= (unsigned long)b->GetWidth() * 31UL + (unsigned long)b->GetHeight();
++    return h & 0xFFFFFFFFUL;
++}
++void dos_r2_char_blit(int ch, long long us, long long px)
++{
++    if (ch < 0 || ch >= 64) return;
++    dos_r2c[ch].us_blit += us; dos_r2c[ch].px_blit += px; dos_r2c[ch].n_blit++;
++    dos_r2_pass_us += us; dos_r2_pass_px += px;
++}
++int dos_r2_is_char_ddb(const void *d)
++{
++    for (int i = 0; i < dos_r2_nddb; ++i) if (dos_r2_ddb[i] == d) return 1;
++    return 0;
++}
++static void dos_r2_char_done(int ch, const CharacterInfo &ci, const CharacterExtras &cx, const ObjectCache &cs,
++    ObjTexture &a, int atx, int aty, int basel, uclock_t t0, uclock_t t1, uclock_t t2, bool wbc)
++{
++    if (ch < 0 || ch >= 64) return;
++    DosR2Char &c = dos_r2c[ch];
++    c.frames++;
++    c.path[(dos_r2_path >= 0 && dos_r2_path < 5) ? dos_r2_path : 0]++;
++    c.xform += dos_r2_xform; c.tinted += dos_r2_tinted;
++    if (dos_r2_crop >= 0) { c.crop_called++; c.crop_changed += dos_r2_crop; }
++    c.us_con += dos_r2_us(t0, t1); c.us_prep += dos_r2_us(t1, t2);
++    const DosR2Key k = { cs.sppic, ci.view, ci.loop, ci.frame, cs.tintr, cs.tintg, cs.tintb, cs.tintamnt, cs.tintlight,
++                         cs.lightlev, cs.zoom, (int)cs.mirrored, cx.width, cx.height, atx, aty, basel, ci.transparency };
++    const bool notified = a.IsChangeNotified();
++    const bool ks = c.prev_valid && !wbc && !notified && memcmp(&k, &c.prev, sizeof(k)) == 0;
++    const bool ps = c.prev_valid && k.x == c.prev.x && k.y == c.prev.y && k.basel == c.prev.basel;
++    const bool pc = c.prev_valid && k.pic == c.prev.pic && k.mir == c.prev.mir && k.w == c.prev.w && k.h == c.prev.h;
++    c.key_same += ks; c.pos_same += ps; c.pic_same += pc; c.wbchg += wbc; c.notified += notified;
++    if (a.Bmp)
++    {
++        c.w = a.Bmp->GetWidth(); c.h = a.Bmp->GetHeight();
++        c.px_img += (long long)c.w * c.h;
++        const int sp = cs.sppic < 0 ? -cs.sppic : cs.sppic;
++        if (spriteset.DoesSpriteExist(sp)) { c.spw = game.SpriteInfos[sp].Width; c.sph = game.SpriteInfos[sp].Height; }
++    }
++    if (dos_r2p_detail() && a.Bmp)
++    {
++        const unsigned long hs = dos_r2_hash(a.Bmp.get());
++        int is = -1;
++        if (c.prev_hash_valid)
++        {
++            is = (hs == c.prev_hash) ? 1 : 0;
++            c.hashed++; c.img_same += is;
++            if (ks && !is) c.ks_img_diff++;
++            if (!ks && c.prev_valid && is) c.kd_img_same++;
++        }
++        c.prev_hash = hs; c.prev_hash_valid = true;
++        Debug::Printf("DOS-PORT r2f lc=%u ch=%d pic=%d vlf=%d/%d/%d path=%d xf=%d tint=%d/%d/%d/%d/%d lev=%d zoom=%d mir=%d"
++            " sz=%dx%d sp=%dx%d at=%d,%d basel=%d tr=%d crop=%d wbc=%d ks=%d ps=%d is=%d h=%08lx us_c=%lld us_p=%lld",
++            (unsigned)get_loop_counter(), ch, k.pic, k.view, k.loop, k.frame, dos_r2_path, dos_r2_xform, k.tr, k.tg, k.tb,
++            k.ta, k.tl, k.ll, k.zoom, k.mir, c.w, c.h, c.spw, c.sph, atx, aty, basel, k.transp, dos_r2_crop, (int)wbc,
++            (int)ks, (int)ps, is, hs, dos_r2_us(t0, t1), dos_r2_us(t1, t2));
++    }
++    else
++        c.prev_hash_valid = false;
++    c.prev = k; c.prev_valid = true;
++    if (dos_r2_nbmp < 64 && a.Bmp) { dos_r2_bmp[dos_r2_nbmp] = a.Bmp.get(); dos_r2_bmp_ch[dos_r2_nbmp] = ch; dos_r2_nbmp++; }
++    if (dos_r2_nddb < 64 && a.Ddb) dos_r2_ddb[dos_r2_nddb++] = a.Ddb;
++}
++void dos_r2_dump(FILE *f, long lc, bool ck)
++{
++    for (int i = 0; i < 64; ++i)
++    {
++        const DosR2Char &c = dos_r2c[i];
++        if (!c.frames) continue;
++        char line[640];
++        snprintf(line, sizeof(line), "%s lc=%ld ch=%d name=%s frames=%ld path=%ld/%ld/%ld/%ld/%ld xform=%ld tinted=%ld crop=%ld/%ld"
++            " key_same=%ld pos_same=%ld pic_same=%ld wbchg=%ld notified=%ld hashed=%ld img_same=%ld ks_img_diff=%ld kd_img_same=%ld"
++            " us_con=%lld us_prep=%lld us_blit=%lld px_blit=%lld n_blit=%lld px_img=%lld sz=%dx%d sp=%dx%d",
++            ck ? "DOS-PORT labck c=r2char" : "DOS-PORT r2char", lc, i, (i < game.numcharacters) ? game.chars[i].scrname : "?",
++            c.frames, c.path[0], c.path[1], c.path[2], c.path[3], c.path[4], c.xform, c.tinted, c.crop_called, c.crop_changed,
++            c.key_same, c.pos_same, c.pic_same, c.wbchg, c.notified, c.hashed, c.img_same, c.ks_img_diff, c.kd_img_same,
++            c.us_con, c.us_prep, c.us_blit, c.px_blit, c.n_blit, c.px_img, c.w, c.h, c.spw, c.sph);
++        if (f) fprintf(f, "%s\n", line); else Debug::Printf("%s", line);
++    }
++    extern long long dos_r2_bgpx_all, dos_r2_bgpx_char; extern long dos_r2_rect_over, dos_r2_restores;
++    char line[256];
++    snprintf(line, sizeof(line), "%s lc=%ld restores=%ld bgpx_all=%lld bgpx_char=%lld rect_over=%ld",
++        ck ? "DOS-PORT labck c=r2bg" : "DOS-PORT r2bg", lc, dos_r2_restores, dos_r2_bgpx_all, dos_r2_bgpx_char, dos_r2_rect_over);
++    if (f) fprintf(f, "%s\n", line); else Debug::Printf("%s", line);
++}
++#endif
++
+ // Draws the specified 'sppic' sprite onto ObjTexture 'actsp' at the specified
+ // width and height, and flips the sprite if necessary.
+ // If any transformation was necessary, then writes the result into ObjTexture.
+@@ -2291,6 +2429,9 @@
+         objsav.lightlev = light_level;
+         objsav.zoom = objsrc.zoom;
+         objsav.mirrored = is_mirrored;
++#ifdef __DJGPP__
++        dos_r2_path = 1;   // LAB-R2
++#endif
+         return is_texture_intact;
+     }
+ 
+@@ -2321,6 +2462,9 @@
+         if ((drawstate.WalkBehindMethod != DrawOverCharSprite) &&
+             (actsp.Bmp != nullptr))
+         {
++#ifdef __DJGPP__
++            dos_r2_path = 2;   // LAB-R2: cached, raw bitmap kept
++#endif
+             return true;
+         }
+         // Check if the X & Y co-ords are the same, too -- if so, there
+@@ -2331,10 +2475,16 @@
+             (actsp.Bmp != nullptr) &&
+             (walk_behind_baselines_changed == 0))
+         {
++#ifdef __DJGPP__
++            dos_r2_path = 2;   // LAB-R2: cached, raw bitmap kept (objects only)
++#endif
+             return true;
+         }
+         recycle_bitmap(actsp.Bmp, objsav.image->GetColorDepth(), objsav.image->GetWidth(), objsav.image->GetHeight());
+         actsp.Bmp->Blit(objsav.image.get(), 0, 0);
++#ifdef __DJGPP__
++        dos_r2_path = 3;   // LAB-R2: cached image re-copied into the raw bitmap
++#endif
+         return false; // image was modified
+     }
+ 
+@@ -2385,6 +2535,11 @@
+     objsav.mirrored = is_mirrored;
+     objsav.x = objsrc.x;
+     objsav.y = objsrc.y;
++#ifdef __DJGPP__
++    dos_r2_path = 4;   // LAB-R2: drawn from the sprite (transform / tint / plain blit) and re-cached
++    dos_r2_xform = actsps_used ? 1 : 0;
++    dos_r2_tinted = ((tint_level > 0) || (light_level != 0)) ? 1 : 0;
++#endif
+     return false; // image was modified
+ }
+ 
+@@ -2409,7 +2564,11 @@
+         // Only merge sprite with the walk-behinds in software mode
+         if ((drawstate.WalkBehindMethod == DrawOverCharSprite) && (actsp_modified))
+         {
++#ifdef __DJGPP__
++            dos_r2_crop = walkbehinds_cropout(actsp.Bmp.get(), atx, aty, usebasel) ? 1 : 0;   // LAB-R2
++#else
+             walkbehinds_cropout(actsp.Bmp.get(), atx, aty, usebasel);
++#endif
+         }
+     }
+     else
+@@ -2620,6 +2779,18 @@
+ {
+     set_our_eip(33);
+     const bool hw_accel = !drawstate.SoftwareRender;
++#ifdef __DJGPP__
++    const int _r2 = dos_r2p();   // LAB-R2
++    if (_r2)
++    {
++        dos_r2_nbmp = 0; dos_r2_nddb = 0;
++        if (displayed_room != dos_r2_last_room)
++        {
++            for (auto &c : dos_r2c) { c.prev_valid = false; c.prev_hash_valid = false; }
++            dos_r2_last_room = displayed_room;
++        }
++    }
++#endif
+ 
+     // draw characters
+     for (int charid = 0; charid < game.numcharacters; ++charid)
+@@ -2641,11 +2812,22 @@
+         int usebasel = chin.get_baseline();
+ 
+         // Generate raw bitmap in ObjTexture and store parameters in ObjectCache.
++#ifdef __DJGPP__
++        uclock_t _r2t0 = 0, _r2t1 = 0; bool _r2wbc = false;   // LAB-R2
++        if (_r2) { dos_r2_path = 0; dos_r2_xform = dos_r2_tinted = 0; dos_r2_crop = -1;
++                   _r2wbc = walk_behind_baselines_changed; _r2t0 = uclock(); }
++#endif
+         bool actsp_modified = !construct_char_gfx(charid, false);
++#ifdef __DJGPP__
++        if (_r2) _r2t1 = uclock();
++#endif
+         // Prepare the object texture
+         prepare_and_add_object_gfx(chsav, actsp, actsp_modified,
+             Size(chex.width, chex.height), atx, aty, usebasel,
+             (chin.flags & CHF_NOWALKBEHINDS) == 0, chin.transparency, hw_accel);
++#ifdef __DJGPP__
++        if (_r2) dos_r2_char_done(charid, chin, chex, chsav, actsp, atx, aty, usebasel, _r2t0, _r2t1, uclock(), _r2wbc);
++#endif
+ #if (AGS_PLATFORM_DEBUG)
+         actsp.Ddb->SetTag(String::FromFormat("CHAR%d:%s", chin.index_id, chin.scrname));
+ #endif
+@@ -2728,7 +2910,7 @@
+         prepare_objects_for_drawing();
+ #ifdef __DJGPP__
+         }
+-        { DosPortTickScope _dp(dos_port_tick_timing.sc_prep_chars);
++        { DosPortTickScope _dp(dos_port_tick_timing.sc_prep_chars, dos_r2p() ? 8 : 0);   // LAB-R2: kind 8
+ #endif
+         prepare_characters_for_drawing();
+ #ifdef __DJGPP__
+@@ -3333,7 +3515,10 @@
+ #endif
+             {   // patch 0175
+                 dos_port_dirty_source = in_room ? kDirtySrc_RoomSprite : kDirtySrc_UiSprite;
++                extern int dos_r2_marking;   // LAB-R2: record a character's marked rect for the restore split
++                dos_r2_marking = (in_room && dos_r2p_mode == 2 && dos_r2_is_char_ddb(t.DDB)) ? 1 : 0;
+                 invalidate_sprite(t.X, t.Y, t.DDB, in_room);
++                dos_r2_marking = 0;
+                 dos_port_dirty_source = kDirtySrc_Other;
+             }
+             // push to the graphics driver
+--- a/Engine/ac/draw_software.cpp
++++ b/Engine/ac/draw_software.cpp
+@@ -376,6 +376,15 @@
+     //}
+ }
+ 
++#ifdef __DJGPP__
++// LAB-R2: character rects marked since the last room restore (camera 0's surface coords), for the restore px split
++int dos_r2_marking = 0;
++struct DosR2Rect { int x1, y1, x2, y2; };
++static DosR2Rect dos_r2_rect[48]; static int dos_r2_nrect = 0;
++long dos_r2_rect_over = 0, dos_r2_restores = 0;
++long long dos_r2_bgpx_all = 0, dos_r2_bgpx_char = 0;
++extern int dos_r2p(); extern int dos_r2p_detail();
++#endif
+ void invalidate_rect_ds(DirtyRects &rects, int x1, int y1, int x2, int y2, bool in_room)
+ {
+     if (!in_room)
+@@ -402,6 +411,13 @@
+         y1 -= rects.Room2Screen.Y.GetSrcOffset();
+         x2 -= rects.Room2Screen.X.GetSrcOffset();
+         y2 -= rects.Room2Screen.Y.GetSrcOffset();
++#ifdef __DJGPP__
++        if (dos_r2_marking && !RoomCamRects.empty() && &rects == &RoomCamRects[0])   // LAB-R2
++        {
++            if (dos_r2_nrect < 48) dos_r2_rect[dos_r2_nrect++] = { x1, y1, x2, y2 };
++            else dos_r2_rect_over++;
++        }
++#endif
+     }
+ 
+     invalidate_rect_on_surf(x1, y1, x2, y2, rects);
+@@ -957,11 +973,52 @@
+     // this is subtracted out.
+     dos_port_tick_timing.bg_calls++;
+     {
+-    DosPortTickScope _dp_bg(dos_port_tick_timing.bg_restore);
++    DosPortTickScope _dp_bg(dos_port_tick_timing.bg_restore, dos_r2p() ? 10 : 0);   // LAB-R2: kind 10
+ #endif
+     update_invalid_region(ds, src, RoomCamRects[view_index], no_transform);
+ #ifdef __DJGPP__
+     }
++    if (view_index == 0 && dos_r2p_detail())   // LAB-R2: what this restore repainted, and how much of it was character rects
++    {
++        const DirtyRects &r = RoomCamRects[0];
++        long long all = 0, chr = 0;
++        if (r.NumDirtyRegions != 0)
++        {
++            const int W = r.SurfaceSize.Width, H = r.SurfaceSize.Height;
++            const bool whole = (r.NumDirtyRegions == WHOLESCREENDIRTY);
++            for (int y = 0; y < H; ++y)
++            {
++                const int ns = whole ? 1 : r.DirtyRows[y].numSpans;
++                for (int k = 0; k < ns; ++k)
++                {
++                    const int sx1 = whole ? 0 : r.DirtyRows[y].span[k].x1, sx2 = whole ? W - 1 : r.DirtyRows[y].span[k].x2;
++                    all += sx2 - sx1 + 1;
++                    // union of the character rects' x-ranges on this row, inside this span
++                    int iv[48][2]; int ni = 0;
++                    for (int q = 0; q < dos_r2_nrect; ++q)
++                    {
++                        const DosR2Rect &c = dos_r2_rect[q];
++                        if (y < c.y1 || y > c.y2) continue;
++                        const int a = std::max(sx1, c.x1), b = std::min(sx2, c.x2);
++                        if (a <= b) { iv[ni][0] = a; iv[ni][1] = b; ni++; }
++                    }
++                    for (int i = 1; i < ni; ++i)   // insertion sort by start
++                        for (int j = i; j > 0 && iv[j][0] < iv[j - 1][0]; --j) { std::swap(iv[j][0], iv[j - 1][0]); std::swap(iv[j][1], iv[j - 1][1]); }
++                    int cs = -1, ce = -2;
++                    for (int i = 0; i < ni; ++i)
++                    {
++                        if (iv[i][0] > ce + 1) { if (ce >= cs && cs >= 0) chr += ce - cs + 1; cs = iv[i][0]; ce = iv[i][1]; }
++                        else if (iv[i][1] > ce) ce = iv[i][1];
++                    }
++                    if (cs >= 0 && ce >= cs) chr += ce - cs + 1;
++                }
++            }
++        }
++        dos_r2_bgpx_all += all; dos_r2_bgpx_char += chr; dos_r2_restores++;
++        dos_port_ticklog_add(11, (unsigned long)all);
++        dos_port_ticklog_add(12, (unsigned long)chr);
++    }
++    if (view_index == 0) dos_r2_nrect = 0;   // LAB-R2: the next interval's marks start here
+     dos_port_dirty_note_restore();   // patch 0193: marks made from here on are repainted next frame
+     dos_r3_coarse_frame = dos_r3_coarse_acc; dos_r3_coarse_acc = 0;   // LAB-R3: what THIS restore repainted beyond the marks
+     if (dos_r3_coarse_frame & 1) dos_r3_coarse_frames1++;
+--- a/Engine/ac/timer.cpp
++++ b/Engine/ac/timer.cpp
+@@ -84,7 +84,8 @@
+     // the whole point (a correct pacing wait should measure close to
+     // what it requested; a miscalibrated one won't).
+ #ifdef __DJGPP__
+-    DosPortTickScope _dos_port_wait_scope(dos_port_tick_timing.wait_next_frame);
++    extern int dos_r2p();   // LAB-R2: kind 7
++    DosPortTickScope _dos_port_wait_scope(dos_port_tick_timing.wait_next_frame, dos_r2p() ? 7 : 0);
+ #endif
+     // Do the last polls on this frame, if necessary
+ #if defined(AGS_DISABLE_THREADS)
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -88,6 +88,9 @@
+     fclose(f);
+ }
+ extern uint32_t get_loop_counter();
++// LAB-R2 probe state (ac/draw.cpp)
++extern int dos_r2p_mode; extern const void *dos_r2_bmp[64]; extern int dos_r2_bmp_ch[64]; extern int dos_r2_nbmp;
++extern long long dos_r2_pass_us, dos_r2_pass_px; extern void dos_r2_char_blit(int ch, long long us, long long px);
+ #endif
+ 
+ 
+@@ -824,6 +827,17 @@
+     _rendSpriteBatch = UINT32_MAX;
+     ClearDrawLists();
+ #ifdef __DJGPP__
++    {   // LAB-R2: per-pass lab TICKS.BIN records (9 character blit us, 14 character blit px, 13 rb_sprite_time us)
++        static long long _r2_rb_last = 0;
++        if (dos_r2p_mode > 0)
++        {
++            dos_port_ticklog_add(9, (unsigned long)dos_r2_pass_us);
++            dos_port_ticklog_add(14, (unsigned long)dos_r2_pass_px);
++            dos_port_ticklog_add(13, (unsigned long)(dos_port_tick_timing.rb_sprite_time.total_us - _r2_rb_last));
++        }
++        _r2_rb_last = dos_port_tick_timing.rb_sprite_time.total_us;
++        dos_r2_pass_us = dos_r2_pass_px = 0;
++    }
+     if (dos_lab_fh_mode < 0)
+     {
+         const char *e = getenv("DOSAGS_LAB_FRAMEHASH");
+@@ -1174,6 +1188,13 @@
+     const bool _lab_dump = ::dos_lab_sprdump_now() && native_bmp;
+     const uclock_t _lab_t0 = _lab_dump ? uclock() : 0;
+ #endif
++    // LAB-R2: time a character's composite (its bitmap was registered by prepare_characters_for_drawing this frame)
++    int _r2ch = -1; uclock_t _r2t = 0;
++    if (dos_r2p_mode > 0 && native_bmp)
++    {
++        for (int _k = 0; _k < dos_r2_nbmp; ++_k) if (dos_r2_bmp[_k] == native_bmp) { _r2ch = dos_r2_bmp_ch[_k]; break; }
++        if (_r2ch >= 0) _r2t = uclock();
++    }
+     auto _dp_draw = [&]() {   // LAB-R3: the unchanged draw dispatch, callable once per clip rect
+     if (alpha == 0) {} // fully transparent, do nothing
+     else if (is_opaque && (native_bmp == surface) && (alpha == 255)) {}
+@@ -1219,6 +1240,10 @@
+ #endif
+     _dp_draw();
+ #ifdef __DJGPP__
++    if (_r2ch >= 0)
++    {
++        dos_r2_char_blit(_r2ch, dos_port_tick_elapsed_us(_r2t), _dw_px);
++    }
+     if (_lab_dump)
+     {
+         char _rl[512]; int _n = 0; _rl[0] = 0;
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -2109,6 +2109,10 @@
+     {
+         dos_lc_mode = 0;
+         const char *e = getenv("DOSAGS_LABCLICKS");
++        // LAB-R2: DOSAGS_LABCLICKS=GCL expands to LAB-L1's GCL fixture (GCMP's 16 click ticks), to keep RUN.BAT's SETs short
++        static const char *k_gcl = "6178:250:135,6510:60:135,6974:250:135,7205:60:135,7543:250:135,7890:1:135,8118:40:130,"
++            "8519:300:130,8772:40:130,9253:300:130,9566:40:130,9935:300:130,10244:40:130,10722:300:130,11063:40:130,12136:300:130";
++        if (e && strcmp(e, "GCL") == 0) e = k_gcl;
+         while (e && *e && dos_lc_n < 64)
+         {
+             long t; int x, y, used = 0, b = 1, used2 = 0;
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -376,6 +376,8 @@
+     Debug::Printf("DOS-PORT labck lc=%ld c=lab camchg=%ld vpchg=%ld invall=%ld invcam=%ld", lc,
+         dos_lab_camchg, dos_lab_vpchg, dos_lab_invall, dos_lab_invcam);
+     for (int i = 0; i < 6; ++i) Debug::Printf("DOS-PORT labck lc=%ld evt=%d n=%ld us=%lld", lc, i, dos_port_evt_n[i], dos_port_evt_us[i]);
++    {   extern int dos_r2p_mode; extern void dos_r2_dump(FILE *, long, bool);   // LAB-R2
++        if (dos_r2p_mode > 0) dos_r2_dump(nullptr, lc, true); }
+     {   // LAB-R3
+         extern long dos_lab_guiredraw_n, dos_lab_guinoskip_n; extern long long dos_lab_guiredraw_us, dos_lab_guinoskip_px;
+         extern long dos_gc_flagged, dos_gc_skipped, dos_gc_clipped, dos_gc_full;
+@@ -670,6 +672,8 @@
+             // dos_port_tick_emit()'s own definition above quit().
+             {   extern void dos_guiclip_summary(FILE *);   // LAB-PLAY R1: both flavours
+                 dos_guiclip_summary(run_manifest_log); }
++            {   extern int dos_r2p_mode; extern void dos_r2_dump(FILE *, long, bool);   // LAB-R2
++                if (dos_r2p_mode > 0 && run_manifest_log) dos_r2_dump(run_manifest_log, (long)get_loop_counter(), false); }
+ #ifdef DOSAGS_RELEASE
+             // DOS-PORT patch 0351: the release flavour times nothing, so it has no phase aggregates and none of
+             // the quit-time counter dump below. It keeps the one line the DOSBox-X ratchet reads from this

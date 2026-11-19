@@ -1,0 +1,11 @@
+== results/T4 ticks 5437..12439 (7002): skipped 18 (0.26%), spike ticks 40-250 ms: 14, > 250 ms: 2; rooms [(5436, 1), (7972, 2)]
+   spike ticks: 5480(86) 7890(93,click) 7973(61) 8100(84) 8519(42,click) 8772(44,click) 9253(41,click) 9566(42,click) 9935(41,click) 10244(44,click) 10722(42,click) 11063(44,click) 12136(41,click) 12430(85) 7972(2202,room) 8118(253,click)
+-- observed, local rule: spike-local skips 13, other 5
+   spike-local: 7973 7974 7975 7976 7977 8101 8102 8119 8120 8121 8122 8123 12431
+   other: 5437 5438 5439 5440 5441
+-- replay (actual costs): skipped 18 (observed 18), per-tick state agreement 99.9%, resyncs 2, FIFO labels {'spike': 18}
+   replay FIFO spike skips: 5481 5482 7891 7892 7973 7974 7975 7976 7977 8101 8102 8119 8120 8121 8122 8123 12431 12432
+-- counterfactual replays: actual 18 | NOSPIKE 0 | NOBUDGET 18 | NEITHER 0
+   spike-attributable: marginal (actual - NOSPIKE) 18 = 0.26% of ticks; standalone (NOBUDGET) 18 = 0.26%
+   budget-attributable: marginal (actual - NOBUDGET) 0 = 0.00%; standalone (NOSPIKE) 0 = 0.00%
+   NOBUDGET skips (spike-only): 5481 5482 7891 7892 7973 7974 7975 7976 7977 8101 8102 8119 8120 8121 8122 8123 12431 12432

@@ -262,6 +262,235 @@ completeness beside it.
     - Slot preconditions are checked when the slot is reached: the lab's committed PASS plus a
       clean build with a hash.
     - Same hang rule. Message the coordinator at power-on and at power-off with raw results.
+- **MS3 target, 2026-11-13 (operator, via the question tool, asked once in sdlports' session as the single asker,
+  relayed by sdlports): 99% frames displayed on MS3** (the moving campaign fixture chosen 2026-11-11 to replace the
+  still P9M1 line; displayed = gatebar.py's `1 - frames_skipped/ticks`). Context given with the question: MS3 baseline
+  90.68% (round RL, RLM1-4); ~92.1-92.6% on ags 0377 (round RO's fixed cells, memlog on); round RQ showed the remaining
+  skips are not stalls (the heap levers keep game time but do not raise displayed frames). The options were 99%, keep
+  not set, or retire MS3. The proof bar stands: a REGISTERED pair, both cells >= 99.0%. From now on every MS3 round's
+  README states the target. (Replaces "MS3 target: not yet set (operator)", written in rounds RL-RQ.)
+- **0371 (L1, route pre-warm) on MS3, 2026-11-13: stays default off.** The 99% target was the mandate to revisit the
+  operator's 2026-11-09 "revisit if a pacing change makes cheaper clicks pay"; move's lab MS99-A (pre-registered lab-rb
+  2df5126e, result f6ded126; est486b refitted on round RL's RLTA, RLTB gate -0.3%) read FALSIFIED: a cut of 0.094 skips
+  per click-second (~19 per run; falsifier < 0.20) -- L1 changes only 2 of MS3's 114 clicks; the warm clicks carry the
+  skips. Closes the 2026-11-09 revisit question.
+- **MS3 target revisit, 2026-11-17 02:17Z (operator, via the question tool in sdlports' session, relayed by sdlports; the
+  question was asked 2026-11-14 00:42Z and answered 2026-11-17 02:17Z = 2026-11-16 18:17 local): "Wait for R1".** 99% stays the MS3 target for now. The lab's full-stack projection (move, lab-rb badf8466, model only) reads
+  ~97% at the release level with output-identical levers (the route-finder speed-ups R on ASSUMED fractions, the VM
+  fusions S at their measured ~0.5 ms per tick; the action-bar redraw G measured ~0); 99% would need the 486's VM
+  dispatch to cost 5-7x what the lab measures. The operator revisits the target with R's MEASURED gains (R1 first)
+  instead of the assumed ones. The options put to them then: keep 99% and scope native compilation of the hot verb-bar
+  script functions as research, restate the goal with a game-time KPI (the pacer route), or a lower MS3 target.
+- **MS3 target, 2026-11-17 04:53Z (operator, via the question tool in sdlports' session, relayed by sdlports; asked and
+  answered 2026-11-17 04:53Z = 2026-11-16 20:53 PST): "Keep 99%, add research".** 99% stays the MS3 target. The figures
+  put to them (lab model, corrected reading rule, lab-rb e2cf79de; none measured on the 486): today 91.84% displayed;
+  with the route-finder levers R 93.8-94.4%; with R and the VM fusions S (S assumed, not yet built) 95.9-96.6%; about
+  240-290 skips left against the 70 that 99% allows. The option chosen: keep 99% and have dosags SCOPE compiling the
+  game's hottest script functions to native code, as research; the route-search (R) and interpreter (S) work continue
+  alongside. Not chosen: lower the target to 95% (sdlports' recommendation), a game-time measure, decide after the 486
+  test -- so the 2026-11-09 pacer ruling stands (no pacer / catch-up without a restated goal). First deliverable of the
+  research: a scoping pre-registration, read by sdlports before anything is built, that starts with a bound -- if making
+  the hot verb-bar functions cost nothing still leaves MS3 short of 99%, that goes straight back to the operator.
+- **Round RR and the route-finder default, 2026-11-17 (operator, via the question tool in sdlports' session, about
+  17:00Z, relayed by sdlports): "On, remove old code".** Round RR (ags 0382 release on the Gateway 486, MS3, ABBA of
+  DOSAGS_ROUTE_FAST off / on; pre-registration 05d41e01 + 19cbf0b2, results 6340befd) read R-SKIPS SUPPORTED: skipped
+  frames 578 -> 364 per run (O 558 / 572 / 605, F 359 / 324 / 409), displayed 91.7% -> 94.8%, all six cells valid, inside
+  the lab's predicted cut of 153-220. The 99% proof bar is not met (best cell 95.37%). The ruling: the fast search
+  becomes the only one -- a removal patch (0383) deletes the TEMPORARY switch and the old bodies; it goes to sdlports for
+  review (identity cells re-run, ratchet limits tightened, a release smoke in which the fast search runs) before merge.
+  The lab's other lever, the VM fusions S, read small (33 lab us per tick; lab-rb RESULT-S) and gets no rig round and no
+  patch. What remains toward 99% is the native-compilation research (level O) and the 486's own dispatch cost.
+- **Level O and the pacer, 2026-11-18 (operator; TWO sets of answers the same night, recorded as given).** The lab
+  probe MS99-K (lab-rb RESULT-K, fb3689c4) read the interpreter's own work for script calls, returns and builtin calls
+  at 39.6% of the hot functions' time A, above the registered 34% line; the lead's estimate (not measured) is that
+  level O-a saves 55-65% of A, where the model needs 67-70% for 99% by the generous cut and 85-87% by the tight one.
+  - **In dosags' session (the lead's question tool, after "Ask questions"):** level O -- "Build it, with script calls"
+    (the fuller design that also compiles script-to-script calls; a new short plan to sdlports first); the goal --
+    "Keep 99%, decide later"; a rig round on the 0383 binary -- "Wait for level O".
+  - **In sdlports' session (the question tool, about 01:25Z, relayed by sdlports):** the research -- "Build it and
+    measure" (build and gate level O-a as designed; O-b and compiled-to-compiled calls not covered, they need O-a's
+    result and a new question); the target -- "Revisit the pacer ruling": the 2026-11-09 pacer ruling is REOPENED FOR
+    SCOPING ONLY. Reopening lets dosags scope a pacer or catch-up change as a route to 99%; it changes what a
+    displayed frame means, so it comes back to the operator with a plan before any work -- no build, no patch, no lab
+    cell that changes the pacer yet.
+  - **What is done on both answers:** level O-a is built, gated and measured first (both answers cover it); the plan
+    for compiled script calls (a PREREG-N addendum) is written for sdlports' review, and its build waits for O-a's
+    measured result -- whether it then needs a new question is put to the operator with that result, since the two
+    answers differ on it. The pacer scoping plan is written in parallel (no host time) and goes to sdlports first.
+    99% stays the MS3 target.
+  - **HELD (2026-11-18, later the same hour):** the two sets differ on whether O-a is measured on its own and on
+    whether the pacer is scoped now. sdlports is asking the operator which stands. Until that answer is recorded here,
+    the "what is done" paragraph above is NOT a ruling: nothing of level O is built, and the pacer scoping is not
+    started. Allowed meanwhile because both sets allow it: the script-calls plan as a plan, and the generator's review.
+  - **RECONCILED by the operator, 2026-11-18 (dosags' session, the lead's question tool; the three questions named
+    both sessions' answers side by side). The HELD mark is lifted by this entry.** Level O -- "Simple first, then
+    calls": build, gate and measure the simpler design (O-a), then add compiled script calls on top (O-c, lab-rb
+    PREREG-N ADDENDUM 5) and measure again without a new question in between. Pacer -- "Write the plan now": the
+    scoping plan is written in parallel with level O, uses no machine time, goes to sdlports first and comes back to
+    the operator before any pacer work (the 2026-11-09 ruling stays reopened for SCOPING ONLY). Rig round on the 0383
+    binary -- "Wait for level O": no power-on question now. 99% stays the MS3 target.
+  - **Pacer scoping plan read, 2026-11-18 (operator, via the question tool in sdlports' session, relayed by sdlports):
+    "Decide with level O".** The plan (lab-rb docs/lab/move-lab/ms99/PACER-SCOPING.md, model only): the shipped pacer
+    reads 94.2-95.0% on MS3 with the route-finder levers (the 486: 94.8%); no catch-up change inside the 2026-11-09
+    limits reaches 99%; not repaying a tick over 50 ms reads 98.95-99.39% for 1.45 points of game time beyond today
+    (seven times the 0.2% limit), no catch-up at all 100% for 3.26 points. No pacer work now: no lab switch, no
+    instrumented 486 run for it. When level O's saving is measured, the same model is run with it and both go to the
+    operator together.
+- **Level O-a measured, and the next steps, 2026-11-18 (operator, dosags' session, the lead's question tool).** O-a
+  (lab-rb RESULT-N-OA 64828c96 + 00c6235d; gate RESULT-N-OA-GATE b7c78832; both accepted by sdlports) saves 742 lab us
+  per tick = 26.9% of the hot functions' time A: FALSIFIED against the 66% line; the lead's registered 55-65% was wrong
+  by half. Model only: MS3 97.8-98.4% displayed with it under the shipped pacer, 99.55-99.86% with the 50 ms pacer rule
+  at +0.62 points of game time (the 2026-11-09 limit is 0.2%); it assumes the saving transfers to the 486 and that the
+  code could ship (it is generated ahead of time for one game). The answers:
+  - level O -- "Probe first": measure where O-a's compiled code spends its remaining time (lab-rb PREREG-KO), then the
+    operator decides on compiled script calls (O-c) with that number;
+  - pacer -- "Scope it further": the lab part (a lab-only switch for the long-tick threshold, DOSBox-X cells to check
+    the model's bookkeeping) goes ahead through sdlports' review; the instrumented 486 run it would need waits with the
+    rig round (next answer);
+  - push -- "Push now" (this commit and the four before it);
+  - the rig round on the 0383 binary -- "Keep waiting".
+  99% stays the MS3 target.
+- **The native-compilation line ends; the interpreter is next, 2026-11-18 (operator, sdlports' question tool: "Take it
+  to the interpreter").** What it rests on (lab-rb, all accepted by sdlports): RESULT-N-OA -- compiled code for the
+  seven hot functions saves 742 lab us per tick, 26.9% of A (2,764), against the 66% line; RESULT-KO -- the probe of
+  that compiled code closes on A within 1% (2,032 against 2,020) and shows where the rest goes: the builtin-call
+  protocol 741 (34%; about 4.3 lab us per call compiled against at least 4.7-4.9 in the interpreter -- CORRECTED, see
+  below), stack locals 644 (30%), calls and returns
+  356-585 (16-27%), the expression stack 228 (11%). So compiled script calls (O-c) could reach about 40-48% of A at
+  most, and no single further level reaches 66%. Limits: emulated time, MS3 only, the probe's spans lean high; none of
+  it was measured on the 486. The ruling:
+  - O-c and O-b are not built; PREREG-N ADDENDUM 5 stays a plan on file. No further compiled stages.
+  - The lead scopes SHIPPABLE interpreter changes aimed at the cost groups the probe found, the builtin-call protocol
+    first: a bound from existing data per group (lab us per tick, and modelled frames on MS3 with the route-finder
+    levers under the shipped pacer and the 50 ms rule), the candidate changes with what each must keep exact (error
+    text, line, call stack, the abort and hook paths) and how S's identity gate covers it, the registered line for a
+    486 A/B, and RESULT-S's lesson (a change aimed at dispatch saved 0.8%: each candidate names the handler work it
+    removes, in emulated instructions per call). To sdlports before anything is built.
+  - Then S's discipline: a lab-only overlay, G1 identity on the four discriminating fixtures in both flavours, a
+    reading against the S build, a patch for review, and a 486 round with the operator's power-on.
+  - The pacer lab check (PREREG-PACE50): the first cells are VOID (their precondition failed; three errors in the
+    plan, stated in RESULT-PACE50-LAB). FIX-UP 2 (the null with DOSAGS_STALL_RESYNC=1, the spin inside the logged
+    tick, base-spin arms near the 486's tick length) is with sdlports; no cell until they reply.
+  - **CORRECTION (same day, the lead; lab-rb RESULT-KO's appended correction):** this entry first said "2.23 lab us per
+    call compiled, 4.52 in the interpreter" -- half. That compared different spans: the 4.52 includes the fused
+    farpush / setfuncargs / import load / farsubsp, the 2.23 does not. Like for like the compiled builtin protocol costs
+    75-100% of the interpreter's. The operator's answer was given on the wrong comparison; sdlports is correcting it with
+    the operator, and the interpreter scoping states the builtin group's bound from the work a changed protocol removes,
+    not from the compiled figure. (FIX-UP 2 was accepted afterwards; its cells are running.)
+- **The interpreter, re-asked on the corrected bound, 2026-11-18 (operator, sdlports' question tool): "Go ahead, step by
+  step"; PLAN.md: "Push".** What the operator was given: lab-rb PREREG-I (accepted with FIX-UP 1): bounds from the
+  handler work each change removes, counted in the shipped VM's object code -- built-in calls 167-312 lab us per tick,
+  stack locals 164-223, the expression stack 32-52, all 363-588 (11.5-17.4% of A; O-a measured 26.9%); frames, OLD
+  PACESIM, upper estimates: 95.3% for the cheap pair, 96.7-97.5% for everything, 99% not reached without a pacer
+  change. (CORRECTED by a follow-up commit: the operator answered on the bounds and frames above. The static 486-cycle
+  count -- unmeasured; 0.35-0.51 ms per tick for everything against 0.70-1.13 by the model's x 1.93, "the 486 may see
+  about half of the lab figure", PREREG-I FIX-UP 1 -- did not exist when they answered; sdlports told them of it
+  afterwards, in plain text, not as a question.) The order: I-B1 + I-B2 (the 32-bit import check; the
+  return value straight into ax) first, lab-only, through the identity gates, measured before the next step; then the
+  walk-length histogram cell and I-L1 (O(1) local slots); then the rest. A patch and a 486 A/B only for a set that
+  clears 80 fewer skipped frames per run at the release level (ensemble minimum 40). Each overlay goes to sdlports
+  before its build.
+  - The pacer lab check closed with lab-rb RESULT-PACE50-LAB2: the lab switch is exact (at 50 ms no forced stall made a
+    skip), but pacesim.py under-counts the shipped pacer's repayment once ticks are long (54 against 38, 270 against
+    188 in the cells). PREREG-PACESIM (accepted) checks the model against those logs and the 486 records before any
+    model figure is used again; until then every frame figure is "old pacesim".
+  - **The pacer-model check is CLOSED (lab-rb RESULT-PACESIM, D3 accepted by sdlports).**
+    - The forgiving rows (the 50 / 75 ms rule) are checked against the engine.
+    - Every repaying row (the shipped pacer, the caps, the budgets) stays "unverified mechanism", supported only by
+      est486b's fit to round RR.
+    - Two causes are named, neither closed: the start state explains all of the disagreement at short ticks; at long
+      ticks the engine's clock runs ahead of the logged tick times.
+    - The lab cannot settle it: a log perturbs the pacer near 25 ms ticks, which may also explain part of RR's
+      same-binary spread.
+    - Only a 486 run that logs now - epoch and owed per call can say more (added to the drafted run, which waits with
+      the rig round).
+    - The interpreter's verdicts are in lab us against A; if a set lands near the 80-skip line, the 486 pair decides,
+      not the model.
+  - **Interpreter step 1, I-B1 + I-B2: read in the lab (lab-rb RESULT-I-GATE, RESULT-I; accepted by sdlports).**
+    - Gate: both changes, alone and stacked, run every script instruction exactly as today (86 cells, 0 mismatches).
+    - Reading, against the S build (the lower rule): the pair saves 97 lab us per tick (3.5% of A, inside its
+      bound 92-135); I-B1 alone 54; I-B2 alone -11.
+    - The I build is 54 lab us slower everywhere, even with both changes off and in the copy-only control: a
+      build-wide layout cost, not the edits. Inside the build the edits save 108 + 43 = 150, as priced.
+    - **I-B2 stays in the stack** (sdlports' ruling): its +43 inside the build equals its bound; the -11 is the
+      build's +54 charged to one arm. Every stack figure is still read against the S build, so the +54 is paid once.
+    - No code change for the +54. From I-L1 on, a single candidate whose saving against the S build is under about
+      54 is read as "within layout", not as a saving.
+    - Old pacesim (repaying rows unverified): 407 -> 351 skipped frames per run (cut 56). STACK-ELIGIBLE, not past
+      80: no 486 A/B. Next: the walk-length histogram cell (S build), then I-L1, each to sdlports first.
+  - **Interpreter step 2 (lab-rb RESULT-WALK, PREREG-IL1 STEP 2-3, RESULT-B-GATE, RESULT-B; accepted by sdlports).**
+    - I-L1 (O(1) local lookup) is CLOSED at the object check, twice: as copies (the whole build spilled the VM's ip)
+      and in place (hit path ~25 instructions, not <= 12; bound re-stated -44 lab us).
+    - Every edit to DosVmLoop moves register allocation in handlers it never touches. Any further interpreter edit
+      must pass an object-first gate before cells.
+    - I-B1 + I-B2 edited in place (the shipping shape): identity gate passed, including the shipped 0x3F mask. They
+      save 65 lab us per tick against the S build (2.3% of A, build-level, layout included), against 97 as copies;
+      the in-place allocator shift costs about 85.
+    - Old pacesim: 407 -> 367 skipped frames (cut 40): STACK-ELIGIBLE, no 486 A/B.
+    - **Paused (sdlports):** whether the interpreter line goes on (I-P1 / I-P2, I-B3, each likely under or straddling
+      the 54 lab us layout line once discounted by B's shift) is the operator's decision.
+  - **The interpreter line is CLOSED (2026-11-18; operator "One last try: I-B3", then the line ends; lab-rb
+    PREREG-IB3, accepted by sdlports).**
+    - **I-B1 + I-B2 in place (B): kept on file, not shipped.** 65 lab us per tick against the S build, old pacesim cut
+      40: STACK-ELIGIBLE. Builds and records in lab-rb (apply-ship.py, RESULT-B-GATE, RESULT-B).
+    - **I-L1 (O(1) local lookup): closed at the object check.** As copies, the whole build spilled the VM's ip. In
+      place, the hit path compiled to ~25 instructions (12 allowed), so the re-stated bound was a loss (-44 lab us).
+    - **I-B3 (typed direct builtin calls): closed on its own pricing, no build.** A typed call removes only the
+      wrapper's frame (~12-13 instructions: prologue / epilogue, two frame loads, ~1.5 pushes). It must still load
+      and push the arguments, call, and store the 5-word result into ax. The typed check and dispatch add 7-10, so
+      the bound is 13-26 lab us inside the build, 54 even with a free check, before B's discount.
+    - **Why I-B3's earlier range was too high:** PREREG-I priced it at 25-45 removed instructions per call (75-177
+      lab us; -10..+92 after B's discount, as told to the operator). That counted the result stores and the
+      argument unpack as removed, but a typed call still has to do both.
+    - I-P1 / I-P2 were not started (32-52 inside a build; under the layout line once discounted).
+    - **From now on, every edit to DosVmLoop is object-first:** it is one computed-goto function, so any edit,
+      copied or in place, re-runs GCC's register allocation for every handler (54-85 lab us elsewhere in these
+      builds). Build it, read the object (ip in %edi, unedited handlers against the base, the edit's own path), and
+      keep the listings with the record before any cell.
+  - **Round RS (2026-11-19, one power-on; tests/harness/results/ROUNDRS-2026-11-19 section 9; accepted from raw by
+    sdlports): 0383 on main measures what round RR measured.**
+    - **0383-CONFIRMS-RR: CONSISTENT.** The ags 0383 release: 380 / 463 / 379 skipped frames per run (mean 407.3),
+      every cell in 239..494, mean in 279..449. Displayed 94.57 / 93.39 / 94.59%, **mean 94.2%**. All three cells
+      valid. The MS3 proof bar (a registered pair, both >= 99.0%) is not met.
+    - **The instrumented cells (information; never compared with anything, their skips included):** the per-call
+      log (OWED.BIN) was valid in both. Room 1 click ticks median ~88 ms (86 / 82 mapped to the release level), above
+      the model's 52-73 ms. Room 2 ~57 ms (55 / 53 mapped), inside it. Press 3 is not singled out (88 ms against 80-85
+      for presses 2 and 4).
+    - The rig was clean: no daemon gap, no foreign lock, 0 mouse losses, every press sent as planned.
+- **A new game-time limit for a pacer A/B on the 486, 2026-11-19 ~03:5xZ (operator, relayed by sdlports): at most 2.0%
+  game time lost per run.** It replaces the 2026-11-09 limit of 0.2%. Next: a pre-registered pacer A/B (T = 50 as
+  scoped in lab-rb PACER-SCOPING.md, unless lab reasons point to another T). It goes to sdlports for review; no data
+  and no power-on question until they have read it. The proof bar is unchanged: a registered pair, both cells >= 99.0%
+  displayed. The game-time figure is measured on the 486 cells, not taken from the model, and stands beside it in
+  any claim. (The 2026-11-09 "no forgiven slip over about 150 ms" limit is not mentioned in the relay; the
+  pre-registration asks.) Push of df873ee9..20609531 done by sdlports with the operator's OK; origin/main = 20609531.
+- **Round RT's two time questions, 2026-11-19 (operator, sdlports' question tool, relayed): Q1 "Extra <= 2.0%"; Q2
+  "Lifted".** The 2.0% limit is G, the extra game time lost beyond the shipped pacer, measured against the same
+  power-on's A cells (G = loop_ms(P) / mean loop_ms(A) - 1; ROUNDRT README section 3). It is not the total game clock
+  against the wall, by which the shipped pacer already loses 2.33-2.42% on MS3. sdlports disclosed that their limit
+  question had framed T = 50 as "1.84% per run", the model's total; the operator was told so and chose the extra
+  reading. The 2026-11-09 "no forgiven slip over about 150 ms" limit is lifted for this A/B: G <= 2.0% is the only time
+  limit, and the largest forgiven slips are printed per P cell as information. sdlports accepted T = 45 ms (from round
+  RS's measured click ticks) and the single rig binary with the lab-only spin left unset (round RT FIX-UP 1).
+  - **Round RT (2026-11-19, one power-on; tests/harness/results/ROUNDRT-2026-11-19 section 10; accepted from raw by
+    sdlports): the 45 ms long-tick rule reads TIME-OVER on MS3.**
+    - **PACE-MS3: TIME-OVER.** G = +2.381 / +2.418 / +2.371% (RTP1 / RTP2 / RTP3) against the 2.0% limit; Gwin agrees
+      within 0.07 points. The bar is also not met: 207 / 207 / 212 skipped frames, **97.04 / 97.04 / 96.97%
+      displayed**. The 0383 A cells in the same power-on: 327 / 365 skips, 95.33 / 94.79%. Every cell valid.
+    - **The model missed.** Predicted: P 8-31 skips, G +0.65..+0.88%. Measured: about 207 and +2.37..+2.42%. About 116
+      rebases per run fall on ticks between 45 and 250 ms, which the model (built from RS's click ticks) did not count.
+      The ~207 skips left are all single-tick catch-ups, i.e. overruns under 45 ms.
+    - A two-point slope, information only: about 4.3 s of loop time for about 140 fewer skips (the shipped pacer
+      against T = 45 in this round); not extrapolated to any other T.
+    - The rig was clean: no daemon gap, no foreign lock, 0 mouse losses, every press sent as planned.
+    - Next: the operator picks a direction (sdlports is asking). No new pre-registration or analysis before that.
+- **MS3 parked at ~95%, 2026-11-19 (operator decision, sdlports' question tool, relayed: "Park MS3 at ~95%").** This
+  settles round RT's "Next" line above. Recorded 486 results:
+  - The shipped 0383 release reads 94-95% displayed (round RS and RT A cells: 94.57 / 93.39 / 94.59, 95.33 / 94.79%).
+  - The 45 ms long-tick rule read 97.0% displayed at G +2.4% (round RT: TIME-OVER).
+  MS3 rounds stop; the 486 stays off. The shipped pacer is unchanged; rtpace / tests/harness/apply-pace-rig.py stays a
+  harness overlay and is never a patch. 99% displayed stays the stated target, parked and not met. Reopening is the
+  operator's call. Push: "Push after my check" (sdlports pushes the stack once checked).
 
 ## The numbers to plan against
 

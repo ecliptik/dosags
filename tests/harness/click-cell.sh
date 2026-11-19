@@ -65,7 +65,7 @@ own_stage() {
         p=$pid
         while [[ -n "$p" && "$p" -gt 1 ]]; do
             if [[ "$p" -eq "$RUN_PID" ]]; then
-                tr '\0' ' ' < "/proc/$pid/cmdline" | sed -n 's#.*-c MOUNT C \(/tmp/dos-port-dosbox\.[A-Za-z0-9]*\).*#\1#p'
+                tr '\0' ' ' < "/proc/$pid/cmdline" | sed -n 's#.*-c MOUNT C \(/[^ ]*/dos-port-dosbox\.[A-Za-z0-9]*\).*#\1#p'
                 return 0
             fi
             p=$(sed 's/.*) //' "/proc/$p/stat" 2>/dev/null | awk '{print $2}')   # ppid; comm may hold spaces

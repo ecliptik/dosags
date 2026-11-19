@@ -1,0 +1,41 @@
+ratchet 20261111T212649Z PASS: 12 pass (0 improved), 0 fail, 0 blocked, 1 quarantined
+
+ratchet.sh report
+run:    20261111T212649Z
+root:   /home/claude/data/worktrees/dosags-l2def
+file:   /home/claude/data/worktrees/dosags-l2def/tests/ratchet.yaml
+host:   claude
+state:  /home/claude/data/worktrees/dosags-l2def/build/ratchet/state.tsv (not recorded: --no-record)
+lock:   /tmp/dos-port-dosbox.lock, exclusive per unit; no ps quiet-wait
+
+RUN                            KIND     STATUS         RC   WAIT   SECS  LOCK
+gate-alias                     capture  OK              1      0    947  exclusive
+
+CHECK                              KIND     STATUS       VALUE        CMP   LIMIT      HISTORY       WAIT   SECS  NOTE
+screen-bench8-alias-idle           capture  PASS         0            eq    0          -                0    947  run=gate-alias
+screen-bench8-alias-walk           capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-bench8-alias-anim4          capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-bench8-alias-anim12         capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-bench8-alias-text           capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-bench8-alias-gui            capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-bench8-alias-full           capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-bench8-alias-512x384-idle   capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-bench8-alias-512x384-anim12 capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-bench16-alias-512x384-idle  capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-bench16-alias-512x384-anim12 capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-5days-alias-512x384         capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-shards-alias-512x384        capture  FAIL(q)      2            eq    0          -                0      0  run=gate-alias
+
+HISTORY letters, oldest first, last 10 recorded results (BLOCKED/INTERRUPTED not counted):
+  P pass  I improved  F fail  E error  T timeout.  (q) = quarantined, never gating.
+
+--- screen-shards-alias-512x384: FAIL (value 2, eq 0; from run.gate-alias)
+    log:     /home/claude/data/worktrees/dosags-l2def/build/ratchet/20261111T212649Z/run.gate-alias/output.txt
+    | bench8-alias-gui       A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | bench8-alias-full      A==B: ok   | screen-equal: 2 pair(s) compared, 0 problem(s)  | -
+    | bench8-alias-512x384-idle A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | bench8-alias-512x384-anim12 A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | bench16-alias-512x384-idle A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | bench16-alias-512x384-anim12 A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | 5days-alias-512x384    A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | shards-alias-512x384   A==B: FAIL | screen-equal: 4 pair(s) compared, 2 problem(s)  | -

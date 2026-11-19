@@ -184,6 +184,17 @@ GAMES_DIR="$HARNESS_DIR/games/$PKG"
 AGS_EXE="${AGS_EXE:-$REPO_ROOT/build/ags/ags.exe}"
 CWSDPMI_EXE="$REPO_ROOT/vendor/cwsdpmi/cwsdpmi.exe"
 DOSBOX_RUN="$REPO_ROOT/tools/dosbox-run.sh"
+# Stage GC (2026-11-09): this script always passes --keep-stage, because its callers read results out of the stage
+# it prints; nothing ever deleted one, and ~400 stages a day (~79 MB each) filled / (the VM's VMDiskFilling alert).
+# Before each run, collect THIS caller's own old stages with the hub's dosbox-stage.sh: keep the newest
+# $DOSAGS_STAGE_KEEP (default 6), delete the rest once older than $DOSAGS_STAGE_MAX_AGE (default 2h); a stage in use
+# (a live process's cwd / fd / "MOUNT C <stage>", or its run still going) is never touched. Callers copy results
+# out within minutes of the run. DOSAGS_STAGE_GC=0 turns it off (e.g. to keep stages for debugging).
+if [[ "${DOSAGS_STAGE_GC:-1}" != 0 ]]; then
+    bash "$REPO_ROOT/.sdl-dos-ports/shared/tools/dosbox-stage.sh" gc --apply --quiet \
+        --caller "$(basename "$REPO_ROOT")/run-dosbox.sh" --keep "${DOSAGS_STAGE_KEEP:-6}" \
+        --max-age "${DOSAGS_STAGE_MAX_AGE:-2h}" --orphan-age 1h >/dev/null 2>&1 || true
+fi
 
 [[ -f "$AGS_EXE" ]] || { echo "run-dosbox.sh: $AGS_EXE not found -- run 'make build-ags' first" >&2; exit 1; }
 # The exe is staged under its own basename and RUN.BAT calls it by that name; DOS only runs an 8.3
@@ -353,11 +364,11 @@ own_stage() {
         { pid = $1; ppid = $2; $1 = ""; $2 = ""; sub(/^ +/, ""); par[pid] = ppid; cmd[pid] = $0 }
         END {
             for (p in cmd) {
-                if (cmd[p] !~ /^dosbox-x .*-c MOUNT C \/tmp\/dos-port-dosbox\./) continue
+                if (cmd[p] !~ /^dosbox-x .*-c MOUNT C \/[^ ]*\/dos-port-dosbox\./) continue
                 q = p
                 for (n = 0; n < 64 && q != "" && q != "0" && q != "1"; n++) {
                     if (q == root) {
-                        match(cmd[p], /\/tmp\/dos-port-dosbox\.[A-Za-z0-9]*/)
+                        match(cmd[p], /\/[^ ]*\/dos-port-dosbox\.[A-Za-z0-9]*/)
                         print substr(cmd[p], RSTART, RLENGTH); exit
                     }
                     q = par[q]
@@ -431,7 +442,7 @@ if [[ -n "$SERIES_DIR" ]]; then
         --manifest "$SERIES_DIR/MANIFEST.json" --crop auto >&2 || true
 fi
 
-STAGE_DIR="$(grep -o '/tmp/dos-port-dosbox\.[A-Za-z0-9]*' "$RUN_LOG" | tail -1 || true)"
+STAGE_DIR="$(grep -o '/[^[:space:]"]*/dos-port-dosbox\.[A-Za-z0-9]*' "$RUN_LOG" | tail -1 || true)"
 if [[ -z "$STAGE_DIR" ]]; then
     echo "run-dosbox.sh: could not determine the staged run directory" >&2
     cat "$RUN_LOG" >&2

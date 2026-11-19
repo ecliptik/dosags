@@ -1,0 +1,11 @@
+STEPS RQO1-2026-11-13 arm=O valid=yes pair=PAIR-OK pre=1794624326622 S17=+360 S18=+153 L2=1836 W17=+2196 j1=34025 | heap unlock=0 kb=0 flags=0x1080->0x1080 hook 5137->5137 us=10 exit_free=3745 phys=8192 | max+shift outside steps +33 at 45 | SWP pre=none post=none
+STEPS RQU1-2026-11-13 arm=U valid=yes pair=PAIR-OK pre=1794625031101 S17=+21 S18=-64 L2=2158 W17=+2179 j1=36277 | heap unlock=1 kb=0 flags=0x1080->0x80 hook 5137->5137 us=13 exit_free=4055 phys=8192 pageability=ok | max+shift outside steps +26 at 74 | SWP pre=none post=none
+STEPS RQP1-2026-11-13 arm=P valid=yes pair=PAIR-OK pre=1794625726222 S17=+7 S18=+11 L2=1291 W17=+1298 j1=33066 | heap unlock=0 kb=6144 flags=0x1080->0x1080 hook 5137->3585 us=58765 exit_free=3585 phys=8192 cover=ok | max+shift outside steps +31 at 101 | SWP pre=none post=none
+STEPS RQP2-2026-11-13 arm=P valid=yes pair=PAIR-OK pre=1794626431218 S17=+12 S18=-20 L2=1294 W17=+1306 j1=32968 | heap unlock=0 kb=6144 flags=0x1080->0x1080 hook 5137->3585 us=58846 exit_free=3585 phys=8192 cover=ok | max+shift outside steps +27 at 61 | SWP pre=none post=none
+STEPS RQU2-2026-11-13 arm=U valid=yes pair=PAIR-OK pre=1794627121959 S17=-23 S18=+40 L2=2155 W17=+2132 j1=35705 | heap unlock=1 kb=0 flags=0x1080->0x80 hook 5137->5137 us=10 exit_free=4055 phys=8192 pageability=ok | max+shift outside steps +33 at 82 | SWP pre=none post=none
+STEPS RQO2-2026-11-13 arm=O valid=yes pair=PAIR-OK pre=1794627824563 S17=+287 S18=+185 L2=1894 W17=+2181 j1=34253 | heap unlock=0 kb=0 flags=0x1080->0x1080 hook 5137->5137 us=10 exit_free=3745 phys=8192 | max+shift outside steps +27 at 105 | SWP pre=none post=none
+BASELINE in-round O x2 | S18 +153 +185 | W17 2196 2181 | min W17 2181
+TERM S18 UNLOCK SUPPORTED (-64 +40 vs baseline >= 120)
+TERM S18 PREGROW SUPPORTED (+11 -20 vs baseline >= 120)
+TERM W17 PREGROW SUPPORTED (1298 1306 < 2181 - 60)
+TERM (d) PAGEABILITY not falsified (U exit free pages 4055 4055)

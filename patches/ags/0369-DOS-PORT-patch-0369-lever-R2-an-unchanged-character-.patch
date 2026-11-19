@@ -1,0 +1,645 @@
+From 18b3c6edcf9f56d94fd50f65460d08ae0eae18d4 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sat, 7 Nov 2026 22:41:38 -0800
+Subject: [PATCH 369/369] DOS-PORT: patch 0369 -- lever R2: an unchanged
+ character reuses its prepared image and skips its restore, blit and present
+ (DOSAGS_CHAR_REUSE, default off)
+
+Why: in Maniac Mansion Deluxe room 1 the three kids are drawn at 100% zoom with no tint or light, two of them never
+change and Dave is idle in 88.5% of frames, yet every frame, for every kid, the engine re-copies the cached image into
+the raw bitmap, re-runs the walk-behind crop-out, marks the old and new rects (so the background is restored under
+them), masked-blits the sprite back and presents the box (dosags docs/lab/LAB-R2.md sections 0 and 6). Character work
+is 2.83 ms of a 10.29 ms room-1 drawn tick at DOSBox-X fixed 40000; LAB-R2B measured R2 at 10.29 -> 7.42 ms busy.
+
+What: DOSAGS_CHAR_REUSE unset or 0 = off (the 0368 head; the default); 1 = R2a; 2 = R2a + R2b. Software renderer only.
+ R2a: when a character's whole input key equals last scene's (sprite and mirror, view/loop/frame, the six tint/light
+  fields, zoom, width/height, final position and baseline, transparency, the no-walk-behinds flag,
+  walk_behind_baselines_changed, the walk-behind mask generation, room, background frame) and its raw bitmap and
+  texture are the ones last scene left, construct_object_gfx's cached branch returns "intact": no re-copy, no
+  crop-out, no texture sync. A dynamic sprite edited in place is caught by construct_object_gfx's own cache test
+  (IsChangeNotified, set by notify_sprite_changed), which R2a's branch sits behind. The mask generation is new against
+  the lab lever (LAB-R2B): a DrawingSurface on the walk-behind mask changes what the crop-out reads without touching
+  walk_behind_baselines_changed, so it is bumped by walkbehinds_recalc() and by every walk-behind DrawingSurface access
+  (as 0319 does for the walkable mask).
+ R2b (mode 2): a character that took R2a, was composited last scene and composites idempotently (transparency 0, no
+  alpha channel) skips its mark, like 0233's room overlays, and is flagged to the driver like 0169's GUI entries, so
+  0368 draws it only inside the dirty boxes that reach it. Every DOSAGS_GUI_CLIP mode has a path that redraws such an
+  entry wherever the restore repainted (4 per box, 2 and 1 the bbox, 0 unflagged and drawn in full), so no mode refuses
+  R2b.
+Guards: (1) a character left unmarked and now off, in another room, or not key-same (baseline included) gets its OLD
+rect marked before this scene's restore (0197's convention), with a net at the end of the scene; (2) drawn in full,
+not skipped, under 0366's latch, on a camera or viewport move, on a full invalidation (dos_port_dirty full or its
+carry), under 0368's coarse flag, or with more than one room viewport (counted before the first one is drawn); (3)
+every record dropped on clear_drawobj_cache, a room change, or a scene without exactly one composite.
+Witness: "DOS-PORT charreuse DOSAGS_CHAR_REUSE=<v|(default)> mode=<n>" at driver construction; "DOS-PORT
+charreuse_final ..." in RUNMANI.LOG in both flavours. DOSAGS_CHAR_REUSE joins the RUNMANIFEST env allowlist.
+
+Gates (DOSBox-X fixed 40000, every tick rendered, frame digest + PRESENT_VERIFY, seeded; dosags
+tests/harness/results/R2LAND-2026-11-07): modes 1 and 2 vs 0 EQUAL on every loop counter of MMD fixtures G (3164), V
+(3964), GCL (7004), the intro (1299) and AGS Quest AutoPilot (3558); an R2a verify rebuilt every reused image the old
+way, 0 mismatches in 59,318 checks. Mode 2 vs 0 EQUAL under DOSAGS_GUI_CLIP=2 and =0 on G and GCL (and =1 on G).
+Controls DIFF: no per-box redraw (3023/3164 G, 6487/7004 GCL); the key without the baseline under a forced baseline
+change (980/3164). Forced guards, each EQUAL on and DIFF disabled: old-rect mark (590), 0366's latch (1440),
+whole-surface invalidation (14); 0368's coarse flag forced: EQUAL. In-place edits, each EQUAL, DIFF with R2 blind to
+them: a still character's dynamic frame sprite edited through DrawingSurface.Release every 7th scene (2989), the
+walk-behind mask edited under still characters (1847; the lab lever's behaviour). Default off renders frame-EQUAL to
+the 0368 head (R3LAND's records). Release, default vs 2: 5 Days room 3, Trilby room 35, AGS Quest game output EQUAL;
+P9-shape MMD EQUAL to the 0368 release with R2 off and on.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P4db4MSiR2PYUDFdrDdJe2
+---
+ Engine/ac/draw.cpp                        | 276 +++++++++++++++++++++-
+ Engine/ac/dynobj/scriptdrawingsurface.cpp |   3 +
+ Engine/ac/walkbehind.cpp                  |   6 +
+ Engine/gfx/ali3dsw.cpp                    |  20 ++
+ Engine/gfx/ali3dsw.h                      |   2 +
+ Engine/gfx/gfxdriverbase.h                |   1 +
+ Engine/gfx/graphicsdriver.h               |   2 +
+ Engine/main/quit.cpp                      |   3 +
+ 8 files changed, 311 insertions(+), 2 deletions(-)
+
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index 93840db51..b97184f5b 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -707,6 +707,7 @@ struct SpriteListEntry
+     // unchanged, so its region need not be marked dirty. It is still
+     // composited IN FULL -- only the invalidation is skipped.
+     bool SkipInvalidate = false;
++    int DosCharId = -1;   // patch 0369 R2: this entry is character DosCharId's texture
+ #endif
+ 
+     SpriteListEntry(IDriverDependantBitmap *ddb, int x, int y)
+@@ -1126,6 +1127,7 @@ void clear_drawobj_cache(bool keep_sprite_callbacks)
+     // room, and could flush a rect that means nothing in the new room's own coordinate space.
+     for (int i = 0; i < MAX_ROOM_OBJECTS; ++i)
+         dos_port_obj_prev[i] = DosPortObjPrev();
++    {   extern void dos_cr_reset_all(int why); dos_cr_reset_all(0); }   // patch 0369 R2: textures are gone
+ #endif
+     // room overlays cache
+     overcache.clear();
+@@ -2219,6 +2221,13 @@ static bool transform_sprite(ObjTexture &actsp, int sppic,
+ // require preparing the raw bitmap.
+ // Except if alwaysUseSoftware is set, in which case even HW renderers
+ // construct the image in software mode as well.
++#ifdef __DJGPP__
++// DOS-PORT patch 0369 -- lever R2a (DOSAGS_CHAR_REUSE >= 1; see prepare_characters_for_drawing). dos_cr_allow is set for the one
++// construct_char_gfx call of a character whose input key, outside this function's own cache test, equals last scene's
++// and whose raw bitmap is still the one last scene left final; the cached branch then returns "intact" (dos_cr_hit).
++static int dos_cr_allow = 0;
++static int dos_cr_hit = 0;
++#endif
+ static bool construct_object_gfx(const ViewFrame *vf, int pic,
+     const Size &scale_size,
+     int tint_flags, // OBJF_* flags related to using tint and light fx
+@@ -2324,6 +2333,16 @@ static bool construct_object_gfx(const ViewFrame *vf, int pic,
+         {
+             return true;
+         }
++#ifdef __DJGPP__
++        // patch 0369 R2a: the cache test above matched (sprite and mirror, the six tint/light fields, zoom, no change
++        // notification), the caller matched the rest of the key against last scene, so actsp.Bmp already holds the
++        // re-copy plus the crop-out this branch and the caller would redo.
++        if (dos_cr_allow && (actsp.Bmp != nullptr))
++        {
++            dos_cr_hit = 1;
++            return true;
++        }
++#endif
+         recycle_bitmap(actsp.Bmp, objsav.image->GetColorDepth(), objsav.image->GetWidth(), objsav.image->GetHeight());
+         actsp.Bmp->Blit(objsav.image.get(), 0, 0);
+         return false; // image was modified
+@@ -2607,15 +2626,238 @@ bool construct_char_gfx(int charid, bool force_software)
+         force_software);
+ }
+ 
++#ifdef __DJGPP__
++// DOS-PORT patch 0369 -- lever R2 (dosags docs/lab/LAB-R2.md section 6; LAB-R2B.md). DOSAGS_CHAR_REUSE: unset or 0 = off (the 0368
++// head); 1 = R2a only; 2 = R2a + R2b. Software renderer only.
++//  R2a, the prepared image. In MMD room 1 the three kids are key-same in 88.5% of frames, and each frame still re-copied
++//   the cached image into the raw bitmap and re-ran the walk-behind crop-out. When the whole input key equals last
++//   scene's (sprite and mirror, view/loop/frame, the six tint/light fields, zoom, width/height, final position and
++//   baseline, transparency, the no-walk-behinds flag, walk_behind_baselines_changed, the dynamic-sprite change mark, the
++//   walk-behind mask generation, the same room and background frame) and the raw bitmap is the one last scene left, it
++//   still holds last scene's final image: only construct_object_gfx and walkbehinds_cropout write it, both from here,
++//   and the crop-out is a function of the key. construct_object_gfx returns "intact", so no re-copy, no crop-out, no
++//   texture sync. The mask generation (dos_cr_wb_gen) is bumped by walkbehinds_recalc() and by every DrawingSurface
++//   access to the walk-behind mask (as 0319 does for the walkable mask); neither touches
++//   walk_behind_baselines_changed, so without it a character standing still would keep the crop-out of the old mask. A dynamic sprite edited in place (DrawingSurface
++//   release, DynamicSprite.* edits) is caught by construct_object_gfx's own test (actsp.IsChangeNotified(), set by
++//   notify_sprite_changed), which R2a's branch sits behind.
++//  R2b, the composite (mode 2). A character that took R2a, was composited last scene and composites idempotently
++//   (transparency 0, no alpha channel) skips its invalidation like 0233's room overlays: its rect is not marked, so it is
++//   not restored and not presented, and it is flagged to the driver like 0169's GUI entries, so R3 (0368) draws it only
++//   inside the dirty boxes that reach it. Outside them the buffer still holds last scene's composite of it, at the same
++//   place, under and over the same entries (anything that changed there is marked, so it is inside a box).
++//   Every DOSAGS_GUI_CLIP mode redraws such an entry wherever this scene's restore repainted, as it does an unchanged
++//   GUI: 4 (0368) per dirty box, 2 (0366) clipped to the dirty bbox (skipped when the bbox misses it), 1 clipped to
++//   the bbox (in full when it misses it), 0 not flagged and drawn in full (an idempotent composite over its own last
++//   composite). The driver draws it in full when 0368's same-space test fails (a scrolled room camera). So no mode
++//   needs R2b refused.
++//   (1) A character whose last composite skipped its mark and that is now off, in another room, not drawn or not
++//       key-same (its baseline included) gets its OLD rect marked here, before this scene's restore (0197's convention).
++//   (2) It is marked and drawn in full instead -- not skipped -- when 0366's latch is armed for this composite
++//       (latch_fullrestore included), the camera or viewport moved, the whole surface is invalidated (dos_port_dirty
++//       full, or its carry full), 0368's coarse guard is set, or more than one room viewport is drawn. In the driver a
++//       flagged entry under the latch is drawn in full, as for GUIs.
++//   (3) Every record is dropped (old rects of unmarked ones marked) when the drawobj cache is cleared, the room
++//       changes, or a scene passed without a composite.
++// Witness: "DOS-PORT charreuse DOSAGS_CHAR_REUSE=<v|(default)> mode=<0|1|2>" at startup; "DOS-PORT charreuse_final ..."
++// in RUNMANI.LOG.
++struct DosCrKey
++{
++    int pic, view, loop, frame, tr, tg, tb, ta, tl, ll, zoom, mir, w, h, x, y, basel, transp, nowb, room, bgf, wbg;
++};
++struct DosCrRec
++{
++    bool valid = false;      // composited in scene `seen`: key/bmp/ddb/rect describe that composite
++    bool unmarked = false;   // ... and that composite skipped its invalidation
++    bool elig = false;       // this scene: R2a hit, key-same, idempotent, composited last scene
++    long seen = -1;          // the scene it was last composited in
++    long prep = -1;          // the scene it was last prepared in
++    DosCrKey key;
++    const void *bmp = nullptr, *ddb = nullptr;
++    int rx = 0, ry = 0, rw = 0, rh = 0;   // what invalidate_sprite() marks for that composite (room coords)
++};
++static std::vector<DosCrRec> dos_cr_rec;
++static int dos_cr_mode_v = -1;
++static long dos_cr_scene = 0;            // scenes constructed (construct_game_scene)
++static long dos_cr_prev_scene = -1;      // the scene the characters were last prepared in
++static long dos_cr_prev_comp = -1;       // composites done when they were
++static int dos_cr_room = -1000;
++static int dos_cr_nview = 0;             // room viewports drawn so far in this scene (construct_room_view)
++static int dos_cr_nview_pre = 0;         // room viewports this scene will draw, counted before the first one is
++static Rect dos_cr_cam, dos_cr_vp; static bool dos_cr_cam_valid = false; static bool dos_cr_cam_moved = false;
++long dos_cr_hits = 0, dos_cr_keyfail = 0, dos_cr_elig = 0, dos_cr_skips = 0, dos_cr_refused = 0;
++long dos_cr_ff = 0, dos_cr_ff_latch = 0, dos_cr_ff_cam = 0, dos_cr_ff_full = 0, dos_cr_ff_coarse = 0, dos_cr_ff_multi = 0;
++long dos_cr_mark_old = 0, dos_cr_mo_off = 0, dos_cr_mo_key = 0, dos_cr_mo_end = 0, dos_cr_mo_reset = 0;
++long dos_cr_resets = 0, dos_cr_reset_why[3] = {0, 0, 0};
++extern long dos_cr_composites;           // gfx/ali3dsw.cpp: composites done (RenderToBackBuffer)
++extern int dos_cr_wb_gen;               // ac/walkbehind.cpp: walkbehinds_recalc() calls (the walk-behind mask changed)
++extern int dos_guiclip_latched_next();   // gfx/ali3dsw.cpp: 0366's latch is armed for the next composite
++extern int dos_guiclip_coarse();         // gfx/ali3dsw.cpp: 0368 guard (a) is set for the next composite
++int dos_char_reuse_mode()
++{
++    if (dos_cr_mode_v < 0)
++    {
++        const char *e = getenv("DOSAGS_CHAR_REUSE");
++        dos_cr_mode_v = (e && e[0] == '1' && e[1] == 0) ? 1 : (e && e[0] == '2' && e[1] == 0) ? 2 : 0;
++        Debug::Printf("DOS-PORT charreuse DOSAGS_CHAR_REUSE=%s mode=%d", (e && *e) ? e : "(default)", dos_cr_mode_v);
++    }
++    return dos_cr_mode_v;
++}
++static void dos_cr_mark_old_rect(DosCrRec &r, long &why)
++{
++    dos_port_dirty_source = kDirtySrc_RoomSprite;
++    invalidate_rect(r.rx, r.ry, r.rx + r.rw, r.ry + r.rh, true);
++    dos_port_dirty_source = kDirtySrc_Other;
++    r.unmarked = false;
++    why++; dos_cr_mark_old++;
++}
++// why: 0 drawobj cache cleared, 1 room changed, 2 a scene passed without a composite (or a scene gap)
++void dos_cr_reset_all(int why)
++{
++    for (auto &r : dos_cr_rec)
++    {
++        if (r.valid && r.unmarked) dos_cr_mark_old_rect(r, dos_cr_mo_reset);   // marking more is always safe
++        r = DosCrRec();
++    }
++    dos_cr_resets++; dos_cr_reset_why[why < 0 ? 0 : why > 2 ? 2 : why]++;
++}
++void dos_char_reuse_scene_begin()   // construct_game_scene, before anything is restored or drawn
++{
++    dos_cr_scene++;
++    dos_cr_nview = 0;
++}
++// prepare_characters_for_drawing: once per scene, before the characters
++static void dos_cr_begin_chars()
++{
++    if ((int)dos_cr_rec.size() < game.numcharacters) dos_cr_rec.resize(game.numcharacters);
++    if (displayed_room != dos_cr_room) { if (dos_cr_room != -1000) dos_cr_reset_all(1); dos_cr_room = displayed_room; }
++    else if (dos_cr_prev_scene >= 0 &&
++             (dos_cr_prev_scene != dos_cr_scene - 1 || dos_cr_composites != dos_cr_prev_comp + 1))
++        dos_cr_reset_all(2);
++    dos_cr_prev_scene = dos_cr_scene;
++    dos_cr_prev_comp = dos_cr_composites;
++    // the camera and viewport of the (one) room view, against last scene's. Counted here, before the first viewport's
++    // put_sprite_list_on_screen, so that a second viewport refuses R2b in the first one too (rule (2)).
++    dos_cr_cam_moved = true;
++    dos_cr_nview_pre = 0;
++    Viewport *vp = nullptr;
++    for (const auto &_v : play.GetRoomViewportsZOrdered())
++        if (_v->IsVisible() && _v->GetCamera()) { dos_cr_nview_pre++; vp = _v.get(); }
++    auto cam = (vp && dos_cr_nview_pre == 1) ? vp->GetCamera() : nullptr;
++    if (vp && cam)
++    {
++        const Rect c = cam->GetRect(), v = vp->GetRect();
++        dos_cr_cam_moved = !dos_cr_cam_valid || !(c == dos_cr_cam) || !(v == dos_cr_vp);
++        dos_cr_cam = c; dos_cr_vp = v; dos_cr_cam_valid = true;
++    }
++    else dos_cr_cam_valid = false;
++}
++// the character is not drawn this scene
++static void dos_cr_char_gone(int charid)
++{
++    if (charid >= (int)dos_cr_rec.size()) return;
++    DosCrRec &r = dos_cr_rec[charid];
++    if (r.valid && r.unmarked) dos_cr_mark_old_rect(r, dos_cr_mo_off);
++    r.valid = false; r.elig = false;
++}
++// before construct_char_gfx: may R2a reuse last scene's final image?
++static int dos_cr_pre(int charid, const CharacterInfo &chin, const CharacterExtras &chex, const ObjTexture &actsp,
++                      int atx, int aty, int usebasel)
++{
++    DosCrRec &r = dos_cr_rec[charid];
++    return r.valid && r.seen == dos_cr_scene - 1 && r.prep == dos_cr_scene - 1 && actsp.Bmp && actsp.Ddb &&
++        r.bmp == actsp.Bmp.get() && r.ddb == actsp.Ddb && walk_behind_baselines_changed == 0 &&
++        r.key.view == chin.view && r.key.loop == chin.loop && r.key.frame == chin.frame &&
++        r.key.w == chex.width && r.key.h == chex.height && r.key.x == atx && r.key.y == aty && r.key.basel == usebasel &&
++        r.key.transp == chin.transparency && r.key.nowb == ((chin.flags & CHF_NOWALKBEHINDS) != 0) &&
++        r.key.room == displayed_room && r.key.bgf == play.bg_frame && r.key.wbg == dos_cr_wb_gen;
++}
++// after prepare_and_add_object_gfx (usebasel as it went to the sprite list)
++static void dos_cr_post(int charid, const CharacterInfo &chin, const CharacterExtras &chex, const ObjectCache &cs,
++                        const ObjTexture &actsp, int atx, int aty, int usebasel, bool hit, bool wbc)
++{
++    DosCrRec &r = dos_cr_rec[charid];
++    const DosCrKey k = { cs.sppic, chin.view, chin.loop, chin.frame, cs.tintr, cs.tintg, cs.tintb, cs.tintamnt,
++                         cs.tintlight, cs.lightlev, cs.zoom, (int)cs.mirrored, chex.width, chex.height, atx, aty, usebasel,
++                         chin.transparency, (chin.flags & CHF_NOWALKBEHINDS) != 0, displayed_room, play.bg_frame, dos_cr_wb_gen };
++    const bool last = r.valid && r.seen == dos_cr_scene - 1;
++    const bool same = last && !wbc && memcmp(&k, &r.key, sizeof(k)) == 0;
++    if (hit && !same) dos_cr_keyfail++;   // cannot happen: R2a's test is a subset of the key; counted, never assumed
++    const bool idem = chin.transparency == 0 && actsp.SpriteID < game.SpriteInfos.size() &&
++        (game.SpriteInfos[actsp.SpriteID].Flags & SPF_ALPHACHANNEL) == 0;
++    r.elig = dos_cr_mode_v == 2 && hit && same && idem;
++    if (dos_cr_mode_v == 2 && hit && same && !idem) dos_cr_refused++;
++    if (r.elig) dos_cr_elig++;
++    // rule (1): last composite left unmarked and this one will not look the same -> its old rect goes out now
++    if (r.valid && r.unmarked && !r.elig) dos_cr_mark_old_rect(r, dos_cr_mo_key);
++    r.key = k; r.bmp = actsp.Bmp.get(); r.ddb = actsp.Ddb; r.prep = dos_cr_scene;
++}
++// put_sprite_list_on_screen(in_room): after this scene's restore, before the entry's mark. Returns true to skip the mark.
++static bool dos_cr_put(const SpriteListEntry &t)
++{
++    if (t.DosCharId < 0 || t.DosCharId >= (int)dos_cr_rec.size()) return false;
++    DosCrRec &r = dos_cr_rec[t.DosCharId];
++    if (r.prep != dos_cr_scene) return false;
++    bool skip = false;
++    if (r.elig)
++    {
++        if (dos_cr_nview > 1 || dos_cr_nview_pre != 1)                 { dos_cr_ff_multi++; dos_cr_ff++; }
++        else if (dos_cr_cam_moved)                                     { dos_cr_ff_cam++; dos_cr_ff++; }
++        else if (dos_port_dirty.is_full || dos_port_dirty.carry_full)  { dos_cr_ff_full++; dos_cr_ff++; }
++        else if (dos_guiclip_latched_next())                           { dos_cr_ff_latch++; dos_cr_ff++; }
++        else if (dos_guiclip_coarse())                                 { dos_cr_ff_coarse++; dos_cr_ff++; }
++        else skip = true;
++    }
++    r.valid = true; r.unmarked = skip; r.seen = dos_cr_scene;
++    r.rx = t.X; r.ry = t.Y; r.rw = t.DDB->GetWidth(); r.rh = t.DDB->GetHeight();
++    if (skip) dos_cr_skips++;
++    return skip;
++}
++// end of construct_game_scene: a record not composited this scene describes nothing on the screen any more. If it was
++// left unmarked its old pixels are still there: mark them (a safety net; rule (1) is meant to have caught it already).
++void dos_char_reuse_scene_end()
++{
++    for (auto &r : dos_cr_rec)
++    {
++        if (!r.valid || r.seen == dos_cr_scene) continue;
++        if (r.unmarked) dos_cr_mark_old_rect(r, dos_cr_mo_end);
++        r.valid = false;
++    }
++}
++void dos_char_reuse_summary(FILE *log)
++{
++    if (!log) return;
++    extern long dos_cr_drv_flagged, dos_cr_drv_skipped, dos_cr_drv_boxed, dos_cr_drv_boxes, dos_cr_drv_full,
++                dos_cr_drv_latched, dos_cr_drv_clipped;
++    fprintf(log, "DOS-PORT charreuse_final mode=%d hits=%ld keyfail=%ld elig=%ld skips=%ld refused=%ld forced_full=%ld"
++        " ff_latch=%ld ff_cam=%ld ff_full=%ld ff_coarse=%ld ff_multi=%ld mark_old=%ld mo_off=%ld mo_key=%ld mo_end=%ld"
++        " mo_reset=%ld resets=%ld reset_cache=%ld reset_room=%ld reset_gap=%ld drv_flagged=%ld drv_skipped=%ld"
++        " drv_boxed=%ld drv_boxes=%ld drv_clipped=%ld drv_full=%ld drv_latched=%ld scenes=%ld\n",
++        dos_cr_mode_v, dos_cr_hits, dos_cr_keyfail, dos_cr_elig, dos_cr_skips, dos_cr_refused, dos_cr_ff,
++        dos_cr_ff_latch, dos_cr_ff_cam, dos_cr_ff_full, dos_cr_ff_coarse, dos_cr_ff_multi, dos_cr_mark_old, dos_cr_mo_off,
++        dos_cr_mo_key, dos_cr_mo_end, dos_cr_mo_reset, dos_cr_resets, dos_cr_reset_why[0], dos_cr_reset_why[1],
++        dos_cr_reset_why[2], dos_cr_drv_flagged, dos_cr_drv_skipped, dos_cr_drv_boxed, dos_cr_drv_boxes,
++        dos_cr_drv_clipped, dos_cr_drv_full, dos_cr_drv_latched, dos_cr_scene);
++}
++#endif
++
+ void prepare_characters_for_drawing()
+ {
+     set_our_eip(33);
+     const bool hw_accel = !drawstate.SoftwareRender;
++#ifdef __DJGPP__
++    const int _cr = drawstate.SoftwareRender ? dos_char_reuse_mode() : 0;   // patch 0369 R2
++    if (_cr) dos_cr_begin_chars();
++#endif
+ 
+     // draw characters
+     for (int charid = 0; charid < game.numcharacters; ++charid)
+     {
+         const CharacterInfo &chin = game.chars[charid];
++#ifdef __DJGPP__
++        if (_cr && (chin.on == 0 || chin.room != displayed_room))
++            dos_cr_char_gone(charid);   // patch 0369 R2 rule (1)
++#endif
+         if (chin.on == 0)
+             continue; // disabled
+         if (chin.room != displayed_room)
+@@ -2632,16 +2874,33 @@ void prepare_characters_for_drawing()
+         int usebasel = chin.get_baseline();
+ 
+         // Generate raw bitmap in ObjTexture and store parameters in ObjectCache.
++#ifdef __DJGPP__
++        const bool _cr_wbc = walk_behind_baselines_changed != 0;
++        dos_cr_allow = _cr ? dos_cr_pre(charid, chin, chex, actsp, atx, aty, usebasel) : 0;   // patch 0369 R2a
++        dos_cr_hit = 0;
++#endif
+         bool actsp_modified = !construct_char_gfx(charid, false);
++#ifdef __DJGPP__
++        const bool _cr_hit = dos_cr_hit != 0;
++        dos_cr_allow = 0; dos_cr_hit = 0;
++        if (_cr_hit) dos_cr_hits++;
++#endif
+         // Prepare the object texture
+         prepare_and_add_object_gfx(chsav, actsp, actsp_modified,
+             Size(chex.width, chex.height), atx, aty, usebasel,
+             (chin.flags & CHF_NOWALKBEHINDS) == 0, chin.transparency, hw_accel);
+ #if (AGS_PLATFORM_DEBUG)
+         actsp.Ddb->SetTag(String::FromFormat("CHAR%d:%s", chin.index_id, chin.scrname));
++#endif
++#ifdef __DJGPP__
++        if (_cr) dos_cr_post(charid, chin, chex, chsav, actsp, atx, aty, usebasel, _cr_hit, _cr_wbc);
++        const size_t _cr_n = sprlist.size();
+ #endif
+         // Finally, add the texture to the draw list
+         add_to_sprite_list(actsp.Ddb, atx, aty, usebasel, actsp.DrawIndex);
++#ifdef __DJGPP__
++        if (sprlist.size() > _cr_n) sprlist.back().DosCharId = charid;   // patch 0369 R2: the entry is this character
++#endif
+     }
+ }
+ 
+@@ -3288,7 +3547,9 @@ void put_sprite_list_on_screen(bool in_room)
+                 continue; // skip completely invisible things
+             // mark the image's region as dirty
+ #ifdef __DJGPP__
+-            if (!t.SkipInvalidate)   // patch 0169 stage 1
++            // patch 0369 R2b: an unchanged character skips its mark, as 0233's room overlays do
++            const bool _cr_skip = in_room && t.DosCharId >= 0 && dos_cr_mode_v >= 1 && dos_cr_put(t);   // records in 1 and 2
++            if (!t.SkipInvalidate && !_cr_skip)   // patch 0169 stage 1
+ #endif
+             {   // patch 0175
+                 dos_port_dirty_source = in_room ? kDirtySrc_RoomSprite : kDirtySrc_UiSprite;
+@@ -3304,8 +3565,10 @@ void put_sprite_list_on_screen(bool in_room)
+             {
+                 extern int dos_guiclip_mode();   // patch 0366: one resolver (ali3dsw.cpp); 1, 2 and 4 (0368) flag, 0 does not
+                 const int _h2 = dos_guiclip_mode() >= 1 ? 1 : 0;
+-                if (_h2 && t.SkipInvalidate)
++                if (_h2 && (t.SkipInvalidate || _cr_skip))   // patch 0369 R2b: flagged like 0169's GUI entries
+                     gfxDriver->DosPortClipNextToDirty(true);
++                if (_cr_skip)
++                    gfxDriver->DosPortNextIsChar(2);
+             }
+ #endif
+             gfxDriver->DrawSprite(t.X, t.Y, t.DDB);
+@@ -3335,6 +3598,10 @@ void GfxDriverOnInitCallback(void *data)
+     pl_run_plugin_init_gfx_hooks(gfxDriver->GetDriverID(), data);
+ }
+ 
++#ifdef __DJGPP__
++void dos_char_reuse_scene_begin();   // patch 0369 R2 (defined above prepare_characters_for_drawing)
++void dos_char_reuse_scene_end();
++#endif
+ // Schedule room rendering: background, objects, characters
+ static void construct_room_view()
+ {
+@@ -3360,6 +3627,9 @@ static void construct_room_view()
+         if (!camera)
+             continue;
+ 
++#ifdef __DJGPP__
++        dos_cr_nview++;   // patch 0369 R2: R2b only with one room viewport
++#endif
+         const Rect &view_rc = viewport->GetRect();
+         const Rect &cam_rc = camera->GetRect();
+         const float view_sx = (float)view_rc.GetWidth() / (float)cam_rc.GetWidth();
+@@ -3519,6 +3789,7 @@ void construct_game_scene(bool full_redraw)
+     if (full_redraw)
+         dos_port_dirty_set_full("full_redraw requested");
+     dos_port_gui_flush_unmarked();   // patch 0191: before the restore below
++    dos_char_reuse_scene_begin();    // patch 0369 R2
+ #endif
+ 
+     // React to changes to viewports and cameras (possibly from script) just before the render
+@@ -3583,6 +3854,7 @@ void construct_game_scene(bool full_redraw)
+     }
+ #ifdef __DJGPP__
+     dos_port_over_end_frame();   // patch 0233
++    dos_char_reuse_scene_end();  // patch 0369 R2
+ #endif
+ 
+     // End the parent scene node
+diff --git a/Engine/ac/dynobj/scriptdrawingsurface.cpp b/Engine/ac/dynobj/scriptdrawingsurface.cpp
+index dd6c56a64..1dd0759b1 100644
+--- a/Engine/ac/dynobj/scriptdrawingsurface.cpp
++++ b/Engine/ac/dynobj/scriptdrawingsurface.cpp
+@@ -56,6 +56,9 @@ Bitmap* ScriptDrawingSurface::GetBitmapSurface()
+         // DOS-PORT patch 0319: every draw on a room mask goes through here first; a walkable-mask draw may change
+         // its pixels, so the pathfinder's cache must compare them again
+         if (roomMaskType == kRoomAreaWalkable) { extern unsigned long dos_walkmask_gen; dos_walkmask_gen++; }
++        // DOS-PORT patch 0369: a walk-behind draw changes what walkbehinds_cropout() reads even before the release's
++        // walkbehinds_recalc(), so R2's key (the mask generation) moves here too
++        if (roomMaskType == kRoomAreaWalkBehind) { extern int dos_cr_wb_gen; dos_cr_wb_gen++; }
+         return thisroom.GetMask(roomMaskType);
+     }
+     return nullptr;
+diff --git a/Engine/ac/walkbehind.cpp b/Engine/ac/walkbehind.cpp
+index c3d89af55..33bb519fe 100644
+--- a/Engine/ac/walkbehind.cpp
++++ b/Engine/ac/walkbehind.cpp
+@@ -39,6 +39,9 @@ Rect walkBehindAABB[MAX_WALK_BEHINDS]; // WB bounding box
+ int walkBehindsCachedForBgNum = -1; // WB textures are for this background
+ bool noWalkBehindsAtAll = false; // quick report that no WBs in this room
+ bool walk_behind_baselines_changed = false;
++#ifdef __DJGPP__
++int dos_cr_wb_gen = 0;   // DOS-PORT patch 0369: R2's key holds it; bumped whenever the mask is (re)read below
++#endif
+ 
+ 
+ // Generates walk-behinds as separate sprites
+@@ -147,6 +150,9 @@ bool walkbehinds_cropout(Bitmap *sprit, int sprx, int spry, int basel)
+ 
+ void walkbehinds_recalc()
+ {
++#ifdef __DJGPP__
++    dos_cr_wb_gen++;   // DOS-PORT patch 0369: a character's crop-out made before this is stale
++#endif
+     // Reset all data
+     walkBehindCols.clear();
+     for (int wb = 0; wb < MAX_WALK_BEHINDS; ++wb)
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index 7e8836329..c02a8c618 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -115,6 +115,13 @@ void dos_guiclip_note_restore()
+     if (dos_gc_span_acc) { dos_gc_coarse = 1; dos_gc_coarse_restores++; }
+     dos_gc_span_acc = 0;
+ }
++// patch 0369 R2 (ac/draw.cpp): what R2b's guard reads, and the driver's side of its counters
++long dos_cr_composites = 0;
++long dos_cr_drv_flagged = 0, dos_cr_drv_skipped = 0, dos_cr_drv_boxed = 0, dos_cr_drv_boxes = 0, dos_cr_drv_full = 0;
++long dos_cr_drv_latched = 0, dos_cr_drv_clipped = 0;
++int dos_char_reuse_mode();   // ac/draw.cpp
++int dos_guiclip_latched_next() { return dos_gc_latch >= 2; }   // the next composite decays it to >= 1: latched
++int dos_guiclip_coarse() { return dos_gc_coarse; }
+ void dos_guiclip_summary(FILE *log)
+ {
+     if (!log) return;
+@@ -148,6 +155,7 @@ SDLRendererGraphicsDriver::SDLRendererGraphicsDriver()
+ {
+ #ifdef __DJGPP__
+   dos_guiclip_mode();   // patch 0366: the witness line, once, at startup
++  dos_char_reuse_mode();   // patch 0369 R2: its witness line
+ #endif
+   _tint_red = 0;
+   _tint_green = 0;
+@@ -662,12 +670,17 @@ void SDLRendererGraphicsDriver::DrawSprite(int x, int y, IDriverDependantBitmap*
+ #ifdef __DJGPP__
+         e.dos_clip_dirty = _dosNextClipDirty;   // patch 0170
+         _dosNextClipDirty = false;              // one-shot, never sticky
++        e.dos_char = _dosNextChar;              // patch 0369 R2
++        _dosNextChar = 0;
+ #endif
+         _spriteList.push_back(e);
+     }
+ #ifdef __DJGPP__
+     else
++    {
+         _dosNextClipDirty = false;   // do not leak onto the next sprite
++        _dosNextChar = 0;
++    }
+ #endif
+ }
+ 
+@@ -725,6 +738,7 @@ void SDLRendererGraphicsDriver::RenderToBackBuffer()
+     // patch 0366: the latch decays one per composited frame; a changed back buffer re-arms it for this frame and the next
+     if (dos_gc_latch > 0) dos_gc_latch--;
+     if (dos_gc_latch_fr > 0) dos_gc_latch_fr--;   // patch 0368
++    dos_cr_composites++;   // patch 0369 R2
+     if (virtualScreen)
+     {
+         const void *_vb = virtualScreen->GetScanLine(0);
+@@ -1034,6 +1048,7 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+     if (sprite.dos_clip_dirty)
+     {
+         dos_gc_flagged++;
++        if (sprite.dos_char == 2) dos_cr_drv_flagged++;   // patch 0369 R2b
+         bool _gc_clipped = false;
+         if (dos_gc_latch == 0 && _dp_same_space &&
+             dos_port_dirty.valid && !dos_port_dirty.is_full && !dos_port_dirty.carry_full)
+@@ -1055,6 +1070,7 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+                                                                      drawAtY + native_bmp->GetHeight() - 1)) : Rect();
+             if (_gm >= 2 && native_bmp && _ge.IsEmpty())
+             {
++                if (sprite.dos_char == 2) dos_cr_drv_skipped++;   // patch 0369 R2b
+                 dos_gc_skipped++;
+                 dos_gc_skipped_px += (long long)native_bmp->GetWidth() * native_bmp->GetHeight();
+                 continue;
+@@ -1078,6 +1094,7 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+                 }
+                 if (_r3_n == 0)   // the bbox reached the entry, no box did: nothing to draw
+                 {
++                    if (sprite.dos_char == 2) dos_cr_drv_skipped++;   // patch 0369 R2b
+                     dos_gc_skipped++;
+                     dos_gc_skipped_px += (long long)native_bmp->GetWidth() * native_bmp->GetHeight();
+                     continue;
+@@ -1087,6 +1104,7 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+                 dos_port_tick_timing.rb_clipped_sprites++;
+                 dos_gc_boxed++;
+                 dos_gc_boxes += _r3_n;
++                if (sprite.dos_char == 2) { dos_cr_drv_boxed++; dos_cr_drv_boxes += _r3_n; }   // patch 0369 R2b
+                 _gc_clipped = true;
+             }
+             if (!_gc_clipped && !isect.IsEmpty())
+@@ -1096,11 +1114,13 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+                 surface->SetClip(isect);
+                 dos_port_tick_timing.rb_clipped_sprites++;
+                 dos_gc_clipped++;
++                if (sprite.dos_char == 2) dos_cr_drv_clipped++;   // patch 0369 R2b (mode 2's bbox, or 4's guard (a))
+                 _gc_clipped = true;
+             }
+         }
+         if (!_gc_clipped)
+         {
++            if (sprite.dos_char == 2) { dos_cr_drv_full++; if (dos_gc_latch) dos_cr_drv_latched++; }   // patch 0369 R2b
+             dos_gc_full++;
+             if (dos_gc_latch) dos_gc_latched_full++;
+             if (dos_gc_latch && dos_gc_latch_fr) dos_gc_fb_whole++;   // patch 0368 guard (b): 0366's full-restore latch
+diff --git a/Engine/gfx/ali3dsw.h b/Engine/gfx/ali3dsw.h
+index 5ae1fd93a..039f1b661 100644
+--- a/Engine/gfx/ali3dsw.h
++++ b/Engine/gfx/ali3dsw.h
+@@ -443,8 +443,10 @@ public:
+     // reaches the right entry. The flag cannot live on the DDB: the same
+     // GUI bitmap is a different sprite on different frames.
+     void DosPortClipNextToDirty(bool on) { _dosNextClipDirty = on; }
++    void DosPortNextIsChar(int c) { _dosNextChar = c; }   // patch 0369 R2
+ private:
+     bool _dosNextClipDirty = false;
++    int _dosNextChar = 0;
+ #endif
+ };
+ 
+diff --git a/Engine/gfx/gfxdriverbase.h b/Engine/gfx/gfxdriverbase.h
+index 88d338d35..44f20975d 100644
+--- a/Engine/gfx/gfxdriverbase.h
++++ b/Engine/gfx/gfxdriverbase.h
+@@ -96,6 +96,7 @@ struct SpriteDrawListEntry
+     // DOS-PORT patch 0170 (stage 2): this sprite reported itself unchanged,
+     // so its composite may be clipped to the region something else dirtied.
+     bool dos_clip_dirty = false;
++    int dos_char = 0;   // patch 0369 R2: 2 = a character entry that skipped its mark (R2b)
+ #endif
+ 
+     SpriteDrawListEntry() = default;
+diff --git a/Engine/gfx/graphicsdriver.h b/Engine/gfx/graphicsdriver.h
+index f04aadb8f..7d1728384 100644
+--- a/Engine/gfx/graphicsdriver.h
++++ b/Engine/gfx/graphicsdriver.h
+@@ -235,6 +235,8 @@ public:
+     // A no-op in the base so only the software driver -- the only one this
+     // port builds -- needs to implement it.
+     virtual void DosPortClipNextToDirty(bool) {}
++    // patch 0369 R2: one-shot, the next DrawSprite is a character (2 = an R2b entry that skipped its mark)
++    virtual void DosPortNextIsChar(int) {}
+ #endif
+     // Adds a render event, which runs a callback with the given parameters, to the active batch
+     virtual void AddRenderEvent(int evt, int param) = 0;
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 002572f42..6deaa9f3c 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -408,6 +408,7 @@ void quit(const char *quitmsg)
+             // that ran differently -- hashed like the rest. Unset
+             // variables contribute nothing, so older cells' hashes stand.
+             "DOSAGS_BREAK_0193",      // patch 0195: control for the screen-equality gate; a diagnostic
++            "DOSAGS_CHAR_REUSE",      // patch 0369 R2: character reuse (0 off by default; 1 = R2a; 2 = R2a + R2b)
+             "DOSAGS_CLOCK_CROSSCHECK",
+             "DOSAGS_ENGLEV",          // engine levers 1 + 2 (on by default; 0 = off)
+             "DOSAGS_FIXED_TIMESTEP",
+@@ -587,6 +588,8 @@ void quit(const char *quitmsg)
+             {   // DOS-PORT patch 0366: which GUI composite mode ran and how often it skipped, in both flavours
+                 extern void dos_guiclip_summary(FILE *);
+                 dos_guiclip_summary(run_manifest_log);
++                extern void dos_char_reuse_summary(FILE *);   // patch 0369 R2, both flavours
++                dos_char_reuse_summary(run_manifest_log);
+             }
+ #ifdef DOSAGS_RELEASE
+             // DOS-PORT patch 0351: the release flavour times nothing, so it has no phase aggregates and none of
+-- 
+2.47.3
+

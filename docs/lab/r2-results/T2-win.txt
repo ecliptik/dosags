@@ -1,0 +1,72 @@
+window                          5480:7890   8100:12430
+ticks                                2410         4330
+render passes                        2410         4323
+renders/ticks %                     100.0         99.8
+-- ms per tick
+update_game_once_total             24.900       24.925
+wait_next_frame                    14.224       15.590
+script_vm                           4.227        4.380
+process_events_dispatch             4.589        4.760
+game_objects_update                 0.149        0.144
+drawable_object_states              0.253        0.259
+objects_scale                       0.217        0.222
+input_handling                      0.155        0.155
+input_poll                          0.065        0.065
+gui_context_cursor                  0.114        0.148
+rep_exec_wrapper                    0.147        0.147
+scene_construct                     2.260        1.639
+render_to_screen                    2.849        1.885
+logic (ugo-wait-render-scene)        5.567        5.811
+  of which dispatch                 4.589        4.760
+  other logic                       0.978        1.051
+busy (ugo-wait)                    10.676        9.335
+-- ms per render pass
+scene_construct                     2.260        1.642
+sc_room_view                        2.005        1.391
+sc_viewports                        0.965        0.677
+bg_restore                          0.577        0.428
+sc_prep_chars                       0.812        0.478
+sc_prep_objects                     0.005        0.047
+sc_ui_view                          0.110        0.111
+sc_preroom                          0.157        0.117
+render_to_screen                    2.849        1.888
+render_backbuffer                   2.191        1.305
+rb_sprite_time                      2.125        1.252
+present_update_window               0.400        0.343
+present_blit                        0.000        0.000
+present_dirty_check                 0.000        0.000
+pass = scene + render               5.109        3.530
+-- work per render pass
+push_bytes                          11117        16486
+push_rects                              3            2
+bg_px                                5290         8237
+spr_n                                   7            8
+spr_msk_px                           7102         6250
+spr_opq_px                              0            0
+spr_bld_px                              0            0
+fill_px                               135          121
+blit1x_bytes                            0            0
+script_ext / tick                   183.1        176.1
+dirty.narrow (count)                 2410         3913
+dirty.full (count)                      0          410
+rb.bgwhole (count)                      0          410
+lab.camchg (count)                      0          410
+lab.vpchg (count)                       0            0
+lab.invall (count)                      0          410
+lab.invcam (count)                      0          410
+evt script ms/tick                  4.193        4.390
+evt object ms/tick                  0.378        0.315
+-- LAB-R3 per render pass
+r3.skipped                            2.0          2.7
+r3.clipped                            1.0          0.0
+r3.full                               0.0          0.3
+r3.multi                              0.0          0.0
+r3.rects                              0.0          0.0
+r3.r3_px                              0.0          0.0
+r3.clip_px                         1629.7        102.1
+r3.full_px                            0.0       3924.3
+r3.guinoskip_n                        0.0          0.0
+r3.guiredraw_n                        0.0          0.0
+r3.fb_bbox                            0.0          0.0
+r3.fb_whole                           0.0          0.0
+gui re-render ms/pass               0.012        0.012

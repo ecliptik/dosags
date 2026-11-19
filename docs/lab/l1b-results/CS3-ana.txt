@@ -1,0 +1,138 @@
+== build/l1b/results/CS3  ticks=960  groups=951070  gram_full=0 actover=0
+superinstruction attempts 951070 commits 951070 (fallbacks 0)
+
+-- (a) instructions and dispatch units per tick
+function                ops/tick   units/t   ops/u   fused%  VM-share  L1F-us/t
+Extension                 1062.0     606.0    1.75    60.5%     18.7%   10159.5
+SetAlternativeAction      1102.0     730.0    1.51    47.4%     19.4%   10302.0
+CheckTimers               1232.0     624.0    1.97    71.6%     21.6%   11295.7
+GlobalCondition            491.0     305.0    1.61    55.2%      8.6%    4626.4
+IsOwnTimerExpired          600.0     312.0    1.92    68.0%     10.5%    5588.6
+CheckDefaultAction         323.0     245.0    1.32    34.1%      5.7%    3090.5
+repeatedly_execute         406.0     270.0    1.50    49.3%      7.1%    3766.0
+SEVEN                     5216.0    3092.0    1.69    58.2%     91.6%   48828.7
+ALL VM                    5692.7    3370.9    1.69    58.2%    100.0%   53542.5
+
+-- (a) opcode histogram, ops/tick (share of the group)
+SEVEN (5216 ops/tick): mov 757.0 (14.5%), movl 667.0 (12.8%), subi 514.0 (9.9%), sourceline 507.0 (9.7%), memread4 413.0 (7.9%), push 361.0 (6.9%), pop 284.0 (5.4%), farpush 254.0 (4.9%), jzi 175.0 (3.4%), farcall 157.0 (3.0%), setfuncargs 157.0 (3.0%), farsubsp 151.0 (2.9%), cmpeq 115.0 (2.2%), sub 95.0 (1.8%), addi 81.0 (1.6%), memwrite4 80.0 (1.5%), gte 64.0 (1.2%), call 59.0 (1.1%)
+Extension (1062 ops/tick): mov 184.0 (17.3%), subi 126.0 (11.9%), sourceline 112.0 (10.5%), movl 88.0 (8.3%), memread4 70.0 (6.6%), farpush 70.0 (6.6%), push 44.0 (4.1%), pop 44.0 (4.1%), farcall 42.0 (4.0%), farsubsp 42.0 (4.0%)
+SetAlternativeAction (1102 ops/tick): movl 157.0 (14.2%), mov 151.0 (13.7%), memread4 121.0 (11.0%), subi 113.0 (10.3%), sourceline 95.0 (8.6%), farpush 90.0 (8.2%), add 54.0 (4.9%), farcall 36.0 (3.3%), farsubsp 36.0 (3.3%), setfuncargs 36.0 (3.3%)
+CheckTimers (1232 ops/tick): mov 216.0 (17.5%), subi 153.0 (12.4%), sourceline 125.0 (10.1%), memread4 122.0 (9.9%), movl 93.0 (7.5%), push 92.0 (7.5%), pop 92.0 (7.5%), gte 61.0 (5.0%), jzi 61.0 (5.0%), memwrite4 32.0 (2.6%)
+GlobalCondition (491 ops/tick): mov 73.0 (14.9%), movl 66.0 (13.4%), push 44.0 (9.0%), sourceline 42.0 (8.6%), subi 39.0 (7.9%), memread4 39.0 (7.9%), pop 39.0 (7.9%), cmpeq 26.0 (5.3%), jzi 19.0 (3.9%), farpush 15.0 (3.1%)
+IsOwnTimerExpired (600 ops/tick): movl 96.0 (16.0%), mov 72.0 (12.0%), sourceline 72.0 (12.0%), push 48.0 (8.0%), pop 48.0 (8.0%), subi 24.0 (4.0%), ret 24.0 (4.0%), memread4 24.0 (4.0%), sub 24.0 (4.0%), cmpeq 24.0 (4.0%)
+CheckDefaultAction (323 ops/tick): movl 67.0 (20.7%), push 48.0 (14.9%), subi 35.0 (10.8%), mov 30.0 (9.3%), memread4 29.0 (9.0%), sourceline 24.0 (7.4%), call 17.0 (5.3%), farpush 15.0 (4.6%), pop 10.0 (3.1%), addi 7.0 (2.2%)
+repeatedly_execute (406 ops/tick): movl 100.0 (24.6%), push 55.0 (13.5%), sourceline 37.0 (9.1%), mov 31.0 (7.6%), pop 31.0 (7.6%), jzi 30.0 (7.4%), call 27.0 (6.7%), cmpeq 26.0 (6.4%), subi 24.0 (5.9%), farpush 10.0 (2.5%)
+ALL VM (5693 ops/tick): mov 821.2 (14.4%), movl 727.2 (12.8%), subi 559.8 (9.8%), sourceline 553.1 (9.7%), memread4 458.6 (8.1%), push 386.6 (6.8%), pop 301.5 (5.3%), farpush 292.7 (5.1%), jzi 183.8 (3.2%), farcall 177.2 (3.1%), setfuncargs 177.2 (3.1%), farsubsp 170.2 (3.0%), cmpeq 126.6 (2.2%), sub 96.0 (1.7%), addi 91.8 (1.6%), memwrite4 87.9 (1.5%), ret 66.1 (1.2%), thisaddr 66.1 (1.2%)
+
+-- (a) dispatch units per tick by handler (SEVEN)
+linenum 507.0, S_localload 351.0, movl_int 266.0, push 201.0, S_pushmovlpop 160.0, mov 157.0, S_farcall 151.0, subi 144.0, farpush 103.0, S_eqjz 87.0, addi 81.0, memread 62.0, memwrite 61.0, generic 61.0, call 59.0, ret 56.0, thisaddr 56.0, S_popsubmov 56.0, addreg 56.0, jz 54.0, jmp 47.0, subreg 39.0, movl_imp 35.0, movl_gvar 34.0, S_popgtemov 31.0, S_gtejz 30.0, muli 28.0, S_popeqmov 22.0, movl_str 21.0, S_localstore 19.0, pop 15.0, and 8.0, isequal 6.0, or 6.0, callext 6.0, setfuncargs 6.0, gte 3.0, notequal 2.0, S_nejz 2.0, lessthan 1.0, S_gtjz 1.0, S_ltjz 1.0
+
+-- (a) top 5 2-instruction sequences, SEVEN (5215 sequences/tick)
+#    opcodes                            per tick   % ops   fused  dominant form (share)
+1    mov ; subi                            398.0    7.6%     93%  mov sp,mar ; subi mar (100%)
+2    subi ; memread4                       351.0    6.7%    100%  subi mar ; memread4 ax (100%)
+3    push ; movl                           284.0    5.4%     56%  push ax ; movl ax (97%)
+4    sourceline ; mov                      277.0    5.3%      0%  sourceline ; mov sp,mar (100%)
+5    mov ; jzi                             175.0    3.4%     69%  mov bx,ax ; jzi (100%)
+
+-- (a) top 5 2-instruction sequences, ALL VM (5691 sequences/tick)
+#    opcodes                            per tick   % ops   fused  dominant form (share)
+1    mov ; subi                            434.6    7.6%     94%  mov sp,mar ; subi mar (100%)
+2    subi ; memread4                       387.6    6.8%    100%  subi mar ; memread4 ax (100%)
+3    push ; movl                           299.9    5.3%     57%  push ax ; movl ax (97%)
+4    sourceline ; mov                      293.2    5.2%      0%  sourceline ; mov sp,mar (99%)
+5    mov ; jzi                             183.8    3.2%     70%  mov bx,ax ; jzi (100%)
+
+-- (a) top 5 3-instruction sequences, SEVEN (5214 sequences/tick)
+#    opcodes                            per tick   % ops   fused  dominant form (share)
+1    mov ; subi ; memread4                 351.0    6.7%    100%  mov sp,mar ; subi mar ; memread4 ax (100%)
+2    sourceline ; mov ; subi               243.0    4.7%      0%  sourceline ; mov sp,mar ; subi mar (100%)
+3    mov ; jzi ; sourceline                174.0    3.3%      0%  mov bx,ax ; jzi ; sourceline (100%)
+4    push ; movl ; pop                     160.0    3.1%    100%  push ax ; movl ax ; pop bx (100%)
+5    setfuncargs ; movl ; farcall          157.0    3.0%     96%  setfuncargs ; movl ax ; farcall ax (100%)
+
+-- (a) top 5 3-instruction sequences, ALL VM (5689 sequences/tick)
+#    opcodes                            per tick   % ops   fused  dominant form (share)
+1    mov ; subi ; memread4                 387.6    6.8%    100%  mov sp,mar ; subi mar ; memread4 ax (100%)
+2    sourceline ; mov ; subi               256.2    4.5%      0%  sourceline ; mov sp,mar ; subi mar (100%)
+3    mov ; jzi ; sourceline                179.3    3.1%      0%  mov bx,ax ; jzi ; sourceline (100%)
+4    setfuncargs ; movl ; farcall          177.2    3.1%     96%  setfuncargs ; movl ax ; farcall ax (100%)
+5    push ; movl ; pop                     170.8    3.0%    100%  push ax ; movl ax ; pop bx (100%)
+
+-- (b) script calls per tick, by callee (activations, leaf = made no script call)
+callee                     acts/t  entry/t   leaf/t  leaf0/t   ops/act leafops/a  apis/act  calls/a
+IsOwnTimerExpired           24.00     0.00    24.00     0.00      25.0      25.0      1.00     0.00
+Extension                   14.00     0.00    14.00     0.00      75.9      75.9      3.00     0.00
+SetAlternativeAction        10.00     0.00     0.00     0.00     110.2       0.0      3.60     1.00
+GlobalCondition              5.00     0.00     2.00     0.00      98.2     106.0      2.40     1.00
+isAction                     5.00     0.00     5.00     5.00      13.0      13.0      0.00     0.00
+room_b                       1.00     1.00     1.00     0.00      24.0      24.0      1.00     0.00
+repeatedly_execute           1.00     1.00     0.00     0.00     406.0       0.0      6.00    27.00
+UpdateActionBar              1.00     0.00     0.00     0.00     141.0       0.0      7.00     3.00
+CheckDefaultAction           1.00     0.00     0.00     0.00     323.0       0.0      7.00    17.00
+AddExtension                 1.00     0.00     0.00     0.00      64.0       0.0      3.00     1.00
+RemoveExtension              1.00     0.00     0.00     0.00      53.0       0.0      2.00     1.00
+CheckTimers                  1.00     0.00     1.00     0.00    1232.0    1232.0     30.00     0.00
+TranslateAction              1.00     0.00     1.00     0.00      85.0      85.0      5.00     0.00
+script CALLs/tick (caller->callee pairs): 64.09; returns/tick (non-entry activations ended by ret): 64.09
+caller -> callee per tick:
+   repeatedly_execute       -> IsOwnTimerExpired         24.00
+   SetAlternativeAction     -> Extension                 10.00
+   CheckDefaultAction       -> SetAlternativeAction      10.00
+   GlobalCondition          -> isAction                   5.00
+   CheckDefaultAction       -> GlobalCondition            3.00
+   UpdateActionBar          -> GlobalCondition            2.00
+   CheckDefaultAction       -> Extension                  2.00
+   repeatedly_execute       -> UpdateActionBar            1.00
+   RemoveExtension          -> Extension                  1.00
+   CheckDefaultAction       -> RemoveExtension            1.00
+   AddExtension             -> Extension                  1.00
+   CheckDefaultAction       -> AddExtension               1.00
+   repeatedly_execute       -> CheckDefaultAction         1.00
+   UpdateActionBar          -> TranslateAction            1.00
+   repeatedly_execute       -> CheckTimers                1.00
+
+-- local-variable walks (mov sp,mar; subi mar,K): per tick and steps per walk
+   Extension              walks/tick   112.0  steps/walk  2.50
+   SetAlternativeAction   walks/tick    94.0  steps/walk  3.98
+   CheckTimers            walks/tick   122.0  steps/walk  1.76
+   GlobalCondition        walks/tick    29.0  steps/walk  2.31
+   IsOwnTimerExpired      walks/tick    24.0  steps/walk  3.00
+   CheckDefaultAction     walks/tick    17.0  steps/walk  2.18
+   repeatedly_execute     walks/tick     0.0  steps/walk  0.00
+   SEVEN                  walks/tick   398.0  steps/walk  2.63
+   ALL VM                 walks/tick   434.6  steps/walk  2.66
+
+-- (c) engine API calls per tick from the per-tick functions (L1 P lines; us is probe-inflated)
+   GetGlobalInt             54.00/tick  callers: CheckTimers 30.0, IsOwnTimerExpired 24.0, game_start 0.0
+   StrGetCharAt             28.83/tick  callers: Extension 28.0, clearToSpace 0.8, SetActionButtons 0.0, game_start 0.0
+   FindGUIID                23.00/tick  callers: SetAlternativeAction 18.0, repeatedly_execute 2.0, UpdateActionBar 2.0, GlobalCondition 1.0
+   SetButtonPic             20.00/tick  callers: SetAlternativeAction 18.0, repeatedly_execute 2.0
+   StrLen                   16.81/tick  callers: Extension 14.0, RemoveExtension 1.0, AddExtension 1.0, clearToSpace 0.8
+   StrCopy                   6.01/tick  callers: TranslateAction 2.0, UpdateActionBar 2.0, CheckDefaultAction 2.0, SetActionButtons 0.0
+   GetInvAt                  5.00/tick  callers: GlobalCondition 3.0, CheckDefaultAction 2.0
+   GetCursorMode             4.00/tick  callers: GlobalCondition 3.0, UpdateActionBar 1.0
+   GetLocationType^2         3.00/tick  callers: CheckDefaultAction 2.0, GlobalCondition 1.0
+   StrSetCharAt              2.18/tick  callers: RemoveExtension 1.0, AddExtension 1.0, clearToSpace 0.2
+   GetGUIObjectAt            2.00/tick  callers: GlobalCondition 2.0
+   SetLabelText              2.00/tick  callers: room_b 1.0, UpdateActionBar 1.0
+   IsGamePaused              2.00/tick  callers: repeatedly_execute 2.0
+   GetTranslation            1.00/tick  callers: TranslateAction 1.0, game_start 0.0
+   StrFormat                 1.00/tick  callers: TranslateAction 1.0
+   StrContains               1.00/tick  callers: TranslateAction 1.0
+   GetGUIAt                  1.00/tick  callers: GlobalCondition 1.0
+   GetPlayerCharacter        1.00/tick  callers: GlobalCondition 1.0
+   GetLocationName           1.00/tick  callers: CheckDefaultAction 1.0
+   SetLabelColor             1.00/tick  callers: UpdateActionBar 1.0
+   StrCat                    1.00/tick  callers: AddExtension 1.0
+   SetGlobalInt              0.31/tick  callers: game_start 0.3
+   total API calls/tick from VM: 177.2
+
+-- (c) getter timing loop (cycles per call at fixed 40000 = c - loop; e = an empty noinline call of the same signature)
+   K GetGlobalInt calls=51841 nargs=1 args=381,0  -> cycles/call 41/41/41, empty call 18/18/18
+   K StrGetCharAt calls=27674 nargs=2 args=0,1  -> cycles/call 128/45/65, empty call 18/18/18
+   K StrLen calls=16141 nargs=1 args=0,0  -> cycles/call 107/35, empty call 18/18
+   K GetCursorMode calls=3840 nargs=0 args=0,0  -> cycles/call 21/21, empty call 18/18
+   K IsGamePaused calls=1920 nargs=0 args=0,0  -> cycles/call 31, empty call 18
+   K GetPlayerCharacter calls=960 nargs=0 args=0,0  -> cycles/call 28, empty call 18
+   K GetGUIAt calls=960 nargs=2 args=160,100  -> cycles/call 461, empty call 18

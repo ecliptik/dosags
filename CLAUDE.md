@@ -66,6 +66,15 @@ changes) and bump this repo's `.sdl-dos-ports/` pin (`git subtree pull
    is authoritative for performance/compatibility claims; DOSBox-X/86Box
    are automation gates.
 
+## Waiting on background work (agents included)
+
+Wait with `tools/waitfor.sh --timeout SECS --pid PID|--pidfile F [--file F --grep PAT]`, never a
+bare `until`/`while` loop. Record the job's PID when you start it (`& echo $! > job.pid`). Never
+test for a running job with `pgrep -f '<pattern>'`: the pattern is in the waiting shell's own
+command line, so it always matches and the loop never ends. One waiter per job; if it times out,
+look at the job before starting another. Before handing back, stop every background task you
+started.
+
 ## Never contribute upstream
 
 Never send anything back to AGS's upstream, or to SDL, or to any other

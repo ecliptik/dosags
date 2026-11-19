@@ -1,0 +1,790 @@
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index 4eed0b69f..b876cdc6e 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -1292,8 +1292,14 @@ void on_roomviewport_deleted(int index)
+     delete_invalid_regions(index);
+ }
+ 
++#ifdef __DJGPP__
++extern long dos_lab_camchg, dos_lab_vpchg;   // LAB-PLAY counters
++#endif
+ void on_roomviewport_changed(Viewport *view)
+ {
++#ifdef __DJGPP__
++    dos_lab_vpchg++;
++#endif
+     if (drawstate.FullFrameRedraw || (displayed_room < 0))
+         return;
+     if (!view->IsVisible() || view->GetCamera() == nullptr)
+@@ -1342,6 +1348,9 @@ void detect_roomviewport_overlaps(size_t z_index)
+ 
+ void on_roomcamera_changed(Camera *cam)
+ {
++#ifdef __DJGPP__
++    dos_lab_camchg++;
++#endif
+     if (drawstate.FullFrameRedraw || (displayed_room < 0))
+         return;
+     if (cam->HasChangedSize())
+@@ -2997,6 +3006,11 @@ static void dos_port_gui_flush_unmarked()
+ }
+ #endif
+ 
++#ifdef __DJGPP__
++// LAB-R3 (lab worktree only): GUI texture re-render counters and a per-frame GUI log in the DOSAGS_LAB_R3LOG window.
++extern int dos_lab_r3log_now();
++long dos_lab_guiredraw_n = 0, dos_lab_guinoskip_n = 0; long long dos_lab_guiredraw_us = 0, dos_lab_guinoskip_px = 0;
++#endif
+ void draw_gui_and_overlays()
+ {
+     // Draw gui controls on separate textures if:
+@@ -3050,6 +3064,19 @@ void draw_gui_and_overlays()
+             dos_port_gui_was_changed[_i] = guis[_i].HasChanged();
+             dos_port_gui_was_ctrls[_i]   = guis[_i].HasControlsChanged();
+         }
++        if (dos_lab_r3log_now())   // LAB-R3: which GUI / control says it changed, before the update loop clears it
++        {
++            for (int _i = 0; _i < game.numgui; ++_i)
++            {
++                const GUIMain &_g = guis[_i];
++                if (!_g.IsDisplayed() || (!_g.HasChanged() && !_g.HasControlsChanged())) continue;
++                char _cl[256]; int _cn = 0; _cl[0] = 0;
++                for (int _c = 0; _c < _g.GetControlCount() && _cn < 240; ++_c)
++                    if (_g.GetControl(_c)->HasChanged()) _cn += snprintf(_cl + _cn, sizeof(_cl) - _cn, "%d,", _c);
++                Debug::Printf("DOS-PORT labgui lc=%u idx=%d name=%s ch=%d cc=%d ctrls=%s", (unsigned)get_loop_counter(), _i,
++                    _g.GetName().GetCStr(), (int)_g.HasChanged(), (int)_g.HasControlsChanged(), _cn ? _cl : "-");
++            }
++        }
+ #endif
+ 
+         set_our_eip(37);
+@@ -3074,10 +3101,20 @@ void draw_gui_and_overlays()
+                     // non-sprite on guis with alpha-containing background would be transparent.
+                     gbg.Bmp->SetSupportAlphaInColors(game.HasAlphaInDrawingOps());
+ 
++#ifdef __DJGPP__
++                    const uclock_t _lab_rt0 = uclock();   // LAB-R3
++#endif
+                     if (draw_with_controls)
+                         gui.DrawWithControls(gbg.Bmp.get());
+                     else
+                         gui.DrawSelf(gbg.Bmp.get());
++#ifdef __DJGPP__
++                    {   const long long _us = dos_port_tick_elapsed_us(_lab_rt0);   // LAB-R3
++                        dos_lab_guiredraw_n++; dos_lab_guiredraw_us += _us;
++                        if (dos_lab_r3log_now())
++                            Debug::Printf("DOS-PORT labguiredraw lc=%u idx=%d %dx%d us=%lld", (unsigned)get_loop_counter(), index,
++                                gui.GetWidth(), gui.GetHeight(), _us); }
++#endif
+ 
+                     const bool is_alpha = gui.HasAlphaChannel();
+                     if (is_alpha)
+@@ -3248,6 +3285,10 @@ void draw_gui_and_overlays()
+                     _p.unmarked = _skip;
+                     if (_skip) dos_port_gui_skip_tally[index]++;
+                 }
++                if (!_skip) { dos_lab_guinoskip_n++; dos_lab_guinoskip_px += (long long)gui_ddb->GetWidth() * gui_ddb->GetHeight(); }   // LAB-R3
++                if (dos_lab_r3log_now())
++                    Debug::Printf("DOS-PORT labguidraw lc=%u idx=%d x=%d y=%d w=%d h=%d unch=%d same=%d skip=%d", (unsigned)get_loop_counter(),
++                        index, gui.GetX(), gui.GetY(), gui_ddb->GetWidth(), gui_ddb->GetHeight(), (int)_unch, (int)_same, (int)_skip);
+                 add_to_sprite_list(gui_ddb, gui.GetX(), gui.GetY(), gui.GetZOrder(),
+                                    guibg[index].DrawIndex, _skip);
+             }
+@@ -3302,9 +3343,8 @@ void put_sprite_list_on_screen(bool in_room)
+             // call, which is what makes a one-shot flag land on the right
+             // entry -- DrawSprite constructs its list entry synchronously.
+             {
+-                static int _h2 = -1;
+-                if (_h2 < 0) { const char *e = getenv("DOSAGS_GUI_CLIP");
+-                               _h2 = (e && e[0] == '1') ? 1 : 0; }
++                extern int dos_guiclip_mode();   // LAB-PLAY R1: one resolver (ali3dsw.cpp), 0 = off
++                const int _h2 = dos_guiclip_mode() >= 1 ? 1 : 0;
+                 if (_h2 && t.SkipInvalidate)
+                     gfxDriver->DosPortClipNextToDirty(true);
+             }
+diff --git a/Engine/ac/draw_software.cpp b/Engine/ac/draw_software.cpp
+index 2e57022e7..153d5af47 100644
+--- a/Engine/ac/draw_software.cpp
++++ b/Engine/ac/draw_software.cpp
+@@ -248,9 +248,13 @@ void set_invalidrects_cameraoffs(int view_index, int x, int y)
+ static bool dos_port_break_0193();   // patch 0195: defined below
+ #endif
+ 
++#ifdef __DJGPP__
++extern long dos_lab_invall, dos_lab_invcam;   // LAB-PLAY counters
++#endif
+ void invalidate_all_rects()
+ {
+ #ifdef __DJGPP__
++    dos_lab_invall++;
+     if (!dos_port_break_0193()) dos_port_dirty_set_full("invalidate_all_rects");   // patch 0193: the accumulator never heard of this
+ #endif
+     for (auto &rects : RoomCamRects)
+@@ -264,6 +268,7 @@ void invalidate_all_rects()
+ void invalidate_all_camera_rects(int view_index)
+ {
+ #ifdef __DJGPP__
++    dos_lab_invcam++;
+     if (!dos_port_break_0193()) dos_port_dirty_set_full("invalidate_all_camera_rects");   // patch 0193
+ #endif
+     if (view_index < 0)
+@@ -271,11 +276,22 @@ void invalidate_all_camera_rects(int view_index)
+     RoomCamRects[view_index].NumDirtyRegions = WHOLESCREENDIRTY;
+ }
+ 
++#ifdef __DJGPP__
++// LAB-R3: the restore repaints MORE than was marked when AGS's own span set coarsens -- a row past MAX_SPANS_PER_ROW
++// extends its nearest span across a gap (bit 1, still inside the marks' bbox), or a 26th rect in one interval turns
++// the whole surface dirty (bit 2, not reported to dos_port_dirty at all). Accumulated per restore interval and
++// latched at the room restore; R3's per-box clip falls back to the bbox (bit 1) or to a full composite (bit 2).
++int dos_r3_coarse_acc = 0, dos_r3_coarse_frame = 0;
++long dos_r3_span_ext = 0, dos_r3_overflow = 0, dos_r3_coarse_frames1 = 0, dos_r3_coarse_frames2 = 0;
++#endif
+ void invalidate_rect_on_surf(int x1, int y1, int x2, int y2, DirtyRects &rects)
+ {
+     if (rects.DirtyRows.size() == 0)
+         return;
+     if (rects.NumDirtyRegions >= MAXDIRTYREGIONS) {
++#ifdef __DJGPP__
++        dos_r3_coarse_acc |= 2; dos_r3_overflow++;   // LAB-R3
++#endif
+         // too many invalid rectangles, just mark the whole thing dirty
+         rects.NumDirtyRegions = WHOLESCREENDIRTY;
+         return;
+@@ -347,6 +363,9 @@ void invalidate_rect_on_surf(int x1, int y1, int x2, int y2, DirtyRects &rects)
+                 }
+             }
+             assert(nearestWas >= 0);
++#ifdef __DJGPP__
++            dos_r3_coarse_acc |= 1; dos_r3_span_ext++;   // LAB-R3
++#endif
+             if (extendLeft)
+                 dirtyRow[a].span[nearestWas].x1 = x1;
+             else
+@@ -944,6 +963,9 @@ void update_room_invreg_and_reset(int view_index, Bitmap *ds, Bitmap *src, bool
+ #ifdef __DJGPP__
+     }
+     dos_port_dirty_note_restore();   // patch 0193: marks made from here on are repainted next frame
++    dos_r3_coarse_frame = dos_r3_coarse_acc; dos_r3_coarse_acc = 0;   // LAB-R3: what THIS restore repainted beyond the marks
++    if (dos_r3_coarse_frame & 1) dos_r3_coarse_frames1++;
++    if (dos_r3_coarse_frame & 2) dos_r3_coarse_frames2++;
+ #ifndef DOSAGS_RELEASE   // patch 0351: no periodic bgstruct line in the release flavour
+     if ((dos_port_tick_timing.bg_calls % 500) == 0)
+         AGS::Common::Debug::Printf("DOS-PORT bgstruct calls=%ld whole=%ld px=%ld slow_px=%ld",
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index f9af123ae..58caa4a7b 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -28,6 +28,66 @@
+ #include <time.h> // uclock_t/uclock()/UCLOCKS_PER_SEC -- DOS-PORT patch 0079
+ #include "main/dos_port_tick_timing.h" // DOS-PORT patch 0079
+ #include "main/dos_port_work.h"        // DOS-PORT patch 0230
++#include "debug/out.h"                 // LAB-PLAY R1 witness line
++extern int dos_lab_sprdump_now();      // LAB-PLAY
++// LAB-PLAY lever R1 (ags 0170/0236 extended). DOSAGS_GUI_CLIP: unset/0 = off (the 0365 head: no entry is flagged,
++// every GUI composited in full); 1 = 0170+0236's clip as shipped (opt-in); 2 = R1: the same clip, and an entry whose
++// clipped rect is EMPTY is not composited at all (a clip to an empty rect draws nothing). Lab control only:
++// DOSAGS_GUI_CLIP=2 with DOSAGS_LAB_GUISKIP_BREAK=1 = mode 3, skip every flagged entry (must break the digest gate).
++// Latch: any change of the back buffer (virtualScreen object, its pixel base or size, an alias switch) or a tint /
++// plugin entry forces full composition -- no clip, no skip -- for that frame and the next.
++static int dos_gc_mode = -1;
++static const char *dos_gc_env = nullptr;
++long dos_gc_flagged = 0, dos_gc_skipped = 0, dos_gc_clipped = 0, dos_gc_full = 0, dos_gc_latched_full = 0;
++long dos_gc_latch_events = 0, dos_gc_latch_alias = 0, dos_gc_latch_buffer = 0, dos_gc_latch_tint = 0;
++long long dos_gc_skipped_px = 0;
++static int dos_gc_latch = 0;
++static const void *dos_gc_last_vs = nullptr, *dos_gc_last_base = nullptr; static int dos_gc_last_w = -1, dos_gc_last_h = -1;
++int dos_guiclip_mode()
++{
++    if (dos_gc_mode < 0)
++    {
++        dos_gc_env = getenv("DOSAGS_GUI_CLIP");
++        const char *e = dos_gc_env;
++        dos_gc_mode = (e && e[0] == '1') ? 1 : (e && e[0] == '2') ? 2 : (e && e[0] == '4') ? 4 : 0;
++        const char *b = getenv("DOSAGS_LAB_GUISKIP_BREAK");
++        if (dos_gc_mode == 2 && b && b[0] == '1') dos_gc_mode = 3;
++        if (dos_gc_mode == 4 && b && b[0] == '2') dos_gc_mode = 5;   // LAB-R3 control: per-box clip WITHOUT the carry boxes
++        AGS::Common::Debug::Printf("DOS-PORT guiclip DOSAGS_GUI_CLIP=%s mode=%d", (e && *e) ? e : "(unset)", dos_gc_mode);
++    }
++    return dos_gc_mode;
++}
++// LAB-R3 (DOSAGS_GUI_CLIP=4): R1, and a flagged entry the dirty set does reach is composited once per dirty BOX
++// (box set U carry boxes, each intersected with the entry rect) instead of once to their bounding box.
++long dos_r3_multi = 0, dos_r3_rects = 0, dos_r3_fb_bbox = 0, dos_r3_fb_whole = 0;
++long long dos_r3_px = 0, dos_gc_clip_px = 0, dos_gc_full_px = 0;
++extern int dos_r3_coarse_frame;
++extern long dos_r3_span_ext, dos_r3_overflow, dos_r3_coarse_frames1, dos_r3_coarse_frames2;
++extern int dos_lab_r3log_now();
++static void dos_gc_set_latch(long &why) { if (dos_gc_latch < 2) { dos_gc_latch_events++; why++; } dos_gc_latch = 2; }
++void dos_guiclip_summary(FILE *log)
++{
++    if (!log) return;
++    fprintf(log, "DOS-PORT guiclip_final mode=%d flagged=%ld skipped=%ld skipped_px=%lld clipped=%ld full=%ld latched_full=%ld"
++        " latch_events=%ld latch_alias=%ld latch_buffer=%ld latch_tint=%ld\n",
++        dos_gc_mode, dos_gc_flagged, dos_gc_skipped, dos_gc_skipped_px, dos_gc_clipped, dos_gc_full, dos_gc_latched_full,
++        dos_gc_latch_events, dos_gc_latch_alias, dos_gc_latch_buffer, dos_gc_latch_tint);
++    fprintf(log, "DOS-PORT r3_final multi=%ld rects=%ld r3_px=%lld clip_px=%lld full_px=%lld fb_bbox=%ld fb_whole=%ld"
++        " span_ext=%ld overflow=%ld coarse_frames_span=%ld coarse_frames_whole=%ld\n",
++        dos_r3_multi, dos_r3_rects, dos_r3_px, dos_gc_clip_px, dos_gc_full_px, dos_r3_fb_bbox, dos_r3_fb_whole,
++        dos_r3_span_ext, dos_r3_overflow, dos_r3_coarse_frames1, dos_r3_coarse_frames2);
++}
++// LAB-PLAY gate: DOSAGS_LAB_FRAMEHASH=1 records (loop counter, FNV-1a of the virtual screen) after every composite
++static int dos_lab_fh_mode = -1; static unsigned long *dos_lab_fh_buf = nullptr; static long dos_lab_fh_n = 0;
++static const long DOS_LAB_FH_CAP = 40000;
++static void dos_lab_fh_dump()
++{
++    FILE *f = fopen("FHASH.TXT", "w");
++    if (!f) return;
++    for (long i = 0; i < dos_lab_fh_n; ++i) fprintf(f, "%lu %08lx\n", dos_lab_fh_buf[2 * i], dos_lab_fh_buf[2 * i + 1]);
++    fclose(f);
++}
++extern uint32_t get_loop_counter();
+ #endif
+ 
+ 
+@@ -49,6 +109,9 @@ static uint32_t _trans_alpha_blender32(uint32_t x, uint32_t y, uint32_t n);
+ 
+ SDLRendererGraphicsDriver::SDLRendererGraphicsDriver()
+ {
++#ifdef __DJGPP__
++    dos_guiclip_mode();   // LAB-PLAY R1: witness line once at startup
++#endif
+   _tint_red = 0;
+   _tint_green = 0;
+   _tint_blue = 0;
+@@ -221,6 +284,9 @@ void SDLRendererGraphicsDriver::DosPortAliasDeactivate()
+ {
+     if (!_aliasActive)
+         return;
++#ifdef __DJGPP__
++    dos_gc_set_latch(dos_gc_latch_alias);   // LAB-PLAY R1
++#endif
+     _aliasActive = false;
+     _aliasX = _aliasY = _aliasW = _aliasH = -1;
+     _aliasBase = nullptr;
+@@ -295,6 +361,9 @@ bool SDLRendererGraphicsDriver::DosPortAliasTryActivate(SDL_Surface *win, const
+     _vscreenSurface = SDL_CreateSurfaceFrom(dst.w, dst.h, win->format, base, win->pitch);
+     if (_vscreenSurface && win->format == SDL_PIXELFORMAT_INDEX8)
+         SDL_CreateSurfacePalette(_vscreenSurface);
++#ifdef __DJGPP__
++    dos_gc_set_latch(dos_gc_latch_alias);   // LAB-PLAY R1
++#endif
+     _aliasActive = true;
+     _aliasX = dst.x; _aliasY = dst.y; _aliasW = dst.w; _aliasH = dst.h; _aliasBase = win->pixels;
+     dos_port_tick_timing.vscreen_alias_on++;
+@@ -619,6 +688,21 @@ void SDLRendererGraphicsDriver::RenderToBackBuffer()
+         ClearDrawLists();
+         return; // no batches - no render
+     }
++#ifdef __DJGPP__
++    // LAB-PLAY R1 latch: decays one per composited frame; a back-buffer change re-arms it for this frame and the next
++    if (dos_gc_latch > 0) dos_gc_latch--;
++    if (virtualScreen)
++    {
++        const void *_vb = virtualScreen->GetScanLine(0);
++        if (virtualScreen != dos_gc_last_vs || _vb != dos_gc_last_base ||
++            virtualScreen->GetWidth() != dos_gc_last_w || virtualScreen->GetHeight() != dos_gc_last_h)
++        {
++            if (dos_gc_last_vs) dos_gc_set_latch(dos_gc_latch_buffer);
++            dos_gc_last_vs = virtualScreen; dos_gc_last_base = _vb;
++            dos_gc_last_w = virtualScreen->GetWidth(); dos_gc_last_h = virtualScreen->GetHeight();
++        }
++    }
++#endif
+ 
+     // Render all the sprite batches with necessary transformations
+     //
+@@ -739,6 +823,27 @@ void SDLRendererGraphicsDriver::RenderToBackBuffer()
+     _stageVirtualScreen = virtualScreen;
+     _rendSpriteBatch = UINT32_MAX;
+     ClearDrawLists();
++#ifdef __DJGPP__
++    if (dos_lab_fh_mode < 0)
++    {
++        const char *e = getenv("DOSAGS_LAB_FRAMEHASH");
++        dos_lab_fh_mode = (e && e[0] == '1') ? 1 : 0;
++        if (dos_lab_fh_mode) { dos_lab_fh_buf = (unsigned long *)malloc(sizeof(unsigned long) * 2 * DOS_LAB_FH_CAP); atexit(dos_lab_fh_dump); }
++    }
++    if (dos_lab_fh_mode == 1 && dos_lab_fh_buf && dos_lab_fh_n < DOS_LAB_FH_CAP && virtualScreen)
++    {
++        unsigned long hsh = 2166136261UL;
++        const int bw = virtualScreen->GetWidth() * virtualScreen->GetBPP();   // whole 32-bit words (320x16bpp: 160 a row)
++        for (int y = 0; y < virtualScreen->GetHeight(); ++y)
++        {
++            const uint32_t *row = reinterpret_cast<const uint32_t *>(virtualScreen->GetScanLine(y));
++            for (int x = 0; x < bw / 4; ++x) { hsh ^= row[x]; hsh *= 16777619UL; hsh ^= hsh >> 15; }
++        }
++        dos_lab_fh_buf[2 * dos_lab_fh_n] = (unsigned long)get_loop_counter();
++        dos_lab_fh_buf[2 * dos_lab_fh_n + 1] = hsh & 0xFFFFFFFFUL;
++        dos_lab_fh_n++;
++    }
++#endif
+ }
+ 
+ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch, size_t from, Bitmap *surface, int surf_offx, int surf_offy)
+@@ -757,6 +862,9 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+ #endif
+     if (sprite.ddb == nullptr)
+     {
++#ifdef __DJGPP__
++      dos_gc_set_latch(dos_gc_latch_tint);   // LAB-PLAY R1
++#endif
+       if (_spriteEvtCallback)
+         _spriteEvtCallback(sprite.x, sprite.y);
+       else
+@@ -767,6 +875,9 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+     }
+     else if (sprite.ddb == reinterpret_cast<ALSoftwareBitmap*>(DRAWENTRY_TINT))
+     {
++#ifdef __DJGPP__
++      dos_gc_set_latch(dos_gc_latch_tint);   // LAB-PLAY R1
++#endif
+       // draw screen tint fx
+       set_trans_blender(_tint_red, _tint_green, _tint_blue, 0);
+       surface->LitBlendBlt(surface, 0, 0, 128);
+@@ -900,25 +1011,135 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+     // (dos_port_dirty_merge_carry), after this composite, so a clip read without them can miss a restored
+     // span and leave the skipped entry out of it for good -- the cause of 0170 stage 2's divergence (dosags
+     // LAB-S32.md 23.4-23.11). Read the carry here; do not merge it. Only reachable with DOSAGS_GUI_CLIP=1.
+-    if (sprite.dos_clip_dirty && _dp_same_space &&
+-        dos_port_dirty.valid && !dos_port_dirty.is_full && !dos_port_dirty.carry_full)
++    // LAB-PLAY R1: modes and latch per dos_guiclip_mode() above. A flagged entry exists only in modes >= 1.
++    // LAB-R3: the dirty set as the UI batch sees it, once per batch in the R3LOG window
++    {
++        static unsigned _lab_last_batch = UINT32_MAX; static uint32_t _lab_last_lc = UINT32_MAX;
++        if (sprite.dos_clip_dirty && dos_lab_r3log_now() &&
++            (batch.ID != _lab_last_batch || get_loop_counter() != _lab_last_lc))
++        {
++            _lab_last_batch = batch.ID; _lab_last_lc = get_loop_counter();
++            char _bl[512]; int _n = 0; _bl[0] = 0;
++            for (int _i = 0; _i < dos_port_dirty.nbox && _n < 480; ++_i)
++                _n += snprintf(_bl + _n, sizeof(_bl) - _n, "%d,%d-%d,%d;", dos_port_dirty.box[_i].x1, dos_port_dirty.box[_i].y1,
++                               dos_port_dirty.box[_i].x2, dos_port_dirty.box[_i].y2);
++            char _cl[512]; int _m = 0; _cl[0] = 0;
++            for (int _i = 0; _i < dos_port_dirty.carry_nbox && _m < 480; ++_i)
++                _m += snprintf(_cl + _m, sizeof(_cl) - _m, "%d,%d-%d,%d;", dos_port_dirty.carry_box[_i].x1, dos_port_dirty.carry_box[_i].y1,
++                               dos_port_dirty.carry_box[_i].x2, dos_port_dirty.carry_box[_i].y2);
++            Debug::Printf("DOS-PORT labdirty lc=%u batch=%u valid=%d full=%d carry_full=%d latch=%d coarse=%d bbox=%d,%d-%d,%d boxes=%s carry=%s",
++                (unsigned)get_loop_counter(), (unsigned)batch.ID, (int)dos_port_dirty.valid, (int)dos_port_dirty.is_full,
++                (int)dos_port_dirty.carry_full, dos_gc_latch, dos_r3_coarse_frame, dos_port_dirty.x1, dos_port_dirty.y1,
++                dos_port_dirty.x2, dos_port_dirty.y2, _n ? _bl : "-", _m ? _cl : "-");
++        }
++    }
++    Rect _r3_rect[2 * DOS_PORT_DIRTY_MAX_BOXES]; int _r3_n = 0;   // LAB-R3: >0 = composite once per rect
++    char _lab_mode = 'n';                                            // LAB-R3 log: n unflagged, F full, C bbox, S skip, M multi
++    if (sprite.dos_clip_dirty)
+     {
+-        Rect d(dos_port_dirty.x1, dos_port_dirty.y1,
+-               dos_port_dirty.x2, dos_port_dirty.y2);
+-        for (int _ci = 0; _ci < dos_port_dirty.carry_nbox; ++_ci)   // patch 0236
++        dos_gc_flagged++;
++        bool _gc_clip_done = false;
++        const int _gm0 = dos_guiclip_mode();
++        if (_gm0 >= 4 && dos_gc_latch == 0 && _dp_same_space && native_bmp &&
++            dos_port_dirty.valid && !dos_port_dirty.is_full && !dos_port_dirty.carry_full &&
++            (dos_r3_coarse_frame & 2))
+         {
+-            const DosPortDirtyBox &_cb = dos_port_dirty.carry_box[_ci];
+-            d = Rect(std::min(d.Left, _cb.x1), std::min(d.Top, _cb.y1),
+-                     std::max(d.Right, _cb.x2), std::max(d.Bottom, _cb.y2));
++            dos_r3_fb_whole++;   // LAB-R3: this frame's restore went whole-surface behind dos_port_dirty's back
+         }
+-        Rect cur = surface->GetClip();
+-        Rect isect = IntersectRects(cur, d);
+-        if (!isect.IsEmpty())
++        else if (_gm0 >= 4 && dos_gc_latch == 0 && _dp_same_space && native_bmp &&
++            dos_port_dirty.valid && !dos_port_dirty.is_full && !dos_port_dirty.carry_full &&
++            !(dos_r3_coarse_frame & 1))
+         {
++            // LAB-R3: everything written to the buffer before this entry this frame lies inside box[] U carry_box[]
++            // (0193/0236; boxes only ever grow when merged), so outside them the entry's pixels are last frame's,
++            // which already hold this same composite. Composite it once per box that reaches it.
++            const Rect cur = surface->GetClip();
++            const Rect _g(drawAtX, drawAtY, drawAtX + native_bmp->GetWidth() - 1, drawAtY + native_bmp->GetHeight() - 1);
++            const Rect _gc = IntersectRects(cur, _g);
++            const int _nc = (_gm0 == 5) ? 0 : dos_port_dirty.carry_nbox;   // mode 5: the control drops the carry
++            for (int _bi = 0; _bi < dos_port_dirty.nbox + _nc; ++_bi)
++            {
++                const DosPortDirtyBox &_b = (_bi < dos_port_dirty.nbox) ? dos_port_dirty.box[_bi]
++                                                                       : dos_port_dirty.carry_box[_bi - dos_port_dirty.nbox];
++                const Rect _r = IntersectRects(_gc, Rect(_b.x1, _b.y1, _b.x2, _b.y2));
++                if (_r.IsEmpty()) continue;
++                // a rect inside one already listed adds nothing (the still cursor: its box and its carry are equal)
++                bool _inside = false;
++                for (int _k = 0; _k < _r3_n && !_inside; ++_k)
++                    _inside = _r.Left >= _r3_rect[_k].Left && _r.Right <= _r3_rect[_k].Right &&
++                              _r.Top >= _r3_rect[_k].Top && _r.Bottom <= _r3_rect[_k].Bottom;
++                if (!_inside) _r3_rect[_r3_n++] = _r;
++            }
++            if (_r3_n == 0)
++            {
++                dos_gc_skipped++;
++                dos_gc_skipped_px += (long long)native_bmp->GetWidth() * native_bmp->GetHeight();
++                if (dos_lab_r3log_now())
++                    Debug::Printf("DOS-PORT labspr batch=%u x=%d y=%d w=%d h=%d mode=S", (unsigned)batch.ID, drawAtX, drawAtY,
++                        native_bmp->GetWidth(), native_bmp->GetHeight());
++                continue;
++            }
+             _dp_saved_clip = cur;
+             _dp_clipped = true;
+-            surface->SetClip(isect);
++            _gc_clip_done = true;
++            dos_gc_clipped++;
+             dos_port_tick_timing.rb_clipped_sprites++;
++            dos_r3_multi++; dos_r3_rects += _r3_n;
++            for (int _k = 0; _k < _r3_n; ++_k) dos_r3_px += (long long)_r3_rect[_k].GetWidth() * _r3_rect[_k].GetHeight();
++            _lab_mode = 'M';
++        }
++        else if (dos_gc_latch == 0 && _dp_same_space &&
++            dos_port_dirty.valid && !dos_port_dirty.is_full && !dos_port_dirty.carry_full)
++        {
++            if (_gm0 >= 4) dos_r3_fb_bbox++;   // LAB-R3: span coarsening -> the bbox (R1) path
++            Rect d(dos_port_dirty.x1, dos_port_dirty.y1,
++                   dos_port_dirty.x2, dos_port_dirty.y2);
++            for (int _ci = 0; _ci < dos_port_dirty.carry_nbox; ++_ci)   // patch 0236
++            {
++                const DosPortDirtyBox &_cb = dos_port_dirty.carry_box[_ci];
++                d = Rect(std::min(d.Left, _cb.x1), std::min(d.Top, _cb.y1),
++                         std::max(d.Right, _cb.x2), std::max(d.Bottom, _cb.y2));
++            }
++            Rect cur = surface->GetClip();
++            Rect isect = IntersectRects(cur, d);
++            const int _gm = dos_guiclip_mode();
++            if (_gm >= 2 && native_bmp)
++            {
++                const Rect _g(drawAtX, drawAtY,
++                              drawAtX + native_bmp->GetWidth() - 1, drawAtY + native_bmp->GetHeight() - 1);
++                if (_gm == 3 || IntersectRects(isect, _g).IsEmpty())
++                {
++                    dos_gc_skipped++;
++                    dos_gc_skipped_px += (long long)native_bmp->GetWidth() * native_bmp->GetHeight();
++                    if (dos_lab_r3log_now())
++                        Debug::Printf("DOS-PORT labspr batch=%u x=%d y=%d w=%d h=%d mode=S", (unsigned)batch.ID, drawAtX, drawAtY,
++                            native_bmp->GetWidth(), native_bmp->GetHeight());
++                    continue;   // R1: a clip to an empty rect would draw nothing
++                }
++            }
++            if (!isect.IsEmpty())
++            {
++                _dp_saved_clip = cur;
++                _dp_clipped = true;
++                surface->SetClip(isect);
++                dos_port_tick_timing.rb_clipped_sprites++;
++                dos_gc_clipped++;
++                _gc_clip_done = true;
++                _lab_mode = 'C';
++                if (native_bmp)
++                {
++                    const Rect _gi = IntersectRects(isect, Rect(drawAtX, drawAtY, drawAtX + native_bmp->GetWidth() - 1,
++                                                                drawAtY + native_bmp->GetHeight() - 1));
++                    if (!_gi.IsEmpty()) dos_gc_clip_px += (long long)_gi.GetWidth() * _gi.GetHeight();
++                }
++            }
++        }
++        if (!_gc_clip_done)
++        {
++            dos_gc_full++;
++            if (dos_gc_latch) dos_gc_latched_full++;
++            _lab_mode = 'F';
++            if (native_bmp) dos_gc_full_px += (long long)native_bmp->GetWidth() * native_bmp->GetHeight();
+         }
+     }
+     struct _DpUnclip {
+@@ -941,8 +1162,19 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+         const Rect _dw_i = IntersectRects(surface->GetClip(), _dw_s);
+         if (!_dw_i.IsEmpty())
+             _dw_px = (long long)_dw_i.GetWidth() * _dw_i.GetHeight();
++        if (_r3_n > 0)   // LAB-R3: the per-box composite covers its rects, not the clip in force
++        {
++            _dw_px = 0;
++            for (int _k = 0; _k < _r3_n; ++_k) _dw_px += (long long)_r3_rect[_k].GetWidth() * _r3_rect[_k].GetHeight();
++        }
+     }
+ #endif
++#ifdef __DJGPP__
++    // LAB-PLAY: DOSAGS_LAB_SPRDUMP=lc[,lc...] lists every composited sprite of the render passes at those loop counts
++    const bool _lab_dump = ::dos_lab_sprdump_now() && native_bmp;
++    const uclock_t _lab_t0 = _lab_dump ? uclock() : 0;
++#endif
++    auto _dp_draw = [&]() {   // LAB-R3: the unchanged draw dispatch, callable once per clip rect
+     if (alpha == 0) {} // fully transparent, do nothing
+     else if (is_opaque && (native_bmp == surface) && (alpha == 255)) {}
+     else if (is_opaque)
+@@ -976,6 +1208,41 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+       GfxUtil::DrawSpriteWithTransparency(surface, native_bmp, drawAtX, drawAtY,
+           alpha);
+     }
++    };
++#ifdef __DJGPP__
++    if (_r3_n > 0)
++    {
++        for (int _k = 0; _k < _r3_n; ++_k) { surface->SetClip(_r3_rect[_k]); _dp_draw(); }
++        // _dp_unclip restores _dp_saved_clip on scope exit
++    }
++    else
++#endif
++    _dp_draw();
++#ifdef __DJGPP__
++    if (_lab_dump)
++    {
++        char _rl[512]; int _n = 0; _rl[0] = 0;
++        long long _px = _dw_px;
++        if (_r3_n > 0)
++        {
++            _px = 0;
++            for (int _k = 0; _k < _r3_n && _n < 480; ++_k)
++            {
++                _n += snprintf(_rl + _n, sizeof(_rl) - _n, "%d,%d-%d,%d;", _r3_rect[_k].Left, _r3_rect[_k].Top, _r3_rect[_k].Right, _r3_rect[_k].Bottom);
++                _px += (long long)_r3_rect[_k].GetWidth() * _r3_rect[_k].GetHeight();
++            }
++        }
++        else if (_lab_mode == 'C')
++        {
++            const Rect _c = surface->GetClip();
++            _n = snprintf(_rl, sizeof(_rl), "%d,%d-%d,%d;", _c.Left, _c.Top, _c.Right, _c.Bottom);
++        }
++        Debug::Printf("DOS-PORT labspr batch=%u x=%d y=%d w=%d h=%d alpha=%d opaque=%d hasalpha=%d clipdirty=%d surf=%dx%d off=%d,%d px=%ld us=%ld bpp=%d/%d mode=%c rects=%s",
++            (unsigned)batch.ID, drawAtX, drawAtY, native_bmp->GetWidth(), native_bmp->GetHeight(), alpha, (int)is_opaque,
++            (int)has_alpha, (int)sprite.dos_clip_dirty, surface->GetWidth(), surface->GetHeight(), surf_offx, surf_offy, (long)_px,
++            (long)dos_port_tick_elapsed_us(_lab_t0), native_bmp->GetColorDepth(), surface->GetColorDepth(), _lab_mode, _n ? _rl : "-");
++    }
++#endif
+   }
+   return from;
+ }
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 283f3a8bd..387764e42 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -2032,6 +2032,106 @@ static void dos_tick_clicks()
+ }
+ #endif
+ 
++#ifdef __DJGPP__
++// LAB-PLAY (lab worktree only, not a port patch): DOSAGS_LABCLICKS=lc:x:y[,lc:x:y...] clicks the left button at
++// game point (x, y) when the loop counter first reaches lc, through the same calls as patch 0247. Lets an in-play
++// fixture walk MMD's kids by pointing into the room view instead of 0247's fixed sweep (which lands in the verb bar).
++static int dos_lc_mode = -1, dos_lc_n = 0, dos_lc_next = 0;
++static long dos_lc_t[64]; static int dos_lc_x[64], dos_lc_y[64], dos_lc_b[64];
++long dos_lab_camchg = 0, dos_lab_vpchg = 0, dos_lab_invall = 0, dos_lab_invcam = 0, dos_lab_camx_moves = 0;
++static int dos_sd_mode = -1, dos_sd_n = 0; static long dos_sd_t[32];
++// LAB-R3: DOSAGS_LAB_R3LOG=lo:hi -- per-frame GUI / dirty-set / composite log for every render pass with lo <= lc <= hi
++static int dos_r3l_mode = -1; static long dos_r3l_lo = 0, dos_r3l_hi = -1;
++int dos_lab_r3log_now()
++{
++    if (dos_r3l_mode < 0)
++    {
++        dos_r3l_mode = 0;
++        const char *e = getenv("DOSAGS_LAB_R3LOG");
++        if (e && sscanf(e, "%ld:%ld", &dos_r3l_lo, &dos_r3l_hi) == 2) dos_r3l_mode = 1;
++    }
++    if (!dos_r3l_mode) return 0;
++    const long lc = (long)get_loop_counter();
++    return lc >= dos_r3l_lo && lc <= dos_r3l_hi;
++}
++int dos_lab_sprdump_now()
++{
++    if (dos_lab_r3log_now()) return 1;
++    if (dos_sd_mode < 0)
++    {
++        dos_sd_mode = 0;
++        const char *e = getenv("DOSAGS_LAB_SPRDUMP");
++        while (e && *e && dos_sd_n < 32)
++        {
++            long t; int used = 0;
++            if (sscanf(e, "%ld%n", &t, &used) != 1) break;
++            dos_sd_t[dos_sd_n++] = t; e += used; if (*e == ',') e++;
++        }
++        dos_sd_mode = dos_sd_n > 0;
++    }
++    if (!dos_sd_mode) return 0;
++    const long lc = (long)get_loop_counter();
++    for (int i = 0; i < dos_sd_n; ++i) if (dos_sd_t[i] == lc) return 1;
++    return 0;
++}
++static int dos_ck_mode = -1, dos_ck_n = 0, dos_ck_next = 0; static long dos_ck_t[64];
++#ifndef DOSAGS_RELEASE
++extern void dos_lab_checkpoint(long lc);
++#else
++static void dos_lab_checkpoint(long) {}   // LAB-PLAY: the release flavour has no phase totals to dump
++#endif
++static void dos_lab_ckpt()
++{
++    if (dos_ck_mode < 0)
++    {
++        dos_ck_mode = 0;
++        const char *e = getenv("DOSAGS_LAB_CKPT");
++        while (e && *e && dos_ck_n < 64)
++        {
++            long t; int used = 0;
++            if (sscanf(e, "%ld%n", &t, &used) != 1) break;
++            dos_ck_t[dos_ck_n++] = t; e += used; if (*e == ',') e++;
++        }
++        dos_ck_mode = dos_ck_n > 0;
++    }
++    if (!dos_ck_mode || dos_ck_next >= dos_ck_n) return;
++    const long lc = (long)get_loop_counter();
++    while (dos_ck_next < dos_ck_n && lc >= dos_ck_t[dos_ck_next])
++    {
++        const uclock_t _t0 = uclock();
++        dos_lab_checkpoint(lc); dos_ck_next++;
++        Debug::Printf("DOS-PORT labck lc=%ld self_us=%lld", lc, (long long)dos_port_tick_elapsed_us(_t0));
++    }
++}
++static void dos_lab_clicks()
++{
++    if (dos_lc_mode < 0)
++    {
++        dos_lc_mode = 0;
++        const char *e = getenv("DOSAGS_LABCLICKS");
++        while (e && *e && dos_lc_n < 64)
++        {
++            long t; int x, y, used = 0, b = 1, used2 = 0;
++            if (sscanf(e, "%ld:%d:%d%n", &t, &x, &y, &used) != 3) break;
++            e += used;
++            if (*e == ':' && sscanf(e, ":%d%n", &b, &used2) == 1) e += used2;   // 4th field: 1 click (default), 0 move only
++            dos_lc_t[dos_lc_n] = t; dos_lc_x[dos_lc_n] = x; dos_lc_y[dos_lc_n] = y; dos_lc_b[dos_lc_n] = b; dos_lc_n++;
++            if (*e == ',') e++;
++        }
++        if (dos_lc_n > 0) { dos_lc_mode = 1; Debug::Printf("DOS-PORT labclicks n=%d", dos_lc_n); }
++    }
++    if (dos_lc_mode != 1 || dos_lc_next >= dos_lc_n)
++        return;
++    const long lc = (long)get_loop_counter();
++    if (lc < dos_lc_t[dos_lc_next])
++        return;
++    const int k = dos_lc_next++;
++    SetMousePosition(dos_lc_x[k], dos_lc_y[k]);
++    if (dos_lc_b[k]) SimulateMouseClick(kMouseLeft);
++    Debug::Printf("DOS-PORT labclick lc=%ld n=%d x=%d y=%d click=%d", lc, k + 1, dos_lc_x[k], dos_lc_y[k], dos_lc_b[k]);
++}
++#endif
++
+ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int extra_x, int extra_y, bool skip_render_and_wait)
+ {
+     // DOS-PORT patch 0082: whole-function bracket, first line so it
+@@ -2055,6 +2155,8 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+ #ifdef __DJGPP__
+         DosPortTickScope _dos_port_input_scope(dos_port_tick_timing.input_poll);
+         dos_tick_clicks();   // patch 0247: no-op unless DOSAGS_TICKCLICKS is set
++        dos_lab_ckpt();      // LAB-PLAY
++        dos_lab_clicks();    // LAB-PLAY
+ #endif
+         sys_evt_process_pending();
+     }
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index d73ebb3de..d35483887 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -310,6 +310,91 @@ static void dos_port_tick_emit(FILE *log, const char *name, const DosPortTickPha
+ }
+ #endif
+ 
++#ifdef __DJGPP__
++#ifndef DOSAGS_RELEASE
++// LAB-PLAY: one checkpoint of every cumulative phase total and work counter, so a single run yields windows
++// (differences between checkpoints). Called from UpdateGameOnce at DOSAGS_LAB_CKPT loop counts.
++#include "main/dos_port_work.h"
++extern long dos_lab_camchg, dos_lab_vpchg, dos_lab_invall, dos_lab_invcam;
++extern long long dos_port_evt_us[6];
++extern long dos_port_evt_n[6];
++void dos_lab_checkpoint(long lc)
++{
++    const DosPortTickTiming &t = dos_port_tick_timing;
++    Debug::Printf("DOS-PORT labck lc=%ld ph=script_vm calls=%ld us=%lld", lc, t.script_vm.calls, t.script_vm.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=render_backbuffer calls=%ld us=%lld", lc, t.render_backbuffer.calls, t.render_backbuffer.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=rb_sprite_time calls=%ld us=%lld", lc, t.rb_sprite_time.calls, t.rb_sprite_time.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=input_poll calls=%ld us=%lld", lc, t.input_poll.calls, t.input_poll.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=audio_sync calls=%ld us=%lld", lc, t.audio_sync.calls, t.audio_sync.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=scene_construct calls=%ld us=%lld", lc, t.scene_construct.calls, t.scene_construct.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=bg_restore calls=%ld us=%lld", lc, t.bg_restore.calls, t.bg_restore.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=sc_overlays calls=%ld us=%lld", lc, t.sc_overlays.calls, t.sc_overlays.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=sc_room_view calls=%ld us=%lld", lc, t.sc_room_view.calls, t.sc_room_view.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=sc_ui_view calls=%ld us=%lld", lc, t.sc_ui_view.calls, t.sc_ui_view.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=sc_screen_ovl calls=%ld us=%lld", lc, t.sc_screen_ovl.calls, t.sc_screen_ovl.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=sc_preroom calls=%ld us=%lld", lc, t.sc_preroom.calls, t.sc_preroom.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=sc_prep_objects calls=%ld us=%lld", lc, t.sc_prep_objects.calls, t.sc_prep_objects.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=sc_prep_chars calls=%ld us=%lld", lc, t.sc_prep_chars.calls, t.sc_prep_chars.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=sc_draw_list calls=%ld us=%lld", lc, t.sc_draw_list.calls, t.sc_draw_list.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=sc_viewports calls=%ld us=%lld", lc, t.sc_viewports.calls, t.sc_viewports.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=wait_next_frame calls=%ld us=%lld", lc, t.wait_next_frame.calls, t.wait_next_frame.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=game_tick_outer calls=%ld us=%lld", lc, t.game_tick_outer.calls, t.game_tick_outer.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=update_game_once_total calls=%ld us=%lld", lc, t.update_game_once_total.calls, t.update_game_once_total.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=game_objects_update calls=%ld us=%lld", lc, t.game_objects_update.calls, t.game_objects_update.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=objects_scale calls=%ld us=%lld", lc, t.objects_scale.calls, t.objects_scale.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=gui_poll calls=%ld us=%lld", lc, t.gui_poll.calls, t.gui_poll.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=ground_interactions calls=%ld us=%lld", lc, t.ground_interactions.calls, t.ground_interactions.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=input_handling calls=%ld us=%lld", lc, t.input_handling.calls, t.input_handling.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=room_check calls=%ld us=%lld", lc, t.room_check.calls, t.room_check.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=gui_context_cursor calls=%ld us=%lld", lc, t.gui_context_cursor.calls, t.gui_context_cursor.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=persistent_anims calls=%ld us=%lld", lc, t.persistent_anims.calls, t.persistent_anims.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=end_of_tick calls=%ld us=%lld", lc, t.end_of_tick.calls, t.end_of_tick.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=rep_exec_vm calls=%ld us=%lld", lc, t.rep_exec_vm.calls, t.rep_exec_vm.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=rep_exec_wrapper calls=%ld us=%lld", lc, t.rep_exec_wrapper.calls, t.rep_exec_wrapper.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=drawable_object_states calls=%ld us=%lld", lc, t.drawable_object_states.calls, t.drawable_object_states.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=process_events_dispatch calls=%ld us=%lld", lc, t.process_events_dispatch.calls, t.process_events_dispatch.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=catchup_audio_poll calls=%ld us=%lld", lc, t.catchup_audio_poll.calls, t.catchup_audio_poll.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=render_to_screen calls=%ld us=%lld", lc, t.render_to_screen.calls, t.render_to_screen.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=render_to_screen_pertick calls=%ld us=%lld", lc, t.render_to_screen_pertick.calls, t.render_to_screen_pertick.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=screen_overlay_vsync calls=%ld us=%lld", lc, t.screen_overlay_vsync.calls, t.screen_overlay_vsync.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=present_get_win_surface calls=%ld us=%lld", lc, t.present_get_win_surface.calls, t.present_get_win_surface.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=present_sync_palette calls=%ld us=%lld", lc, t.present_sync_palette.calls, t.present_sync_palette.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=present_flip_handling calls=%ld us=%lld", lc, t.present_flip_handling.calls, t.present_flip_handling.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=present_blit calls=%ld us=%lld", lc, t.present_blit.calls, t.present_blit.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=present_update_window calls=%ld us=%lld", lc, t.present_update_window.calls, t.present_update_window.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=fastblit_lock calls=%ld us=%lld", lc, t.fastblit_lock.calls, t.fastblit_lock.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=fastblit_hreplicate calls=%ld us=%lld", lc, t.fastblit_hreplicate.calls, t.fastblit_hreplicate.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=fastblit_vmemcpy calls=%ld us=%lld", lc, t.fastblit_vmemcpy.calls, t.fastblit_vmemcpy.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=present_dirty_check calls=%ld us=%lld", lc, t.present_dirty_check.calls, t.present_dirty_check.total_us);
++    Debug::Printf("DOS-PORT labck lc=%ld ph=present_skip_unchanged calls=%ld us=%lld", lc, t.present_skip_unchanged.calls, t.present_skip_unchanged.total_us);
++    long long w[kDW_Count]; dos_port_work_snapshot(w);
++    for (int i = 0; i < kDW_Count; ++i) Debug::Printf("DOS-PORT labck lc=%ld w=%d v=%lld", lc, i, w[i]);
++    Debug::Printf("DOS-PORT labck lc=%ld c=dirty narrow=%ld full=%ld px_narrow=%lld px_full=%lld", lc,
++        dos_port_dirty.frames_narrow, dos_port_dirty.frames_full, (long long)dos_port_dirty.px_narrow, (long long)dos_port_dirty.px_full);
++    Debug::Printf("DOS-PORT labck lc=%ld c=rb sprites=%ld sprite_px=%lld bgcalls=%ld bgwhole=%ld bgpx=%lld presents_real=%ld", lc,
++        t.rb_sprites, (long long)t.rb_sprite_px, t.bg_calls, t.bg_whole, (long long)t.bg_px, t.presents_real);
++    Debug::Printf("DOS-PORT labck lc=%ld c=lab camchg=%ld vpchg=%ld invall=%ld invcam=%ld", lc,
++        dos_lab_camchg, dos_lab_vpchg, dos_lab_invall, dos_lab_invcam);
++    for (int i = 0; i < 6; ++i) Debug::Printf("DOS-PORT labck lc=%ld evt=%d n=%ld us=%lld", lc, i, dos_port_evt_n[i], dos_port_evt_us[i]);
++    {   // LAB-R3
++        extern long dos_lab_guiredraw_n, dos_lab_guinoskip_n; extern long long dos_lab_guiredraw_us, dos_lab_guinoskip_px;
++        extern long dos_gc_flagged, dos_gc_skipped, dos_gc_clipped, dos_gc_full;
++        extern long dos_r3_multi, dos_r3_rects, dos_r3_fb_bbox, dos_r3_fb_whole;
++        extern long long dos_r3_px, dos_gc_clip_px, dos_gc_full_px;
++        extern long dos_r3_span_ext, dos_r3_overflow, dos_r3_coarse_frames1, dos_r3_coarse_frames2;
++        Debug::Printf("DOS-PORT labck lc=%ld c=r3 guiredraw_n=%ld guiredraw_us=%lld guinoskip_n=%ld guinoskip_px=%lld flagged=%ld skipped=%ld"
++            " clipped=%ld full=%ld multi=%ld rects=%ld r3_px=%lld clip_px=%lld full_px=%lld fb_bbox=%ld fb_whole=%ld span_ext=%ld"
++            " overflow=%ld cf1=%ld cf2=%ld src_room=%lld src_ui=%lld src_cursor=%lld src_carry=%lld", lc,
++            dos_lab_guiredraw_n, dos_lab_guiredraw_us, dos_lab_guinoskip_n, dos_lab_guinoskip_px, dos_gc_flagged, dos_gc_skipped,
++            dos_gc_clipped, dos_gc_full, dos_r3_multi, dos_r3_rects, dos_r3_px, dos_gc_clip_px, dos_gc_full_px, dos_r3_fb_bbox,
++            dos_r3_fb_whole, dos_r3_span_ext, dos_r3_overflow, dos_r3_coarse_frames1, dos_r3_coarse_frames2,
++            dos_port_dirty_src_px[kDirtySrc_RoomSprite], dos_port_dirty_src_px[kDirtySrc_UiSprite],
++            dos_port_dirty_src_px[kDirtySrc_Cursor], dos_port_dirty_src_px[kDirtySrc_Carry]);
++    }
++}
++#endif
++#endif
++
+ // quit - exits the engine, shutting down everything gracefully
+ // The parameter is the message to print. If this message begins with
+ // an '!' character, then it is printed as a "contact game author" error.
+@@ -583,6 +668,8 @@ void quit(const char *quitmsg)
+             // phase instead of a repeated fprintf now that patch 0082's
+             // exhaustive partition brings the phase count to 17 -- see
+             // dos_port_tick_emit()'s own definition above quit().
++            {   extern void dos_guiclip_summary(FILE *);   // LAB-PLAY R1: both flavours
++                dos_guiclip_summary(run_manifest_log); }
+ #ifdef DOSAGS_RELEASE
+             // DOS-PORT patch 0351: the release flavour times nothing, so it has no phase aggregates and none of
+             // the quit-time counter dump below. It keeps the one line the DOSBox-X ratchet reads from this
+@@ -706,6 +793,9 @@ void quit(const char *quitmsg)
+                     extern long dos_port_gui_unchanged_tally[64];
+                     extern long dos_port_gui_skip_tally[64];    // patch 0191
+                     extern long dos_port_gui_flush_n, dos_port_gui_flush_late_n;
++                    {   extern long dos_lab_camchg, dos_lab_vpchg, dos_lab_invall, dos_lab_invcam;   // LAB-PLAY
++                        Debug::Printf("DOS-PORT labplay camchg=%ld vpchg=%ld invall=%ld invcam=%ld",
++                            dos_lab_camchg, dos_lab_vpchg, dos_lab_invall, dos_lab_invcam); }
+                     Debug::Printf("DOS-PORT dirtycarry presents=%ld boxes=%ld full=%ld",   // patch 0193
+                         dos_port_dirty.carried_presents, dos_port_dirty.carried_boxes, dos_port_dirty.carried_full);
+                     if (dos_port_pv_frames)

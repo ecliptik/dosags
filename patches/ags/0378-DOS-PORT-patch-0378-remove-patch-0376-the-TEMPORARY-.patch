@@ -1,0 +1,142 @@
+From 43d1a5fd7a0c4863f2c42a55b5f894985699e9d8 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 12 Nov 2026 14:35:24 -0800
+Subject: [PATCH 378/379] DOS-PORT: patch 0378 -- remove patch 0376 (the
+ TEMPORARY DOSAGS_MEMLOG diagnostic): the freeze cause it was kept for is
+ named and fixed (0377, round RO)
+
+WHY: 0376 kept every one-second DPMI 0500h reading for the rig's freeze hunt (rounds RM / RN / RO). The cause is named
+and fixed: patch 0049's mixer voice ring grew without bound on a live SB, and patch 0377 bounds it (round RO, 2026-11-12:
+the fix SUPPORTED by its pre-registered terms on the 486). 0376's commit message owed this removal "once the freeze cause
+is named".
+
+WHAT: the exact reverse of 0376 (git revert of its commit): the DOSAGS_MEMLOG ring, the 0400h read and the "DOS-PORT
+memlog" lines leave game_run.cpp, and the env allowlist loses DOSAGS_MEMLOG (quit.cpp). Patch 0043's sampler and its
+memory_min_free_kb line are untouched.
+
+Verified: the AGS source tree after this patch (series 0001-0373 + 0376 + 0377 + this) is the same git tree as 0001-0373 +
+0377 applied without 0376 (tree c79dae74084988c5e6eaa7714f3e301ed88e0430), so the rebuilt exes are the builds of the
+series without 0376 (0376's removal terms); both flavours rebuilt and compared byte for byte in the landing records.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Engine/main/game_run.cpp | 81 ----------------------------------------
+ Engine/main/quit.cpp     |  1 -
+ 2 files changed, 82 deletions(-)
+
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index bfb195157..283f3a8bd 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -1449,49 +1449,6 @@ void dos_memory_sample_tick()
+     dos_memory_sample_at(Clock::now());
+ }
+ 
+-// DOS-PORT patch 0376: TEMPORARY diagnostic, removal owed (see the patch
+-// message: removed once the freeze cause is named, or together with 0375's
+-// removal). Off by default. DOSAGS_MEMLOG=1 keeps every one-second DPMI
+-// 0500h reading this sampler already takes -- not just the running minimum
+-// of the largest free block -- so a run shows its physical-page budget over
+-// time: all nine 0500h fields (largest block, max unlocked / locked
+-// allocation, linear space, total unlocked, free and total physical pages,
+-// free linear, paging-file size), each row stamped with the loop counter
+-// and engine ms so rows line up with game events. The first sample also
+-// records the DPMI host's version and flags (0400h); with the paging-file
+-// size that shows which host and swap state the run had. The env is read
+-// once, at the first sample (startup). Rows stay in memory and are printed
+-// to RUNMANI.LOG at exit: no file I/O in play. The ring (24 KB) is
+-// malloc'ed only when the diagnostic is on. Off path: one cached int test
+-// per one-second sample, and no memory.
+-struct DosMemRec
+-{
+-    uint32_t lc, ms;
+-    unsigned long largest, max_unlocked, max_locked, linear_pages, total_unlocked, free_pages, phys_pages, free_linear,
+-        swap_pages;
+-    long call_us;
+-};
+-static const int DOS_MEMLOG_CAP = 512;   // ~8.5 min at one per second
+-static DosMemRec *dos_memlog = nullptr;   // allocated at the first sample, only when DOSAGS_MEMLOG=1
+-static int dos_memlog_n = 0, dos_memlog_on = -1, dos_memlog_dropped = 0;
+-static int dos_memlog_ver_major = -1, dos_memlog_ver_minor = -1, dos_memlog_ver_flags = -1;
+-
+-void dos_port_memlog_emit_hook(FILE *log)
+-{
+-    if (!log || dos_memlog_on != 1)
+-        return;
+-    fprintf(log, "DOS-PORT memlog dpmi_version=%d.%02d flags=0x%x samples=%d dropped=%d page_kb=4 "
+-                 "(all nine 0500h fields; pages are 4 KB; 4294967295 = not reported by the host)\n",
+-            dos_memlog_ver_major, dos_memlog_ver_minor, dos_memlog_ver_flags, dos_memlog_n, dos_memlog_dropped);
+-    for (int i = 0; i < dos_memlog_n; i++) {
+-        const DosMemRec &r = dos_memlog[i];
+-        fprintf(log, "DOS-PORT memlog lc=%u ms=%u largest_kb=%lu max_unlocked=%lu max_locked=%lu linear=%lu "
+-                     "total_unlocked=%lu free=%lu phys=%lu free_linear=%lu swap=%lu call_us=%ld\n", (unsigned)r.lc,
+-                (unsigned)r.ms, r.largest / 1024UL, r.max_unlocked, r.max_locked, r.linear_pages, r.total_unlocked,
+-                r.free_pages, r.phys_pages, r.free_linear, r.swap_pages, r.call_us);
+-    }
+-}
+-
+ static void dos_memory_sample_at(const Clock::time_point &now)
+ {
+     if (!dos_mem_have_last_sample_time)
+@@ -1505,46 +1462,8 @@ static void dos_memory_sample_at(const Clock::time_point &now)
+     dos_mem_last_sample_time = now;
+ 
+     __dpmi_free_mem_info info;
+-    if (dos_memlog_on < 0)
+-    {
+-        const char *e = getenv("DOSAGS_MEMLOG");
+-        dos_memlog_on = (e && e[0] == '1' && e[1] == 0) ? 1 : 0;
+-        if (dos_memlog_on)
+-            dos_memlog = (DosMemRec *)malloc(DOS_MEMLOG_CAP * sizeof(DosMemRec));
+-        if (dos_memlog_on && !dos_memlog)
+-            dos_memlog_on = 0;   // no ring: the diagnostic stays off
+-        if (dos_memlog_on)
+-        {
+-            __dpmi_version_ret v;
+-            if (__dpmi_get_version(&v) == 0)
+-            {
+-                dos_memlog_ver_major = v.major; dos_memlog_ver_minor = v.minor; dos_memlog_ver_flags = v.flags;
+-            }
+-        }
+-    }
+-    const uclock_t dos_memlog_t0 = (dos_memlog_on == 1) ? uclock() : 0;
+     if (__dpmi_get_free_memory_information(&info) != 0)
+         return; // call itself failed -- leave the running minimum untouched
+-    if (dos_memlog_on == 1)
+-    {
+-        if (dos_memlog_n < DOS_MEMLOG_CAP)
+-        {
+-            DosMemRec &r = dos_memlog[dos_memlog_n++];
+-            r.call_us = (long)((uclock() - dos_memlog_t0) * 1000000LL / UCLOCKS_PER_SEC);
+-            r.lc = get_loop_counter(); r.ms = get_runtime_ms();
+-            r.largest = info.largest_available_free_block_in_bytes;
+-            r.max_unlocked = info.maximum_unlocked_page_allocation_in_pages;
+-            r.max_locked = info.maximum_locked_page_allocation_in_pages;
+-            r.linear_pages = info.linear_address_space_size_in_pages;
+-            r.total_unlocked = info.total_number_of_unlocked_pages;
+-            r.free_pages = info.total_number_of_free_pages;
+-            r.phys_pages = info.total_number_of_physical_pages;
+-            r.free_linear = info.free_linear_address_space_in_pages;
+-            r.swap_pages = info.size_of_paging_file_partition_in_pages;
+-        }
+-        else
+-            dos_memlog_dropped++;
+-    }
+ 
+     if (info.largest_available_free_block_in_bytes == 0xFFFFFFFFUL)
+         return; // this DPMI host doesn't support this field -- not a real zero
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index a3a5d93f5..f3c2265c9 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -554,7 +554,6 @@ void quit(const char *quitmsg)
+             // any consumer that only reads between [RUNMANIFEST-BEGIN]
+             // and [RUNMANIFEST-END] is unaffected.
+             fprintf(run_manifest_log, "DOS-PORT memory_min_free_kb=%ld\n", dos_memory_min_free_kb());
+-            { extern void dos_port_memlog_emit_hook(FILE *); dos_port_memlog_emit_hook(run_manifest_log); }   // DOSAGS_MEMLOG diagnostic
+ 
+             // DOS-PORT (patch 0048): tick_rate/frames_skipped -- see
+             // PLAN.md's "Fixed timestep and the fps KPI" (decided
+-- 
+2.47.3
+

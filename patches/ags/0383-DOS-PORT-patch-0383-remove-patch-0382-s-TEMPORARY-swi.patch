@@ -1,0 +1,398 @@
+From ee9dc7af94df36d9e845817a6e5fd31863749a9e Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Tue, 17 Nov 2026 11:24:25 -0800
+Subject: [PATCH] DOS-PORT: patch 0383 -- remove patch 0382's TEMPORARY switch
+ DOSAGS_ROUTE_FAST and the old search bodies: the legacy route finder's stamp
+ grid, frontier walk and inline line-of-sight walk are now the only code
+ (operator 2026-11-17 after round RR: "On, remove old code")
+
+WHY: 0382 put the three output-identical levers behind a temporary, default-off switch for a same-binary 486 A/B and
+stated its own removal. Round RR (Gateway 486DX2-66, MS3, ABBA of the switch; tests/harness/results/ROUNDRR-2026-11-17)
+read R-SKIPS SUPPORTED: skipped frames 578 -> 364 per run (O 558 / 572 / 605, F 359 / 324 / 409), displayed 91.7% ->
+94.8%, all six cells valid, the stamp grid at 192,000 bytes at most. The operator ruled the fast search the default and
+the old code out.
+
+WHAT:
+- the switch is gone: dos_rf_fast / dos_rf_fast_on() and both tests of it (in __find_route and in can_see_from);
+- the bodies that lost are gone: the old find_route_dijkstra and its CHECK_MIN. find_route_dijkstra_fast and
+  CHECK_MIN_FAST take their names and their PLACE in the file, so against the pre-0382 text the function is edited in
+  place: CHECK_MIN's first test reads the stamp, the 0xFF fill is the stamp's begin, the two writes stamp, the pass loop
+  walks the active-slot bitset, three writes keep the bitset;
+- can_see_from: an 8-bit mask takes the inline walk; other depths keep do_line and line_callback;
+- DOSAGS_ROUTE_FAST leaves the environment witness list (quit.cpp is back to its pre-0382 text);
+- the exit line "DOS-PORT routefast on= stamp_allocs= stamp_peak_bytes=" becomes "DOS-PORT routestamp allocs=
+  peak_bytes=": the switch witness goes with the switch, the memory witness stays (two counters that move only when a
+  mask size changes).
+- Unchanged: the stamp grid (W x H bytes, one at a time, allocated at the first search on a mask size, freed and
+  re-allocated on a size change, freed in ~LegacyRouteFinder; quit on a failed allocation), the wrap at generation 255.
+---
+ Engine/ac/route_finder_impl_legacy.cpp | 279 ++-----------------------
+ Engine/main/quit.cpp                   |   1 -
+ 2 files changed, 13 insertions(+), 267 deletions(-)
+
+diff --git a/Engine/ac/route_finder_impl_legacy.cpp b/Engine/ac/route_finder_impl_legacy.cpp
+index f393bab4b..f5f358ea5 100644
+--- a/Engine/ac/route_finder_impl_legacy.cpp
++++ b/Engine/ac/route_finder_impl_legacy.cpp
+@@ -70,19 +70,8 @@ static short **beenhere = nullptr;
+ static Bitmap *rp_cache_src = nullptr;   // the mask the cached analysis was made from
+ static Bitmap *rp_cache_norm = nullptr;  // that mask with every walkable pixel set to 1
+ 
+-// DOS-PORT patch 0382 (TEMPORARY switch, default off): DOSAGS_ROUTE_FAST=1 runs find_route_dijkstra_fast and the
+-// inline line-of-sight walk below; unset, the functions as they were run. The switch is tested once per call, never
+-// inside a search loop. To be removed, with the body that loses, after the 486 A/B and the operator's ruling on the default.
+-static int dos_rf_fast = -1;
+-static inline bool dos_rf_fast_on()
+-{
+-    if (dos_rf_fast < 0)
+-    {
+-        const char *e = getenv("DOSAGS_ROUTE_FAST");
+-        dos_rf_fast = (e && e[0] == '1' && e[1] == 0) ? 1 : 0;
+-    }
+-    return dos_rf_fast != 0;
+-}
++// DOS-PORT patch 0382 / 0383: the legacy route finder's three output-identical levers (0383 removed 0382's TEMPORARY
++// switch DOSAGS_ROUTE_FAST and the bodies they replaced, after round RR on the 486).
+ // R1: one uint8 generation stamp per mask cell. A cell is "not yet visited in this search" when its stamp is not the
+ // current generation, which is what the 0xFF fill of beenhere said; beenhere itself stays the per-call buffer it is.
+ // When the generation would pass 255 the grid is cleared and it restarts at 1.
+@@ -243,7 +232,7 @@ int can_see_from(const Bitmap *wallscreen, int x1, int y1, int x2, int y2)
+     return 1;
+ 
+   // TODO: need some way to use Bitmap with callback
+-  if (dos_rf_fast_on() && wallscreen->GetColorDepth() == 8) // DOS-PORT patch 0382
++  if (wallscreen->GetColorDepth() == 8) // DOS-PORT patch 0382
+     dos_rf_los_line((BITMAP*)wallscreen->GetAllegroBitmap(), x1, y1, x2, y2);
+   else
+     do_line((BITMAP*)wallscreen->GetAllegroBitmap(), x1, y1, x2, y2, 0, line_callback);
+@@ -470,8 +459,7 @@ void dos_rp_report(FILE *log)
+       rp_pw_max_us, rp_pw_first_serial, rp_pw_first_compare, rp_pw_first_miss, rp_pw_first_none, rp_pw_pending);
+ #endif
+   if (log) // DOS-PORT patch 0382
+-    fprintf(log, "DOS-PORT routefast on=%d stamp_allocs=%ld stamp_peak_bytes=%ld\n", dos_rf_fast_on() ? 1 : 0, dos_rf_stamp_allocs,
+-      dos_rf_stamp_peak);
++    fprintf(log, "DOS-PORT routestamp allocs=%ld peak_bytes=%ld\n", dos_rf_stamp_allocs, dos_rf_stamp_peak);
+ }
+ static int is_route_possible_flood(Bitmap *tempw, int fromx, int fromy, int tox, int toy, const LegacyRouteFinder::PathfinderConfig &pfc);
+ 
+@@ -875,7 +863,7 @@ try_again:
+ 
+ 
+ #define CHECK_MIN(cellx, celly) { \
+-  if (beenhere[celly][cellx] == -1) {\
++  if (dos_rf_stamp[(celly) * dos_rf_stamp_w + (cellx)] != (unsigned char)dos_rf_gen) {\
+     adjcount = 0; \
+     if (wallscreen->GetScanLine(celly)[cellx] != 0) live = 1; /* DOS-PORT patch 0317 */ \
+     if ((wallscreen->GetScanLine(celly)[cellx] != 0) && (beenhere[j][i]+modifier <= min)) {\
+@@ -919,232 +907,8 @@ static void round_down_coords(const Bitmap *wallscreen, int &tmpx, int &tmpy)
+   }
+ }
+ 
+-static int find_route_dijkstra(const Bitmap *wallscreen, int fromx, int fromy, int destx, int desty, const LegacyRouteFinder::PathfinderConfig &pfc)
+-{
+-  int i, j;
+-
+-  assert(wallscreen != nullptr);
+-  assert(pathbackx != nullptr);
+-  assert(pathbacky != nullptr);
+-  assert(beenhere != nullptr);
+-
+-  // This algorithm doesn't behave differently the second time, so ignore
+-  if (leftorright == 1)
+-    return 0;
+-
+-  for (i = 0; i < wallscreen->GetHeight(); i++)
+-    memset(&beenhere[i][0], 0xff, wallscreen->GetWidth() * BEENHERE_SIZE);
+-
+-  round_down_coords(wallscreen, fromx, fromy);
+-  beenhere[fromy][fromx] = 0;
+-
+-  int temprd = destx, tempry = desty;
+-  round_down_coords(wallscreen, temprd, tempry);
+-  if ((temprd == fromx) && (tempry == fromy)) {
+-    // already at destination
+-    pathbackstage = 0;
+-    return 1;
+-  }
+-
+-  int allocsize = int (wallscreen->GetWidth()) * int (wallscreen->GetHeight()) * sizeof(int);
+-  int *parent = (int *)malloc(allocsize);
+-  int min = 999999, cheapest[40], newcell[40], replace[40];
+-  int *visited = (int *)malloc(MAX_TRAIL_LENGTH * sizeof(int));
+-  // DOS-PORT patch 0212: each visited cell's x and y, kept beside its index, so the main loop does
+-  // not divide by the mask width for every visited cell on every pass (an idiv, ~43 cycles on a 486,
+-  // times the ~20000-51000 cell visits of a long request). Same cells, same order, same values.
+-  int *visx = (int *)malloc(MAX_TRAIL_LENGTH * sizeof(int));
+-  int *visy = (int *)malloc(MAX_TRAIL_LENGTH * sizeof(int));
+-  // DOS-PORT patch 0317: per slot, 0 = still has an unvisited walkable neighbour; 1 = every neighbour visited
+-  // (its checks can only leave adjcount = 1); 2 = its only unvisited neighbours are unwalkable (its checks can only
+-  // leave adjcount = 0, with no candidate). Cells never lose visited status and unwalkable cells are never visited,
+-  // so both states are permanent for the cell; a reused slot starts at 0. Skipping the neighbour checks of a
+-  // state-1/2 slot leaves every candidate, adjcount outcome, slot kill and slot reuse exactly as before.
+-  unsigned char *vstate = (unsigned char *)malloc(MAX_TRAIL_LENGTH);
+-  int live = 0;
+-  vstate[0] = 0;
+-  int iteration = 1;
+-  visited[0] = fromy * wallscreen->GetWidth() + fromx;
+-  visx[0] = fromx;
+-  visy[0] = fromy;
+-  parent[visited[0]] = -1;
+-
+-  int granularity = 3, newx = -1, newy, foundAnswer = -1, numreplace;
+-  int changeiter, numfound, adjcount;
+-  int destxlow = destx - pfc.MaxGranularity;
+-  int destylow = desty - pfc.MaxGranularity;
+-  int destxhi = destxlow + pfc.MaxGranularity * 2;
+-  int destyhi = destylow + pfc.MaxGranularity * 2;
+-  int modifier = 0;
+-  int totalfound = 0;
+-  int DIRECTION_BONUS = 0;
+-
+-  while (foundAnswer < 0) {
+-    min = 29999;
+-    changeiter = iteration;
+-    numfound = 0;
+-    numreplace = 0;
+-
+-    for (int n = 0; n < iteration; n++) {
+-      if (visited[n] == -1)
+-        continue;
+-      if (vstate[n] == 2) // DOS-PORT patch 0317: permanently adjcount 0, no candidate
+-        continue;
+-      if (vstate[n] == 1) { // DOS-PORT patch 0317: permanently adjcount 1
+-        if (numreplace < 40) {
+-          visited[numreplace] = -1;
+-          replace[numreplace] = n;
+-          numreplace++;
+-        }
+-        continue;
+-      }
+-
+-      i = visx[n];
+-      j = visy[n];
+-      granularity = walk_area_granularity[wallscreen->GetScanLine(j)[i]];
+-      adjcount = 1;
+-      live = 0; // DOS-PORT patch 0317
+-
+-      if (i >= granularity) {
+-        modifier = (destx < i) ? DIRECTION_BONUS : 0;
+-        CHECK_MIN(i - granularity, j)
+-      }
+-
+-      if (j >= granularity) {
+-        modifier = (desty < j) ? DIRECTION_BONUS : 0;
+-        CHECK_MIN(i, j - granularity)
+-      }
+-
+-      if (i < wallscreen->GetWidth() - granularity) {
+-        modifier = (destx > i) ? DIRECTION_BONUS : 0;
+-        CHECK_MIN(i + granularity, j)
+-      }
+-
+-      if (j < wallscreen->GetHeight() - granularity) {
+-        modifier = (desty > j) ? DIRECTION_BONUS : 0;
+-        CHECK_MIN(i, j + granularity)
+-      }
+-
+-      if (!live) // DOS-PORT patch 0317: no unvisited walkable neighbour is left, ever
+-        vstate[n] = adjcount ? 1 : 2;
+-
+-      // If all the adjacent cells have been done, stop checking this one
+-      if (adjcount) {
+-        if (numreplace < 40) {
+-          visited[numreplace] = -1;
+-          replace[numreplace] = n;
+-          numreplace++;
+-        }
+-      }
+-    }
+-
+-    if (numfound == 0) {
+-      free(visited);
+-      free(visx);
+-      free(visy);
+-      free(vstate); // DOS-PORT patch 0317
+-      free(parent);
+-      return 0;
+-    }
+-
+-    totalfound += numfound;
+-    for (int p = 0; p < numfound; p++) {
+-      newx = newcell[p] % wallscreen->GetWidth();
+-      newy = newcell[p] / wallscreen->GetWidth();
+-      const int cellx = newx, celly = newy; // DOS-PORT patch 0212: before the edge adjustment below
+-      beenhere[newy][newx] = beenhere[cheapest[p] / wallscreen->GetWidth()][cheapest[p] % wallscreen->GetWidth()] + 1;
+-//      int wal = walk_area_granularity[->GetPixel(wallscreen, newx, newy)];
+-//      beenhere[newy - newy%wal][newx - newx%wal] = beenhere[newy][newx];
+-      parent[newcell[p]] = cheapest[p];
+-
+-      // edges of screen pose a problem, so if current and dest are within
+-      // certain distance of the edge, say we've got it
+-      if ((newx >= wallscreen->GetWidth() - pfc.MaxGranularity) && (destx >= wallscreen->GetWidth() - pfc.MaxGranularity))
+-        newx = destx;
+-
+-      if ((newy >= wallscreen->GetHeight() - pfc.MaxGranularity) && (desty >= wallscreen->GetHeight() - pfc.MaxGranularity))
+-        newy = desty;
+-
+-      // Found the desination, abort loop
+-      if ((newx >= destxlow) && (newx <= destxhi) && (newy >= destylow)
+-          && (newy <= destyhi)) {
+-        foundAnswer = newcell[p];
+-        break;
+-      }
+-
+-      if (totalfound >= 1000) {
+-        //Doesn't work cos it can see the destination from the point that's
+-        //not nearest
+-        // every so often, check if we can see the destination
+-        if (can_see_from(wallscreen, newx, newy, destx, desty)) {
+-          DIRECTION_BONUS -= 50;
+-          totalfound = 0;
+-        }
+-
+-      }
+-
+-      if (numreplace > 0) {
+-        numreplace--;
+-        changeiter = replace[numreplace];
+-      } else
+-        changeiter = iteration;
+-
+-      visited[changeiter] = newcell[p];
+-      visx[changeiter] = cellx;
+-      visy[changeiter] = celly;
+-      vstate[changeiter] = 0; // DOS-PORT patch 0317: a new cell in this slot
+-      if (changeiter == iteration)
+-        iteration++;
+-
+-      changeiter = iteration;
+-      if (iteration >= MAX_TRAIL_LENGTH) {
+-        free(visited);
+-        free(visx);
+-        free(visy);
+-        free(vstate); // DOS-PORT patch 0317
+-        free(parent);
+-        return 0;
+-      }
+-    }
+-    if (totalfound >= 1000) {
+-      totalfound = 0;
+-    }
+-  }
+-  free(visited);
+-  free(visx);
+-  free(visy);
+-  free(vstate); // DOS-PORT patch 0317
+-
+-  int on;
+-  pathbackstage = 0;
+-  pathbackx[pathbackstage] = destx;
+-  pathbacky[pathbackstage] = desty;
+-  pathbackstage++;
+-
+-  for (on = parent[foundAnswer];; on = parent[on]) {
+-    if (on == -1)
+-      break;
+-
+-    newx = on % wallscreen->GetWidth();
+-    newy = on / wallscreen->GetWidth();
+-    if ((newx >= destxlow) && (newx <= destxhi) && (newy >= destylow)
+-        && (newy <= destyhi))
+-      break;
+-
+-    pathbackx[pathbackstage] = on % wallscreen->GetWidth();
+-    pathbacky[pathbackstage] = on / wallscreen->GetWidth();
+-    pathbackstage++;
+-    if (pathbackstage >= MAXPATHBACK) {
+-      free(parent);
+-      return 0;
+-    }
+-  }
+-  free(parent);
+-  return 1;
+-}
+-
+-// DOS-PORT patch 0382: find_route_dijkstra_fast is find_route_dijkstra (above, untouched) with two changes that return
+-// the same answers: R1 (the stamp grid above instead of the 0xFF fill; CHECK_MIN_FAST's first test) and R2 (each pass
++// DOS-PORT patch 0382: find_route_dijkstra is upstream's with two changes that return the same answers: R1 (the stamp
++// grid above instead of a 0xFF fill of beenhere; CHECK_MIN's first test) and R2 (each pass
+ // walks only the ACTIVE slots -- visited != -1 and vstate != 2 -- kept as a bitset at every write that kills or revives
+ // a slot; the same candidates in the same order).
+ static uint32_t dos_rf_act[(MAX_TRAIL_LENGTH + 31) / 32];
+@@ -1161,23 +925,7 @@ static inline int dos_rf_next(int n, int lim)
+     const int r = (w << 5) + __builtin_ctz(bits);
+     return r < lim ? r : lim;
+ }
+-#define CHECK_MIN_FAST(cellx, celly) { \
+-  if (dos_rf_stamp[(celly) * dos_rf_stamp_w + (cellx)] != (unsigned char)dos_rf_gen) {\
+-    adjcount = 0; \
+-    if (wallscreen->GetScanLine(celly)[cellx] != 0) live = 1; /* DOS-PORT patch 0317 */ \
+-    if ((wallscreen->GetScanLine(celly)[cellx] != 0) && (beenhere[j][i]+modifier <= min)) {\
+-      if (beenhere[j][i]+modifier < min) { \
+-        min = beenhere[j][i]+modifier; \
+-        numfound = 0; } \
+-      if (numfound < 40) { \
+-        newcell[numfound] = (celly) * wallscreen->GetWidth() + (cellx);\
+-        cheapest[numfound] = j * wallscreen->GetWidth() + i;\
+-        numfound++; \
+-      }\
+-    } \
+-  }}
+-
+-static int find_route_dijkstra_fast(const Bitmap *wallscreen, int fromx, int fromy, int destx, int desty, const LegacyRouteFinder::PathfinderConfig &pfc)
++static int find_route_dijkstra(const Bitmap *wallscreen, int fromx, int fromy, int destx, int desty, const LegacyRouteFinder::PathfinderConfig &pfc)
+ {
+   int i, j;
+ 
+@@ -1266,22 +1014,22 @@ static int find_route_dijkstra_fast(const Bitmap *wallscreen, int fromx, int fro
+ 
+       if (i >= granularity) {
+         modifier = (destx < i) ? DIRECTION_BONUS : 0;
+-        CHECK_MIN_FAST(i - granularity, j)
++        CHECK_MIN(i - granularity, j)
+       }
+ 
+       if (j >= granularity) {
+         modifier = (desty < j) ? DIRECTION_BONUS : 0;
+-        CHECK_MIN_FAST(i, j - granularity)
++        CHECK_MIN(i, j - granularity)
+       }
+ 
+       if (i < wallscreen->GetWidth() - granularity) {
+         modifier = (destx > i) ? DIRECTION_BONUS : 0;
+-        CHECK_MIN_FAST(i + granularity, j)
++        CHECK_MIN(i + granularity, j)
+       }
+ 
+       if (j < wallscreen->GetHeight() - granularity) {
+         modifier = (desty > j) ? DIRECTION_BONUS : 0;
+-        CHECK_MIN_FAST(i, j + granularity)
++        CHECK_MIN(i, j + granularity)
+       }
+ 
+       if (!live) // DOS-PORT patch 0317: no unvisited walkable neighbour is left, ever
+@@ -1443,8 +1191,7 @@ findroutebk:
+   }
+ 
+   // Try the new pathfinding algorithm
+-  if (dos_rf_fast_on() ? find_route_dijkstra_fast(wallscreen, srcx, srcy, tox[0], toy[0], pfc) // DOS-PORT patch 0382
+-                       : find_route_dijkstra(wallscreen, srcx, srcy, tox[0], toy[0], pfc)) {
++  if (find_route_dijkstra(wallscreen, srcx, srcy, tox[0], toy[0], pfc)) {
+     return 1;
+   }
+ 
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index dcc4a2669..741c63aad 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -421,7 +421,6 @@ void quit(const char *quitmsg)
+             "DOSAGS_MAX_SCALE",       // patch 0101: caps the render-frame scale (bake-off candidate c)
+             "DOSAGS_PRESENT_NO_SKIP", // patch 0099: forces real presents -- changes every fps figure
+             "DOSAGS_PRESENT_VERIFY",  // patch 0192: reads the surface twice per present -- a diagnostic, never a timed cell
+-            "DOSAGS_ROUTE_FAST",      // patch 0382 (TEMPORARY): the legacy route finder's stamp / frontier / LOS levers (off by default)
+             "DOSAGS_ROUTE_PREWARM",   // patch 0371: route-cache pre-warm in the room-load / restore stall (off by default)
+             "DOSAGS_TAS_AUTO_EXIT_TICK",
+             "DOSAGS_VM",              // patch 0359: script VM mode (fast by default; legacy = upstream's Run())
+-- 
+2.47.3
+

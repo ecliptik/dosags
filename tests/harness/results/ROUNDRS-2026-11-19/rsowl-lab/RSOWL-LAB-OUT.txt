@@ -1,0 +1,48 @@
+## MS99-RSOWL-on-1
+stamp 3cbe1d7e1239; frames_skipped 5; memory_min_free_kb 164336; TICKS.BIN ticks 7003 (dropped 0, cap 120256)
+
+### click ticks: 0 (TICKS.BIN click markers)
+| room | tick | n | p10 / median / p90 ms | > 50 / 75 / 100 ms | release level by offset (-1.70) median | by scale (x 0.937) median |
+|---|---|---|---|---|---|---|
+
+### the per-call log (OWED.BIN)
+n 6998, before 0, dropped 0, from 5430 -> VALID
+calls by owed: <= -1 6995, 0 2, 1 0, 2-5 0, > 5 1; catch-up ticks 5; rebases: flag 0, clamp 1, ahead 0
+waits: 6998 of 6998 drawn ticks waited (median 17.67 ms); frame-time resets 0
+grid offset (now - epoch mod 25 ms) over calls 5441-5499: 57 calls, 6.532 .. 24.182 ms
+
+## MS99-RSOWL-on-2
+stamp 3cbe1d7e1239; frames_skipped 5; memory_min_free_kb 164336; TICKS.BIN ticks 7003 (dropped 0, cap 120256)
+
+### click ticks: 0 (TICKS.BIN click markers)
+| room | tick | n | p10 / median / p90 ms | > 50 / 75 / 100 ms | release level by offset (-1.70) median | by scale (x 0.937) median |
+|---|---|---|---|---|---|---|
+
+### the per-call log (OWED.BIN)
+n 6998, before 0, dropped 0, from 5430 -> VALID
+calls by owed: <= -1 6995, 0 2, 1 0, 2-5 0, > 5 1; catch-up ticks 5; rebases: flag 0, clamp 1, ahead 0
+waits: 6998 of 6998 drawn ticks waited (median 17.67 ms); frame-time resets 0
+grid offset (now - epoch mod 25 ms) over calls 5441-5499: 57 calls, 0.190 .. 23.346 ms
+
+## the log's own cost: MS99-RSOWL-on-1 (log on) against MS99-RSOWL-off-1 (log off), ticks from 5450 in both: 6989
+drawn flags differ on 0 ticks; skipped: on 0, off 0
+room 1, drawn non-click ticks in both: 6989; ugo on - off median -1 us (p10 -9, p90 +1)
+## the log's own cost: MS99-RSOWL-on-2 (log on) against MS99-RSOWL-off-2 (log off), ticks from 5450 in both: 6989
+drawn flags differ on 0 ticks; skipped: on 0, off 0
+room 1, drawn non-click ticks in both: 6989; ugo on - off median -2 us (p10 -9, p90 +1)
+
+# the click-tick read exercised on round RL's RLTA (0373 instrumented, real 486 clicks):
+## RLTA-2026-11-12
+stamp 39abbc4b5c34; frames_skipped 1469; memory_min_free_kb 137984; TICKS.BIN ticks 7003 (dropped 0, cap 50256)
+
+### click ticks: 114 (TICKS.BIN click markers)
+| room | tick | n | p10 / median / p90 ms | > 50 / 75 / 100 ms | release level by offset (-1.70) median | by scale (x 0.937) median |
+|---|---|---|---|---|---|---|
+| 1 | click | 16 | 117.1 / 125.8 / 155.4 | 16 / 16 / 16 | 124.1 | 117.8 |
+| 1 | click+1 | 16 | 16.6 / 16.9 / 17.3 | 0 / 0 / 0 | 15.2 | 15.8 |
+| 1 | click+2 | 16 | 16.6 / 16.7 / 17.5 | 0 / 0 / 0 | 15.0 | 15.7 |
+| 2 | click | 98 | 64.1 / 67.9 / 70.8 | 98 / 6 / 3 | 66.2 | 63.7 |
+| 2 | click+1 | 98 | 18.5 / 18.8 / 19.4 | 0 / 0 / 0 | 17.1 | 17.6 |
+| 2 | click+2 | 98 | 17.7 / 19.2 / 44.8 | 1 / 0 / 0 | 17.5 | 18.0 |
+press-3 watch (RESULT-SBRK): click ticks 2 / 3 / 4 = 117.4 / 129.6 / 117.5 ms (ticks 6196 / 6284 / 6384)
+

@@ -114,7 +114,7 @@ def main():
     # (lab-cell.sh keeps the stage's LOGS/SDLDBG.LOG as SDLDBG.LOG)
     out['code_lock_bytes'] = m[-1][0] if m and m[-1][1] == 'locked' else None
 
-    st = re.findall(r'(/tmp/dos-port-dosbox\.[A-Za-z0-9]+)', runlog)
+    st = re.findall(r'(/[^\s"\']*/dos-port-dosbox\.[A-Za-z0-9]+)', runlog)
     exe = ''
     if st and os.path.isdir(st[-1]):
         exe = next((os.path.join(st[-1], f) for f in os.listdir(st[-1]) if f.lower() == 'ags.exe'), '')

@@ -1,0 +1,55 @@
+presses planned / sent: 61; walk targets logged: 61; rooms entered: [1, 2]; centre DY 15
+CAL-C    TR corner: x [319] -> PASS
+CAL-EXIT TL corner: x [0] -> PASS
+PRELUDE  one packet of d counts from x 289.0: x = 289.0 -3.064 d (model 285 - 3.0 d); max residual 4.5 px
+     8 counts: x 269  (2.50 px/count)
+    20 counts: x 225  (3.20 px/count)
+    30 counts: x 195  (3.13 px/count)
+    45 counts: x 150  (3.09 px/count)
+    60 counts: x 105  (3.07 px/count)
+    88 counts: x 21  (3.05 px/count)
+    60 counts as 4 slow packets: x 105 (one packet: 105)
+    60 counts as 4 fast packets: x 105 (one packet: 105)
+   one 200-count packet then -70: x 75 -> clip (clip predicts 75, carry 201)
+   y: 16 counts in one packet y 122; as 4 slow packets y 106
+DY   y target 120 (band 116..140): line y = 92.2 +1.866 x counts (model slope +1.5); max residual 1.4 px
+     8 counts: y 106  (n 1, spread 0)
+     9 counts: y 108  (n 1, spread 0)
+    10 counts: y 110  (n 1, spread 0)
+    11 counts: y 113  (n 1, spread 0)
+    12 counts: y 116  (n 1, spread 0)
+    13 counts: y 117  (n 1, spread 0)
+    14 counts: y 119  (n 1, spread 0)
+    15 counts: y 120 120 120 120 120 120 120 120 121 120 120 120 120 120 120 120 120 120 120 120 120 120 120 120 120 120 120 120 120 120 120 120 121 120 120 121 120 120 121 121 121 120 121 121 121 121  (n 46, spread 1)   <- chosen
+    16 counts: y 122 122  (n 2, spread 0)
+    18 counts: y 125  (n 1, spread 0)
+    21 counts: y 130  (n 1, spread 0)
+   -> DRIVE6_DY=15: predicted y 120.2, inside the sweep, measured 46 time(s) at [120, 120, 120, 120, 120, 120, 120, 120, 121, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 121, 120, 120, 121, 120, 120, 121, 121, 121, 120, 121, 121, 121, 121]
+DXL  x target 60 (band 48..72): line x = -96.0 +3.000 x counts (model slope +3.0); max residual 0.0 px
+    44 counts: x 36  (n 1, spread 0)
+    48 counts: x 48 48 48  (n 3, spread 0)
+    52 counts: x 60 60 60  (n 3, spread 0)   <- chosen
+    56 counts: x 72 72 72  (n 3, spread 0)
+    60 counts: x 84  (n 1, spread 0)
+   -> DRIVE6_DXL=52: predicted x 60.0, inside the sweep, measured 3 time(s) at [60, 60, 60]
+DXA  x target 190 (band 177..201): line x = 415.0 -3.000 x counts (model slope -3.0); max residual 0.0 px
+    66 counts: x 217  (n 1, spread 0)
+    69 counts: x 208  (n 1, spread 0)
+    72 counts: x 199 199 199  (n 3, spread 0)
+    75 counts: x 190 190  (n 2, spread 0)   <- chosen
+    78 counts: x 181 181 181  (n 3, spread 0)
+    81 counts: x 172  (n 1, spread 0)
+   -> DRIVE6_DXA=75: predicted x 190.0, inside the sweep, measured 2 time(s) at [190, 190]
+DXB  x target 289 (band 276..300): line x = 415.0 -3.000 x counts (model slope -3.0); max residual 0.0 px
+    39 counts: x 298 298 298  (n 3, spread 0)
+    42 counts: x 289 289 289 289 289  (n 5, spread 0)   <- chosen
+    45 counts: x 280 280 280  (n 3, spread 0)
+    48 counts: x 271  (n 1, spread 0)
+    51 counts: x 262  (n 1, spread 0)
+   -> DRIVE6_DXB=42: predicted x 289.0, inside the sweep, measured 5 time(s) at [289, 289, 289, 289, 289]
+CAL-BR   bottom bound (information): y [111, 111, 111] -> driver bottom 383 (383 expected)
+env: DRIVE6_DY=15 DRIVE6_DXL=52 DRIVE6_DXA=75 DRIVE6_DXB=42
+RESULT: FAIL
+  FAIL: prelude: one-packet sizes off one line by 4.5 px (> 2): the gain depends on packet size
+  FAIL: prelude: 16 y counts in 4 slow packets landed -16 px from one packet: speed-dependent
+{"bottom": 383.0, "checks": {"C1": [], "C10": ["prelude: one-packet sizes off one line by 4.5 px (> 2): the gain depends on packet size", "prelude: 16 y counts in 4 slow packets landed -16 px from one packet: speed-dependent"], "C2": [], "C3": [], "C4": [], "C5": [], "C6": [], "C7": [], "C8": [], "C9": []}, "env": {"DRIVE6_DXA": 75, "DRIVE6_DXB": 42, "DRIVE6_DXL": 52, "DRIVE6_DY": 15}, "fails": ["prelude: one-packet sizes off one line by 4.5 px (> 2): the gain depends on packet size", "prelude: 16 y counts in 4 slow packets landed -16 px from one packet: speed-dependent"], "pass": false, "quantities": {"DXA": {"chosen": 75, "env": "DRIVE6_DXA", "in_band": true, "in_range": true, "intercept": 415.0, "max_residual": 0.0, "measured_at_chosen": [190, 190], "predicted": 190.0, "slope": -3.0, "swept": [66, 81]}, "DXB": {"chosen": 42, "env": "DRIVE6_DXB", "in_band": true, "in_range": true, "intercept": 415.0, "max_residual": 0.0, "measured_at_chosen": [289, 289, 289, 289, 289], "predicted": 289.0, "slope": -3.0, "swept": [39, 51]}, "DXL": {"chosen": 52, "env": "DRIVE6_DXL", "in_band": true, "in_range": true, "intercept": -96.0, "max_residual": 0.0, "measured_at_chosen": [60, 60, 60], "predicted": 60.0, "slope": 3.0, "swept": [44, 60]}, "DY": {"chosen": 15, "env": "DRIVE6_DY", "in_band": true, "in_range": true, "intercept": 92.18, "max_residual": 1.43, "measured_at_chosen": [120, 120, 120, 120, 120, 120, 120, 120, 121, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 121, 120, 120, 121, 120, 120, 121, 121, 121, 120, 121, 121, 121, 121], "predicted": 120.2, "slope": 1.8658, "swept": [8, 21]}}, "transfer": {"MXF": 0, "MXS": 0, "MYS": -16, "intercept": 289.01, "max_residual": 4.5, "packet_over_127": "clip", "slope": -3.0639}}

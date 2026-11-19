@@ -30,7 +30,7 @@ VOID: binary_sha12 != --stamp, exit_code != 0, build_dirty != 0, last room !=
 
 import argparse
 import re
-import sys
+import os, sys
 from decimal import Decimal
 from pathlib import Path
 
@@ -151,13 +151,19 @@ def main():
     ap.add_argument("--stamp", required=True)
     ap.add_argument("--room", type=int, required=True)
     ap.add_argument("--msgskip", action="store_true")
-    ap.add_argument("dirs", nargs=2)
+    ap.add_argument("dirs", nargs="+")
     args = ap.parse_args()
-    res = [cell(d, args) for d in args.dirs]
+    # 2026-11-06 (sdlports): one cell passed twice printed "MET x2" -- a single reading is now scored as x1, and
+    # the same directory given twice is refused as a pair.
+    dirs = list(dict.fromkeys(os.path.realpath(d) for d in args.dirs))
+    if len(dirs) > 2:
+        ap.error("at most two cells")
+    res = [cell(d, args) for d in dirs]
+    n = "x%d" % len(dirs)
     if None in res:
         verdict = "VOID (a cell is void)"
     elif all(res):
-        verdict = "MET x2 (subject to camera CLEAN in both)"
+        verdict = "MET %s (subject to camera CLEAN in %s)" % (n, "both" if len(dirs) == 2 else "the cell")
     else:
         verdict = "NOT MET"
     print("%s: %s" % (args.label, verdict))

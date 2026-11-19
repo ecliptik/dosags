@@ -1,0 +1,71 @@
+== gate 1: mode 1 and mode 2 vs 0 (default)
+G-0: 3194 records, 3164 loop counters
+G-1: 3194 records, common lc 3164, EQUAL 3164, DIFF 0
+G-2: 3194 records, common lc 3164, EQUAL 3164, DIFF 0
+V-0: 3994 records, 3964 loop counters
+V-1: 3994 records, common lc 3964, EQUAL 3964, DIFF 0
+V-2: 3994 records, common lc 3964, EQUAL 3964, DIFF 0
+GCL-0: 7034 records, 7004 loop counters
+GCL-1: 7034 records, common lc 7004, EQUAL 7004, DIFF 0
+GCL-2: 7034 records, common lc 7004, EQUAL 7004, DIFF 0
+I-0: 1329 records, 1299 loop counters
+I-1: 1329 records, common lc 1299, EQUAL 1299, DIFF 0
+I-2: 1329 records, common lc 1299, EQUAL 1299, DIFF 0
+Q-0: 3945 records, 3558 loop counters
+Q-1: 3945 records, common lc 3558, EQUAL 3558, DIFF 0
+Q-2: 3945 records, common lc 3558, EQUAL 3558, DIFF 0
+== gate 2: CHAR_REUSE=2 vs 0 under DOSAGS_GUI_CLIP=2 (R1) and =0 (off)
+G-G2-0: 3194 records, 3164 loop counters
+G-G2-2: 3194 records, common lc 3164, EQUAL 3164, DIFF 0
+G-G0-0: 3194 records, 3164 loop counters
+G-G0-2: 3194 records, common lc 3164, EQUAL 3164, DIFF 0
+GCL-G2-0: 7034 records, 7004 loop counters
+GCL-G2-2: 7034 records, common lc 7004, EQUAL 7004, DIFF 0
+GCL-G0-0: 7034 records, 7004 loop counters
+GCL-G0-2: 7034 records, common lc 7004, EQUAL 7004, DIFF 0
+== gate 3: controls
+G-0: 3194 records, 3164 loop counters
+G-2-NODRAW: 3194 records, common lc 3164, EQUAL 141, DIFF 3023, first diff lc 5438, last 8599
+GCL-0: 7034 records, 7004 loop counters
+GCL-2-NODRAW: 7034 records, common lc 7004, EQUAL 517, DIFF 6487, first diff lc 5438, last 12439
+G-B-0: 3194 records, 3164 loop counters
+G-B-2: 3194 records, common lc 3164, EQUAL 3164, DIFF 0
+G-B-N: 3194 records, common lc 3164, EQUAL 2184, DIFF 980, first diff lc 6050, last 8599
+== gate 4: forced guards (each against its own forced mode-0 arm)
+G-T-0: 3194 records, 3164 loop counters
+G-T-2: 3194 records, common lc 3164, EQUAL 3164, DIFF 0
+G-T-N: 3194 records, common lc 3164, EQUAL 2574, DIFF 590, first diff lc 5441, last 7901
+G-L-0: 3194 records, 3164 loop counters
+G-L-2: 3194 records, common lc 3164, EQUAL 3164, DIFF 0
+G-L-N: 3194 records, common lc 3164, EQUAL 1724, DIFF 1440, first diff lc 5442, last 6881
+G-C-0: 3194 records, 3164 loop counters
+G-C-2: 3194 records, common lc 3164, EQUAL 3164, DIFF 0
+G-C-N: 3194 records, common lc 3164, EQUAL 3150, DIFF 14, first diff lc 5700, last 6007
+== in-place edits: dynamic sprite (DYN) and walk-behind mask (WBM)
+G-D-0: 3194 records, 3164 loop counters
+G-D-2: 3194 records, common lc 3164, EQUAL 3164, DIFF 0
+G-D-N: 3194 records, common lc 3164, EQUAL 175, DIFF 2989, first diff lc 5436, last 8599
+G-W-0: 3194 records, 3164 loop counters
+G-W-2: 3194 records, common lc 3164, EQUAL 3164, DIFF 0
+G-W-N: 3194 records, common lc 3164, EQUAL 1317, DIFF 1847, first diff lc 5436, last 8596
+== forced mode-0 arms against unforced G-0 (does the forcing change a mode-0 picture?)
+G-0: 3194 records, 3164 loop counters
+G-T-0: 3194 records, common lc 3164, EQUAL 2958, DIFF 206, first diff lc 5441, last 6876
+G-L-0: 3194 records, common lc 3164, EQUAL 3164, DIFF 0
+G-C-0: 3194 records, common lc 3164, EQUAL 3164, DIFF 0
+G-B-0: 3194 records, common lc 3164, EQUAL 2115, DIFF 1049, first diff lc 6031, last 8596
+G-D-0: 3194 records, common lc 3164, EQUAL 135, DIFF 3029, first diff lc 5436, last 8599
+G-W-0: 3194 records, common lc 3164, EQUAL 1448, DIFF 1716, first diff lc 5441, last 8596
+== lever inert: default (=0) gate arms against main's R3LAND records (0001-0368 + R3LAND overlay)
+R3LAND:GG-D.FHASH.TXT: 3194 records, 3164 loop counters
+G-0: 3194 records, common lc 3164, EQUAL 3164, DIFF 0
+R3LAND:GV-D.FHASH.TXT: 3994 records, 3964 loop counters
+V-0: 3994 records, common lc 3964, EQUAL 3964, DIFF 0
+R3LAND:GI-D.FHASH.TXT: 1329 records, 1299 loop counters
+I-0: 1329 records, common lc 1299, EQUAL 1299, DIFF 0
+R3LAND:GQ-D.FHASH.TXT: 3945 records, 3558 loop counters
+Q-0: 3945 records, common lc 3558, EQUAL 3558, DIFF 0
+R3LAND:GG-2.FHASH.TXT: 3194 records, 3164 loop counters
+G-G2-0: 3194 records, common lc 3164, EQUAL 3164, DIFF 0
+R3LAND:GG-0.FHASH.TXT: 3194 records, 3164 loop counters
+G-G0-0: 3194 records, common lc 3164, EQUAL 3164, DIFF 0

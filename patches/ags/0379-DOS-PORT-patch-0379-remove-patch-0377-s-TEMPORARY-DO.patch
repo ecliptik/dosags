@@ -1,0 +1,83 @@
+From 11c13802a5b173590e4bb29b02d228d2762e23c3 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 12 Nov 2026 14:35:55 -0800
+Subject: [PATCH 379/379] DOS-PORT: patch 0379 -- remove patch 0377's TEMPORARY
+ DOSAGS_RING_LEGACY switch: the bounded voice ring is now unconditional
+
+WHY: 0377 carried DOSAGS_RING_LEGACY=1 only so one binary could run both arms of the rig ABBA (the old unbounded growth
+as the legacy arm). Round RO (2026-11-12) ran that ABBA and its pre-registered terms read SUPPORTED: with the bound, both
+fixed arms' room-2 freeze steps are flat (-6..+13 ms) while both legacy arms keep them (170-223 / 609-655 / 1,482-1,488
+ms), audio underruns / overwrites 0. 0377's message owed this removal after that round.
+
+WHAT: dos_ring_legacy() and its getenv go; the compaction condition is read_pos >= RING_COMPACT_BYTES alone (the code
+every fixed arm ran); the env allowlist loses DOSAGS_RING_LEGACY (quit.cpp). The exit witness keeps its counters and
+drops the constant field: "DOS-PORT voicering compact_at= compactions= moved_bytes= cap_max=" (the release audio check
+reads compactions >= 1 from it). 0377's bound, its counters and the witness stay.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Engine/main/quit.cpp                    |  1 -
+ Engine/platform/dos/dos_audio_mixer.cpp | 21 +++------------------
+ 2 files changed, 3 insertions(+), 19 deletions(-)
+
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index f3c2265c9..741c63aad 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -421,7 +421,6 @@ void quit(const char *quitmsg)
+             "DOSAGS_MAX_SCALE",       // patch 0101: caps the render-frame scale (bake-off candidate c)
+             "DOSAGS_PRESENT_NO_SKIP", // patch 0099: forces real presents -- changes every fps figure
+             "DOSAGS_PRESENT_VERIFY",  // patch 0192: reads the surface twice per present -- a diagnostic, never a timed cell
+-            "DOSAGS_RING_LEGACY",     // patch 0377, TEMPORARY: 1 = the mixer voice ring's old unbounded growth (the ABBA's legacy arm)
+             "DOSAGS_ROUTE_PREWARM",   // patch 0371: route-cache pre-warm in the room-load / restore stall (off by default)
+             "DOSAGS_TAS_AUTO_EXIT_TICK",
+             "DOSAGS_VM",              // patch 0359: script VM mode (fast by default; legacy = upstream's Run())
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index a49336fe8..ed0393ff4 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -123,20 +123,6 @@ const size_t MAX_VOICE_RING_BYTES = 32 * 1024; // ~1.48s at 11025 Hz S16 mono
+ const size_t RING_COMPACT_BYTES = 64 * 1024;
+ static unsigned long g_ring_compactions = 0, g_ring_moved_bytes = 0, g_ring_cap_max = 0;
+ 
+-// DOS-PORT patch 0377, TEMPORARY (removal owed after the rig ABBA, see the
+-// patch message): DOSAGS_RING_LEGACY=1 (exactly "1") restores the unbounded
+-// growth for that round's legacy arm. Read once.
+-static int g_ring_legacy = -1;
+-static bool dos_ring_legacy()
+-{
+-    if (g_ring_legacy < 0)
+-    {
+-        const char *e = getenv("DOSAGS_RING_LEGACY");
+-        g_ring_legacy = (e && e[0] == '1' && e[1] == 0) ? 1 : 0;
+-    }
+-    return g_ring_legacy == 1;
+-}
+-
+ // Mixdown granularity and target queued depth (a top-up, not a
+ // run-to-cap fill -- hub docs/audio.md's own pump convention). SB path
+ // only.
+@@ -478,9 +464,8 @@ void dos_audio_mixer_ring_report(FILE *log)
+ {
+     if (!log)
+         return;
+-    fprintf(log, "DOS-PORT voicering legacy=%d compact_at=%lu compactions=%lu moved_bytes=%lu cap_max=%lu\n",
+-        dos_ring_legacy() ? 1 : 0, (unsigned long)RING_COMPACT_BYTES, g_ring_compactions, g_ring_moved_bytes,
+-        g_ring_cap_max);
++    fprintf(log, "DOS-PORT voicering compact_at=%lu compactions=%lu moved_bytes=%lu cap_max=%lu\n",
++        (unsigned long)RING_COMPACT_BYTES, g_ring_compactions, g_ring_moved_bytes, g_ring_cap_max);
+ }
+ 
+ void dos_audio_mixer_voice_release(int voice)
+@@ -518,7 +503,7 @@ size_t dos_audio_mixer_voice_write(int voice, const void *data, size_t bytes)
+     if (buffered + bytes > MAX_VOICE_RING_BYTES)
+         return 0u; // reject the whole chunk; caller retries next frame
+     const uint8_t *bytes_in = static_cast<const uint8_t *>(data);
+-    if (v.read_pos >= RING_COMPACT_BYTES && !dos_ring_legacy()) // DOS-PORT patch 0377
++    if (v.read_pos >= RING_COMPACT_BYTES) // DOS-PORT patch 0377
+     {
+         v.ring.erase(v.ring.begin(), v.ring.begin() + v.read_pos);
+         v.read_pos = 0;
+-- 
+2.47.3
+

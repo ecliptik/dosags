@@ -1,0 +1,185 @@
+From d2e830536ed0b5de086df7d92f357ef9a84590b6 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Thu, 12 Nov 2026 01:19:37 -0800
+Subject: [PATCH] DOS-PORT: patch 0377 -- bound the mixer voice ring (patch
+ 0049): drop the consumed prefix once it reaches 64 KB, so a voice topped up
+ before it drains no longer grows without bound; DOSAGS_RING_LEGACY=1
+ (TEMPORARY) restores the old growth for the rig ABBA
+
+WHY: patch 0049's per-voice ring (Engine/platform/dos/dos_audio_mixer.cpp: Voice::ring, a vector with read_pos) caps
+only the UNREAD bytes (MAX_VOICE_RING_BYTES, 32 KB). The consumed prefix [0, read_pos) was dropped only when the ring
+drained completely (clear() in mix_one_chunk and dos_null_drain). With a live Sound Blaster a long or looping voice is
+topped up before it drains, so its vector grew at the PCM rate (11025 Hz S16 mono, ~22 KB/s) for as long as it played,
+reallocating at 2x capacity. In MMD room 2 (looping ambient sound 96, from the room load) that is 0.75 / 2 / 3.9 MB new
+blocks at ~21 / 43 / 88 s, each first-touched (committed) at once by the reallocation's copy: on the Gateway 486 each
+is a machine-wide freeze of ~0.2 / ~0.65 / ~1.5 s (rounds RL / RM: the clock steps at room-2 entry +830 / +1,730 /
++3,540 ticks, the vcctrl board holds, and DOSAGS_MEMLOG's 192 / 512 / 992-page commits at the same game points, with
+or without CWSDPMI's swap). The growth is unbounded: ~20 MB in a 15-minute stay. The lab only reproduces it with a
+live SB (dosbox-run.sh --sb-live); under -silent no IRQ consumes the ring (LAB-MOVE rm/LAB-RING.txt).
+
+WHAT: in dos_audio_mixer_voice_write, before the append, once read_pos >= RING_COMPACT_BYTES (64 KB) the consumed
+prefix is erased (one memmove of the <= 32 KB unread bytes) and read_pos reset. Size stays <= 96 KB, capacity settles
+at <= 192 KB per voice (128,000 B measured), and no allocation follows the first fills. Readers are untouched: the
+unread bytes stay contiguous at ring.data() + read_pos in the same order, so the mixer takes the same bytes.
+Chosen over a fixed circular buffer because it is one hunk at the single writer, and the readers (mix_one_chunk,
+dos_null_drain, the 0348 prime and the queued / drain checks, 7 sites) keep their contiguous reads; a circular buffer
+would split every read at the wrap. Not erasing on every write (5 memmoves/s); at 64 KB it is one per ~3 s of a
+playing voice. All on the main thread (dos_audio_mixer_pump, audio_core.cpp), so nothing races the writer.
+Witness: "DOS-PORT voicering legacy= compact_at= compactions= moved_bytes= cap_max=" in RUNMANI.LOG (quit.cpp, next to
+pcmcache).
+
+LAB (DOSBox-X fixed40k, MS3 with the lab overlay, --sb-live, DOSAGS_MEMLOG=1; lab-rb move-lab/rj/rm):
+- memlog: fixed = no commit after room-2 entry +81 ticks (free flat at 7,500 pages, two runs); legacy
+  (DOSAGS_RING_LEGACY=1) = the rig's sequence (192 / 192 / 512 / 992 pages at +161 / +850 / +1,743 / +3,570, two runs).
+- voicering: fixed 38 compactions, 1,085,952 bytes moved, cap_max 128,000; legacy 0 / 0 / 4,037,632.
+- correctness: a lab-only shadow ring with the legacy semantics, appended identically, compared with every read the
+  mixer makes (same run, so device-paced timing cannot differ): 4,951 reads, 4,863,488 bytes, 0 mismatches. Control
+  (2 unread bytes dropped at each compaction): 955 mismatches. A whole-stream hash across runs is no bar with a live SB:
+  two runs of the same binary and arm already differ.
+- cost: the compactions took 8.7 ms in all over the ~178 s run (max 242 us; lab timing); update_game_once_total
+  178,579 / 178,579 ms fixed vs 178,636 / 178,583 ms legacy; tickstats_audio_sync 209-263 vs 210-375 ms (noise).
+  On the 486 a ~28 KB memmove is ~1-2 ms, once per ~3 s of a playing voice.
+
+SWITCH, TEMPORARY -- REMOVAL OWED: DOSAGS_RING_LEGACY=1 (exactly "1", read once) skips the compaction, for the rig
+ABBA's legacy arm only (same binary). It is in the env allowlist, so env_block_sha tells the arms apart. Remove
+dos_ring_legacy(), its use in the compaction condition, the "legacy=" field and the allowlist line after that round.
+---
+ Engine/main/quit.cpp                    |  2 +
+ Engine/platform/dos/dos_audio_mixer.cpp | 56 ++++++++++++++++++++++++-
+ Engine/platform/dos/dos_audio_mixer.h   |  4 ++
+ 3 files changed, 61 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 150c393c6..a3a5d93f5 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -421,6 +421,7 @@ void quit(const char *quitmsg)
+             "DOSAGS_MAX_SCALE",       // patch 0101: caps the render-frame scale (bake-off candidate c)
+             "DOSAGS_PRESENT_NO_SKIP", // patch 0099: forces real presents -- changes every fps figure
+             "DOSAGS_PRESENT_VERIFY",  // patch 0192: reads the surface twice per present -- a diagnostic, never a timed cell
++            "DOSAGS_RING_LEGACY",     // patch 0377, TEMPORARY: 1 = the mixer voice ring's old unbounded growth (the ABBA's legacy arm)
+             "DOSAGS_ROUTE_PREWARM",   // patch 0371: route-cache pre-warm in the room-load / restore stall (off by default)
+             "DOSAGS_TAS_AUTO_EXIT_TICK",
+             "DOSAGS_VM",              // patch 0359: script VM mode (fast by default; legacy = upstream's Run())
+@@ -955,6 +956,7 @@ void quit(const char *quitmsg)
+             AGS::Engine::dos_pcm_cache_report(run_manifest_log);
+             AGS::Engine::dos_rp_report(run_manifest_log); // DOS-PORT patch 0319
+             dos_gc2_report(run_manifest_log);              // DOS-PORT patch 0372
++            dos_audio_mixer_ring_report(run_manifest_log); // DOS-PORT patch 0377
+             // patch 0217: SDL 0198's IRQ-safe uclock() -- first = calls made with the caller's interrupt
+             // flag (the one that sets up the PIT), wrapped = calls made with interrupts off. 0/0 means the
+             // program was linked without -Wl,--wrap=uclock.
+diff --git a/Engine/platform/dos/dos_audio_mixer.cpp b/Engine/platform/dos/dos_audio_mixer.cpp
+index 062d4cac4..a49336fe8 100644
+--- a/Engine/platform/dos/dos_audio_mixer.cpp
++++ b/Engine/platform/dos/dos_audio_mixer.cpp
+@@ -72,7 +72,10 @@ bool g_gus_backend = false;
+ 
+ // A voice's ring is a plain append/consume byte buffer: writes append to
+ // the back, reads advance read_pos and the backing vector is only
+-// actually shrunk once fully drained. Every voice's bytes are already in
++// actually shrunk once fully drained -- and, since DOS-PORT patch 0377,
++// its consumed prefix is dropped once it reaches RING_COMPACT_BYTES (see
++// dos_audio_mixer_voice_write), so a voice that is topped up before it
++// drains no longer grows without bound. Every voice's bytes are already in
+ // the mixer's device format (dos_audio_mixer_format()) by the time they
+ // arrive here -- sdldecoder.cpp's DOS implementation converts once at load
+ // -- so no per-chunk resampling happens in this file. SB-path only; under
+@@ -102,6 +105,38 @@ struct Voice
+ // gus_pcm_stream owns its own, separately-sized pending buffer.
+ const size_t MAX_VOICE_RING_BYTES = 32 * 1024; // ~1.48s at 11025 Hz S16 mono
+ 
++// DOS-PORT patch 0377: bound the ring. MAX_VOICE_RING_BYTES caps only the
++// UNREAD bytes; the consumed prefix [0, read_pos) was dropped only when the
++// ring drained completely (clear() in mix_one_chunk / dos_null_drain). With
++// a live Sound Blaster a long or looping voice (MMD room 2's ambient sound)
++// is topped up before it drains, so the vector grew at the PCM rate
++// (~22 KB/s) for the whole stay, reallocating at 2x capacity: 0.75 / 2 /
++// 3.9 MB commits at ~21 / 43 / 88 s, each a machine-wide freeze on the 486
++// (rounds RL / RM). Now the writer drops the consumed prefix once it reaches
++// RING_COMPACT_BYTES: one memmove of the <= MAX_VOICE_RING_BYTES unread
++// bytes per >= RING_COMPACT_BYTES consumed (~every 3 s at 11025 Hz S16
++// mono), so size stays <= RING_COMPACT_BYTES + MAX_VOICE_RING_BYTES (96 KB)
++// and the capacity settles at <= 192 KB per voice after its first fills.
++// Readers are untouched: they still see the unread bytes contiguous at
++// ring.data() + read_pos, in the same order, so the mixed output is the
++// same bytes.
++const size_t RING_COMPACT_BYTES = 64 * 1024;
++static unsigned long g_ring_compactions = 0, g_ring_moved_bytes = 0, g_ring_cap_max = 0;
++
++// DOS-PORT patch 0377, TEMPORARY (removal owed after the rig ABBA, see the
++// patch message): DOSAGS_RING_LEGACY=1 (exactly "1") restores the unbounded
++// growth for that round's legacy arm. Read once.
++static int g_ring_legacy = -1;
++static bool dos_ring_legacy()
++{
++    if (g_ring_legacy < 0)
++    {
++        const char *e = getenv("DOSAGS_RING_LEGACY");
++        g_ring_legacy = (e && e[0] == '1' && e[1] == 0) ? 1 : 0;
++    }
++    return g_ring_legacy == 1;
++}
++
+ // Mixdown granularity and target queued depth (a top-up, not a
+ // run-to-cap fill -- hub docs/audio.md's own pump convention). SB path
+ // only.
+@@ -438,6 +473,16 @@ int dos_audio_mixer_voice_acquire()
+     return -1;
+ }
+ 
++// DOS-PORT patch 0377: the ring bound's witness, one RUNMANI.LOG line at exit
++void dos_audio_mixer_ring_report(FILE *log)
++{
++    if (!log)
++        return;
++    fprintf(log, "DOS-PORT voicering legacy=%d compact_at=%lu compactions=%lu moved_bytes=%lu cap_max=%lu\n",
++        dos_ring_legacy() ? 1 : 0, (unsigned long)RING_COMPACT_BYTES, g_ring_compactions, g_ring_moved_bytes,
++        g_ring_cap_max);
++}
++
+ void dos_audio_mixer_voice_release(int voice)
+ {
+     if (voice < 0 || voice >= DOS_AUDIO_MIXER_MAX_VOICES)
+@@ -473,7 +518,16 @@ size_t dos_audio_mixer_voice_write(int voice, const void *data, size_t bytes)
+     if (buffered + bytes > MAX_VOICE_RING_BYTES)
+         return 0u; // reject the whole chunk; caller retries next frame
+     const uint8_t *bytes_in = static_cast<const uint8_t *>(data);
++    if (v.read_pos >= RING_COMPACT_BYTES && !dos_ring_legacy()) // DOS-PORT patch 0377
++    {
++        v.ring.erase(v.ring.begin(), v.ring.begin() + v.read_pos);
++        v.read_pos = 0;
++        g_ring_compactions++;
++        g_ring_moved_bytes += (unsigned long)v.ring.size();
++    }
+     v.ring.insert(v.ring.end(), bytes_in, bytes_in + bytes);
++    if (v.ring.capacity() > g_ring_cap_max) // DOS-PORT patch 0377: the witness
++        g_ring_cap_max = (unsigned long)v.ring.capacity();
+     if (buffered == 0 && v.active)
+         dos_prime_cold_start(voice); // DOS-PORT patch 0348: no-op unless the device is idle
+     return bytes;
+diff --git a/Engine/platform/dos/dos_audio_mixer.h b/Engine/platform/dos/dos_audio_mixer.h
+index e3adcc7a4..1165f3660 100644
+--- a/Engine/platform/dos/dos_audio_mixer.h
++++ b/Engine/platform/dos/dos_audio_mixer.h
+@@ -53,6 +53,7 @@
+ #ifndef __AGS_EE_PLATFORM_DOS__DOS_AUDIO_MIXER_H
+ #define __AGS_EE_PLATFORM_DOS__DOS_AUDIO_MIXER_H
+ #include <cstddef>
++#include <cstdio> // FILE, DOS-PORT patch 0377
+ #include <SDL3/SDL.h>
+ 
+ // Tier-2 device rate: 11025 Hz mono -- doskutsu/dossage's own established
+@@ -142,6 +143,9 @@ void dos_audio_mixer_voice_release(int voice);
+ size_t dos_audio_mixer_voice_write(int voice, const void *data, size_t bytes);
+ // Bytes still buffered (not yet mixed out) for the given voice.
+ size_t dos_audio_mixer_voice_queued(int voice);
++
++// DOS-PORT patch 0377: one "DOS-PORT voicering ..." line (the ring bound's witness) to `log` (RUNMANI.LOG at exit).
++void dos_audio_mixer_ring_report(FILE *log);
+ // Marks the voice active (mixed into the output) or inactive (silent,
+ // ring left untouched so a Pause() can Resume() without losing data).
+ void dos_audio_mixer_voice_set_active(int voice, bool active);
+-- 
+2.47.3
+

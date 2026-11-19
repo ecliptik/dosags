@@ -1,0 +1,325 @@
+From c8a026701bcff566fe6d523240d5967c1442aa71 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 6 Nov 2026 14:49:26 -0800
+Subject: [PATCH 366/367] DOS-PORT: patch 0366 -- lever R1: an unchanged GUI
+ that nothing touched this frame is not composited (DOSAGS_GUI_CLIP, default
+ on)
+
+Why: Maniac Mansion Deluxe in play drew about 2 frames in 3 on the 486 (round P9 67.6%) while its character
+select held 99.9%. The difference was the render pass, not logic (dosags LAB-PLAY.md sections 2-3): three GUIs
+(the verb bar 320x57 twice and a 320x16 strip, 41,280 masked pixels) were composited in full on every frame though
+none of them changed. They were already on 0169/0191/0234's skip-invalidate list, and 0170's clip that would limit
+them to the dirty region was opt-in and off. In DOSBox-X at fixed 40000 they were 4.9 of 5.4-6.5 ms of sprite
+drawing per pass. Round GC (same-binary ABBA on the 486, lab exe): MMD in play 66.39 / 65.97% -> 88.72 / 89.30%
+displayed; rb_sprite_time per drawn frame 7.97 -> 4.12 ms; AGS Quest AutoPilot 93.01 -> 97.09%.
+
+What: 0170 clips an unchanged, idempotent entry to the frame's dirty bbox plus 0236's carry boxes, and drew it in
+full when the entry's rect missed that region. A clip to an empty rect draws nothing, so such an entry is now not
+composited at all: outside the region the buffer still holds this same composite from the last frame that drew it
+(the restore, every room sprite and every non-skipped UI entry are inside the region; skipped UI entries are clipped
+to it). DOSAGS_GUI_CLIP: unset (or any other value) = 2, this skip; 0 = off, every GUI composited in full as in the
+0365 head; 1 = 0170+0236's clip without the skip.
+Latch: a change of the back buffer (virtualScreen object, pixel base or size), an alias activate or deactivate, or
+a tint or plugin entry forces full composition -- no clip, no skip, exactly mode 0's drawing -- for that frame and
+the next. So does a whole-surface restore the dirty set was not told about, for the frame it repaints: AGS turns a
+26th rect in one restore interval into WHOLESCREENDIRTY (invalidate_rect_on_surf) without telling dos_port_dirty, so
+the bbox the clip reads would be smaller than what the restore repainted (found by the R3 lab, dosags LAB-R3.md; seen
+3-18 times a run in MMD, the intro and AGS Quest). The room restore and the black fill check for it and arm the latch
+(dos_guiclip_note_fullrestore).
+Witness: "DOS-PORT guiclip DOSAGS_GUI_CLIP=<value|(default)> mode=<0|1|2>" once at startup, and in RUNMANI.LOG
+"DOS-PORT guiclip_final mode= flagged= skipped= skipped_px= clipped= full= latched_full= latch_events=
+latch_alias= latch_buffer= latch_tint= latch_fullrestore=" in both flavours. DOSAGS_GUI_CLIP joins the RUNMANIFEST env allowlist.
+
+Gates (DOSBox-X, fixed 40000; LAB-PLAY.md 7 and 9): a per-frame digest of the composited virtual screen, every
+tick rendered, default vs 0: EQUAL on every tick of MMD in play (save 007, clicks and hovers, 3164 ticks) and the
+MMD intro (1299 ticks); a control that skips every flagged entry DIFFs (2443 / 781 ticks). Never engages on 5 Days
+room 3 (its 320x200 picture sits in a 320x240 virtual screen, so 0170's same-space test fails) or Trilby room 35.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P4db4MSiR2PYUDFdrDdJe2
+---
+ Engine/ac/draw.cpp          |   5 +-
+ Engine/ac/draw_software.cpp |   9 +++
+ Engine/ac/draw_software.h   |   1 +
+ Engine/gfx/ali3dsw.cpp      | 133 +++++++++++++++++++++++++++++++-----
+ Engine/main/quit.cpp        |   5 ++
+ 5 files changed, 134 insertions(+), 19 deletions(-)
+
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index 4eed0b69f..3c3a61bc5 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -3302,9 +3302,8 @@ void put_sprite_list_on_screen(bool in_room)
+             // call, which is what makes a one-shot flag land on the right
+             // entry -- DrawSprite constructs its list entry synchronously.
+             {
+-                static int _h2 = -1;
+-                if (_h2 < 0) { const char *e = getenv("DOSAGS_GUI_CLIP");
+-                               _h2 = (e && e[0] == '1') ? 1 : 0; }
++                extern int dos_guiclip_mode();   // patch 0366: one resolver (ali3dsw.cpp); 1 and 2 flag, 0 does not
++                const int _h2 = dos_guiclip_mode() >= 1 ? 1 : 0;
+                 if (_h2 && t.SkipInvalidate)
+                     gfxDriver->DosPortClipNextToDirty(true);
+             }
+diff --git a/Engine/ac/draw_software.cpp b/Engine/ac/draw_software.cpp
+index 2e57022e7..d61920217 100644
+--- a/Engine/ac/draw_software.cpp
++++ b/Engine/ac/draw_software.cpp
+@@ -922,6 +922,11 @@ void update_black_invreg_and_reset(Bitmap *ds)
+ {
+     if (!BlackRects.IsInit())
+         return;
++#ifdef __DJGPP__
++    // patch 0366: a whole-surface fill the dirty set does not know about repaints under every GUI
++    if (BlackRects.NumDirtyRegions == WHOLESCREENDIRTY && !dos_port_dirty.is_full)
++        dos_guiclip_note_fullrestore();
++#endif
+     update_invalid_region(ds, (color_t)0, BlackRects);
+     BlackRects.Reset();
+ }
+@@ -939,6 +944,10 @@ void update_room_invreg_and_reset(int view_index, Bitmap *ds, Bitmap *src, bool
+     dos_port_tick_timing.bg_calls++;
+     {
+     DosPortTickScope _dp_bg(dos_port_tick_timing.bg_restore);
++    // patch 0366: a whole-surface restore the dirty set does not know about (a 26th rect in one interval turns the
++    // surface WHOLESCREENDIRTY in invalidate_rect_on_surf without telling dos_port_dirty) repaints under every GUI
++    if (RoomCamRects[view_index].NumDirtyRegions == WHOLESCREENDIRTY && !dos_port_dirty.is_full)
++        dos_guiclip_note_fullrestore();
+ #endif
+     update_invalid_region(ds, src, RoomCamRects[view_index], no_transform);
+ #ifdef __DJGPP__
+diff --git a/Engine/ac/draw_software.h b/Engine/ac/draw_software.h
+index 73a7061a6..6c44aa9db 100644
+--- a/Engine/ac/draw_software.h
++++ b/Engine/ac/draw_software.h
+@@ -116,6 +116,7 @@ struct DosPortDirtyState
+     long carried_presents = 0, carried_boxes = 0, carried_full = 0;
+ };
+ extern DosPortDirtyState dos_port_dirty;
++void dos_guiclip_note_fullrestore();   // patch 0366 (gfx/ali3dsw.cpp): a silent whole-surface restore
+ // DOS-PORT patch 0175: which call site dirtied how many pixels.
+ //
+ // The dirty region is 80,514 px/frame after stage 1 halved it, and nothing
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index f9af123ae..d0e5948ca 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -28,6 +28,59 @@
+ #include <time.h> // uclock_t/uclock()/UCLOCKS_PER_SEC -- DOS-PORT patch 0079
+ #include "main/dos_port_tick_timing.h" // DOS-PORT patch 0079
+ #include "main/dos_port_work.h"        // DOS-PORT patch 0230
++#include "debug/out.h"                 // DOS-PORT patch 0366: the guiclip witness line
++#endif
++
++#ifdef __DJGPP__
++// DOS-PORT patch 0366 -- lever R1 (dosags LAB-PLAY.md sections 3 and 7; round GC on the 486). An unchanged GUI
++// (0169/0191/0234's skip-invalidate set) whose rect misses everything this frame repaints is not composited at all.
++// 0170 clips such an entry to the frame's dirty bbox plus 0236's carry boxes, and drew it IN FULL when that
++// intersection was empty; a clip to an empty rect draws nothing, so the skip is 0170+0236 taken to its limit.
++// DOSAGS_GUI_CLIP: unset (or any other value) = 2, the skip (default); 0 = off, every GUI composited in full (the 0365
++// head); 1 = 0170+0236's clip without the skip (the opt-in it was).
++// Latch: any change of the back buffer (the virtualScreen object, its pixel base or its size), any alias activate or
++// deactivate, a whole-surface restore the dirty set was not told about (dos_guiclip_note_fullrestore, below), and any
++// tint or plugin entry force full composition -- no clip, no skip, exactly what mode 0 draws -- for
++// that frame and the next, so nothing relies on pixels a different buffer holds.
++static int dos_gc_mode = -1;
++static long dos_gc_flagged = 0, dos_gc_skipped = 0, dos_gc_clipped = 0, dos_gc_full = 0, dos_gc_latched_full = 0;
++static long dos_gc_latch_events = 0, dos_gc_latch_alias = 0, dos_gc_latch_buffer = 0, dos_gc_latch_tint = 0;
++static long dos_gc_latch_fullrestore = 0;
++static long long dos_gc_skipped_px = 0;
++static int dos_gc_latch = 0;
++static const void *dos_gc_last_vs = nullptr, *dos_gc_last_base = nullptr;
++static int dos_gc_last_w = -1, dos_gc_last_h = -1;
++int dos_guiclip_mode()
++{
++    if (dos_gc_mode < 0)
++    {
++        const char *e = getenv("DOSAGS_GUI_CLIP");
++        dos_gc_mode = (e && e[0] == '0' && e[1] == 0) ? 0 : (e && e[0] == '1' && e[1] == 0) ? 1 : 2;
++        AGS::Common::Debug::Printf("DOS-PORT guiclip DOSAGS_GUI_CLIP=%s mode=%d", (e && *e) ? e : "(default)", dos_gc_mode);
++    }
++    return dos_gc_mode;
++}
++static void dos_gc_set_latch(long &why)
++{
++    if (dos_gc_latch < 2) { dos_gc_latch_events++; why++; }
++    dos_gc_latch = 2;
++}
++// Called by the restore (draw_software.cpp) when it repaints a whole surface that the dirty set does not report as
++// full: AGS turns a 26th rect in one interval into WHOLESCREENDIRTY without telling dos_port_dirty (found by the R3
++// lab, dosags LAB-R3.md), so the bbox the clip reads is smaller than what was just repainted. The frame being
++// constructed then composites every flagged GUI in full (the latch, armed here, is consumed by this frame's render).
++void dos_guiclip_note_fullrestore()
++{
++    dos_gc_set_latch(dos_gc_latch_fullrestore);
++}
++void dos_guiclip_summary(FILE *log)
++{
++    if (!log) return;
++    fprintf(log, "DOS-PORT guiclip_final mode=%d flagged=%ld skipped=%ld skipped_px=%lld clipped=%ld full=%ld latched_full=%ld"
++        " latch_events=%ld latch_alias=%ld latch_buffer=%ld latch_tint=%ld latch_fullrestore=%ld\n",
++        dos_gc_mode, dos_gc_flagged, dos_gc_skipped, dos_gc_skipped_px, dos_gc_clipped, dos_gc_full, dos_gc_latched_full,
++        dos_gc_latch_events, dos_gc_latch_alias, dos_gc_latch_buffer, dos_gc_latch_tint, dos_gc_latch_fullrestore);
++}
+ #endif
+ 
+ 
+@@ -49,6 +102,9 @@ static uint32_t _trans_alpha_blender32(uint32_t x, uint32_t y, uint32_t n);
+ 
+ SDLRendererGraphicsDriver::SDLRendererGraphicsDriver()
+ {
++#ifdef __DJGPP__
++  dos_guiclip_mode();   // patch 0366: the witness line, once, at startup
++#endif
+   _tint_red = 0;
+   _tint_green = 0;
+   _tint_blue = 0;
+@@ -221,6 +277,7 @@ void SDLRendererGraphicsDriver::DosPortAliasDeactivate()
+ {
+     if (!_aliasActive)
+         return;
++    dos_gc_set_latch(dos_gc_latch_alias);   // patch 0366
+     _aliasActive = false;
+     _aliasX = _aliasY = _aliasW = _aliasH = -1;
+     _aliasBase = nullptr;
+@@ -295,6 +352,7 @@ bool SDLRendererGraphicsDriver::DosPortAliasTryActivate(SDL_Surface *win, const
+     _vscreenSurface = SDL_CreateSurfaceFrom(dst.w, dst.h, win->format, base, win->pitch);
+     if (_vscreenSurface && win->format == SDL_PIXELFORMAT_INDEX8)
+         SDL_CreateSurfacePalette(_vscreenSurface);
++    dos_gc_set_latch(dos_gc_latch_alias);   // patch 0366
+     _aliasActive = true;
+     _aliasX = dst.x; _aliasY = dst.y; _aliasW = dst.w; _aliasH = dst.h; _aliasBase = win->pixels;
+     dos_port_tick_timing.vscreen_alias_on++;
+@@ -619,6 +677,21 @@ void SDLRendererGraphicsDriver::RenderToBackBuffer()
+         ClearDrawLists();
+         return; // no batches - no render
+     }
++#ifdef __DJGPP__
++    // patch 0366: the latch decays one per composited frame; a changed back buffer re-arms it for this frame and the next
++    if (dos_gc_latch > 0) dos_gc_latch--;
++    if (virtualScreen)
++    {
++        const void *_vb = virtualScreen->GetScanLine(0);
++        if (virtualScreen != dos_gc_last_vs || _vb != dos_gc_last_base ||
++            virtualScreen->GetWidth() != dos_gc_last_w || virtualScreen->GetHeight() != dos_gc_last_h)
++        {
++            if (dos_gc_last_vs) dos_gc_set_latch(dos_gc_latch_buffer);
++            dos_gc_last_vs = virtualScreen; dos_gc_last_base = _vb;
++            dos_gc_last_w = virtualScreen->GetWidth(); dos_gc_last_h = virtualScreen->GetHeight();
++        }
++    }
++#endif
+ 
+     // Render all the sprite batches with necessary transformations
+     //
+@@ -757,6 +830,9 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+ #endif
+     if (sprite.ddb == nullptr)
+     {
++#ifdef __DJGPP__
++      dos_gc_set_latch(dos_gc_latch_tint);   // patch 0366: a plugin may draw anything
++#endif
+       if (_spriteEvtCallback)
+         _spriteEvtCallback(sprite.x, sprite.y);
+       else
+@@ -767,6 +843,9 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+     }
+     else if (sprite.ddb == reinterpret_cast<ALSoftwareBitmap*>(DRAWENTRY_TINT))
+     {
++#ifdef __DJGPP__
++      dos_gc_set_latch(dos_gc_latch_tint);   // patch 0366: the tint rewrites the whole surface
++#endif
+       // draw screen tint fx
+       set_trans_blender(_tint_red, _tint_green, _tint_blue, 0);
+       surface->LitBlendBlt(surface, 0, 0, 128);
+@@ -899,26 +978,48 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+     // post-restore marks (0193's carry). Those reach the dirty set only at the present
+     // (dos_port_dirty_merge_carry), after this composite, so a clip read without them can miss a restored
+     // span and leave the skipped entry out of it for good -- the cause of 0170 stage 2's divergence (dosags
+-    // LAB-S32.md 23.4-23.11). Read the carry here; do not merge it. Only reachable with DOSAGS_GUI_CLIP=1.
+-    if (sprite.dos_clip_dirty && _dp_same_space &&
+-        dos_port_dirty.valid && !dos_port_dirty.is_full && !dos_port_dirty.carry_full)
++    // LAB-S32.md 23.4-23.11). Read the carry here; do not merge it. Reachable in DOSAGS_GUI_CLIP modes 1 and 2 (0366).
++    // patch 0366: an entry is flagged only in modes 1 and 2 (draw.cpp asks dos_guiclip_mode()).
++    if (sprite.dos_clip_dirty)
+     {
+-        Rect d(dos_port_dirty.x1, dos_port_dirty.y1,
+-               dos_port_dirty.x2, dos_port_dirty.y2);
+-        for (int _ci = 0; _ci < dos_port_dirty.carry_nbox; ++_ci)   // patch 0236
++        dos_gc_flagged++;
++        bool _gc_clipped = false;
++        if (dos_gc_latch == 0 && _dp_same_space &&
++            dos_port_dirty.valid && !dos_port_dirty.is_full && !dos_port_dirty.carry_full)
+         {
+-            const DosPortDirtyBox &_cb = dos_port_dirty.carry_box[_ci];
+-            d = Rect(std::min(d.Left, _cb.x1), std::min(d.Top, _cb.y1),
+-                     std::max(d.Right, _cb.x2), std::max(d.Bottom, _cb.y2));
++            Rect d(dos_port_dirty.x1, dos_port_dirty.y1,
++                   dos_port_dirty.x2, dos_port_dirty.y2);
++            for (int _ci = 0; _ci < dos_port_dirty.carry_nbox; ++_ci)   // patch 0236
++            {
++                const DosPortDirtyBox &_cb = dos_port_dirty.carry_box[_ci];
++                d = Rect(std::min(d.Left, _cb.x1), std::min(d.Top, _cb.y1),
++                         std::max(d.Right, _cb.x2), std::max(d.Bottom, _cb.y2));
++            }
++            Rect cur = surface->GetClip();
++            Rect isect = IntersectRects(cur, d);
++            // patch 0366: the entry's own rect inside that clip is empty -> nothing would be drawn: skip it
++            if (dos_guiclip_mode() == 2 && native_bmp &&
++                IntersectRects(isect, Rect(drawAtX, drawAtY, drawAtX + native_bmp->GetWidth() - 1,
++                                           drawAtY + native_bmp->GetHeight() - 1)).IsEmpty())
++            {
++                dos_gc_skipped++;
++                dos_gc_skipped_px += (long long)native_bmp->GetWidth() * native_bmp->GetHeight();
++                continue;
++            }
++            if (!isect.IsEmpty())
++            {
++                _dp_saved_clip = cur;
++                _dp_clipped = true;
++                surface->SetClip(isect);
++                dos_port_tick_timing.rb_clipped_sprites++;
++                dos_gc_clipped++;
++                _gc_clipped = true;
++            }
+         }
+-        Rect cur = surface->GetClip();
+-        Rect isect = IntersectRects(cur, d);
+-        if (!isect.IsEmpty())
++        if (!_gc_clipped)
+         {
+-            _dp_saved_clip = cur;
+-            _dp_clipped = true;
+-            surface->SetClip(isect);
+-            dos_port_tick_timing.rb_clipped_sprites++;
++            dos_gc_full++;
++            if (dos_gc_latch) dos_gc_latched_full++;
+         }
+     }
+     struct _DpUnclip {
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index d73ebb3de..6821e438d 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -414,6 +414,7 @@ void quit(const char *quitmsg)
+             "DOSAGS_FORCE_COLOR_DEPTH",
+             "DOSAGS_FREEZE_MS",       // patch 0195: stalls at chosen ticks for an emulated-screen capture
+             "DOSAGS_FREEZE_TICKS",
++            "DOSAGS_GUI_CLIP",        // patch 0366: GUI composite skip (2 by default; 0 = off, 1 = 0170's clip)
+             "DOSAGS_MAX_SCALE",       // patch 0101: caps the render-frame scale (bake-off candidate c)
+             "DOSAGS_PRESENT_NO_SKIP", // patch 0099: forces real presents -- changes every fps figure
+             "DOSAGS_PRESENT_VERIFY",  // patch 0192: reads the surface twice per present -- a diagnostic, never a timed cell
+@@ -583,6 +584,10 @@ void quit(const char *quitmsg)
+             // phase instead of a repeated fprintf now that patch 0082's
+             // exhaustive partition brings the phase count to 17 -- see
+             // dos_port_tick_emit()'s own definition above quit().
++            {   // DOS-PORT patch 0366: which GUI composite mode ran and how often it skipped, in both flavours
++                extern void dos_guiclip_summary(FILE *);
++                dos_guiclip_summary(run_manifest_log);
++            }
+ #ifdef DOSAGS_RELEASE
+             // DOS-PORT patch 0351: the release flavour times nothing, so it has no phase aggregates and none of
+             // the quit-time counter dump below. It keeps the one line the DOSBox-X ratchet reads from this
+-- 
+2.47.3
+

@@ -1,0 +1,3 @@
+# RSCAL -- DRIVE 6 full calibration, only on an RSCALQ miss (pre-registration, before any data)
+- Binary: rs0383.exe. DRIVE6_MODE=cal; presses sent == planned before the gate; gate: drive6-gate.sh --no-recentre. No PASS -> no play cell this power-on (a press-path STOP is never answered mid-round).
+- Round RS (pre-registration: ROUNDRS-2026-11-19/README.md, the rule; written 2026-11-18 before any data). One power-on, CAP_MIN 120. USB4VC firmware 0.5.109; pkt_partial / pkt_timeout / mouse.dropped and ev_in == pkt_built reported per cell; a partial voids an MS3 play cell from that press (rule M0).

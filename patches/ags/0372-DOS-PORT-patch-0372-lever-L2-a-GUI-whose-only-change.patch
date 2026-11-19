@@ -1,0 +1,436 @@
+From fda3fe557f611ce589bc359e03c4dc2009c99b1d Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Sun, 8 Nov 2026 23:14:24 -0800
+Subject: [PATCH 372/372] DOS-PORT: patch 0372 -- lever L2: a GUI whose only change is
+ some controls marks their rects, not the GUI (DOSAGS_GUI_CTRL_MARK, default
+ off)
+
+Why: in Maniac Mansion Deluxe every walk click flips a property of the action-line label (GUI 0's only control, 320x10)
+and the next tick flips it back. R3 (0368) then re-marks the whole 320x56 GUI twice per click: the room is restored
+under it, GUI 0 and the overlapping verb bar (GUI 1) are re-composited, and the present pushes 44,800 px. At DOSBox-X
+fixed 40000 a flip tick costs scene 10.2 + render 5.3 ms against ~1.0 + 0.6 for an ordinary room-1 tick; on the 486
+these ticks run ~50 ms (dosags docs/lab/LAB-RB.md section 3.1, LAB-L2G.md).
+
+What: DOSAGS_GUI_CTRL_MARK unset or 0 = off (the 0371 head; the default); exactly "1" = on; any other value = off.
+Each GUI counts what flagged it since its last texture redraw (Common/gui/guimain.cpp, Engine/gui/gui_engine.cpp):
+GUIObject::MarkChanged() records the control; GUIMain::MarkControlChanged() calls are counted; NotifyControlPosition
+and a NotifyControlState with a change make the GUI ineligible. When dos_port_gui_flush_unmarked() finds an unmarked
+GUI flagged only that way -- every control mark matched, no GUI-level change, the same position / size / transparency /
+z, an idempotent composite (0234), not a 32-bit alpha GUI, at most 16 controls -- it marks, ahead of the restore, for
+each such control and every label with text macros, the union of the graphic rect it had at the GUI's last texture
+redraw and the one it has now (frame + CalcGraphicRect clipped and unclipped), and the GUI takes R3's unchanged path
+(no mark at the composite, drawn once per dirty box that reaches it). Outside the marked rects the redrawn texture
+equals the one on screen, so R3's argument holds as for an unchanged GUI. Any failed condition takes the 0371 path; a
+flag set between the flush and the texture redraw drops it and R3's late mark of the whole rect follows. A label's rect
+is cached on everything CalcGraphicRect reads (text as drawn, translation, font, alignment, size, padding, border and
+wrap flags, a font generation bumped by MarkForFontUpdate); labels with macros always recompute. Per-GUI slots are
+allocated on first use. The driver, R2 (0369/0370), the restore and the present are unchanged. All of it is under
+__DJGPP__.
+Witness: "DOS-PORT guictrlmark DOSAGS_GUI_CTRL_MARK=<v|(default)> mode=<0|1>", read at every flush and printed once at
+the first scene; "DOS-PORT guictrlmark_final mode= l2= ctrls= px= px_gui= no_safe= unsafe= mixed= props= norec=
+slots_overflow= late= mismatch= calc= cache_hits=" in RUNMANI.LOG in both flavours. DOSAGS_GUI_CTRL_MARK joins the
+RUNMANIFEST env allowlist. Lab lever: dosags docs/lab/LAB-L2G.md section 8 (lab-l2g2.diff), landed unchanged but for
+the comments and the __DJGPP__ guard around its three includes in draw.cpp.
+
+Gates (DOSBox-X fixed 40000, every tick rendered, frame digest + PRESENT_VERIFY, seeded, R2 at its 0370 default in
+both arms; dosags tests/harness/results/L2LAND-2026-11-09): off vs on EQUAL on every loop counter of MMD fixtures G
+(3164), V (3964), GCL (7004), H (7004), the intro (1299) and AGS Quest AutoPilot (3558), each cell also EQUAL to
+LAB-L2G's, each off arm EQUAL to 0371's; a lab check comparing the old GUI texture with the redrawn one found 0
+differing pixels outside the marked rects in every on cell (L2 engaged 18 / 19 / 34 / 16 / 10 / 43 times). Controls:
+marking nothing DIFF (6049/7004), the rects 1 px short DIFF (2921). Forced, on vs off EQUAL: a control moved /
+resized (falls back), GUI visibility / transparency toggled, a label's text grown and shrunk, the slot cap forced to 2
+(slots_overflow 4). With DOSAGS_ROUTE_PREWARM=1 in both arms (0371 + 0372 together) EQUAL. Release, on vs off: 5 Days
+room 3, Trilby room 35, AGS Quest game output EQUAL; P9-shape MMD with it unset EQUAL to the 0371 release. +8289 bytes
+in both flavours (instrumented: .text +5632, .bss +1536; release: .text +5120, .data +512, .bss +1536; both flavours
+byte-identical across two clean builds).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Common/gui/guimain.cpp    |  17 ++++
+ Engine/ac/draw.cpp        | 206 +++++++++++++++++++++++++++++++++++++-
+ Engine/ac/gui.cpp         |   6 ++
+ Engine/gui/gui_engine.cpp |  12 +++
+ Engine/main/quit.cpp      |   3 +
+ 5 files changed, 243 insertions(+), 1 deletion(-)
+
+diff --git a/Common/gui/guimain.cpp b/Common/gui/guimain.cpp
+index 7992f8fed..d800be3b6 100644
+--- a/Common/gui/guimain.cpp
++++ b/Common/gui/guimain.cpp
+@@ -1,3 +1,11 @@
++#ifdef __DJGPP__
++// DOS-PORT patch 0372: what flagged each GUI since its last texture redraw (reset by draw.cpp after the redraw)
++long dos_gc2_all[64];                              // GUIMain::MarkControlChanged() calls
++long dos_gc2_safe[64];                             // ... of them made by GUIObject::MarkChanged() (gui_engine.cpp)
++unsigned char dos_gc2_unsafe[64];                  // a NotifyControlPosition, or a NotifyControlState with a change
++unsigned short dos_gc2_pending[64];                // which controls called MarkChanged() (slim: bit c, c < 16)
++unsigned char dos_gc2_overflow[64];                // a control id >= 16 called MarkChanged(): the GUI is not eligible
++#endif
+ //=============================================================================
+ //
+ // Adventure Game Studio (AGS)
+@@ -248,11 +256,17 @@ void GUIMain::MarkChanged()
+ 
+ void GUIMain::MarkControlChanged()
+ {
++#ifdef __DJGPP__
++    if (_id >= 0 && _id < 64) dos_gc2_all[_id]++;   // DOS-PORT patch 0372
++#endif
+     _hasControlsChanged = true;
+ }
+ 
+ void GUIMain::NotifyControlPosition()
+ {
++#ifdef __DJGPP__
++    if (_id >= 0 && _id < 64) dos_gc2_unsafe[_id] = 1;   // DOS-PORT patch 0372: a control moved, resized or reordered
++#endif
+     // Force it to re-check for which control is under the mouse
+     _mouseWasAt.X = -1;
+     _mouseWasAt.Y = -1;
+@@ -261,6 +275,9 @@ void GUIMain::NotifyControlPosition()
+ 
+ void GUIMain::NotifyControlState(int objid, bool mark_changed)
+ {
++#ifdef __DJGPP__
++    if (mark_changed && _id >= 0 && _id < 64) dos_gc2_unsafe[_id] = 1;   // DOS-PORT patch 0372: visibility / enabled / ...
++#endif
+     _mouseWasAt.X = -1;
+     _mouseWasAt.Y = -1;
+     _hasControlsChanged |= mark_changed;
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index f4cf1c01f..11503806b 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -59,6 +59,11 @@
+ #include "font/fonts.h"
+ #include "gui/guimain.h"
+ #include "gui/guiobject.h"
++#ifdef __DJGPP__
++#include "gui/guilabel.h"   // DOS-PORT patch 0372
++#include <string.h>          // DOS-PORT patch 0372
++#include "ac/global_translation.h"   // DOS-PORT patch 0372: get_translation
++#endif
+ #include "platform/platform.h"
+ #include "platform/base/agsplatformdriver.h"
+ #include "plugin/plugin_engine.h"
+@@ -3231,8 +3236,198 @@ static void draw_gui_controls_batch(int gui_id)
+ // a GUI whose last composite was left unmarked can be here, and it is left alone
+ // while it still looks the same -- an unchanged, still-visible GUI dirties
+ // nothing, which is what stage 1 is for.
++// DOS-PORT patch 0372: DOSAGS_GUI_CTRL_MARK. A GUI that was composited unmarked (0169/0191) and is then flagged
++// changed has its whole old rect marked by dos_port_gui_flush_unmarked() ahead of the restore. When everything that
++// flagged it since its last texture redraw was GUIObject::MarkChanged() on some of its controls (counted in
++// Common/gui/guimain.cpp; no control move / resize / state notification, no GUI-level change, the same picture
++// properties, an idempotent composite, not a 32-bit alpha GUI, at most 16 controls), the flush marks only those
++// controls' old U new graphic rects (and every label with text macros), and the GUI takes R3's (0368) unchanged path:
++// no mark at the composite, drawn once per dirty box. Any failed condition takes the 0371 path.
++extern long dos_gc2_all[64], dos_gc2_safe[64];
++extern unsigned char dos_gc2_unsafe[64];
++extern unsigned short dos_gc2_pending[64];
++extern unsigned char dos_gc2_overflow[64];
++#define DOS_GC2_MAXC 16
++#define DOS_GC2_CAP DOS_GC2_MAXC   // the slot cap in force: a GUI with more controls takes the 0371 path (slots_overflow)
++// slim: plain-int storage (zero-initialised, so .bss; AGS's Rect constructs to Right = Bottom = -1, which puts an array
++// of it into the exe's initialised data)
++struct DosGc2Box { int l, t, r, b; Rect R() const { return Rect(l, t, r, b); }
++                   void Set(const Rect &x) { l = x.Left; t = x.Top; r = x.Right; b = x.Bottom; } };
++// slim: one block per GUI, allocated the first time the GUI is redrawn with the lever on (DJGPP's exe carries .bss)
++struct DosGc2Gui
++{
++    int oldn;                       // controls recorded at the last texture redraw (0: none)
++    DosGc2Box old[DOS_GC2_MAXC];    // each control's graphic rect then (GUI coords)
++    int markedn;
++    DosGc2Box marked[DOS_GC2_MAXC]; // what this frame's flush marked (GUI coords)
++    DosGc2Box nw[DOS_GC2_MAXC];     // the flush's current rect of each marked control (reused after the redraw)
++    unsigned short newv;
++};
++static DosGc2Gui *dos_gc2_g[64];
++static bool dos_gc2_ok[64];                   // the flush took the L2 path for this GUI this frame
++static long dos_gc2_safe_snap[64];
++static long dos_gc2_n = 0, dos_gc2_ctrls = 0, dos_gc2_no_safe = 0, dos_gc2_unsafe_n = 0, dos_gc2_mixed = 0,
++            dos_gc2_props = 0, dos_gc2_norec = 0, dos_gc2_late = 0, dos_gc2_mismatch = 0, dos_gc2_overflow_n = 0;
++static long long dos_gc2_px = 0, dos_gc2_px_gui = 0;
++static long dos_gc2_calc_n, dos_gc2_cache_hits;   // (the label-rect cache below)
++static int dos_gc2_mode_v = -1;
++int dos_gc2_mode()
++{
++    if (dos_gc2_mode_v < 0)
++    {
++        const char *e = getenv("DOSAGS_GUI_CTRL_MARK");
++        dos_gc2_mode_v = (e && e[0] == '1' && e[1] == 0) ? 1 : 0;   // unset / "0" = off (the default); exactly "1" = on; anything else = off
++        Debug::Printf(kDbgMsg_Info, "DOS-PORT guictrlmark DOSAGS_GUI_CTRL_MARK=%s mode=%d", (e && *e) ? e : "(default)", dos_gc2_mode_v);
++    }
++    return dos_gc2_mode_v;
++}
++void dos_gc2_report(FILE *log)
++{
++    if (log)
++        fprintf(log, "DOS-PORT guictrlmark_final mode=%d l2=%ld ctrls=%ld px=%lld px_gui=%lld no_safe=%ld unsafe=%ld mixed=%ld "
++            "props=%ld norec=%ld slots_overflow=%ld late=%ld mismatch=%ld calc=%ld cache_hits=%ld\n", dos_gc2_mode_v < 0 ? 0 : dos_gc2_mode_v,
++            dos_gc2_n, dos_gc2_ctrls, dos_gc2_px, dos_gc2_px_gui, dos_gc2_no_safe, dos_gc2_unsafe_n, dos_gc2_mixed, dos_gc2_props,
++            dos_gc2_norec, dos_gc2_overflow_n, dos_gc2_late, dos_gc2_mismatch, dos_gc2_calc_n, dos_gc2_cache_hits);
++}
++// A control's drawn extent in GUI coordinates: its frame, and its graphic rect clipped and unclipped.
++// A label's unclipped rect needs its text laid out (~2 ms at fixed 40k), so a label without text macros keeps the last
++// result with everything GUILabel::CalcGraphicRect reads: the text as drawn (translated when the label is), font,
++// alignment, size, padding, border and wrap flags, and a font generation bumped by every MarkForFontUpdate.
++extern long dos_gc2_font_gen;   // ac/gui.cpp
++struct DosGc2LabelRect
++{
++    const GUIObject *o; char text[96]; int font, align, w, h, px, py, bw, flags; long fgen; DosGc2Box r;
++};
++static DosGc2LabelRect *dos_gc2_lrect;    // slim: 8 labels (allocated on first use), text up to 95 chars, strcmp
++static int dos_gc2_lrect_n = 0;
++static Rect dos_gc2_ctrl_rect(GUIObject *o)
++{
++    Rect r = RectWH(0, 0, o->GetWidth(), o->GetHeight());
++    const int pid = o->GetParentID();
++    const bool lbl = pid >= 0 && pid < game.numgui && guis[pid].GetControlType(o->GetID()) == kGUILabel &&
++                     static_cast<GUILabel *>(o)->GetTextMacros() == 0;
++    if (lbl)
++    {
++        GUILabel *l = static_cast<GUILabel *>(o);
++        const char *text = l->IsTranslated() ? get_translation(l->GetText().GetCStr()) : l->GetText().GetCStr();
++        const int flags = (l->IsShowBorder() ? 1 : 0) | (l->IsWrapText() ? 2 : 0) | (l->IsTranslated() ? 4 : 0);
++        DosGc2LabelRect *e = nullptr;
++        if (!dos_gc2_lrect) dos_gc2_lrect = (DosGc2LabelRect *)calloc(8, sizeof(DosGc2LabelRect));
++        for (int k = 0; k < dos_gc2_lrect_n; ++k) if (dos_gc2_lrect[k].o == o) { e = &dos_gc2_lrect[k]; break; }
++        const bool fits = dos_gc2_lrect && strlen(text) < sizeof(dos_gc2_lrect[0].text);
++        if (!e && fits && dos_gc2_lrect_n < 8 && dos_gc2_lrect) { e = &dos_gc2_lrect[dos_gc2_lrect_n++]; e->o = o; e->fgen = -1; }
++        if (e && !fits) e->fgen = -1;   // too long to keep: computed, never cached
++        if (e && fits && e->fgen == dos_gc2_font_gen && strcmp(e->text, text) == 0 && e->font == l->GetFont() && e->align == (int)l->GetTextAlignment() &&
++            e->w == l->GetWidth() && e->h == l->GetHeight() && e->px == l->GetPaddingX() && e->py == l->GetPaddingY() &&
++            e->bw == l->GetBorderWidth() && e->flags == flags)
++        {
++            dos_gc2_cache_hits++;
++            return Rect::MoveBy(e->r.R(), o->GetX(), o->GetY());
++        }
++        Rect lr = SumRects(r, o->CalcGraphicRect(false));
++        lr = SumRects(lr, o->CalcGraphicRect(true));
++        dos_gc2_calc_n++;
++        if (e && fits)
++        {
++            e->fgen = dos_gc2_font_gen; strcpy(e->text, text); e->font = l->GetFont(); e->align = (int)l->GetTextAlignment();
++            e->w = l->GetWidth(); e->h = l->GetHeight(); e->px = l->GetPaddingX(); e->py = l->GetPaddingY();
++            e->bw = l->GetBorderWidth(); e->flags = flags; e->r.Set(lr);
++        }
++        return Rect::MoveBy(lr, o->GetX(), o->GetY());
++    }
++    r = SumRects(r, o->CalcGraphicRect(false));
++    r = SumRects(r, o->CalcGraphicRect(true));
++    dos_gc2_calc_n++;
++    return Rect::MoveBy(r, o->GetX(), o->GetY());
++}
++static bool dos_port_gui_idempotent(int index, const GUIMain &gui);
++// The flush's L2 path. Returns true when it marked the GUI's changed controls (the GUI stays "unmarked").
++static bool dos_gc2_try(int i, GUIMain &g)
++{
++    if (dos_gc2_mode() != 1 || i < 0 || i >= 64) return false;
++    if (dos_gc2_unsafe[i]) { dos_gc2_unsafe_n++; return false; }
++    if (dos_gc2_safe[i] == 0) { dos_gc2_no_safe++; return false; }
++    if (dos_gc2_all[i] != dos_gc2_safe[i]) { dos_gc2_mixed++; return false; }
++    if (!dos_port_gui_idempotent(i, g) || (game.GetColorDepth() >= 32 && g.HasAlphaChannel())) { dos_gc2_props++; return false; }
++    const int n = g.GetControlCount();
++    // more controls than slots, or a control past the slots marked itself: today's path, counted
++    if (n > DOS_GC2_CAP || dos_gc2_overflow[i] || (dos_gc2_pending[i] >> DOS_GC2_CAP) != 0) { dos_gc2_overflow_n++; return false; }
++    DosGc2Gui *b = dos_gc2_g[i];
++    if (!b || b->oldn != n) { dos_gc2_norec++; return false; }
++    const Rect gr = RectWH(0, 0, g.GetWidth(), g.GetHeight());
++    b->markedn = 0;
++    b->newv = 0;
++    for (int c = 0; c < n; ++c)
++    {
++        GUIObject *o = g.GetControl(c);
++        const bool pend = (dos_gc2_pending[i] >> c) & 1;
++        const bool macro = g.GetControlType(c) == kGUILabel && static_cast<GUILabel *>(o)->GetTextMacros() != 0;
++        if (!pend && !macro) continue;
++        const Rect nr = dos_gc2_ctrl_rect(o);
++        b->nw[c].Set(nr);
++        b->newv |= (unsigned short)(1u << c);
++        const Rect r = IntersectRects(SumRects(b->old[c].R(), nr), gr);
++        if (r.IsEmpty()) continue;
++        b->marked[b->markedn++].Set(r);
++    }
++    for (int k = 0; k < b->markedn; ++k)
++    {
++        const Rect r = b->marked[k].R();
++        dos_port_dirty_source = kDirtySrc_UiSprite;
++        invalidate_rect(g.GetX() + r.Left, g.GetY() + r.Top, g.GetX() + r.Right + 1, g.GetY() + r.Bottom + 1, false);
++        dos_port_dirty_source = kDirtySrc_Other;
++        dos_gc2_px += (long long)r.GetWidth() * r.GetHeight();
++    }
++    dos_gc2_ctrls += (long)b->markedn;
++    dos_gc2_px_gui += (long long)g.GetWidth() * g.GetHeight();
++    dos_gc2_n++;
++    dos_gc2_ok[i] = true;
++    dos_gc2_safe_snap[i] = dos_gc2_safe[i];
++    return true;
++}
++// Before the texture redraw: nothing may have flagged the GUI between the flush and here.
++static void dos_gc2_before_redraw(int i, GUIMain &g)
++{
++    if (i < 0 || i >= 64 || !dos_gc2_ok[i]) return;
++    if (dos_gc2_unsafe[i] || g.HasChanged() || dos_gc2_safe[i] != dos_gc2_safe_snap[i] || dos_gc2_all[i] != dos_gc2_safe[i])
++    {
++        dos_gc2_ok[i] = false;   // the draw loop's late mark covers the whole old rect, as R3 does today
++        dos_gc2_mismatch++;
++    }
++}
++// After the texture redraw: every control's rect as now drawn, and the counters start again. Off: nothing (the 0369
++// path). On: after a consistent L2 redraw only the marked controls moved on, and the flush already computed their
++// rects (nothing flagged the GUI since -- dos_gc2_before_redraw checked); any other redraw recomputes every control.
++static void dos_gc2_after_redraw(int i, GUIMain &g)
++{
++    if (i < 0 || i >= 64 || dos_gc2_mode() != 1) return;
++    const int n = g.GetControlCount();
++    if (!dos_gc2_g[i]) dos_gc2_g[i] = (DosGc2Gui *)calloc(1, sizeof(DosGc2Gui));
++    DosGc2Gui *b = dos_gc2_g[i];
++    if (!b) { }
++    else if (n > DOS_GC2_CAP)
++        b->oldn = 0;   // more controls than slots: never eligible (the flush counts it as slots_overflow)
++    else if (dos_gc2_ok[i] && b->oldn == n)
++    {
++        for (int c = 0; c < n; ++c)
++            if ((b->newv >> c) & 1) b->old[c] = b->nw[c];
++    }
++    else
++    {
++        for (int c = 0; c < n; ++c)
++            b->old[c].Set(dos_gc2_ctrl_rect(g.GetControl(c)));
++        b->oldn = n;
++    }
++    dos_gc2_pending[i] = 0;
++    dos_gc2_overflow[i] = 0;
++    dos_gc2_all[i] = dos_gc2_safe[i] = 0;
++    dos_gc2_unsafe[i] = 0;
++}
++
+ static void dos_port_gui_flush_unmarked()
+ {
++    dos_gc2_mode();   // DOS-PORT patch 0372: the witness line, printed by the first read (the first scene), whatever qualifies
++    for (int _i = 0; _i < 64; ++_i) dos_gc2_ok[_i] = false;   // DOS-PORT patch 0372: decided per frame, here
+     const bool ui_drawn = ((debug_flags & DBG_NOIFACE) == 0) && (displayed_room >= 0);
+     for (int i = 0; i < game.numgui && i < 64; ++i)
+     {
+@@ -3244,6 +3439,8 @@ static void dos_port_gui_flush_unmarked()
+         const bool same = drawn_now && p.SameAs(g);
+         if (drawn_now && same && !g.HasChanged() && !g.HasControlsChanged())
+             continue; // same picture as last frame: stays unmarked
++        if (drawn_now && same && !g.HasChanged() && g.HasControlsChanged() && dos_gc2_try(i, guis[i]))
++            continue; // DOS-PORT patch 0372: only controls changed; their rects are marked, the GUI stays unmarked
+         if (!drawn_now)     dos_port_gui_flush_hidden_n++;
+         else if (!same)     dos_port_gui_flush_props_n++;
+         else                dos_port_gui_flush_flag_n++;
+@@ -3327,6 +3524,9 @@ void draw_gui_and_overlays()
+                 const bool draw_with_controls = !draw_controls_as_textures;
+                 if (gui.HasChanged() || (draw_with_controls && gui.HasControlsChanged()))
+                 {
++#ifdef __DJGPP__
++                    dos_gc2_before_redraw(index, gui);   // DOS-PORT patch 0372
++#endif
+                     auto &gbg = guibg[index];
+                     recycle_bitmap(gbg.Bmp, game.GetColorDepth(), gui.GetWidth(), gui.GetHeight(), true);
+                     // Configure GUI drawing alpha support, depending on a game version:
+@@ -3339,6 +3539,9 @@ void draw_gui_and_overlays()
+                     else
+                         gui.DrawSelf(gbg.Bmp.get());
+ 
++#ifdef __DJGPP__
++                    dos_gc2_after_redraw(index, gui);    // DOS-PORT patch 0372
++#endif
+                     const bool is_alpha = gui.HasAlphaChannel();
+                     if (is_alpha)
+                     {
+@@ -3484,11 +3687,12 @@ void draw_gui_and_overlays()
+                 // was true for every GUI on every frame.
+                 const bool _tracked = index >= 0 && index < 64;
+                 const bool _unch = _tracked &&
+-                    !dos_port_gui_was_changed[index] && !dos_port_gui_was_ctrls[index];
++                    !dos_port_gui_was_changed[index] && (!dos_port_gui_was_ctrls[index] || dos_gc2_ok[index]);   // DOS-PORT patch 0372
+                 // patch 0234: and only when re-compositing it over itself is idempotent
+                 const bool _same = _h && _unch && dos_port_gui_prev[index].SameAs(gui);
+                 const bool _skip = _same && dos_port_gui_idempotent(index, gui);
+                 if (_same && !_skip) dos_port_gui_refused_n++;
++                if (_tracked && dos_gc2_ok[index] && !_skip) dos_gc2_late++;   // DOS-PORT patch 0372: R3's late mark follows
+                 if (_unch) dos_port_gui_noinval_n++;
+                 if (_tracked)
+                 {
+diff --git a/Engine/ac/gui.cpp b/Engine/ac/gui.cpp
+index 9d33f62f3..656e8a31e 100644
+--- a/Engine/ac/gui.cpp
++++ b/Engine/ac/gui.cpp
+@@ -1,3 +1,6 @@
++#ifdef __DJGPP__
++long dos_gc2_font_gen = 0;   // DOS-PORT patch 0372: draw.cpp's label-rect cache key (global scope)
++#endif
+ //=============================================================================
+ //
+ // Adventure Game Studio (AGS)
+@@ -123,6 +126,9 @@ void MarkForTranslationUpdate()
+ 
+ void MarkForFontUpdate(int font)
+ {
++#ifdef __DJGPP__
++    dos_gc2_font_gen++;   // DOS-PORT patch 0372
++#endif
+     const bool update_all = (font < 0);
+     for (auto &btn : guibuts)
+     {
+diff --git a/Engine/gui/gui_engine.cpp b/Engine/gui/gui_engine.cpp
+index f86b6f9de..ebe916a55 100644
+--- a/Engine/gui/gui_engine.cpp
++++ b/Engine/gui/gui_engine.cpp
+@@ -1,3 +1,8 @@
++#ifdef __DJGPP__
++extern long dos_gc2_safe[64];                           // DOS-PORT patch 0372 (Common/gui/guimain.cpp)
++extern unsigned short dos_gc2_pending[64];
++extern unsigned char dos_gc2_overflow[64];
++#endif
+ //=============================================================================
+ //
+ // Adventure Game Studio (AGS)
+@@ -121,6 +126,13 @@ size_t GUI::SplitLinesForDrawing(const String &text, bool is_translated, SplitLi
+ 
+ void GUIObject::MarkChanged()
+ {
++#ifdef __DJGPP__
++    if (_parentID >= 0 && _parentID < 64 && _id >= 0)   // DOS-PORT patch 0372: this control's own picture changed
++    {
++        if (_id < 16) dos_gc2_pending[_parentID] |= (unsigned short)(1u << _id); else dos_gc2_overflow[_parentID] = 1;
++        dos_gc2_safe[_parentID]++;
++    }
++#endif
+     _hasChanged = true;
+     if (_parentID >= 0)
+         guis[_parentID].MarkControlChanged();
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 2e5bd772c..692db2e8b 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -34,6 +34,7 @@
+ #include "platform/dos/dos_audio_mixer.h"
+ #include "media/audio/sdldecoder.h" // dos_pcm_cache_report(), patch 0216
+ namespace AGS { namespace Engine { void dos_rp_report(FILE *log); } } // DOS-PORT patch 0319 (route_finder_impl_legacy.cpp)
++void dos_gc2_report(FILE *log);   // DOS-PORT patch 0372 (ac/draw.cpp)
+ #include "main/dos_port_tick_timing.h" // DosPortTickTiming, patch 0079
+ #include <SDL3/SDL_dosident.h> // SDL_DOSVideoIsBankedMode()/SDL_DOSVideoGetBankSwitchCount(), patch 0085
+ #endif
+@@ -416,6 +417,7 @@ void quit(const char *quitmsg)
+             "DOSAGS_FREEZE_MS",       // patch 0195: stalls at chosen ticks for an emulated-screen capture
+             "DOSAGS_FREEZE_TICKS",
+             "DOSAGS_GUI_CLIP",        // patch 0366/0368: GUI composite (4 = R3 by default; 2 = R1; 0 = off; 1 = 0170's clip)
++            "DOSAGS_GUI_CTRL_MARK",   // DOS-PORT patch 0372: a GUI whose only change is controls marks their rects (off by default)
+             "DOSAGS_MAX_SCALE",       // patch 0101: caps the render-frame scale (bake-off candidate c)
+             "DOSAGS_PRESENT_NO_SKIP", // patch 0099: forces real presents -- changes every fps figure
+             "DOSAGS_PRESENT_VERIFY",  // patch 0192: reads the surface twice per present -- a diagnostic, never a timed cell
+@@ -951,6 +953,7 @@ void quit(const char *quitmsg)
+             // patch 0216: the decoded-PCM cache's hits/misses/evictions and footprint
+             AGS::Engine::dos_pcm_cache_report(run_manifest_log);
+             AGS::Engine::dos_rp_report(run_manifest_log); // DOS-PORT patch 0319
++            dos_gc2_report(run_manifest_log);              // DOS-PORT patch 0372
+             // patch 0217: SDL 0198's IRQ-safe uclock() -- first = calls made with the caller's interrupt
+             // flag (the one that sets up the PIT), wrapped = calls made with interrupts off. 0/0 means the
+             // program was linked without -Wl,--wrap=uclock.
+-- 
+2.47.3
+

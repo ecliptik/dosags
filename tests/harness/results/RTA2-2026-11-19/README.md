@@ -1,0 +1,7 @@
+# RTA2 -- MS3 on the ags 0383 release, the A arm of the pacer A/B (pre-registration, before any data)
+- Binary: rs0383.exe = the ags 0383 release (DOSAGS_RELEASE=1; sha256 c68241073cb0dbcc6f0870c22ba31a0d904dd2261e72a44fbb7ba75f6cfb7f43, 8,673,058 B; stamp f2e183845d2f; rounds RS / RR). No env switch: main's behaviour.
+- Play line: round RR's verbatim (DRIVE 6 ms, the calibrated values, 114 presses, AGSSAVE.007 f486d0e9..., ACSETUP-ON-512X384-ROUND.CFG, --no-fine-timing, TAS exit 12440).
+- Read by tests/harness/pa-read.py cell (READ.txt); the term by pa-read.py verdict (VERDICT.txt). VALID: the stamp; routestamp allocs >= 1 and peak_bytes 192000; exit_code=0 and ENGINE HAS SHUTDOWN; underruns = overwrites = 0; PAIR-OK / PAIR-OK-114LATE; ticks = 7003 and loop_ms present; presses sent == planned; no labpace line.
+- The A baseline for G (mean loop_ms of the round's valid A cells). Information: against round RS / RR's band 239..494 skips. Predicted: 379-463 skips, loop_ms 181.1-181.3 s, Lwin 2.3-2.4%, PAIR-OK.
+- Watch (information): partial_waits (+2 expected), the press-3 second's skips, memory_min_free_kb (about 146,176 expected).
+- Round RT (pre-registration: ROUNDRT-2026-11-19/README.md with FIX-UP 1 and 2, the rule; written 2026-11-19 before any data). One power-on, CAP_MIN 120. USB4VC firmware 0.5.109; pkt_partial / pkt_timeout / mouse.dropped and ev_in == pkt_built reported per cell; a partial voids an MS3 play cell from that press (rule M0).

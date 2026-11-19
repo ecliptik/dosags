@@ -1,0 +1,654 @@
+--- a/vendor/ags/Engine/script/cc_instance_vm.cpp	2026-11-06 17:50:05.074478394 -0800
++++ b/vendor/ags/Engine/script/cc_instance_vm.cpp	2026-11-06 18:13:57.981010468 -0800
+@@ -36,7 +36,17 @@
+ //=============================================================================
+ #ifdef __DJGPP__
+ 
++// LAB-L1B: the lab trace hooks' member declarations (cc_instance.h declares them under DOSAGS_VMTRACE only)
++#ifndef DOSAGS_L1B
++#define DOSAGS_L1B 0
++#endif
++#if DOSAGS_L1B && !defined(DOSAGS_VMTRACE)
++#define DOSAGS_VMTRACE
++#include "script/cc_instance.h"
++#undef DOSAGS_VMTRACE
++#else
+ #include "script/cc_instance.h"
++#endif
+ #include <stdlib.h>
+ #include <string.h>
+ #include <time.h> // uclock()
+@@ -167,6 +177,31 @@
+ #define L1_VM_ENTER(CI, PC, LEG)
+ #define L1_VM_EXIT()
+ #endif
++#if DOSAGS_L1B
++extern int dos_l1b_on;
++static void l1b_call_pre();
++static void l1b_call_post();
++static void l1b_ret();
++static void l1b_enter();
++static void l1b_exit();
++static void l1b_walk(int n);
++static void l1b_api(const void *fn, const RuntimeScriptValue *params, int32_t n);
++#define L1B_CALL_PRE() do { if (dos_l1b_on) l1b_call_pre(); } while (0)
++#define L1B_CALL_POST() do { if (dos_l1b_on) l1b_call_post(); } while (0)
++#define L1B_RET() do { if (dos_l1b_on) l1b_ret(); } while (0)
++#define L1B_ENTER() do { if (dos_l1b_on) l1b_enter(); } while (0)
++#define L1B_EXIT() do { if (dos_l1b_on) l1b_exit(); } while (0)
++#define L1B_WALK(N) do { if (dos_l1b_on) l1b_walk(static_cast<int>(N)); } while (0)
++#define L1B_API(FN, P, N) do { if (dos_l1b_on) l1b_api((const void *)(FN), (P), (N)); } while (0)
++#else
++#define L1B_CALL_PRE()
++#define L1B_CALL_POST()
++#define L1B_RET()
++#define L1B_ENTER()
++#define L1B_EXIT()
++#define L1B_WALK(N)
++#define L1B_API(FN, P, N)
++#endif
+ 
+ int dos_vm_sccmd_argc(int op);          // cc_instance.cpp, patch 0359
+ bool dos_vm_sccmd_argisreg(int op, int k);
+@@ -854,6 +889,430 @@
+     int32_t         funcstart[MAXNEST];
+ };
+ 
++// ---------------------------------------------------------------------------------------------------------
++// LAB-L1B (lab worktree only, never a port patch; compiled only with DOSAGS_L1B=1, which needs DOSAGS_L1VM=1):
++// instruction counts for DOSAGS_L1PROF=3. Every executed original instruction is counted once, per script
++// function bucket (dos_l1prof's running bucket): its opcode, its pc, the 2- and 3-instruction sequences ending
++// at it (with register operands, and whether the whole sequence ran inside one superinstruction), the dispatch
++// units by handler, script calls/returns per activation (leaf = made no script call), local-walk steps, and a
++// timing loop over a whitelist of side-effect-free engine getters with the arguments of a live call.
++// Counts only: this build's timing is not scored. Output: appended to L1PROF.TXT by dos_l1_dump.
++#if DOSAGS_L1B
++int dos_l1_cur();
++int dos_l1_inwin();
++#include <stdio.h>
++#include <string>
++#include <unordered_map>
++#include <vector>
++#include "script/cc_script.h"
++static const int kL1bNB = 1024;
++static uint32_t *s_l1b_op = nullptr;      // [bucket][op]
++static uint32_t *s_l1b_unit = nullptr;    // [bucket][handler + 2]: +0..Count-1 handlers, Count = stepper, Count+1 unknown
++static unsigned long s_l1b_attempt[kVmH_Count + 2], s_l1b_commit[kVmH_Count + 2];
++struct L1bG { uint64_t key; uint32_t n, nf; };
++static const uint32_t kL1bGN = 1u << 17;
++static L1bG *s_l1b_g = nullptr;
++static unsigned long s_l1b_g_used = 0, s_l1b_g_full = 0;
++struct L1bRing { uint32_t form; uint32_t g; int b; };
++static L1bRing s_l1b_r[3];
++static int s_l1b_rn = 0;                    // valid ring entries (0..2 kept before the new one)
++static const ccScript *s_l1b_r_sc = nullptr;
++static int32_t s_l1b_r_pc = -1;
++static uint32_t s_l1b_serial = 0;
++struct L1bPc { std::string label; uint32_t codesize; std::vector<uint32_t> n; std::vector<std::string> desc;
++    std::vector<std::pair<std::string, int32_t>> fns; };
++static std::vector<L1bPc> s_l1b_pct;
++static std::unordered_map<const ccScript *, int> s_l1b_pcix;
++static const ccScript *s_l1b_last_sc = nullptr;
++static int s_l1b_last_ix = -1;
++struct L1bAct { int b; uint32_t ops; uint32_t calls; uint32_t apis; int entry; };
++static L1bAct s_l1b_act[1024];
++static int s_l1b_actn = 0;
++static int s_l1b_mark[64];
++static int s_l1b_markn = 0;
++struct L1bAS { unsigned long acts, leaf, leaf0, entries, unret; uint64_t ops, leafops, apis, calls; };
++static L1bAS *s_l1b_as = nullptr;
++static std::unordered_map<uint32_t, unsigned long> s_l1b_cp;   // caller << 16 | callee
++static uint64_t s_l1b_walkn[kL1bNB], s_l1b_walks[kL1bNB];
++static unsigned long s_l1b_ticks = 0, s_l1b_actover = 0;
++static const void *s_l1b_hk[256];
++static int s_l1b_hv[256];
++static bool s_l1b_hready = false;
++// getter timing
++static const char *const s_l1b_bench_names[] = { "GetGlobalInt", "StrGetCharAt", "StrLen", "GetCursorMode",
++    "IsGamePaused", "GetPlayerCharacter", "GetGameOption", "IsInterfaceEnabled", "GetGUIAt", "GetGraphicalVariable", "GetCharacterProperty",
++    "IsKeyPressed", "GetViewportX", "GetViewportY", "GetTime", "GetGameSpeed", "IsInventoryInteractionAvailable" };
++static const int kL1bBN = sizeof(s_l1b_bench_names) / sizeof(s_l1b_bench_names[0]);
++static const void *s_l1b_bfn[kL1bBN];
++static unsigned long s_l1b_bcalls[kL1bBN];
++static int s_l1b_bsamples[kL1bBN];
++static uint64_t s_l1b_bres[kL1bBN][4];      // cycles per call x 1000 (cost - empty loop)
++static uint64_t s_l1b_bempty[kL1bBN][4];    // the empty call (a noinline function of the same signature) x 1000
++static int s_l1b_bnargs[kL1bBN];
++static int32_t s_l1b_barg[kL1bBN][2];
++static bool s_l1b_bready = false;
++
++int l1b_hidx(const void *h)
++{
++    if (!s_l1b_hready)
++    {
++        for (int i = 0; i < 256; ++i) { s_l1b_hk[i] = nullptr; s_l1b_hv[i] = -1; }
++        for (int i = 0; i < kVmH_Count; ++i)
++        {
++            unsigned s = (reinterpret_cast<uintptr_t>(s_vm_handlers[i]) >> 2) & 255;
++            while (s_l1b_hk[s] && s_l1b_hk[s] != s_vm_handlers[i]) s = (s + 1) & 255;
++            if (!s_l1b_hk[s]) { s_l1b_hk[s] = s_vm_handlers[i]; s_l1b_hv[s] = i; }
++        }
++        s_l1b_hready = true;
++    }
++    unsigned s = (reinterpret_cast<uintptr_t>(h) >> 2) & 255;
++    for (int k = 0; k < 256; ++k, s = (s + 1) & 255)
++    {
++        if (s_l1b_hk[s] == h) return s_l1b_hv[s];
++        if (!s_l1b_hk[s]) break;
++    }
++    return kVmH_Count + 1;
++}
++
++static void l1b_alloc()
++{
++    if (s_l1b_op) return;
++    s_l1b_op = static_cast<uint32_t *>(calloc(static_cast<size_t>(kL1bNB) * CC_NUM_SCCMDS, sizeof(uint32_t)));
++    s_l1b_unit = static_cast<uint32_t *>(calloc(static_cast<size_t>(kL1bNB) * (kVmH_Count + 2), sizeof(uint32_t)));
++    s_l1b_g = static_cast<L1bG *>(calloc(kL1bGN, sizeof(L1bG)));
++    s_l1b_as = static_cast<L1bAS *>(calloc(kL1bNB, sizeof(L1bAS)));
++}
++
++static void l1b_gram(uint64_t key, int fused)
++{
++    uint32_t h = static_cast<uint32_t>((key * 0x9E3779B97F4A7C15ULL) >> 47) & (kL1bGN - 1);
++    for (uint32_t k = 0; k < 64; ++k, h = (h + 1) & (kL1bGN - 1))
++    {
++        L1bG &e = s_l1b_g[h];
++        if (e.n == 0) { e.key = key; e.n = 1; e.nf = fused ? 1 : 0; ++s_l1b_g_used; return; }
++        if (e.key == key) { ++e.n; if (fused) ++e.nf; return; }
++    }
++    ++s_l1b_g_full;
++}
++
++static int l1b_bucket()
++{
++    int b = dos_l1_cur();
++    return (b >= 0 && b < kL1bNB) ? b : 0;
++}
++
++void dos_l1b_tick() { if (dos_l1b_on && dos_l1_inwin()) ++s_l1b_ticks; }
++
++static void l1b_call_pre()
++{
++    if (!dos_l1_inwin()) return;
++    if (s_l1b_actn > 0) s_l1b_act[s_l1b_actn - 1].calls++;
++    if (s_l1b_actn >= 1024) { ++s_l1b_actover; return; }
++    L1bAct &a = s_l1b_act[s_l1b_actn++];
++    a.b = l1b_bucket(); a.ops = 0; a.calls = 0; a.apis = 0; a.entry = 0;   // b = the caller until post
++}
++static void l1b_call_post()
++{
++    if (!dos_l1_inwin() || s_l1b_actn <= 0) return;
++    L1bAct &a = s_l1b_act[s_l1b_actn - 1];
++    const int callee = l1b_bucket();
++    s_l1b_cp[(static_cast<uint32_t>(a.b) << 16) | static_cast<uint32_t>(callee)]++;
++    a.b = callee;
++}
++static void l1b_pop(int counted_ret)
++{
++    if (s_l1b_actn <= 0) return;
++    const L1bAct &a = s_l1b_act[--s_l1b_actn];
++    L1bAS &s = s_l1b_as[a.b];
++    if (!counted_ret) { s.unret++; return; }
++    s.acts++;
++    if (a.entry) s.entries++;
++    s.ops += a.ops; s.apis += a.apis; s.calls += a.calls;
++    if (a.calls == 0) { s.leaf++; s.leafops += a.ops; if (a.apis == 0) s.leaf0++; }
++}
++static void l1b_ret()
++{
++    if (!dos_l1_inwin()) return;
++    if (s_l1b_markn > 0 && s_l1b_actn <= s_l1b_mark[s_l1b_markn - 1]) return; // not ours
++    l1b_pop(1);
++}
++static void l1b_enter()
++{
++    if (s_l1b_markn < 64) s_l1b_mark[s_l1b_markn++] = s_l1b_actn;
++    s_l1b_rn = 0;
++    if (!dos_l1_inwin() || s_l1b_actn >= 1024) return;
++    L1bAct &a = s_l1b_act[s_l1b_actn++];
++    a.b = l1b_bucket(); a.ops = 0; a.calls = 0; a.apis = 0; a.entry = 1;
++}
++static void l1b_exit()
++{
++    if (s_l1b_markn <= 0) return;
++    const int m = s_l1b_mark[--s_l1b_markn];
++    while (s_l1b_actn > m) l1b_pop(0);
++    s_l1b_rn = 0;
++}
++static void l1b_walk(int n)
++{
++    if (!dos_l1_inwin()) return;
++    const int b = l1b_bucket();
++    s_l1b_walkn[b]++; s_l1b_walks[b] += static_cast<uint64_t>(n < 0 ? 0 : n);
++}
++static inline uint64_t l1b_tsc()
++{
++    uint32_t lo, hi;
++    __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
++    return (static_cast<uint64_t>(hi) << 32) | lo;
++}
++__attribute__((noinline)) static RuntimeScriptValue l1b_empty_api(const RuntimeScriptValue *params, int32_t n)
++{
++    (void)params; (void)n;
++    __asm__ __volatile__("" ::: "memory");
++    return RuntimeScriptValue().SetInt32(0);
++}
++static volatile int32_t s_l1b_sink = 0;
++typedef RuntimeScriptValue (*L1bApiFn)(const RuntimeScriptValue *, int32_t);
++__attribute__((noinline)) static uint64_t l1b_time(L1bApiFn fn, const RuntimeScriptValue *p, int32_t n, int reps)
++{
++    // the loop around the calls: measured with no call at all, subtracted by the caller
++    const uint64_t t0 = l1b_tsc();
++    int32_t acc = 0;
++    for (int i = 0; i < reps; ++i)
++    {
++        if (fn) acc += fn(p, n).IValue;
++        __asm__ __volatile__("" ::: "memory");
++    }
++    const uint64_t t1 = l1b_tsc();
++    s_l1b_sink = acc;
++    return t1 - t0;
++}
++static void l1b_api(const void *fn, const RuntimeScriptValue *params, int32_t n)
++{
++    if (!dos_l1_inwin()) return;
++    if (s_l1b_actn > 0) s_l1b_act[s_l1b_actn - 1].apis++;
++    if (!s_l1b_bready)
++    {
++        s_l1b_bready = true;
++        for (int i = 0; i < kL1bBN; ++i)
++        {
++            const uint32_t idx = simp.GetIndexOfAny(AGS::Common::String(s_l1b_bench_names[i]));
++            const ScriptImport *imp = (idx == UINT32_MAX) ? nullptr : simp.GetByIndex(idx);
++            s_l1b_bfn[i] = (imp && imp->Value.Type == kScValStaticFunction) ? reinterpret_cast<const void *>(imp->Value.SPfn) : nullptr;
++        }
++    }
++    for (int i = 0; i < kL1bBN; ++i)
++    {
++        if (!fn || s_l1b_bfn[i] != fn) continue;
++        const unsigned long c = ++s_l1b_bcalls[i];
++        if ((c == 200 || c == 2000 || c == 20000 || c == 100000) && s_l1b_bsamples[i] < 4 && n <= 2)
++        {
++            RuntimeScriptValue p[2];
++            for (int k = 0; k < n; ++k) p[k] = params[k];
++            const int reps = 256;
++            const uint64_t tl = l1b_time(nullptr, p, n, reps);
++            const uint64_t te = l1b_time(l1b_empty_api, p, n, reps);
++            const uint64_t tf = l1b_time(reinterpret_cast<L1bApiFn>(const_cast<void *>(fn)), p, n, reps);
++            const int s = s_l1b_bsamples[i]++;
++            s_l1b_bres[i][s] = ((tf > tl ? tf - tl : 0) * 1000ULL) / reps;
++            s_l1b_bempty[i][s] = ((te > tl ? te - tl : 0) * 1000ULL) / reps;
++            s_l1b_bnargs[i] = n;
++            for (int k = 0; k < 2; ++k) s_l1b_barg[i][k] = (k < n) ? params[k].IValue : 0;
++        }
++        break;
++    }
++}
++
++static int l1b_pctab(const ccInstance *ci)
++{
++    const ccScript *sc = ci->GetScript().get();
++    if (sc == s_l1b_last_sc) return s_l1b_last_ix;
++    auto it = s_l1b_pcix.find(sc);
++    int ix;
++    if (it == s_l1b_pcix.end() || s_l1b_pct[it->second].codesize != ci->GetScript()->code.size())
++    {
++        L1bPc t;
++        // the label is the L1 bucket prefix of the running function (game / roomN / ...)
++        char buf[32];
++        snprintf(buf, sizeof(buf), "b%d", l1b_bucket());
++        t.label = buf;
++        t.codesize = static_cast<uint32_t>(sc->code.size());
++        t.n.assign(t.codesize, 0u);
++        t.desc.resize(t.codesize);
++        for (size_t i = 0; i < sc->exports.size() && i < sc->export_addr.size(); ++i)
++            if (((sc->export_addr[i] >> 24) & 0xFF) == EXPORT_FUNCTION)
++                t.fns.push_back(std::make_pair(sc->exports[i], sc->export_addr[i] & 0x00FFFFFF));
++        s_l1b_pct.push_back(std::move(t));
++        ix = static_cast<int>(s_l1b_pct.size()) - 1;
++        s_l1b_pcix[sc] = ix;
++    }
++    else
++        ix = it->second;
++    s_l1b_last_sc = sc;
++    s_l1b_last_ix = ix;
++    return ix;
++}
++
++static const char *const s_l1b_hname[kVmH_Count + 2] = {
++    "generic", "linenum", "addi", "subi", "mov", "ret",
++    "movl_int", "movl_gvar", "movl_str", "movl_imp", "memread", "memwrite",
++    "mulreg", "addreg", "subreg", "bitand", "bitor", "isequal", "notequal",
++    "greater", "lessthan", "gte", "lte", "and", "or", "xorreg", "call",
++    "jz", "jnz", "jmp", "push", "pop", "muli", "callext", "farpush",
++    "farsubsp", "setfuncargs", "thisaddr", "checkbounds", "checknull",
++    "checknullreg",
++    "S_farcall", "S_localload", "S_localstore", "S_pushmovlpop",
++    "S_popsubmov", "S_popaddmov", "S_popeqmov", "S_popgtemov",
++    "S_eqjz", "S_nejz", "S_gtjz", "S_ltjz", "S_gtejz", "S_ltejz",
++    "STEPPER", "UNKNOWN" };
++
++// mode 0: a dispatch at pc; 1: an instruction run by the stepper; >= 16: a constituent of superinstruction group mode-16
++void ccInstance::DosVmTraceFold(const ccInstance *ci, int32_t pc, int32_t mode) const
++{
++    if (!dos_l1_inwin()) return;
++    l1b_alloc();
++    const int b = l1b_bucket();
++    uint32_t g = 0;
++    const int ix = l1b_pctab(ci);
++    L1bPc &t = s_l1b_pct[ix];
++    if (pc < 0 || static_cast<uint32_t>(pc) >= t.codesize) return;
++    if (mode == 0)
++    {
++        const int h = l1b_hidx(reinterpret_cast<const void *>(ci->_scriptData->dcode[pc]));
++        s_l1b_unit[b * (kVmH_Count + 2) + h]++;
++        if (h >= kVmH_SFarCall && h < kVmH_Count) s_l1b_attempt[h]++;
++    }
++    else if (mode == 1)
++        s_l1b_unit[b * (kVmH_Count + 2) + kVmH_Count]++;
++    else
++        g = static_cast<uint32_t>(mode - 16);
++    const intptr_t *code = ci->_code;
++    const int op = static_cast<int>(code[pc] & INSTANCE_ID_REMOVEMASK);
++    if (op < 0 || op >= CC_NUM_SCCMDS) return;
++    const int argc = s_argc[op];
++    const int m = s_regmask[op];
++    uint32_t form = static_cast<uint32_t>(op);
++    if (argc >= 1 && (m & 1)) form |= static_cast<uint32_t>((code[pc + 1] & 7) + 1) << 7;
++    if (argc >= 2 && (m & 2)) form |= static_cast<uint32_t>((code[pc + 2] & 7) + 1) << 11;
++    s_l1b_op[b * CC_NUM_SCCMDS + op]++;
++    if (s_l1b_actn > 0) s_l1b_act[s_l1b_actn - 1].ops++;
++    if (t.n[pc]++ == 0)
++    {
++        char buf[256];
++        int k = snprintf(buf, sizeof(buf), "%d %d", op, argc);
++        for (int j = 0; j < argc && k < 200; ++j)
++        {
++            const intptr_t w = code[pc + 1 + j];
++            const int fx = ci->_code_fixups ? ci->_code_fixups[pc + 1 + j] : 0;
++            if (fx == FIXUP_GLOBALDATA)
++                k += snprintf(buf + k, sizeof(buf) - k, " g:%d", static_cast<int>(reinterpret_cast<const ScriptVariable *>(w)->ScAddress));
++            else if (fx == FIXUP_IMPORT)
++            {
++                const ScriptImport *imp = simp.GetByIndex(static_cast<uint32_t>(w));
++                k += snprintf(buf + k, sizeof(buf) - k, " i:%s", imp ? imp->Name.GetCStr() : "?");
++            }
++            else if (fx == FIXUP_STRING)
++            {
++                char sb[28]; int q = 0;
++                const char *str = ci->_strings + w;
++                for (; q < 24 && str[q]; ++q) sb[q] = (str[q] > 32 && str[q] < 127) ? str[q] : '_';
++                sb[q] = 0;
++                k += snprintf(buf + k, sizeof(buf) - k, " s:\"%s\"", sb);
++            }
++            else if (fx == FIXUP_FUNCTION) k += snprintf(buf + k, sizeof(buf) - k, " f:%d", static_cast<int>(w));
++            else if (fx == FIXUP_STACK) k += snprintf(buf + k, sizeof(buf) - k, " k:%d", static_cast<int>(w));
++            else if (fx == FIXUP_DATADATA) k += snprintf(buf + k, sizeof(buf) - k, " d:%d", static_cast<int>(w));
++            else if (fx != 0) k += snprintf(buf + k, sizeof(buf) - k, " x%d:%d", fx, static_cast<int>(w));
++            else k += snprintf(buf + k, sizeof(buf) - k, " %d", static_cast<int>(w));
++        }
++        t.desc[pc] = buf;
++    }
++    const L1bRing cur = { form, g, b };
++    if (s_l1b_rn >= 1)
++    {
++        const L1bRing &p1 = s_l1b_r[s_l1b_rn - 1];
++        l1b_gram((static_cast<uint64_t>(b) << 46) | (static_cast<uint64_t>(p1.form) << 30) | (static_cast<uint64_t>(form) << 15),
++            g && p1.g == g);
++        if (s_l1b_rn >= 2)
++        {
++            const L1bRing &p2 = s_l1b_r[s_l1b_rn - 2];
++            l1b_gram((static_cast<uint64_t>(b) << 46) | (1ULL << 45) | (static_cast<uint64_t>(p2.form) << 30) |
++                (static_cast<uint64_t>(p1.form) << 15) | form, g && p1.g == g && p2.g == g);
++        }
++    }
++    if (s_l1b_rn == 2) { s_l1b_r[0] = s_l1b_r[1]; s_l1b_r[1] = cur; }
++    else s_l1b_r[s_l1b_rn++] = cur;
++    s_l1b_r_pc = pc;
++    s_l1b_r_sc = s_l1b_last_sc;
++}
++
++// a superinstruction H committed at pc: count its constituents after the first (counted at its dispatch)
++void ccInstance::DosVmSyncFold(const ccInstance *ci, int32_t pc, int32_t h) const
++{
++    if (!dos_l1_inwin()) return;
++    if (h >= 0 && h < kVmH_Count) s_l1b_commit[h]++;
++    const uint32_t g = ++s_l1b_serial;
++    if (s_l1b_rn > 0 && s_l1b_r_pc == pc && s_l1b_r_sc == ci->GetScript().get()) s_l1b_r[s_l1b_rn - 1].g = g;
++    const int K = (h == kVmH_SFarCall) ? 5 : 3;
++    int32_t p = pc;
++    for (int i = 1; i < K; ++i)
++    {
++        const int op = static_cast<int>(ci->_code[p] & INSTANCE_ID_REMOVEMASK);
++        p += 1 + s_argc[op];
++        DosVmTraceFold(ci, p, static_cast<int32_t>(16 + g));
++    }
++}
++
++void dos_l1b_dump(FILE *f)
++{
++    if (!dos_l1b_on || !s_l1b_op) return;
++    fprintf(f, "L1B v1 ticks=%lu groups=%lu gram_used=%lu gram_full=%lu actover=%lu actn_end=%d\n", s_l1b_ticks,
++        static_cast<unsigned long>(s_l1b_serial), s_l1b_g_used, s_l1b_g_full, s_l1b_actover, s_l1b_actn);
++    for (int h = 0; h < kVmH_Count + 2; ++h)
++        fprintf(f, "H %d %s %lu %lu\n", h, s_l1b_hname[h], s_l1b_attempt[h], s_l1b_commit[h]);
++    for (int b = 0; b < kL1bNB; ++b)
++    {
++        for (int op = 0; op < CC_NUM_SCCMDS; ++op)
++            if (s_l1b_op[b * CC_NUM_SCCMDS + op]) fprintf(f, "O %d %d %lu\n", b, op, static_cast<unsigned long>(s_l1b_op[b * CC_NUM_SCCMDS + op]));
++        for (int h = 0; h < kVmH_Count + 2; ++h)
++            if (s_l1b_unit[b * (kVmH_Count + 2) + h]) fprintf(f, "U %d %d %lu\n", b, h, static_cast<unsigned long>(s_l1b_unit[b * (kVmH_Count + 2) + h]));
++        const L1bAS &a = s_l1b_as[b];
++        if (a.acts || a.unret)
++            fprintf(f, "A %d %lu %lu %lu %lu %lu %llu %llu %llu %llu\n", b, a.acts, a.leaf, a.leaf0, a.entries, a.unret,
++                static_cast<unsigned long long>(a.ops), static_cast<unsigned long long>(a.leafops),
++                static_cast<unsigned long long>(a.apis), static_cast<unsigned long long>(a.calls));
++        if (s_l1b_walkn[b])
++            fprintf(f, "W %d %llu %llu\n", b, static_cast<unsigned long long>(s_l1b_walkn[b]), static_cast<unsigned long long>(s_l1b_walks[b]));
++    }
++    for (const auto &kv : s_l1b_cp)
++        fprintf(f, "C %u %u %lu\n", kv.first >> 16, kv.first & 0xFFFF, kv.second);
++    for (uint32_t i = 0; i < kL1bGN; ++i)
++    {
++        const L1bG &e = s_l1b_g[i];
++        if (!e.n) continue;
++        fprintf(f, "G %d %d %u %u %u %lu %lu\n", static_cast<int>(e.key >> 46), static_cast<int>((e.key >> 45) & 1),
++            static_cast<unsigned>((e.key >> 30) & 0x7FFF), static_cast<unsigned>((e.key >> 15) & 0x7FFF),
++            static_cast<unsigned>(e.key & 0x7FFF), static_cast<unsigned long>(e.n), static_cast<unsigned long>(e.nf));
++    }
++    for (size_t i = 0; i < s_l1b_pct.size(); ++i)
++    {
++        const L1bPc &t = s_l1b_pct[i];
++        fprintf(f, "S %u %s %u\n", static_cast<unsigned>(i), t.label.c_str(), t.codesize);
++        for (const auto &fn : t.fns)
++            fprintf(f, "F %u %d %s\n", static_cast<unsigned>(i), static_cast<int>(fn.second), fn.first.c_str());
++        for (uint32_t pc = 0; pc < t.codesize; ++pc)
++            if (t.n[pc]) fprintf(f, "X %u %u %lu %s\n", static_cast<unsigned>(i), pc, static_cast<unsigned long>(t.n[pc]), t.desc[pc].c_str());
++    }
++    for (int i = 0; i < kL1bBN; ++i)
++    {
++        fprintf(f, "K %s calls=%lu nargs=%d args=%d,%d samples=%d", s_l1b_bench_names[i], s_l1b_bcalls[i], s_l1b_bnargs[i],
++            s_l1b_barg[i][0], s_l1b_barg[i][1], s_l1b_bsamples[i]);
++        for (int k = 0; k < s_l1b_bsamples[i]; ++k)
++            fprintf(f, " c%d=%llu e%d=%llu", k, static_cast<unsigned long long>(s_l1b_bres[i][k]), k,
++                static_cast<unsigned long long>(s_l1b_bempty[i][k]));
++        fprintf(f, "\n");
++    }
++}
++#endif // DOSAGS_L1B
++
+ // cc_instance.cpp's assertion macros, returning DosVmStep's error code. The debug-only ones are
+ // empty in this build exactly as there (DEBUG_CC_EXEC is off; with it on the fast path is unused).
+ #if (DEBUG_CC_EXEC)
+@@ -982,7 +1441,9 @@
+     dos_vm_curcall = nullptr;
+     VM_MEMO_BUMP();
+     L1_VM_ENTER(_runningInst, curpc, 1);
++    L1B_ENTER();
+     const ccInstError r = Run(curpc);
++    L1B_EXIT();
+     L1_VM_EXIT();
+     VM_MEMO_BUMP();
+     dos_vm_curcall = keep;
+@@ -1024,7 +1485,9 @@
+     dos_vm_curcall = nullptr;
+     VM_MEMO_BUMP();
+     L1_VM_ENTER(fr.codeInst, curpc, 0);
++    L1B_ENTER();
+     const ccInstError r = DosVmLoop(&fr, curpc);
++    L1B_EXIT();
+     L1_VM_EXIT();
+     VM_MEMO_BUMP();
+     dos_vm_curcall = memo_keep;
+@@ -1060,15 +1523,18 @@
+         {
+             const intptr_t r = fr.codeInst->_code[pc + 1];
+             dos_l1_ext_begin((r >= 0 && r < CC_NUM_REGISTERS) ? _registers[r].Ptr : nullptr);
++            L1B_API((r >= 0 && r < CC_NUM_REGISTERS) ? _registers[r].Ptr : nullptr, fr.fcs->GetHead(), fr.num_args_to_func);
+             const int st = DosVmStepBody(fr, pc);
+             dos_l1_ext_end();
+             return st;
+         }
+         if (op == SCMD_CALL || op == SCMD_RET)
+         {
++            if (op == SCMD_CALL) L1B_CALL_PRE(); else L1B_RET();
+             const int st = DosVmStepBody(fr, pc);
+             if (st == 0)
+                 dos_l1_at_pc(fr.codeInst, _pc);
++            if (op == SCMD_CALL) L1B_CALL_POST();
+             return st;
+         }
+     }
+@@ -2109,6 +2575,8 @@
+ #define VM_IS_START(p) ((fr->dstart[static_cast<uint32_t>(p) >> 5] >> (static_cast<uint32_t>(p) & 31)) & 1u)
+ #ifdef DOSAGS_VMTRACE
+ #define VM_TRACE() DosVmTraceFold(fr->codeInst, VM_PC(), static_cast<int32_t>(fr->codeInst->_code[VM_PC()] & INSTANCE_ID_REMOVEMASK))
++#elif DOSAGS_L1B
++#define VM_TRACE() do { if (dos_l1b_on) DosVmTraceFold(fr->codeInst, VM_PC(), 0); } while (0)
+ #else
+ #define VM_TRACE()
+ #endif
+@@ -2123,6 +2591,12 @@
+ #define VM_SHADOW_END(PC0, K) if (vm_shadow) DosVmShadowEnd(*fr, (PC0), (K))
+ #define VM_SYNC(PC, OP) DosVmSyncFold(fr->codeInst, (PC), (OP))
+ #define VM_COUNT_MORE(N) (dos_vmtrace_n += (N))
++#elif DOSAGS_L1B
++#define VM_COUNT_MORE(N)
++#define VM_FUSED(H, K) do { if (dos_l1b_on) DosVmSyncFold(fr->codeInst, VM_PC(), (H)); } while (0)
++#define VM_SHADOW_BEGIN()
++#define VM_SHADOW_END(PC0, K)
++#define VM_SYNC(PC, OP)
+ #else
+ #define VM_COUNT_MORE(N)
+ #define VM_FUSED(H, K)
+@@ -2227,6 +2701,7 @@
+                     stack_entry--;
+                     total_off += stack_entry->Size;
+                 }
++                L1B_WALK(VM_SP.RValue - stack_entry);
+                 reg1.SetStackPtr(stack_entry);
+                 reg1.IValue += total_off - arg_lit;
+             }
+@@ -2254,6 +2729,7 @@
+         const int32_t newpc = slot->IValue;
+         if (newpc != 0 && _callStackSize < 1)
+             goto h_generic;
++        L1B_RET();
+         if (fr->loopIterationCheckDisabled > 0)
+             fr->loopIterationCheckDisabled--;
+         VM_SP.RValue = slot;
+@@ -2349,6 +2825,7 @@
+             VM_SP.Type != kScValStackPtr || slot->Type == kScValData)
+             goto h_generic;
+         const int32_t pc = VM_PC();
++        L1B_CALL_PRE();
+         // PUSH_CALL_STACK
+         _callStackLineNumber[_callStackSize] = _lineNumber;
+         _callStackCodeInst[_callStackSize] = _runningInst;
+@@ -2370,6 +2847,7 @@
+         }
+         _pc = target;
+         L1_AT_PC(fr->codeInst, target);
++        L1B_CALL_POST();
+         fr->next_call_needs_object = 0;
+         if (fr->loopIterationCheckDisabled)
+             fr->loopIterationCheckDisabled++;
+@@ -2468,6 +2946,7 @@
+         dos_port_work[kDW_ScriptExt]++;   // patch 0230, every build
+         RuntimeScriptValue return_value;
+         VM_MEMO_CALL_BEGIN(reg1.Type == kScValStaticFunction && !fr->next_call_needs_object ? reinterpret_cast<const void*>(reg1.SPfn) : nullptr);
++        L1B_API(reg1.Ptr, fcs.GetHead(), fr->num_args_to_func);
+         L1_EXT_BEGIN(reg1.Ptr);
+         if (reg1.Type == kScValPluginFunction)
+         {
+@@ -2586,6 +3065,7 @@
+         }
+         dos_port_work[kDW_ScriptExt]++;
+         VM_MEMO_CALL_BEGIN(_registers[SREG_AX].SPfn);
++        L1B_API(_registers[SREG_AX].Ptr, fr->fcs->GetHead(), fr->num_args_to_func);
+         L1_EXT_BEGIN(_registers[SREG_AX].Ptr);
+         const RuntimeScriptValue return_value = _registers[SREG_AX].SPfn(fr->fcs->GetHead(), fr->num_args_to_func);
+         L1_EXT_END();
+@@ -2613,6 +3093,7 @@
+                 stack_entry--; \
+                 total_off += stack_entry->Size; \
+             } \
++            L1B_WALK(VM_SP.RValue - stack_entry); \
+             mar.SetStackPtr(stack_entry); \
+             mar.IValue += total_off - arg_lit; \
+         }
+@@ -2728,6 +3209,8 @@
+             }
+ #ifdef DOSAGS_VMTRACE
+             DosVmTraceFold(fr->codeInst, pc, static_cast<int32_t>(fr->codeInst->_code[pc] & INSTANCE_ID_REMOVEMASK));
++#elif DOSAGS_L1B
++            if (dos_l1b_on) DosVmTraceFold(fr->codeInst, pc, 1);
+ #endif
+         }
+     }
+--- a/vendor/ags/Engine/main/dos_l1prof.cpp	2026-11-06 17:50:05.074478394 -0800
++++ b/vendor/ags/Engine/main/dos_l1prof.cpp	2026-11-06 18:13:57.989010350 -0800
+@@ -21,6 +21,9 @@
+ extern int displayed_room;   // ac/game.h
+ int dos_l1_level = 0;
+ int dos_l1_vmon = 0;
++int dos_l1b_on = 0;   // LAB-L1B: level 3 (needs an exe built with DOSAGS_L1B=1 in cc_instance_vm.cpp)
++void dos_l1b_tick() __attribute__((weak));
++void dos_l1b_dump(FILE *f) __attribute__((weak));
+ 
+ namespace
+ {
+@@ -244,6 +247,11 @@
+         dos_l1_level = 0;
+         return;
+     }
++    if (dos_l1_level >= 3)
++    {
++        dos_l1b_on = 1;
++        s_win_lo = 5437;   // LAB-L1B default window: the first repeatedly_execute after MMD's save-007 restore
++    }
+     const char *w = getenv("DOSAGS_L1WIN");
+     if (w)
+     {
+@@ -289,7 +297,11 @@
+ {
+     s_lc = lc;
+     s_inwin = ((long)lc >= s_win_lo && (long)lc < s_win_hi) ? 1 : 0;
++    if (dos_l1b_on && dos_l1b_tick)
++        dos_l1b_tick();
+ }
++int dos_l1_cur() { return s_cur; }
++int dos_l1_inwin() { return s_inwin; }
+ 
+ int dos_l1_entry_begin(int kind, const ccInstance *inst, const char *name)
+ {
+@@ -469,6 +481,8 @@
+     for (const auto &kv : s_pair)
+         fprintf(f, "P %u %u %lu %lu\n", (unsigned)(kv.first >> 16), (unsigned)(kv.first & 0xFFFF), kv.second.n,
+             tsc_us(kv.second.t));
++    if (dos_l1b_on && dos_l1b_dump)
++        dos_l1b_dump(f);
+     fclose(f);
+ }
+ #endif

@@ -1,0 +1,45 @@
+DOS-PORT: patch 0369 -- lever R2: an unchanged character reuses its prepared image and skips its restore, blit and present (DOSAGS_CHAR_REUSE, default off)
+
+Why: in Maniac Mansion Deluxe room 1 the three kids are drawn at 100% zoom with no tint or light, two of them never
+change and Dave is idle in 88.5% of frames, yet every frame, for every kid, the engine re-copies the cached image into
+the raw bitmap, re-runs the walk-behind crop-out, marks the old and new rects (so the background is restored under
+them), masked-blits the sprite back and presents the box (dosags docs/lab/LAB-R2.md sections 0 and 6). Character work
+is 2.83 ms of a 10.29 ms room-1 drawn tick at DOSBox-X fixed 40000; LAB-R2B measured R2 at 10.29 -> 7.42 ms busy.
+
+What: DOSAGS_CHAR_REUSE unset or 0 = off (the 0368 head; the default); 1 = R2a; 2 = R2a + R2b. Software renderer only.
+ R2a: when a character's whole input key equals last scene's (sprite and mirror, view/loop/frame, the six tint/light
+  fields, zoom, width/height, final position and baseline, transparency, the no-walk-behinds flag,
+  walk_behind_baselines_changed, the walk-behind mask generation, room, background frame) and its raw bitmap and
+  texture are the ones last scene left, construct_object_gfx's cached branch returns "intact": no re-copy, no
+  crop-out, no texture sync. A dynamic sprite edited in place is caught by construct_object_gfx's own cache test
+  (IsChangeNotified, set by notify_sprite_changed), which R2a's branch sits behind. The mask generation is new against
+  the lab lever (LAB-R2B): a DrawingSurface on the walk-behind mask changes what the crop-out reads without touching
+  walk_behind_baselines_changed, so it is bumped by walkbehinds_recalc() and by every walk-behind DrawingSurface access
+  (as 0319 does for the walkable mask).
+ R2b (mode 2): a character that took R2a, was composited last scene and composites idempotently (transparency 0, no
+  alpha channel) skips its mark, like 0233's room overlays, and is flagged to the driver like 0169's GUI entries, so
+  0368 draws it only inside the dirty boxes that reach it. Every DOSAGS_GUI_CLIP mode has a path that redraws such an
+  entry wherever the restore repainted (4 per box, 2 and 1 the bbox, 0 unflagged and drawn in full), so no mode refuses
+  R2b.
+Guards: (1) a character left unmarked and now off, in another room, or not key-same (baseline included) gets its OLD
+rect marked before this scene's restore (0197's convention), with a net at the end of the scene; (2) drawn in full,
+not skipped, under 0366's latch, on a camera or viewport move, on a full invalidation (dos_port_dirty full or its
+carry), under 0368's coarse flag, or with more than one room viewport (counted before the first one is drawn); (3)
+every record dropped on clear_drawobj_cache, a room change, or a scene without exactly one composite.
+Witness: "DOS-PORT charreuse DOSAGS_CHAR_REUSE=<v|(default)> mode=<n>" at driver construction; "DOS-PORT
+charreuse_final ..." in RUNMANI.LOG in both flavours. DOSAGS_CHAR_REUSE joins the RUNMANIFEST env allowlist.
+
+Gates (DOSBox-X fixed 40000, every tick rendered, frame digest + PRESENT_VERIFY, seeded; dosags
+tests/harness/results/R2LAND-2026-11-07): modes 1 and 2 vs 0 EQUAL on every loop counter of MMD fixtures G (3164), V
+(3964), GCL (7004), the intro (1299) and AGS Quest AutoPilot (3558); an R2a verify rebuilt every reused image the old
+way, 0 mismatches in 59,318 checks. Mode 2 vs 0 EQUAL under DOSAGS_GUI_CLIP=2 and =0 on G and GCL (and =1 on G).
+Controls DIFF: no per-box redraw (3023/3164 G, 6487/7004 GCL); the key without the baseline under a forced baseline
+change (980/3164). Forced guards, each EQUAL on and DIFF disabled: old-rect mark (590), 0366's latch (1440),
+whole-surface invalidation (14); 0368's coarse flag forced: EQUAL. In-place edits, each EQUAL, DIFF with R2 blind to
+them: a still character's dynamic frame sprite edited through DrawingSurface.Release every 7th scene (2989), the
+walk-behind mask edited under still characters (1847; the lab lever's behaviour). Default off renders frame-EQUAL to
+the 0368 head (R3LAND's records). Release, default vs 2: 5 Days room 3, Trilby room 35, AGS Quest game output EQUAL;
+P9-shape MMD EQUAL to the 0368 release with R2 off and on.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P4db4MSiR2PYUDFdrDdJe2

@@ -1,0 +1,67 @@
+From 95121896daab53df1adc50878cef8d3083e081e4 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Mon, 9 Nov 2026 11:14:01 -0800
+Subject: [PATCH 373/373] DOS-PORT: patch 0373 -- lever L2
+ (DOSAGS_GUI_CTRL_MARK) on by default: unset gives mode 1
+
+Why: the 486 round RG (dosags tests/harness/results/ROUNDRG-2026-11-09) measured L2 (0372, DOSAGS_GUI_CTRL_MARK=1) with
+fewer skipped frames in all 4 pairs on Maniac Mansion Deluxe in play (-10 / -12 / -8 / -2, mean -8, +0.11 points
+displayed). The operator decided to make it the default.
+
+What: DOSAGS_GUI_CTRL_MARK unset, or any value other than exactly "0", now gives mode 1 (on); exactly "0" = off (the
+0371 head for GUIs, 0372's default). So an unknown or mistyped value ("2", "off", "00") reads as mode 1 and fails
+toward the default: only an exact "0" turns L2 off. This is 0370's rule for DOSAGS_CHAR_REUSE and 0368's for
+DOSAGS_GUI_CLIP. The witness keeps its form: "DOS-PORT guictrlmark DOSAGS_GUI_CTRL_MARK=(default) mode=1" when unset;
+guictrlmark_final is unchanged. The two 0372 comments that said off by default (the resolver in ac/draw.cpp and the
+RUNMANIFEST env allowlist entry in main/quit.cpp) now say on by default. Both changed lines lie inside existing
+__DJGPP__ branches.
+
+Gates (DOSBox-X fixed 40000, every tick rendered, frame digest + PRESENT_VERIFY, seeded, R2 at its 0370 default;
+dosags tests/harness/results/L2DEF-2026-11-09): the default (unset) vs explicit =1 frame-EQUAL on every loop counter of
+MMD fixtures G (3164), V (3964), GCL (7004), H (7004), the intro (1299) and AGS Quest AutoPilot (3558), with identical
+L2 counters; the lab texture check found 0 differing pixels outside the marked rects in every default and =1 cell. =0
+EQUAL to 0372's default-off records, and =1 and the default EQUAL to 0372's =1 records (L2LAND-2026-11-09), on all
+six. Controls DIFF: =0 vs the default in the witness, the L2 count and the restored / composited / presented pixels on
+all six (frames EQUAL, L2 being exact); under the default, marking nothing (6049/7004) and the rects 1 px short (2921).
+Forced, the default vs =0 EQUAL: a control moved / resized (unsafe 140), GUI visibility / transparency toggled, a
+label's text grown and shrunk, the slot cap forced to 2 (slots_overflow 4). =2 and =off read as mode 1, frame-EQUAL to
+the default. Release, default vs =0: 5 Days room 3, Trilby room 35, AGS Quest game output EQUAL; P9-shape MMD EQUAL to
+the 0372 release run with =1, and with =0 EQUAL to it unset. Both flavours byte-identical across two clean builds, the
+same size as 0372's; the code lock grows 32 bytes (etext, inside the 512-byte section padding).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Engine/ac/draw.cpp   | 3 ++-
+ Engine/main/quit.cpp | 2 +-
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/Engine/ac/draw.cpp b/Engine/ac/draw.cpp
+index 11503806b..94e4d7bb7 100644
+--- a/Engine/ac/draw.cpp
++++ b/Engine/ac/draw.cpp
+@@ -3276,7 +3276,8 @@ int dos_gc2_mode()
+     if (dos_gc2_mode_v < 0)
+     {
+         const char *e = getenv("DOSAGS_GUI_CTRL_MARK");
+-        dos_gc2_mode_v = (e && e[0] == '1' && e[1] == 0) ? 1 : 0;   // unset / "0" = off (the default); exactly "1" = on; anything else = off
++        // patch 0373: unset or any other value = 1 (on, the default); exactly "0" = off (the 0371 head)
++        dos_gc2_mode_v = (e && e[0] == '0' && e[1] == 0) ? 0 : 1;
+         Debug::Printf(kDbgMsg_Info, "DOS-PORT guictrlmark DOSAGS_GUI_CTRL_MARK=%s mode=%d", (e && *e) ? e : "(default)", dos_gc2_mode_v);
+     }
+     return dos_gc2_mode_v;
+diff --git a/Engine/main/quit.cpp b/Engine/main/quit.cpp
+index 692db2e8b..b0ee1fe69 100644
+--- a/Engine/main/quit.cpp
++++ b/Engine/main/quit.cpp
+@@ -417,7 +417,7 @@ void quit(const char *quitmsg)
+             "DOSAGS_FREEZE_MS",       // patch 0195: stalls at chosen ticks for an emulated-screen capture
+             "DOSAGS_FREEZE_TICKS",
+             "DOSAGS_GUI_CLIP",        // patch 0366/0368: GUI composite (4 = R3 by default; 2 = R1; 0 = off; 1 = 0170's clip)
+-            "DOSAGS_GUI_CTRL_MARK",   // DOS-PORT patch 0372: a GUI whose only change is controls marks their rects (off by default)
++            "DOSAGS_GUI_CTRL_MARK",   // DOS-PORT patch 0372: a GUI whose only change is controls marks their rects (on by default since 0373; 0 = off)
+             "DOSAGS_MAX_SCALE",       // patch 0101: caps the render-frame scale (bake-off candidate c)
+             "DOSAGS_PRESENT_NO_SKIP", // patch 0099: forces real presents -- changes every fps figure
+             "DOSAGS_PRESENT_VERIFY",  // patch 0192: reads the surface twice per present -- a diagnostic, never a timed cell
+-- 
+2.47.3
+

@@ -1,0 +1,57 @@
+From c9ec394e3ede608ed3e550586d817d3516dea590 Mon Sep 17 00:00:00 2001
+From: Micheal Waltz <micheal@ecliptik.com>
+Date: Fri, 6 Nov 2026 14:49:44 -0800
+Subject: [PATCH 367/367] DOS-PORT: patch 0367 -- dos_englev_shadow() and its
+ DOSAGS_ENGLEV_SHADOW string only in a DOSAGS_VMTRACE build
+
+Why: 0363 gated every call of dos_englev_shadow() (update.cpp, character.cpp) under DOSAGS_VMTRACE but defined the
+function unconditionally, so both shipped flavours carried a never-called function and the "DOSAGS_ENGLEV_SHADOW"
+string (dosags docs/lab/VM-LANDING.md, correction note, sdlports review 2026-11-06). Dead code, no behaviour and no
+cost, queued for the next patch that changes the binary anyway (0366 does).
+
+What: the definition (cc_instance_vm.cpp) and the declaration (dos_englev.h) move under #ifdef DOSAGS_VMTRACE, next
+to their callers. Neither flavour defines DOSAGS_VMTRACE; a lab build that does is unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P4db4MSiR2PYUDFdrDdJe2
+---
+ Engine/main/dos_englev.h         | 2 +-
+ Engine/script/cc_instance_vm.cpp | 2 ++
+ 2 files changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/Engine/main/dos_englev.h b/Engine/main/dos_englev.h
+index 82aa8912d..84201455f 100644
+--- a/Engine/main/dos_englev.h
++++ b/Engine/main/dos_englev.h
+@@ -14,8 +14,8 @@ extern int dos_cmemo_live;          // lever 2: 1 while the memo holds an entry
+ extern const void *dos_vm_curcall;  // lever 2: the static API function the fast VM is calling, else nullptr
+ bool dos_cmemo_curpure();           // lever 2: dos_vm_curcall is on the whitelist
+ void dos_englev_init();
+-bool dos_englev_shadow();           // lab: DOSAGS_ENGLEV_SHADOW=1 in a -DDOSAGS_VMTRACE build
+ #ifdef DOSAGS_VMTRACE
++bool dos_englev_shadow();           // lab: DOSAGS_ENGLEV_SHADOW=1 in a -DDOSAGS_VMTRACE build (patch 0367)
+ extern unsigned long dos_el_skip, dos_el_check, dos_el_bad, dos_cm_look, dos_cm_hit, dos_cm_check, dos_cm_bad;
+ extern unsigned long dos_rand_calls;
+ #endif
+diff --git a/Engine/script/cc_instance_vm.cpp b/Engine/script/cc_instance_vm.cpp
+index 2377d0a49..3690eaf3e 100644
+--- a/Engine/script/cc_instance_vm.cpp
++++ b/Engine/script/cc_instance_vm.cpp
+@@ -81,12 +81,14 @@ void dos_englev_init()
+     dos_englev_on = !(e && e[0] == '0'); // default on; DOSAGS_ENGLEV=0 is the fallback
+     Debug::Printf("DOS-PORT englev DOSAGS_ENGLEV=%s on=%d", (e && *e) ? e : "(default)", dos_englev_on ? 1 : 0);
+ }
++#ifdef DOSAGS_VMTRACE   // patch 0367: a lab instrument; only its callers (also DOSAGS_VMTRACE) may carry it
+ bool dos_englev_shadow()
+ {
+     static int s = -1;
+     if (s < 0) { const char *e = getenv("DOSAGS_ENGLEV_SHADOW"); s = (e && e[0] == '1') ? 1 : 0; }
+     return s != 0;
+ }
++#endif
+ 
+ // Lever 2's whitelist: the engine API calls MMD makes between its repeated hit tests (measured in the lab: the
+ // calls made between a memo store and a memo hit on MMD character select and intro), each audited to change
+-- 
+2.47.3
+

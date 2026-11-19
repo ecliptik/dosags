@@ -48,6 +48,13 @@ work (R1-R4, v0.1); STATUS.md keeps the figures.
 | AGS Quest AutoPilot, shipped build | steady 41.09, fps_p50 39.96, displayed 93.04% (249 skipped, = F1AQK), stall_ms 91,966 | release c754df64babd | N7AQ |
 | v0.1 zip as shipped (DIST2, README.TXT settings) | 39.22 / 40.17, 99.42%, music + 7 effects, audio clean -- PASS | zip c0c6fe00 = c754df64babd | DIST2 |
 | gate second readings, shipped exe (V1) | S16 99.40% 39.21 / 40.13 MET; S32P 99.64% **39.18** / 40.12, S8 99.44% **39.13** / 40.25 NOT MET (whole-run); preloop 926-1,004 ms vs N7 722-864 | release c754df64babd | V1S16/V1S32/V1S8 |
+| **MMD IN PLAY, shipped exe (P9, save 007 room 1 -> 2, host clicks)** | steady 39.94 / 39.90, fps_p50 28.0, **displayed 67.6% x2**; renders/ticks room 1 ~61%, room 2 ~69% | release c754df64babd | P9M1/P9M2 |
+| 7 Days room 2 in play, shipped exe | steady 39.99, fps_p50 40.00, 99.50% -- MET | release c754df64babd | P9SD |
+| MMD in play, 486 profile (D8MP, instr f3a8774e03c8) | script_vm 12.39 ms/tick, logic excl. wait 17.26; per drawn frame render 9.71 (sprites ~8.0) + scene 4.73 (room view 3.89); present 0.86 | instrumented | D8MP |
+| gate scenes after the C:\DOSAGS rebuild (D8) | S16 99.48% 39.30, S32P 99.52% 39.40, S8 99.28% 39.37 -- all MET; preloop 824 / 648 / 650 | release c754df64babd | D8S16/D8S32/D8S8 |
+| **MMD IN PLAY, lever R1 (GC ABBA, lab R1REL f81265edd05e)** | R1 off 66.39 / 65.97%, **R1 on 88.72 / 89.30%** (+22.8 pts); fps_p50 27 -> 36.5; first ~4,000 play ticks B 90-99%, end of room 2 B 78-82% | lab release (dirty) | GCA1/GCB1/GCB2/GCA2 |
+| MMD in play, 486 profile with R1 (GCMP, lab R1INS 5dc54892ad56) | rb_sprite per drawn frame 7.97 -> 4.12 ms (falsifier > 4.0 TRIPPED); drawn tick median room 1 30.4 -> 26.5, room 2 29.7 -> 26.6 ms; logic ~17 ms/tick now the largest cost | lab instrumented | GCMP vs D8MP |
+| AGS Quest AutoPilot, R1 off / on (one pair) | 93.01% -> 97.09% displayed; AutoPilot all ok | lab release (dirty) | GCAQA/GCAQB |
 | Iowna, Shards in play | **not measured**: packages lack audio.vox (script null pointer) | -- | F1 prep |
 
 So the walls today: MMD is logic-bound -- its logic takes 24.6 ms/tick, it steps at 36.5 ticks/s (it does not

@@ -1,0 +1,103 @@
+ratchet 20261111T202520Z FAIL: 39 pass (10 improved), 2 fail, 0 blocked, 4 quarantined | failed: screen-bench8-alias-anim12:FAIL code-lock-bytes:FAIL
+
+ratchet.sh report
+run:    20261111T202520Z
+root:   /home/claude/data/worktrees/dosags-l2def
+file:   /home/claude/data/worktrees/dosags-l2def/tests/ratchet.yaml
+host:   claude
+state:  /home/claude/data/worktrees/dosags-l2def/build/ratchet/state.tsv (not recorded: --no-record)
+lock:   /tmp/dos-port-dosbox.lock, exclusive per unit; no ps quiet-wait
+
+RUN                            KIND     STATUS         RC   WAIT   SECS  LOCK
+gate-alias                     capture  OK              1      0    950  exclusive
+gate-aq-fixed                  capture  OK              0      0   1186  shared, asserted by the author (no conf on the command line to check)
+gate-shards-fixed              capture  OK              0      0    501  shared, asserted by the author (no conf on the command line to check)
+aq-journeys                    plain    OK              0      0    201  shared, verified (cycles=fixed 40000 in /home/claude/data/worktrees/dosags-l2def/tests/harness/confs/dosbox-x-fixed40k-opl3.conf)
+sb-5days                       sb-live  OK              0      0     81  exclusive
+mi-stall-isr                   sb-live  OK              0      0    170  shared, verified (cycles=fixed 40000 in /home/claude/data/worktrees/dosags-l2def/tests/harness/confs/dosbox-x-fixed40k-opl3.conf)
+mi-throttle-isr                sb-live  OK              0      0    222  shared, verified (cycles=fixed 40000 in /home/claude/data/worktrees/dosags-l2def/tests/harness/confs/dosbox-x-fixed40k-opl3.conf)
+clicks                         capture  OK              0      0    113  exclusive
+clicks-throttled-quick         capture  OK              0      0    207  exclusive
+
+CHECK                              KIND     STATUS       VALUE        CMP   LIMIT      HISTORY       WAIT   SECS  NOTE
+screen-bench8-alias-idle           capture  PASS         0            eq    0          -                0    950  run=gate-alias
+screen-bench8-alias-walk           capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-bench8-alias-anim4          capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-bench8-alias-anim12         capture  FAIL         1            eq    0          -                0      0  run=gate-alias
+screen-bench8-alias-text           capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-bench8-alias-gui            capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-bench8-alias-full           capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-agsquest-alias-y60-fixed40k capture  PASS(q)      0            eq    0          -                0   1186  run=gate-aq-fixed
+screen-bench8-alias-512x384-idle   capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-bench8-alias-512x384-anim12 capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-bench16-alias-512x384-idle  capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-bench16-alias-512x384-anim12 capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-5days-alias-512x384         capture  PASS         0            eq    0          -                0      0  run=gate-alias
+screen-shards-alias-512x384        capture  FAIL(q)      1            eq    0          -                0      0  run=gate-alias
+screen-shards-alias-512x384-fixed40k capture  PASS(q)      0            eq    0          -                0    501  run=gate-shards-fixed
+stale-frames-aq-journeys           plain    PASS         0            eq    0          -                0    201  run=aq-journeys
+journeys-room-n                    plain    PASS         8            eq    8          -                0      0  run=aq-journeys
+journeys-save-n                    plain    PASS         1            eq    1          -                0      0  run=aq-journeys
+journeys-load-n                    plain    PASS         1            eq    1          -                0      0  run=aq-journeys
+journeys-boot-n                    plain    PASS         1            eq    1          -                0      0  run=aq-journeys
+journeys-unfinished                plain    PASS         0            eq    0          -                0      0  run=aq-journeys
+journey-boot-p95-ms-fixed          plain    IMPROVED     7590         le    7901       -                0      0  run=aq-journeys
+journey-room-p95-ms-fixed          plain    IMPROVED     11741        le    12295      -                0      0  run=aq-journeys
+journey-save-p95-ms-fixed          plain    IMPROVED     897          le    913        -                0      0  run=aq-journeys
+journey-load-p95-ms-fixed          plain    IMPROVED     10163        le    10929      -                0      0  run=aq-journeys
+pcm-accounting-sb-5days            sb-live  IMPROVED     0            le    1          -                0     81  run=sb-5days
+pcm-mixed-sb-5days                 sb-live  IMPROVED     147          ge    50         -                0      0  run=sb-5days
+overwrites-sb-5days                sb-live  PASS(q)      0            eq    0          -                0      0  run=sb-5days
+underruns-sb-5days                 sb-live  PASS         0            eq    0          -                0      0  run=sb-5days
+underruns-stall                    sb-live  PASS         0            eq    0          -                0    170  run=mi-stall-isr
+underruns-throttle                 sb-live  PASS         0            eq    0          -                0    222  run=mi-throttle-isr
+midi-late-sb-5days                 sb-live  PASS         0            eq    0          -                0      0  run=sb-5days
+midi-late-stall                    sb-live  PASS         0            eq    0          -                0      0  run=mi-stall-isr
+midi-stall-fired                   sb-live  IMPROVED     19           ge    10         -                0      0  run=mi-stall-isr
+midi-late-throttle                 sb-live  PASS         0            eq    0          -                0      0  run=mi-throttle-isr
+lost-inputs                        capture  PASS         0            eq    0          -                0    113  run=clicks
+lost-clicks-driver-vs-poll         capture  PASS         0            eq    0          -                0      0  run=clicks
+clicks-injected                    capture  PASS         21           eq    21         -                0      0  run=clicks
+keys-injected                      capture  PASS         5            eq    5          -                0      0  run=clicks
+lost-inputs-throttled-quick        capture  PASS         0            eq    0          -                0    207  run=clicks-throttled-quick
+sb-alive-clk-sb-5days              sb-live  IMPROVED     1002         ge    900        -                0      0  run=sb-5days
+sb-alive-clk-stall                 sb-live  IMPROVED     1001         ge    900        -                0      0  run=mi-stall-isr
+sb-alive-clk-throttle              sb-live  IMPROVED     998          ge    900        -                0      0  run=mi-throttle-isr
+exe-bytes                          plain    PASS         8706959      le    8706959    -                1      1  
+code-lock-bytes                    sb-live  FAIL         5228176      le    5228144    -                0      0  run=sb-5days
+
+HISTORY letters, oldest first, last 10 recorded results (BLOCKED/INTERRUPTED not counted):
+  P pass  I improved  F fail  E error  T timeout.  (q) = quarantined, never gating.
+
+--- screen-bench8-alias-anim12: FAIL (value 1, eq 0; from run.gate-alias)
+    log:     /home/claude/data/worktrees/dosags-l2def/build/ratchet/20261111T202520Z/run.gate-alias/output.txt
+    | bench8-alias-gui       A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | bench8-alias-full      A==B: ok   | screen-equal: 2 pair(s) compared, 0 problem(s)  | -
+    | bench8-alias-512x384-idle A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | bench8-alias-512x384-anim12 A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | bench16-alias-512x384-idle A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | bench16-alias-512x384-anim12 A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | 5days-alias-512x384    A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | shards-alias-512x384   A==B: FAIL | screen-equal: 5 pair(s) compared, 1 problem(s)  | -
+--- screen-shards-alias-512x384: FAIL (value 1, eq 0; from run.gate-alias)
+    log:     /home/claude/data/worktrees/dosags-l2def/build/ratchet/20261111T202520Z/run.gate-alias/output.txt
+    | bench8-alias-gui       A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | bench8-alias-full      A==B: ok   | screen-equal: 2 pair(s) compared, 0 problem(s)  | -
+    | bench8-alias-512x384-idle A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | bench8-alias-512x384-anim12 A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | bench16-alias-512x384-idle A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | bench16-alias-512x384-anim12 A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | 5days-alias-512x384    A==B: ok   | screen-equal: 5 pair(s) compared, 0 problem(s)  | -
+    | shards-alias-512x384   A==B: FAIL | screen-equal: 5 pair(s) compared, 1 problem(s)  | -
+--- code-lock-bytes: FAIL (value 5228176, le 5228144; from run.sb-5days)
+    log:     /home/claude/data/worktrees/dosags-l2def/build/ratchet/20261111T202520Z/run.sb-5days/output.txt
+    | RATCHET save_n=0 save_p95_ms=-1 save_p95_upper_ms=-1 save_failed=0 save_unfinished=0
+    | RATCHET save_restartpoint_n=1 save_restartpoint_p95_ms=132 save_restartpoint_p95_upper_ms=132 save_restartpoint_failed=0 save_restartpoint_unfinished=0
+    | RATCHET load_n=0 load_p95_ms=-1 load_p95_upper_ms=-1 load_failed=0 load_unfinished=0
+    | RATCHET click_n=0 click_p95_ms=-1 click_p95_upper_ms=-1 click_failed=0 click_unfinished=0
+    | RATCHET click_sim_n=0 click_sim_p95_ms=-1 click_sim_p95_upper_ms=-1 click_sim_failed=0 click_sim_unfinished=0
+    | RATCHET key_n=0 key_p95_ms=-1 key_p95_upper_ms=-1 key_failed=0 key_unfinished=0
+    | RATCHET journeys_unfinished=0 journeys_failed=0
+    | RATCHET lost_clicks=0 hw_checks=76 kbd_undrained=0
+
+10 check(s) IMPROVED on their limit; rerun with --propose-lower to write a proposed file.

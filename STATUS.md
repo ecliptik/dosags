@@ -69,7 +69,9 @@ release: v0.1 (2026-11-06, tag on f0f9275c) -- dosags-v0.1.zip sha256
   2 each -- V1's second readings miss the whole-run band only (39.18,
   39.13; start-up ~100-200 ms longer than N7 on the identical exe, game
   loop equal; cause open); MMD character select 99.90% displayed x2
-  (N7M1/M2); AGS Quest 93.04% (N7AQ). GUS documented as not yet right.
+  (N7M1/M2) -- the idle screen only: MMD IN PLAY (room 1 -> 2, real
+  clicks) reads 67.6% x2, fps_p50 ~28 (round P9, 2026-11-06); 7 Days in
+  play 99.50%; AGS Quest 93.04% (N7AQ). GUS documented as not yet right.
 copyrighted_assets: none -- no AGS game data is shipped or tracked. Test
   games are pinned by hash in tests/games/*/PIN and
   tests/harness/packages/*/PIN.

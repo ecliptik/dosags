@@ -593,13 +593,79 @@ checks:
   # clean build 50c027e7 f3a8774e03c8, ratchet 20261106T140437Z): exe-bytes 8638525 -> 8683881, code-lock-bytes
   # 5177312 -> 5214848. The lock grows because cc_instance_vm.cpp links inside the locked text range, not because the
   # ISR needs it; moving it out is a possible later trim. Release c754df64babd is 8646251 B.
+  # LIMIT 2026-11-06 ags 0366 (lever R1, DOSAGS_GUI_CLIP default on; round GC: MMD in play 66.2% -> 89.0% displayed)
+  # + 0367 (dos_englev_shadow under DOSAGS_VMTRACE): +2580 exe, +1328 code-lock, RAISED exact (no headroom) to the
+  # instrumented flavour 39c6e4b65079 (ratchet 20261107T023741Z on branch r1land: 39 pass, only these two fail):
+  # exe-bytes 8683881 -> 8686461, code-lock-bytes 5214848 -> 5216176. 0367 alone: -88 exe, -96 code-lock (0366 alone
+  # 8686549 / 5216272). Release 54d439f88378 is 8649343 B (+3092 vs c754df64babd's 8646251).
+  # LIMIT 2026-11-07 ags 0368 (lever R3, DOSAGS_GUI_CLIP default 4: an unchanged GUI drawn once per dirty box, not
+  # to their bbox; fixture V rb_sprite_time on the verb bar 2.64-4.10 -> 0.73-0.94 ms a pass): +2042 exe, +464
+  # code-lock, PROPOSED exact (no headroom) to the instrumented flavour aa334361a087 (ratchet 20261107T094503Z on branch
+  # r3land: 39 pass, only these two fail): exe-bytes 8686461 -> 8688503, code-lock-bytes 5216176 -> 5216640.
+  # Release 4c9f83b62c5c is 8651385 B (+2042 vs 54d439f88378's 8649343).
+  # LIMIT 2026-11-08 ags 0369 (lever R2, DOSAGS_CHAR_REUSE, default OFF: an unchanged character reuses its prepared
+  # image and skips its restore, blit and present; LAB-R2B room-1 busy 10.29 -> 7.42 ms at 40k with =2): +7094 exe,
+  # +4432 code-lock, PROPOSED exact (no headroom) to the instrumented flavour f9f8dd6614c8 (ratchet 20261108T090448Z
+  # on branch r2land: exe-bytes and code-lock-bytes fail, screen-5days-alias-512x384 VOID-drifted, see R2LAND README):
+  # exe-bytes 8688503 -> 8695597, code-lock-bytes 5216640 -> 5221072. Release 84c1a74fdcf6 is 8657967 B (+6582 vs
+  # 4c9f83b62c5c's 8651385).
+  # LIMIT 2026-11-08 ags 0371 (lever L1, DOSAGS_ROUTE_PREWARM, default OFF: the legacy pathfinder's per-mask analysis
+  # is built in the room-load / restore stall; LAB-L1R first room-2 click's route search 187 -> 17 ms at 40k with =1):
+  # +3073 exe, +1440 code-lock, PROPOSED exact (no headroom) to the instrumented flavour 6198d2e06b8d (ratchet
+  # 20261109T005855Z on branch l1land: only exe-bytes and code-lock-bytes fail, see L1LAND README; ags 0370 moved
+  # neither): exe-bytes 8695597 -> 8698670, code-lock-bytes 5221072 -> 5222512. Release a6aaab93c3d2 is 8660528 B
+  # (+2561 vs 0370's 9db4170acd89, 8657967).
+  # LIMIT 2026-11-09 ags 0372 (lever L2, DOSAGS_GUI_CTRL_MARK, default OFF: a GUI whose only change is some controls marks
+  # those controls' rects instead of the whole GUI; LAB-L2G MMD action-label flip ticks -5.2 ms at 40k with =1):
+  # +8289 exe, +5632 code-lock, PROPOSED exact (no headroom) to the instrumented flavour 01658435489c (ratchet
+  # 20261109T114537Z on branch l2land: only exe-bytes and code-lock-bytes fail, see L2LAND README): exe-bytes
+  # 8698670 -> 8706959, code-lock-bytes 5222512 -> 5228144. Release 8c123c770d0b is 8668817 B (+8289 vs 0371's
+  # a6aaab93c3d2, 8660528); text / data / bss deltas in the L2LAND README, section 1.
+  # LIMIT 2026-11-11 ags 0373 (lever L2, DOSAGS_GUI_CTRL_MARK, ON by default: unset or any value but exactly "0" = 1):
+  # +0 exe, +32 code-lock, PROPOSED exact (no headroom) to the instrumented flavour 39abbc4b5c34 (ratchet
+  # 20261111T202520Z on branch l2def: code-lock-bytes 5228176 > 5228144 fails; exe-bytes 8706959 passes at its limit;
+  # see the L2DEF README, section 9): code-lock-bytes 5228144 -> 5228176, exe-bytes unchanged. The resolver's new
+  # expression moves etext by +0x20 (instrumented) / +0x10 (release 942ad0260d36: etext 0x4f64b0 -> 0x4f64c0 against
+  # 0372's 8c123c770d0b); .text stays inside its 512-byte section padding, so both exes are 0372's size to the byte.
+  # LIMIT 2026-11-12 ags 0376 (TEMPORARY diagnostic DOSAGS_MEMLOG=1, off by default; removal owed -- when 0376 is
+  # removed, these limits go back to 0373's): +2391 exe, +1664 code-lock, PROPOSED exact (no headroom) to the
+  # instrumented flavour ff560ae548b8 on 0001-0373 + 0376 (ratchet 20261112T031935Z on branch memlog: only exe-bytes
+  # and code-lock-bytes fail, see MEMLOG-2026-11-11 README): exe-bytes 8706959 -> 8709350, code-lock-bytes
+  # 5228176 -> 5229840. Release 2725928f2e37 is 8670696 B (+1879 vs 0373's 942ad0260d36, 8668817); .text +1536 in
+  # both flavours, .data +512 instrumented / +0 release, .bss +0 (the 24 KB ring is malloc'ed only when on).
+  # Measured on 0373 without 0374 (branch cap3): if 0374 lands first, re-measure on the combined series.
+  # LIMIT 2026-11-12 ags 0377 (bound the mixer voice ring, patch 0049's Voice::ring; with the TEMPORARY
+  # DOSAGS_RING_LEGACY=1 switch for the rig ABBA, removal owed): +796 exe, +560 code-lock, PROPOSED exact (no
+  # headroom) to the instrumented flavour 7e19b2963a3f on 0001-0373 + 0376 + 0377 (ratchet 20261112T095514Z on
+  # branch ring: only exe-bytes and code-lock-bytes fail, see RING-2026-11-12 README): exe-bytes 8709350 -> 8710146,
+  # code-lock-bytes 5229840 -> 5230400. Release 93df50d751a8 is 8671492 B (+796 vs 0376's 2725928f2e37, 8670696);
+  # .text +512 in both flavours, .data / .bss +0. Removing the switch later shrinks both a little: re-measure then.
+  # LIMIT 2026-11-13 ags 0378 + 0379 (remove 0376's DOSAGS_MEMLOG and 0377's DOSAGS_RING_LEGACY switch, both owed
+  # after round RO; the bounded ring stays, unconditional): -2445 exe, -1888 code-lock, PROPOSED exact (no headroom) to
+  # the instrumented flavour e5623c99f752 on 0001-0379 (ratchet 20261112T225932Z on branch rmdiag: PASS, 41 pass, 12
+  # improved, 0 fail; see RMDIAG-2026-11-13 README): exe-bytes 8710146 -> 8707701, code-lock-bytes 5230400 -> 5228512
+  # (= 0373's 8706959 / 5228176 + 742 / + 336 for 0377's ring). Release 2191042b343c is 8669559 B (-1933 vs
+  # 93df50d751a8). The 0378-truncated build is byte-identical to 0373 + 0377 built without 0376, both flavours.
+  # LIMIT 2026-11-13 ags 0380 (the heap's lock policy, DOSAGS_HEAP_UNLOCK / DOSAGS_HEAP_PREGROW_KB, both off by default,
+  # and its heappolicy_exit witness): exe-bytes 8707701 -> 8709077 (+1,376), code-lock-bytes 5228512 -> 5229440 (+928),
+  # exact (ratchet 20261113T101728Z; results LOCK0380-2026-11-13). A later patch that settles the policy or removes 0380
+  # re-states these.
+  # LIMIT 2026-11-13 ags 0381 (removes 0380 whole after round RQ; operator: both switches stay off): back to 0379's exact
+  # limits, exe-bytes 8709077 -> 8707701, code-lock-bytes 5229440 -> 5228512. The 0381 tree equals 0379's and both
+  # flavours rebuild byte-identical to 0379's (1d8252a6 / 2191042b; RM0380-2026-11-13), which passed ratchet
+  # 20261112T225932Z at these limits.
   # 2026-11-04: reads $AGS_EXE when it is set (as run-dosbox.sh does), so a ratchet run on another binary (the
   # DOSAGS_RELEASE flavour, build/ags-release/ags.exe) measures that binary, not build/ags/ags.exe.
+  # LIMIT 2026-11-17 ags 0382 + 0383 (the legacy route finder's stamp grid, frontier walk and inline line-of-sight walk).
+  # 0382 carried them behind a TEMPORARY switch (ratchet 20261117T115135Z: exe-bytes 8707701 -> 8715475, code-lock-bytes
+  # 5228512 -> 5234928). 0383 removed the switch and the old bodies after round RR (operator: "On, remove old code") and
+  # the limits are tightened to its exact sizes (ratchet 20261117T195038Z, RM0383-2026-11-17): exe-bytes 8715475 ->
+  # 8711712 (-3763; +4011 against 0381), code-lock-bytes 5234928 -> 5231440 (-3488; +2928 against 0381).
   - name: exe-bytes
     command: bash -c 'stat -c "exe_bytes=%s" "${AGS_EXE:-build/ags/ags.exe}"'
     key: exe_bytes
     compare: le
-    limit: 8683881
+    limit: 8711712
     control: bash -c 'cp "${AGS_EXE:-build/ags/ags.exe}" "$RATCHET_OUT/big.exe" && head -c 4096 /dev/zero >> "$RATCHET_OUT/big.exe" && stat -c "exe_bytes=%s" "$RATCHET_OUT/big.exe"'
     timeout: 60
 
@@ -613,5 +679,5 @@ checks:
     match: '^RATCHET '
     key: code_lock_bytes
     compare: le
-    limit: 5214848
+    limit: 5231440
     control: tests/harness/ratchet-lock-control.sh "$RATCHET_OUT"

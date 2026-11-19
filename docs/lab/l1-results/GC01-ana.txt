@@ -1,0 +1,36 @@
+== GC01
+cell: rc=0 stage=/tmp/dos-port-dosbox.xrWQoi exe=build/l1/exe/L1E.EXE sha256=77a393f9a049b55243c87715a496fa53719241479dc8a6ec9110a3881cf66ddf exit=12440 args=--env DOSAGS_RANDSEED=1 --env DOSAGS_GUI_CLIP=2 
+witness: fixed-timestep ENABLED=True guiclip mode=2 l1prof level=1 RUN.BAT SET bytes=297
+inputs: labclick/labmove 0 (); dequeued click/key 0 (); rooms [(5436, 1)]
+L1PROF: L1PROF v2 tsc_per_us=39.9993 level=1 win=0:2147483647 uclocks_per_sec=1193180 c_uclock_x1000=5643 c_switch_x1000=0 legacy_runs=0 vm_overflow=0 ext_overflow=0 ents=14011 dropped=0 api_n=0 probe_us=0
+entries with a negative uclock difference (clamped to 0): 1
+witness: fine timing ON (script_vm recorded, i.e. the last SET DOSAGS_TICKSTATS_FINE survived) = True
+window: loop ticks 5437 <= lc < 12440 (7003 ticks); first repeatedly_execute at 5437
+
+-- script_vm (RunScriptFunction) entries in the window: 14006 (2.000/tick), 0 nested; sum us 28953237 (top level 28953237) = 4.134 ms/tick
+   tickstats script_vm whole run: calls 14007 total_us 29447527; L1 entries whole run: 14007, us 28953836 (ratio 0.9832)
+   tickstats rep_exec_vm whole run: calls 4 total_us 1689
+
+-- script_vm by entry point (top level), window
+class     entry point                                                      n         us  ms/tick   share   nest_us (l2: vm/api/oth us, api calls)
+per-tick  repeatedly_execute                                            7003   27707907    3.957  95.70%         0 
+per-tick  room rep_exec (room1|room_c)                                  7003    1245330    0.178   4.30%         0 
+P1 per-tick entries share of script_vm (top level): 100.00%   [MET if >= 95%, FALSIFIED if < 90%]
+   of which time in game loops nested inside entries (blocking): 0 us = 0.00% of script_vm
+   P1 excluding nested game loops from both sides: 100.00%
+
+-- tick classes (input = labclick/labmove/dequeued click or key; input-free = none within +-40 ticks)
+class                                ticks script_vm ms  per-tick-only
+all ticks                             7003        4.134          4.134
+input-free                            7003        4.134          4.134
+input within +-40                        0          nan            nan
+input-free, no room entry +-40        6963        4.134          4.134
+P2 input-free / all-tick mean: 1.0000 (0.00%)   [MET if within +-10%, FALSIFIED if input-free > 15% lower]
+
+-- script_vm per entry point x tick class (ms per tick of the class; n entries)
+entry point                                                    input-free     input +-40
+repeatedly_execute                                            3.957  7003    0.000     0
+room rep_exec (room1|room_c)                                  0.178  7003    0.000     0
+total                                                         4.134          0.000
+   per-tick script_vm ms: p05 4.110 p50 4.110 p95 4.116 max 59.042
+   largest ticks (us@lc): 59042@7954 59041@6627 59041@6012 5325@5437 4121@5438 4118@7363 4118@6025 4117@12403

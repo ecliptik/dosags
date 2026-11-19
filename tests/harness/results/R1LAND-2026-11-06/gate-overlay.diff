@@ -1,0 +1,170 @@
+diff --git a/Engine/ac/draw_software.cpp b/Engine/ac/draw_software.cpp
+index d61920217..54abd6d19 100644
+--- a/Engine/ac/draw_software.cpp
++++ b/Engine/ac/draw_software.cpp
+@@ -271,10 +271,24 @@ void invalidate_all_camera_rects(int view_index)
+     RoomCamRects[view_index].NumDirtyRegions = WHOLESCREENDIRTY;
+ }
+ 
++#ifdef __DJGPP__
++// GATE OVERLAY: DOSAGS_LAB_FORCE_WHOLE=N -- after every Nth room restore, the next room-rect mark takes the overflow
++// exit below (NumDirtyRegions = WHOLESCREENDIRTY, mark dropped), the path a 26th rect in one interval takes.
++static int dos_lab_force_n = -1; static long dos_lab_force_frames = 0; static bool dos_lab_force_next = false;
++extern long dos_lab_forced;
++#endif
+ void invalidate_rect_on_surf(int x1, int y1, int x2, int y2, DirtyRects &rects)
+ {
+     if (rects.DirtyRows.size() == 0)
+         return;
++#ifdef __DJGPP__
++    if (dos_lab_force_next && &rects != &BlackRects)
++    {
++        dos_lab_force_next = false; dos_lab_forced++;
++        rects.NumDirtyRegions = WHOLESCREENDIRTY;   // as the overflow branch: too many rects, whole surface dirty
++        return;
++    }
++#endif
+     if (rects.NumDirtyRegions >= MAXDIRTYREGIONS) {
+         // too many invalid rectangles, just mark the whole thing dirty
+         rects.NumDirtyRegions = WHOLESCREENDIRTY;
+@@ -953,6 +967,8 @@ void update_room_invreg_and_reset(int view_index, Bitmap *ds, Bitmap *src, bool
+ #ifdef __DJGPP__
+     }
+     dos_port_dirty_note_restore();   // patch 0193: marks made from here on are repainted next frame
++    if (dos_lab_force_n < 0) { const char *e = getenv("DOSAGS_LAB_FORCE_WHOLE"); dos_lab_force_n = e ? atoi(e) : 0; }   // GATE OVERLAY
++    if (dos_lab_force_n > 0 && (++dos_lab_force_frames % dos_lab_force_n) == 0) dos_lab_force_next = true;
+ #ifndef DOSAGS_RELEASE   // patch 0351: no periodic bgstruct line in the release flavour
+     if ((dos_port_tick_timing.bg_calls % 500) == 0)
+         AGS::Common::Debug::Printf("DOS-PORT bgstruct calls=%ld whole=%ld px=%ld slow_px=%ld",
+diff --git a/Engine/gfx/ali3dsw.cpp b/Engine/gfx/ali3dsw.cpp
+index d0e5948ca..ed6c25da2 100644
+--- a/Engine/gfx/ali3dsw.cpp
++++ b/Engine/gfx/ali3dsw.cpp
+@@ -29,6 +29,8 @@
+ #include "main/dos_port_tick_timing.h" // DOS-PORT patch 0079
+ #include "main/dos_port_work.h"        // DOS-PORT patch 0230
+ #include "debug/out.h"                 // DOS-PORT patch 0366: the guiclip witness line
++extern uint32_t get_loop_counter();    // GATE OVERLAY
++long dos_lab_forced = 0;               // GATE OVERLAY (draw_software.cpp counts)
+ #endif
+ 
+ #ifdef __DJGPP__
+@@ -71,15 +73,19 @@ static void dos_gc_set_latch(long &why)
+ // constructed then composites every flagged GUI in full (the latch, armed here, is consumed by this frame's render).
+ void dos_guiclip_note_fullrestore()
+ {
++    static int _noguard = -1;   // GATE OVERLAY: DOSAGS_LAB_NOGUARD=1 counts the fire but does not arm the latch
++    if (_noguard < 0) { const char *e = getenv("DOSAGS_LAB_NOGUARD"); _noguard = (e && e[0] == '1') ? 1 : 0; }
++    if (_noguard) { dos_gc_latch_fullrestore++; return; }
+     dos_gc_set_latch(dos_gc_latch_fullrestore);
+ }
+ void dos_guiclip_summary(FILE *log)
+ {
+     if (!log) return;
+     fprintf(log, "DOS-PORT guiclip_final mode=%d flagged=%ld skipped=%ld skipped_px=%lld clipped=%ld full=%ld latched_full=%ld"
+-        " latch_events=%ld latch_alias=%ld latch_buffer=%ld latch_tint=%ld latch_fullrestore=%ld\n",
++        " latch_events=%ld latch_alias=%ld latch_buffer=%ld latch_tint=%ld latch_fullrestore=%ld lab_forced=%ld lab_noguard=%d\n",
+         dos_gc_mode, dos_gc_flagged, dos_gc_skipped, dos_gc_skipped_px, dos_gc_clipped, dos_gc_full, dos_gc_latched_full,
+-        dos_gc_latch_events, dos_gc_latch_alias, dos_gc_latch_buffer, dos_gc_latch_tint, dos_gc_latch_fullrestore);
++        dos_gc_latch_events, dos_gc_latch_alias, dos_gc_latch_buffer, dos_gc_latch_tint, dos_gc_latch_fullrestore,
++        dos_lab_forced, getenv("DOSAGS_LAB_NOGUARD") && getenv("DOSAGS_LAB_NOGUARD")[0] == '1' ? 1 : 0);
+ }
+ #endif
+ 
+@@ -812,6 +818,33 @@ void SDLRendererGraphicsDriver::RenderToBackBuffer()
+     _stageVirtualScreen = virtualScreen;
+     _rendSpriteBatch = UINT32_MAX;
+     ClearDrawLists();
++#ifdef __DJGPP__
++    {   // GATE OVERLAY: DOSAGS_LAB_FRAMEHASH=1 -> FHASH.TXT
++        static int fh_mode = -1; static unsigned long *fh_buf = nullptr; static long fh_n = 0;
++        static const long FH_CAP = 40000;
++        struct FhDump { static void dump() { FILE *f = fopen("FHASH.TXT", "w"); if (!f) return;
++            for (long i = 0; i < fh_n; ++i) fprintf(f, "%lu %08lx\n", fh_buf[2 * i], fh_buf[2 * i + 1]); fclose(f); } };
++        if (fh_mode < 0)
++        {
++            const char *e = getenv("DOSAGS_LAB_FRAMEHASH");
++            fh_mode = (e && e[0] == '1') ? 1 : 0;
++            if (fh_mode) { fh_buf = (unsigned long *)malloc(sizeof(unsigned long) * 2 * FH_CAP); atexit(FhDump::dump); }
++        }
++        if (fh_mode == 1 && fh_buf && fh_n < FH_CAP && virtualScreen)
++        {
++            unsigned long hsh = 2166136261UL;
++            const int bw = virtualScreen->GetWidth() * virtualScreen->GetBPP();
++            for (int y = 0; y < virtualScreen->GetHeight(); ++y)
++            {
++                const uint32_t *row = reinterpret_cast<const uint32_t *>(virtualScreen->GetScanLine(y));
++                for (int x = 0; x < bw / 4; ++x) { hsh ^= row[x]; hsh *= 16777619UL; hsh ^= hsh >> 15; }
++            }
++            fh_buf[2 * fh_n] = (unsigned long)::get_loop_counter();
++            fh_buf[2 * fh_n + 1] = hsh & 0xFFFFFFFFUL;
++            fh_n++;
++        }
++    }
++#endif
+ }
+ 
+ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch, size_t from, Bitmap *surface, int surf_offx, int surf_offy)
+@@ -998,9 +1031,11 @@ size_t SDLRendererGraphicsDriver::RenderSpriteBatch(const ALSpriteBatch &batch,
+             Rect cur = surface->GetClip();
+             Rect isect = IntersectRects(cur, d);
+             // patch 0366: the entry's own rect inside that clip is empty -> nothing would be drawn: skip it
+-            if (dos_guiclip_mode() == 2 && native_bmp &&
++            static int _gate_break = -1;   // GATE OVERLAY: DOSAGS_LAB_GUISKIP_BREAK=1 skips every flagged entry (control)
++            if (_gate_break < 0) { const char *b = getenv("DOSAGS_LAB_GUISKIP_BREAK"); _gate_break = (b && b[0] == '1') ? 1 : 0; }
++            if (dos_guiclip_mode() == 2 && native_bmp && (_gate_break ||
+                 IntersectRects(isect, Rect(drawAtX, drawAtY, drawAtX + native_bmp->GetWidth() - 1,
+-                                           drawAtY + native_bmp->GetHeight() - 1)).IsEmpty())
++                                           drawAtY + native_bmp->GetHeight() - 1)).IsEmpty()))
+             {
+                 dos_gc_skipped++;
+                 dos_gc_skipped_px += (long long)native_bmp->GetWidth() * native_bmp->GetHeight();
+diff --git a/Engine/main/game_run.cpp b/Engine/main/game_run.cpp
+index 283f3a8bd..aea6050fd 100644
+--- a/Engine/main/game_run.cpp
++++ b/Engine/main/game_run.cpp
+@@ -2032,6 +2032,36 @@ static void dos_tick_clicks()
+ }
+ #endif
+ 
++#ifdef __DJGPP__
++static int dos_lc_mode = -1, dos_lc_n = 0, dos_lc_next = 0;   // GATE OVERLAY: DOSAGS_LABCLICKS
++static long dos_lc_t[64]; static int dos_lc_x[64], dos_lc_y[64], dos_lc_b[64];
++static void dos_lab_clicks()
++{
++    if (dos_lc_mode < 0)
++    {
++        dos_lc_mode = 0;
++        const char *e = getenv("DOSAGS_LABCLICKS");
++        while (e && *e && dos_lc_n < 64)
++        {
++            long t; int x, y, used = 0, b = 1, used2 = 0;
++            if (sscanf(e, "%ld:%d:%d%n", &t, &x, &y, &used) != 3) break;
++            e += used;
++            if (*e == ':' && sscanf(e, ":%d%n", &b, &used2) == 1) e += used2;
++            dos_lc_t[dos_lc_n] = t; dos_lc_x[dos_lc_n] = x; dos_lc_y[dos_lc_n] = y; dos_lc_b[dos_lc_n] = b; dos_lc_n++;
++            if (*e == ',') e++;
++        }
++        if (dos_lc_n > 0) { dos_lc_mode = 1; Debug::Printf("DOS-PORT labclicks n=%d", dos_lc_n); }
++    }
++    if (dos_lc_mode != 1 || dos_lc_next >= dos_lc_n) return;
++    const long lc = (long)get_loop_counter();
++    if (lc < dos_lc_t[dos_lc_next]) return;
++    const int k = dos_lc_next++;
++    SetMousePosition(dos_lc_x[k], dos_lc_y[k]);
++    if (dos_lc_b[k]) SimulateMouseClick(kMouseLeft);
++    Debug::Printf("DOS-PORT labclick lc=%ld n=%d x=%d y=%d click=%d", lc, k + 1, dos_lc_x[k], dos_lc_y[k], dos_lc_b[k]);
++}
++#endif
++
+ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int extra_x, int extra_y, bool skip_render_and_wait)
+ {
+     // DOS-PORT patch 0082: whole-function bracket, first line so it
+@@ -2055,6 +2085,7 @@ void UpdateGameOnce(bool do_controls, IDriverDependantBitmap *extra_ddb, int ext
+ #ifdef __DJGPP__
+         DosPortTickScope _dos_port_input_scope(dos_port_tick_timing.input_poll);
+         dos_tick_clicks();   // patch 0247: no-op unless DOSAGS_TICKCLICKS is set
++        dos_lab_clicks();    // GATE OVERLAY
+ #endif
+         sys_evt_process_pending();
+     }

@@ -1,0 +1,150 @@
+== G2
+cell: rc=0 stage=/tmp/dos-port-dosbox.jscC5b exe=build/l1/exe/L1F.EXE sha256=83d5b4d23ba67907166c80780bea0079758dd6df711fa82ed0be25e78a04ea1f exit=8600 args=--env DOSAGS_RANDSEED=1 --env DOSAGS_GUI_CLIP=2 -
+witness: fixed-timestep ENABLED=True guiclip mode=2 l1prof level=2 RUN.BAT SET bytes=511
+inputs: labclick/labmove 14 (5600m 5700m 5800m 5900m 6000 6400 6800 7100m 7200m 7300m 7500 7900 8050m 8150m); dequeued click/key 5 (6000 6400 6800 7500 7900); rooms [(5436, 1), (6882, 2)]
+L1PROF: L1PROF v2 tsc_per_us=39.9993 level=2 win=0:2147483647 uclocks_per_sec=1193180 c_uclock_x1000=5643 c_switch_x1000=26024 legacy_runs=0 vm_overflow=0 ext_overflow=0 ents=6343 dropped=0 api_n=566802 probe_us=3352354
+entries with a negative uclock difference (clamped to 0): 0
+witness: fine timing ON (script_vm recorded, i.e. the last SET DOSAGS_TICKSTATS_FINE survived) = True
+window: loop ticks 5437 <= lc < 8600 (3163 ticks); first repeatedly_execute at 5437
+
+-- script_vm (RunScriptFunction) entries in the window: 6336 (2.003/tick), 0 nested; sum us 19375692 (top level 19375692) = 6.126 ms/tick
+   tickstats script_vm whole run: calls 6337 total_us 19657896; L1 entries whole run: 6337, us 19389992 (ratio 0.9864)
+   tickstats rep_exec_vm whole run: calls 6 total_us 2534
+
+-- script_vm by entry point (top level), window
+class     entry point                                                      n         us  ms/tick   share   nest_us (l2: vm/api/oth us, api calls)
+per-tick  repeatedly_execute                                            3162   18451990    5.834  95.23%         0 11726100/3123920/350186, 550188
+per-tick  room rep_exec (room1|room_c)                                  1445     314252    0.099   1.62%         0 98260/37576/129983, 13005
+event     event mouse_click: game|on_mouse_click                           5     290347    0.092   1.50%         0 2663/279171/529, 131
+per-tick  room rep_exec (room2|room_b)                                  1717     238618    0.075   1.23%         0 51516/6868/159501, 3434
+event     interaction room ev5: room2|room_a                               1      54493    0.017   0.28%         0 175/46555/90, 24
+event     interaction room ev7: room2|room_c                               1      18438    0.006   0.10%         0 50/17276/87, 6
+event     none: room1|region1_a                                            1       6891    0.002   0.04%         0 29/3848/91, 4
+event     interaction room ev5: game|on_event                              1        300    0.000   0.00%         0 58/108/102, 5
+event     none: game|on_event                                              2        242    0.000   0.00%         0 24/0/207, 0
+event     interaction room ev7: game|on_event                              1        121    0.000   0.00%         0 12/0/103, 0
+P1 per-tick entries share of script_vm (top level): 98.09%   [MET if >= 95%, FALSIFIED if < 90%]
+   of which time in game loops nested inside entries (blocking): 0 us = 0.00% of script_vm
+   P1 excluding nested game loops from both sides: 98.09%
+
+-- tick classes (input = labclick/labmove/dequeued click or key; input-free = none within +-40 ticks)
+class                                ticks script_vm ms  per-tick-only
+all ticks                             3163        6.126          6.008
+input-free                            2029        6.053          6.013
+input within +-40                     1134        6.256          6.000
+input-free, no room entry +-40        1908        6.007          6.007
+P2 input-free / all-tick mean: 0.9881 (-1.19%)   [MET if within +-10%, FALSIFIED if input-free > 15% lower]
+   input-near / all-tick mean: 1.0213
+
+-- script_vm per entry point x tick class (ms per tick of the class; n entries)
+entry point                                                    input-free     input +-40
+repeatedly_execute                                            5.840  2028    5.822  1134
+room rep_exec (room1|room_c)                                  0.094   878    0.108   567
+event mouse_click: game|on_mouse_click                        0.000     0    0.256     5
+room rep_exec (room2|room_b)                                  0.079  1150    0.070   567
+interaction room ev5: room2|room_a                            0.027     1    0.000     0
+interaction room ev7: room2|room_c                            0.009     1    0.000     0
+none: room1|region1_a                                         0.003     1    0.000     0
+interaction room ev5: game|on_event                           0.000     1    0.000     0
+none: game|on_event                                           0.000     2    0.000     0
+interaction room ev7: game|on_event                           0.000     1    0.000     0
+total                                                         6.053          6.256
+   per-tick script_vm ms: p05 5.889 p50 5.995 p95 6.058 max 246.869
+   largest ticks (us@lc): 246869@7500 61926@6882 35473@7900 28120@5437 24557@6883 18675@6000 9763@6400 9704@6800
+
+-- level 2 (whole run, 3163 played ticks; buckets are exclusive emulated time, rdtsc)
+   VM (script functions) 11882483 us = 3.757 ms/tick; engine API 3518562 us = 1.112 ms/tick; nested game loops 0 us; VM share of VM+API 77.2%
+   switches into VM/API buckets: 1544157 (488.2/tick); calibrated switch cost 0.651 us -> 0.318 ms/tick of probe cost in these buckets
+   engine API calls from scripts: 566802 = 179.2/tick
+
+   top script functions (exclusive VM time)
+   function                                           entries   n/tick         us  ms/tick   of VM
+   game::Extension$1                                   177072    55.98    2805277    0.887  23.61%
+   game::SetAlternativeAction$3                        177072    55.98    2176819    0.688  18.32%
+   game::CheckTimers$0                                  98022    30.99    1800398    0.569  15.15%
+   game::GlobalCondition$1                              69238    21.89    1115346    0.353   9.39%
+   game::IsOwnTimerExpired$1                           151776    47.98    1092971    0.346   9.20%
+   game::CheckDefaultAction$0                           79050    24.99     929041    0.294   7.82%
+   game::repeatedly_execute$0                          107508    33.99     861987    0.273   7.25%
+   game::UpdateActionBar$0                              34793    11.00     347814    0.110   2.93%
+   game::TranslateAction$4                              18978     6.00     205655    0.065   1.73%
+   game::AddExtension$2                                 15810     5.00     150287    0.048   1.26%
+   game::isAction$1                                     15628     4.94     127378    0.040   1.07%
+   game::RemoveExtension$1                              12648     4.00     115901    0.037   0.98%
+   room1::room_c$0                                      14450     4.57      99493    0.031   0.84%
+   room2::room_b$0                                       5151     1.63      52504    0.017   0.44%
+   game::on_mouse_click$1                                 101     0.03       1184    0.000   0.01%
+   room2::room_a$0                                         25     0.01        175    0.000   0.00%
+   game::on_event$2                                        11     0.00         89    0.000   0.00%
+   game::AdjustLights$0                                     8     0.00         64    0.000   0.00%
+   room2::room_c$0                                          7     0.00         50    0.000   0.00%
+   room1::region1_a$0                                       5     0.00         29    0.000   0.00%
+   game::SetAction$1                                        2     0.00         21    0.000   0.00%
+
+   engine API functions called from scripts (exclusive time; n = calls)
+   API                                                  calls   n/tick         us  ms/tick  of API of VM+API
+   SetButtonPic                                         63240    19.99     518102    0.164  14.72%     3.36%
+   GetGlobalInt                                        174203    55.08     392015    0.124  11.14%     2.55%
+   FindGUIID                                            72739    23.00     308117    0.097   8.76%     2.00%
+   Room::ProcessClick^3                                     5     0.00     276441    0.087   7.86%     1.79%
+   GetLocationType^2                                     9497     3.00     251022    0.079   7.13%     1.63%
+   StrGetCharAt                                         88536    27.99     246029    0.078   6.99%     1.60%
+   GetInvAt                                             15726     4.97     227369    0.072   6.46%     1.48%
+   StrCopy                                              19076     6.03     211512    0.067   6.01%     1.37%
+   GetLocationName                                       3167     1.00     211146    0.067   6.00%     1.37%
+   StrContains                                           3163     1.00     175896    0.056   5.00%     1.14%
+   StrFormat                                             3163     1.00     164606    0.052   4.68%     1.07%
+   StrLen                                               50592    15.99     115526    0.037   3.28%     0.75%
+   GetGUIObjectAt                                        6426     2.03      95566    0.030   2.72%     0.62%
+   RemoveWalkableArea                                       1     0.00      46498    0.015   1.32%     0.30%
+   SetLabelText                                          3163     1.00      38819    0.012   1.10%     0.25%
+   IsTimerExpired                                       13005     4.11      38045    0.012   1.08%     0.25%
+   GetGUIAt                                              3163     1.00      34535    0.011   0.98%     0.22%
+   StrCat                                                3162     1.00      32021    0.010   0.91%     0.21%
+   GetCursorMode                                        12569     3.97      27969    0.009   0.79%     0.18%
+   GetTranslation                                        3163     1.00      24076    0.008   0.68%     0.16%
+   StrSetCharAt                                          6324     2.00      22773    0.007   0.65%     0.15%
+   PlayAmbientSound                                         1     0.00      17264    0.005   0.49%     0.11%
+   IsGamePaused                                          6329     2.00      15665    0.005   0.45%     0.10%
+   SetLabelColor                                         3168     1.00      14658    0.005   0.42%     0.10%
+   GetPlayerCharacter                                    3170     1.00       7609    0.002   0.22%     0.05%
+   NewRoomEx                                                1     0.00       2036    0.001   0.06%     0.01%
+   FaceLocation                                             1     0.00       1158    0.000   0.03%     0.01%
+   SetScreenTransition                                      1     0.00        651    0.000   0.02%     0.00%
+   SetCursorMode                                            1     0.00        597    0.000   0.02%     0.00%
+   IsInteractionAvailable                                   5     0.00        414    0.000   0.01%     0.00%
+
+   top (caller function -> API) pairs by inclusive time
+   game::SetAlternativeAction$3             -> SetButtonPic                      56916   17.99/tick    540631 us   0.171 ms/tick
+   game::Extension$1                        -> StrGetCharAt                      88536   27.99/tick    366697 us   0.116 ms/tick
+   game::CheckTimers$0                      -> GetGlobalInt                      94860   29.99/tick    342392 us   0.108 ms/tick
+   game::SetAlternativeAction$3             -> FindGUIID                         56916   17.99/tick    322904 us   0.102 ms/tick
+   game::on_mouse_click$1                   -> Room::ProcessClick^3                  5    0.00/tick    278057 us   0.088 ms/tick
+   game::IsOwnTimerExpired$1                -> GetGlobalInt                      75888   23.99/tick    273254 us   0.086 ms/tick
+   game::CheckDefaultAction$0               -> GetLocationName                    3162    1.00/tick    217581 us   0.069 ms/tick
+   game::TranslateAction$4                  -> StrContains                        3163    1.00/tick    182139 us   0.058 ms/tick
+   game::CheckDefaultAction$0               -> GetLocationType^2                  6324    2.00/tick    177367 us   0.056 ms/tick
+   game::TranslateAction$4                  -> StrFormat                          3163    1.00/tick    170007 us   0.054 ms/tick
+   game::Extension$1                        -> StrLen                            44268   14.00/tick    165006 us   0.052 ms/tick
+   game::GlobalCondition$1                  -> GetInvAt                           9397    2.97/tick    152170 us   0.048 ms/tick
+   game::TranslateAction$4                  -> StrCopy                            6326    2.00/tick    111218 us   0.035 ms/tick
+   game::CheckDefaultAction$0               -> GetInvAt                           6324    2.00/tick    104237 us   0.033 ms/tick
+   game::GlobalCondition$1                  -> GetGUIObjectAt                     6326    2.00/tick    102797 us   0.032 ms/tick
+   game::GlobalCondition$1                  -> GetLocationType^2                  3167    1.00/tick     88606 us   0.028 ms/tick
+   game::CheckDefaultAction$0               -> StrCopy                            6324    2.00/tick     66190 us   0.021 ms/tick
+   game::repeatedly_execute$0               -> SetButtonPic                       6324    2.00/tick     63874 us   0.020 ms/tick
+   game::UpdateActionBar$0                  -> StrCopy                            6426    2.03/tick     60981 us   0.019 ms/tick
+   room1::room_c$0                          -> IsTimerExpired                    13005    4.11/tick     56532 us   0.018 ms/tick
+   room2::room_a$0                          -> RemoveWalkableArea                    1    0.00/tick     47520 us   0.015 ms/tick
+   game::UpdateActionBar$0                  -> SetLabelText                       3163    1.00/tick     46121 us   0.015 ms/tick
+   game::GlobalCondition$1                  -> GetCursorMode                      9501    3.00/tick     41551 us   0.013 ms/tick
+   game::GlobalCondition$1                  -> GetGUIAt                           3163    1.00/tick     39650 us   0.013 ms/tick
+   game::AddExtension$2                     -> StrCat                             3162    1.00/tick     38814 us   0.012 ms/tick
+   game::repeatedly_execute$0               -> FindGUIID                          6324    2.00/tick     35781 us   0.011 ms/tick
+   game::UpdateActionBar$0                  -> FindGUIID                          6326    2.00/tick     34691 us   0.011 ms/tick
+   game::TranslateAction$4                  -> GetTranslation                     3163    1.00/tick     29419 us   0.009 ms/tick
+   game::repeatedly_execute$0               -> IsGamePaused                       6324    2.00/tick     26197 us   0.008 ms/tick
+   game::UpdateActionBar$0                  -> SetLabelColor                      3163    1.00/tick     20816 us   0.007 ms/tick
+
+   per-tick entries: us 19004860 = vm 11875876 + api 3168364 + outside-VM 639670 + probe 3313225 + nested loops 0 (gap 7725); api calls 566627
+   event    entries: us 370832 = vm 3011 + api 346958 + outside-VM 1209 + probe 19641 + nested loops 0 (gap 13); api calls 170

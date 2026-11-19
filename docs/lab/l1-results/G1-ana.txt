@@ -1,0 +1,53 @@
+== G1
+cell: rc=0 stage=/tmp/dos-port-dosbox.PRwUWJ exe=build/l1/exe/L1E.EXE sha256=77a393f9a049b55243c87715a496fa53719241479dc8a6ec9110a3881cf66ddf exit=8600 args=--env DOSAGS_RANDSEED=1 --env DOSAGS_GUI_CLIP=2 -
+witness: fixed-timestep ENABLED=True guiclip mode=2 l1prof level=1 RUN.BAT SET bytes=511
+inputs: labclick/labmove 14 (5600m 5700m 5800m 5900m 6000 6400 6800 7100m 7200m 7300m 7500 7900 8050m 8150m); dequeued click/key 5 (6000 6400 6800 7500 7900); rooms [(5436, 1), (6882, 2)]
+L1PROF: L1PROF v2 tsc_per_us=39.9993 level=1 win=0:2147483647 uclocks_per_sec=1193180 c_uclock_x1000=5643 c_switch_x1000=0 legacy_runs=0 vm_overflow=0 ext_overflow=0 ents=6343 dropped=0 api_n=0 probe_us=0
+entries with a negative uclock difference (clamped to 0): 0
+witness: fine timing ON (script_vm recorded, i.e. the last SET DOSAGS_TICKSTATS_FINE survived) = True
+window: loop ticks 5437 <= lc < 8600 (3163 ticks); first repeatedly_execute at 5437
+
+-- script_vm (RunScriptFunction) entries in the window: 6336 (2.003/tick), 0 nested; sum us 13813752 (top level 13813752) = 4.367 ms/tick
+   tickstats script_vm whole run: calls 6337 total_us 14138878; L1 entries whole run: 6337, us 13814351 (ratio 0.9770)
+   tickstats rep_exec_vm whole run: calls 6 total_us 2539
+
+-- script_vm by entry point (top level), window
+class     entry point                                                      n         us  ms/tick   share   nest_us (l2: vm/api/oth us, api calls)
+per-tick  repeatedly_execute                                            3162   13027916    4.119  94.31%         0 
+event     event mouse_click: game|on_mouse_click                           5     280710    0.089   2.03%         0 
+per-tick  room rep_exec (room1|room_c)                                  1445     231288    0.073   1.67%         0 
+per-tick  room rep_exec (room2|room_b)                                  1717     203618    0.064   1.47%         0 
+event     interaction room ev5: room2|room_a                               1      46130    0.015   0.33%         0 
+event     interaction room ev7: room2|room_c                               1      19412    0.006   0.14%         0 
+event     none: room1|region1_a                                            1       4132    0.001   0.03%         0 
+event     interaction room ev5: game|on_event                              1        227    0.000   0.00%         0 
+event     none: game|on_event                                              2        213    0.000   0.00%         0 
+event     interaction room ev7: game|on_event                              1        106    0.000   0.00%         0 
+P1 per-tick entries share of script_vm (top level): 97.46%   [MET if >= 95%, FALSIFIED if < 90%]
+   of which time in game loops nested inside entries (blocking): 0 us = 0.00% of script_vm
+   P1 excluding nested game loops from both sides: 97.46%
+
+-- tick classes (input = labclick/labmove/dequeued click or key; input-free = none within +-40 ticks)
+class                                ticks script_vm ms  per-tick-only
+all ticks                             3163        4.367          4.256
+input-free                            2029        4.293          4.258
+input within +-40                     1134        4.500          4.253
+input-free, no room entry +-40        1908        4.263          4.263
+P2 input-free / all-tick mean: 0.9830 (-1.70%)   [MET if within +-10%, FALSIFIED if input-free > 15% lower]
+   input-near / all-tick mean: 1.0304
+
+-- script_vm per entry point x tick class (ms per tick of the class; n entries)
+entry point                                                    input-free     input +-40
+repeatedly_execute                                            4.122  2028    4.113  1134
+event mouse_click: game|on_mouse_click                        0.000     0    0.248     5
+room rep_exec (room1|room_c)                                  0.069   878    0.080   567
+room rep_exec (room2|room_b)                                  0.067  1150    0.060   567
+interaction room ev5: room2|room_a                            0.023     1    0.000     0
+interaction room ev7: room2|room_c                            0.010     1    0.000     0
+none: room1|region1_a                                         0.002     1    0.000     0
+interaction room ev5: game|on_event                           0.000     1    0.000     0
+none: game|on_event                                           0.000     2    0.000     0
+interaction room ev7: game|on_event                           0.000     1    0.000     0
+total                                                         4.293          4.500
+   per-tick script_vm ms: p05 4.116 p50 4.272 p95 4.280 max 244.484
+   largest ticks (us@lc): 244484@7500 50702@6882 33463@7900 23785@6883 8668@6000 7766@6400 7692@6800 5325@5437

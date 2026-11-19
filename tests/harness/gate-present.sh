@@ -54,7 +54,7 @@ row() { # arm depth rungname cfg extra-env
     [[ -n "$extra" ]] && envs+=(--env "$extra")
     ( cd "$HARNESS" && timeout 400 ./run-dosbox.sh "bench$depth" --fixed-timestep \
         --include-extra "$d/ACSETUP.CFG" --include-extra "$d/BENCH.CFG" "${envs[@]}" --timeout 300 ) > "$d/run.log" 2>&1
-    local st; st="$(/usr/bin/grep -o '/tmp/dos-port-dosbox\.[A-Za-z0-9]*' "$d/run.log" | tail -1)"
+    local st; st="$(/usr/bin/grep -o '/[^[:space:]"]*/dos-port-dosbox\.[A-Za-z0-9]*' "$d/run.log" | tail -1)"
     local pv want got mode alias verdict
     pv="$(/usr/bin/grep -a 'presentverify frames=' "$st/STDOUT.TXT" 2>/dev/null | tr -d '\r' | tail -1)"
     mode="$(/usr/bin/grep -a -m1 'Graphics mode set: [0-9]* x' "$st/STDOUT.TXT" 2>/dev/null | tr -d '\r' | sed 's/Graphics mode set: //;s/, on display 0//')"
@@ -82,7 +82,7 @@ done
 
 if [[ $DO_AQ -eq 1 ]]; then
     ( cd "$HARNESS" && timeout 700 ./run-dosbox.sh agsquest --fixed-timestep ) > "$OUT/aq.run.log" 2>&1
-    st="$(/usr/bin/grep -o '/tmp/dos-port-dosbox\.[A-Za-z0-9]*' "$OUT/aq.run.log" | tail -1)"
+    st="$(/usr/bin/grep -o '/[^[:space:]"]*/dos-port-dosbox\.[A-Za-z0-9]*' "$OUT/aq.run.log" | tail -1)"
     ( cd "$HARNESS" && python3 parse-results.py "$st" ) > "$OUT/aq.parse.txt" 2>&1; rc=$?
     pv="$(/usr/bin/grep -a 'presentverify frames=' "$st/STDOUT.TXT" | tr -d '\r' | tail -1)"
     v="ok"; if [[ $rc -ne 0 ]]; then v="FAIL(parse-results exit $rc)"; FAILS=$((FAILS + 1)); fi

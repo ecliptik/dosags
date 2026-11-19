@@ -1,0 +1,24 @@
+
+Installs and configures the SMARTDrive disk-caching utility.
+
+SMARTDRV [/X] [[drive[+|-]]...] [/U] [/C | /R] [/F | /N] [/L] [/V | /Q | /S]
+         [InitCacheSize [WinCacheSize]] [/E:ElementSize] [/B:BufferSize]
+
+/X              Disables write-behind caching for all drives.
+drive           Sets caching options on specific drive(s). The specified
+                drive(s) will have write-caching disabled unless you add +.
++               Enables write-behind caching for the specified drive.
+-               Disables all caching for the specified drive.
+/U              Do not load CD-ROM caching module.
+/C              Writes all information currently in write-cache to hard disk. 
+/R              Clears the cache and restarts SMARTDrive.
+/F              Writes cached data before command prompt returns (default).
+/N              Doesn't write cached data before command prompt returns.
+/L              Prevents SMARTDrive from loading itself into upper memory.
+/V              Displays SMARTDrive status messages when loading.
+/Q              Does not display status information.
+/S              Displays additional information about SMARTDrive's status.
+InitCacheSize   Specifies XMS memory (KB) for the cache.
+WinCacheSize    Specifies XMS memory (KB) for the cache with Windows.
+/E:ElementSize  Specifies how many bytes of information to move at one time.
+/B:BufferSize   Specifies the size of the read-ahead buffer.

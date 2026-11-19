@@ -1,0 +1,19 @@
+## RSI1-2026-11-19
+stamp 3cbe1d7e1239; frames_skipped 1719; memory_min_free_kb 145728; TICKS.BIN ticks 7003 (dropped 0, cap 50256)
+
+### click ticks: 114 (TICKS.BIN click markers)
+| room | tick | n | p10 / median / p90 ms | > 50 / 75 / 100 ms | release level by offset (-1.70) median | by scale (x 0.937) median |
+|---|---|---|---|---|---|---|
+| 1 | click | 16 | 80.3 / 87.8 / 100.2 | 16 / 16 / 2 | 86.1 | 82.2 |
+| 1 | click+1 | 16 | 17.1 / 17.5 / 42.5 | 0 / 0 / 0 | 15.8 | 16.4 |
+| 1 | click+2 | 16 | 17.0 / 17.2 / 17.5 | 0 / 0 / 0 | 15.5 | 16.1 |
+| 2 | click | 98 | 54.3 / 56.6 / 61.0 | 96 / 1 / 1 | 54.9 | 53.0 |
+| 2 | click+1 | 98 | 18.1 / 19.3 / 24.8 | 0 / 0 / 0 | 17.6 | 18.1 |
+| 2 | click+2 | 98 | 18.1 / 44.0 / 45.3 | 1 / 0 / 0 | 42.3 | 41.2 |
+press-3 watch (RESULT-SBRK): click ticks 2 / 3 / 4 = 85.3 / 88.1 / 80.1 ms (ticks 6110 / 6207 / 6296)
+
+### the per-call log (OWED.BIN)
+n 5284, before 0, dropped 0, from 5430 -> VALID
+calls by owed: <= -1 772, 0 3148, 1 1085, 2-5 266, > 5 13; catch-up ticks 1719; rebases: flag 0, clamp 13, ahead 0
+waits: 5284 of 5284 drawn ticks waited (median 0.03 ms); frame-time resets 484
+grid offset (now - epoch mod 25 ms) over calls 5441-5499: 54 calls, 1.188 .. 22.457 ms

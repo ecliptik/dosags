@@ -1,0 +1,46 @@
+== RV32A-2026-11-19
+   stamp f2e183845d2f exit 0 build_dirty 0 room 3
+   whole-run 39.38 / steady 40.15 (as recorded)  fps_p50 40.00  frames_skipped 22  ticks 4999  stall_ms 1607
+   completeness: presents_real/render_passes 4990/4978 = 100.24%; 1 - frames_skipped/ticks = 99.56%
+   audio: pcm_irqs 1147 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 1147 + inflight 10 = 1157 vs mixed 1157 (diff 0)
+   cell: MET (subject to camera CLEAN)
+   witness: six default lines + BLASTER OK
+   start-up (information): preloop_ms 656 loop_ms 126041 tail_ms 323
+   REGRESSION: none
+READ RV32A-2026-11-19 S32: MET
+== RV32B-2026-11-19
+   stamp f2e183845d2f exit 0 build_dirty 0 room 3
+   whole-run 39.38 / steady 40.14 (as recorded)  fps_p50 40.00  frames_skipped 31  ticks 4999  stall_ms 1560
+   completeness: presents_real/render_passes 4981/4969 = 100.24%; 1 - frames_skipped/ticks = 99.38%
+   audio: pcm_irqs 1052 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 1052 + inflight 0 = 1052 vs mixed 1052 (diff 0)
+   cell: MET (subject to camera CLEAN)
+   witness: six default lines + BLASTER OK
+   start-up (information): preloop_ms 665 loop_ms 126033 tail_ms 320
+   REGRESSION: none
+READ RV32B-2026-11-19 S32: MET
+DEPTH S32 on f2e183845d2f: MET x2 (subject to the screen witness CLEAN in each MET cell)
+== RV8A-2026-11-19
+   stamp f2e183845d2f exit 0 build_dirty 0 room 35 msgskip 1: DOS-PORT msgskip n=1 lc=101
+   whole-run 39.33 / steady 40.20 (as recorded)  fps_p50 40.00  frames_skipped 32  ticks 5002  stall_ms 1515
+   completeness: presents_real/render_passes 4982/4968 = 100.28%; 1 - frames_skipped/ticks = 99.36%
+   audio: pcm_irqs 2041 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 2041 + inflight 20 = 2061 vs mixed 2061 (diff 0)
+   cell: MET (subject to camera CLEAN)
+   witness: six default lines + BLASTER OK
+   start-up (information): preloop_ms 643 loop_ms 125895 tail_ms 616
+   REGRESSION: none
+READ RV8A-2026-11-19 S8: MET
+== RV8B-2026-11-19
+   stamp f2e183845d2f exit 0 build_dirty 0 room 35 msgskip 1: DOS-PORT msgskip n=1 lc=101
+   whole-run 39.33 / steady 40.22 (as recorded)  fps_p50 40.00  frames_skipped 28  ticks 5002  stall_ms 1573
+   completeness: presents_real/render_passes 4986/4972 = 100.28%; 1 - frames_skipped/ticks = 99.44%
+   audio: pcm_irqs 2014 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 3
+   accounting (reported, not scored): pcm_irqs 2014 + inflight 19 = 2033 vs mixed 2033 (diff 0)
+   cell: NOT MET: late_writes 3
+   witness: six default lines + BLASTER OK
+   start-up (information): preloop_ms 647 loop_ms 125891 tail_ms 617
+   REGRESSION: late_writes non-zero
+READ RV8B-2026-11-19 S8: NOT MET
+DEPTH S8 on f2e183845d2f: MET x1 -- not MET: RV8B-2026-11-19 NOT MET (subject to the screen witness CLEAN in each MET cell)

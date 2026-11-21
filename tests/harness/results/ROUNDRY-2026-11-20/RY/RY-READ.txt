@@ -1,0 +1,179 @@
+# RY-READ: tests/harness/ry-read.py (24dc1cde) on round RY's cells, against KERN-SLICE.txt (sha256 566c642371af...). Registered window: exit. The lock window is information.
+
+## --window exit
+== RY16B1-2026-11-21
+   stamp f42436aadd7b exit 0 build_dirty 1 room 3
+   whole-run 39.32 / steady 40.03 (as recorded)  fps_p50 40.00  frames_skipped 40  ticks 4999  stall_ms 1414
+   completeness: presents_real/render_passes 4972/4960 = 100.24%; 1 - frames_skipped/ticks = 99.20%
+   audio: pcm_irqs 1062 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 1062 + inflight 0 = 1062 vs mixed 1062 (diff 0)
+   cell: MET (subject to camera CLEAN)
+   scale2 (information): on=1 break=0 verify=0 narrow=4957 full=15 fullfast=15 pal=0 rects=6206 px_src=2553399 skipcheck=0 rej geom=0 hint=0 fmt=0 nolatch=1 noscene=12 latched
+   stick (information): play window 01:17:40 .. 01:20:24 UTC (end: exit anchor + 10 s), 62 card-state samples in it
+   witness: OK
+   start-up (information): preloop_ms 629 loop_ms 126256 tail_ms 321
+   REGRESSION: none
+READ RY16B1-2026-11-21 B16: MET
+== RY32B1-2026-11-21
+   stamp f42436aadd7b exit 0 build_dirty 1 room 3
+   whole-run 38.98 / steady 40.10 (as recorded)  fps_p50 40.00  frames_skipped 42  ticks 4999  stall_ms 2713
+   completeness: presents_real/render_passes 4970/4958 = 100.24%; 1 - frames_skipped/ticks = 99.16%
+   audio: pcm_irqs 1200 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 1200 + inflight 20 = 1220 vs mixed 1220 (diff 0)
+   cell: NOT MET: whole-run 38.98 outside 39.2-40.8
+   scale2 (information): on=1 break=0 verify=0 narrow=4955 full=15 fullfast=15 pal=0 rects=6177 px_src=2505479 skipcheck=0 rej geom=0 hint=0 fmt=0 nolatch=1 noscene=12 latched
+   witness: FAIL -- stick: no exit anchor in run-hw.out (window "exit")
+   start-up (information): preloop_ms 666 loop_ms 127333 tail_ms 321
+READ RY32B1-2026-11-21 B32: VOID
+== RY8B1-2026-11-21
+   stamp f42436aadd7b exit 0 build_dirty 1 room 35 msgskip 1: DOS-PORT msgskip n=1 lc=101
+   whole-run 39.44 / steady 40.28 (as recorded)  fps_p50 40.00  frames_skipped 24  ticks 5002  stall_ms 1706
+   completeness: presents_real/render_passes 4895/4976 = 98.37%; 1 - frames_skipped/ticks = 99.52%
+   audio: pcm_irqs 2101 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 2101 + inflight 19 = 2120 vs mixed 2120 (diff 0)
+   cell: MET (subject to camera CLEAN)
+   scale2 (information): on=1 break=0 verify=0 narrow=4878 full=5 fullfast=5 pal=12 rects=13238 px_src=5345121 skipcheck=4878 rej geom=0 hint=0 fmt=0 nolatch=1 noscene=12 latc
+   witness: FAIL -- stick: no exit anchor in run-hw.out (window "exit")
+   start-up (information): preloop_ms 621 loop_ms 125846 tail_ms 337
+READ RY8B1-2026-11-21 B8: VOID
+== RY16B2-2026-11-21
+   stamp f42436aadd7b exit 0 build_dirty 1 room 3
+   whole-run 39.22 / steady 40.00 (as recorded)  fps_p50 40.00  frames_skipped 40  ticks 4999  stall_ms 1653
+   completeness: presents_real/render_passes 4972/4960 = 100.24%; 1 - frames_skipped/ticks = 99.20%
+   audio: pcm_irqs 1465 (as recorded) silent_irqs 1 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 1465 + inflight 0 = 1465 vs mixed 1465 (diff 0)
+   silentirq tick=788 irqs=1 since_room=788 -> in play
+   cell: NOT MET: silent_irqs 1 outside room loads
+   scale2 (information): on=1 break=0 verify=0 narrow=4957 full=15 fullfast=15 pal=0 rects=6095 px_src=2397645 skipcheck=0 rej geom=0 hint=0 fmt=0 nolatch=1 noscene=12 latched
+   stick (information): play window 01:52:52 .. 01:55:40 UTC (end: exit anchor + 10 s), 67 card-state samples in it
+   witness: OK
+   start-up (information): preloop_ms 620 loop_ms 126567 tail_ms 323
+   REGRESSION: none
+READ RY16B2-2026-11-21 B16: NOT MET
+== RY32B2-2026-11-21
+   stamp f42436aadd7b exit 0 build_dirty 1 room 3
+   whole-run 37.72 / steady 38.84 (as recorded)  fps_p50 40.00  frames_skipped 238  ticks 4999  stall_ms 2973
+   completeness: presents_real/render_passes 4774/4762 = 100.25%; 1 - frames_skipped/ticks = 95.24%
+   audio: pcm_irqs 1191 (as recorded) silent_irqs 13 start_latency_irqs 2 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 1191 + inflight 9 = 1200 vs mixed 1200 (diff 0)
+   silentirq tick=4764 irqs=1 since_room=4764 -> in play
+   silentirq tick=4767 irqs=1 since_room=4767 -> in play
+   silentirq tick=4777 irqs=1 since_room=4777 -> in play
+   silentirq tick=4779 irqs=1 since_room=4779 -> in play
+   silentirq tick=4787 irqs=1 since_room=4787 -> in play
+   silentirq tick=4789 irqs=1 since_room=4789 -> in play
+   silentirq tick=4799 irqs=1 since_room=4799 -> in play
+   silentirq tick=4802 irqs=1 since_room=4802 -> in play
+   silentirq tick=4804 irqs=1 since_room=4804 -> in play
+   silentirq tick=4811 irqs=1 since_room=4811 -> in play
+   silentirq tick=4814 irqs=1 since_room=4814 -> in play
+   silentirq tick=4814 irqs=1 since_room=4814 -> in play
+   silentirq tick=4817 irqs=1 since_room=4817 -> in play
+   startlat tick=4762 irqs=1 since_room=4762 (reported, not scored)
+   startlat tick=4810 irqs=1 since_room=4810 (reported, not scored)
+   cell: NOT MET: whole-run 37.72 outside 39.2-40.8; steady 38.84 outside 39.2-40.8; silent_irqs 13 outside room loads
+   scale2 (information): on=1 break=0 verify=0 narrow=4759 full=15 fullfast=15 pal=0 rects=5920 px_src=2427889 skipcheck=0 rej geom=0 hint=0 fmt=0 nolatch=1 noscene=12 latched
+   witness: FAIL -- stick: no exit anchor in run-hw.out (window "exit")
+   start-up (information): preloop_ms 666 loop_ms 131618 tail_ms 321
+READ RY32B2-2026-11-21 B32: VOID
+== RY8B2-2026-11-21
+   stamp None exit None build_dirty None room None msgskip 0: 
+   VOID: msgskip lines 0 != 1; missing binary_sha12; missing exit_code; missing build_dirty; missing room; missing tick_rate; missing frames_skipped; missing tick_rate_steady; missing ticks; missing stall_ms; missing fps_p50; missing render_passes; missing presents_real; missing audio_vital_status; missing pcm_irqs; missing silent_irqs; missing overwrites; missing underruns; missing late_writes
+   witness: FAIL -- witness line(s) missing: DOS-PORT vmmode DOSAGS_VM=(default) mode=3 | DOS-PORT englev DOSAGS_ENGLEV=(default) on=1 | DOS-PORT guiclip DOSAGS_GUI_CLIP=(default) mode=4 | DOS-PORT charreuse DOSAGS_CHAR_REUSE=(default) mode=2 | DOS-PORT guictrlmark DOSAGS_GUI_CTRL_MARK=(default) mode=1 | DOS-PORT routeprewarm DOSAGS_ROUTE_PREWARM=(default) mode=0; BLASTER.TXT [] != [A220 I7 D3 P330 T3]; no scale2 line; render dest is not render dest (0, 0, 639, 479 : 640 x 480); stick: DRIVE-WALK.LOG / witness/card-state.log / START.UTC missing
+   start-up (information): preloop_ms ? loop_ms ? tail_ms ?
+READ RY8B2-2026-11-21 B8: VOID
+DEPTH B16 on S2NR f42436aadd7b (overlay build, 640x480 2x): MET x1 -- not MET: RY16B2-2026-11-21 NOT MET (subject to the capture sheet CLEAN in each MET cell)
+DEPTH B32 on S2NR f42436aadd7b (overlay build, 640x480 2x): NOT MET -- not MET: RY32B1-2026-11-21 VOID, RY32B2-2026-11-21 VOID (subject to the capture sheet CLEAN in each MET cell)
+DEPTH B8 on S2NR f42436aadd7b (overlay build, 640x480 2x): NOT MET -- not MET: RY8B1-2026-11-21 VOID, RY8B2-2026-11-21 VOID (subject to the capture sheet CLEAN in each MET cell)
+
+## --window lock
+== RY16B1-2026-11-21
+   stamp f42436aadd7b exit 0 build_dirty 1 room 3
+   whole-run 39.32 / steady 40.03 (as recorded)  fps_p50 40.00  frames_skipped 40  ticks 4999  stall_ms 1414
+   completeness: presents_real/render_passes 4972/4960 = 100.24%; 1 - frames_skipped/ticks = 99.20%
+   audio: pcm_irqs 1062 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 1062 + inflight 0 = 1062 vs mixed 1062 (diff 0)
+   cell: MET (subject to camera CLEAN)
+   scale2 (information): on=1 break=0 verify=0 narrow=4957 full=15 fullfast=15 pal=0 rects=6206 px_src=2553399 skipcheck=0 rej geom=0 hint=0 fmt=0 nolatch=1 noscene=12 latched
+   stick (information): play window 01:17:40 .. 01:22:19 UTC (end: lock release), 108 card-state samples in it
+   witness: OK
+   start-up (information): preloop_ms 629 loop_ms 126256 tail_ms 321
+   REGRESSION: none
+READ RY16B1-2026-11-21 B16: MET
+== RY32B1-2026-11-21
+   stamp f42436aadd7b exit 0 build_dirty 1 room 3
+   whole-run 38.98 / steady 40.10 (as recorded)  fps_p50 40.00  frames_skipped 42  ticks 4999  stall_ms 2713
+   completeness: presents_real/render_passes 4970/4958 = 100.24%; 1 - frames_skipped/ticks = 99.16%
+   audio: pcm_irqs 1200 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 1200 + inflight 20 = 1220 vs mixed 1220 (diff 0)
+   cell: NOT MET: whole-run 38.98 outside 39.2-40.8
+   scale2 (information): on=1 break=0 verify=0 narrow=4955 full=15 fullfast=15 pal=0 rects=6177 px_src=2505479 skipcheck=0 rej geom=0 hint=0 fmt=0 nolatch=1 noscene=12 latched
+   stick (information): play window 01:29:48 .. 01:34:32 UTC (end: lock release), 108 card-state samples in it
+   witness: OK
+   start-up (information): preloop_ms 666 loop_ms 127333 tail_ms 321
+   REGRESSION: none
+READ RY32B1-2026-11-21 B32: NOT MET
+== RY8B1-2026-11-21
+   stamp f42436aadd7b exit 0 build_dirty 1 room 35 msgskip 1: DOS-PORT msgskip n=1 lc=101
+   whole-run 39.44 / steady 40.28 (as recorded)  fps_p50 40.00  frames_skipped 24  ticks 5002  stall_ms 1706
+   completeness: presents_real/render_passes 4895/4976 = 98.37%; 1 - frames_skipped/ticks = 99.52%
+   audio: pcm_irqs 2101 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 2101 + inflight 19 = 2120 vs mixed 2120 (diff 0)
+   cell: MET (subject to camera CLEAN)
+   scale2 (information): on=1 break=0 verify=0 narrow=4878 full=5 fullfast=5 pal=12 rects=13238 px_src=5345121 skipcheck=4878 rej geom=0 hint=0 fmt=0 nolatch=1 noscene=12 latc
+   stick (information): play window 01:42:06 .. 01:46:51 UTC (end: last run-hw job + 5 s), 112 card-state samples in it
+   witness: OK
+   start-up (information): preloop_ms 621 loop_ms 125846 tail_ms 337
+   REGRESSION: none
+READ RY8B1-2026-11-21 B8: MET
+== RY16B2-2026-11-21
+   stamp f42436aadd7b exit 0 build_dirty 1 room 3
+   whole-run 39.22 / steady 40.00 (as recorded)  fps_p50 40.00  frames_skipped 40  ticks 4999  stall_ms 1653
+   completeness: presents_real/render_passes 4972/4960 = 100.24%; 1 - frames_skipped/ticks = 99.20%
+   audio: pcm_irqs 1465 (as recorded) silent_irqs 1 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 1465 + inflight 0 = 1465 vs mixed 1465 (diff 0)
+   silentirq tick=788 irqs=1 since_room=788 -> in play
+   cell: NOT MET: silent_irqs 1 outside room loads
+   scale2 (information): on=1 break=0 verify=0 narrow=4957 full=15 fullfast=15 pal=0 rects=6095 px_src=2397645 skipcheck=0 rej geom=0 hint=0 fmt=0 nolatch=1 noscene=12 latched
+   stick (information): play window 01:52:52 .. 01:57:32 UTC (end: lock release), 112 card-state samples in it
+   witness: OK
+   start-up (information): preloop_ms 620 loop_ms 126567 tail_ms 323
+   REGRESSION: none
+READ RY16B2-2026-11-21 B16: NOT MET
+== RY32B2-2026-11-21
+   stamp f42436aadd7b exit 0 build_dirty 1 room 3
+   whole-run 37.72 / steady 38.84 (as recorded)  fps_p50 40.00  frames_skipped 238  ticks 4999  stall_ms 2973
+   completeness: presents_real/render_passes 4774/4762 = 100.25%; 1 - frames_skipped/ticks = 95.24%
+   audio: pcm_irqs 1191 (as recorded) silent_irqs 13 start_latency_irqs 2 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 1191 + inflight 9 = 1200 vs mixed 1200 (diff 0)
+   silentirq tick=4764 irqs=1 since_room=4764 -> in play
+   silentirq tick=4767 irqs=1 since_room=4767 -> in play
+   silentirq tick=4777 irqs=1 since_room=4777 -> in play
+   silentirq tick=4779 irqs=1 since_room=4779 -> in play
+   silentirq tick=4787 irqs=1 since_room=4787 -> in play
+   silentirq tick=4789 irqs=1 since_room=4789 -> in play
+   silentirq tick=4799 irqs=1 since_room=4799 -> in play
+   silentirq tick=4802 irqs=1 since_room=4802 -> in play
+   silentirq tick=4804 irqs=1 since_room=4804 -> in play
+   silentirq tick=4811 irqs=1 since_room=4811 -> in play
+   silentirq tick=4814 irqs=1 since_room=4814 -> in play
+   silentirq tick=4814 irqs=1 since_room=4814 -> in play
+   silentirq tick=4817 irqs=1 since_room=4817 -> in play
+   startlat tick=4762 irqs=1 since_room=4762 (reported, not scored)
+   startlat tick=4810 irqs=1 since_room=4810 (reported, not scored)
+   cell: NOT MET: whole-run 37.72 outside 39.2-40.8; steady 38.84 outside 39.2-40.8; silent_irqs 13 outside room loads
+   scale2 (information): on=1 break=0 verify=0 narrow=4759 full=15 fullfast=15 pal=0 rects=5920 px_src=2427889 skipcheck=0 rej geom=0 hint=0 fmt=0 nolatch=1 noscene=12 latched
+   stick (information): play window 02:03:22 .. 02:08:03 UTC (end: lock release), 112 card-state samples in it
+   witness: OK
+   start-up (information): preloop_ms 666 loop_ms 131618 tail_ms 321
+   REGRESSION: displayed 95.24% < 99.0%
+READ RY32B2-2026-11-21 B32: NOT MET
+== RY8B2-2026-11-21
+   stamp None exit None build_dirty None room None msgskip 0: 
+   VOID: msgskip lines 0 != 1; missing binary_sha12; missing exit_code; missing build_dirty; missing room; missing tick_rate; missing frames_skipped; missing tick_rate_steady; missing ticks; missing stall_ms; missing fps_p50; missing render_passes; missing presents_real; missing audio_vital_status; missing pcm_irqs; missing silent_irqs; missing overwrites; missing underruns; missing late_writes
+   witness: FAIL -- witness line(s) missing: DOS-PORT vmmode DOSAGS_VM=(default) mode=3 | DOS-PORT englev DOSAGS_ENGLEV=(default) on=1 | DOS-PORT guiclip DOSAGS_GUI_CLIP=(default) mode=4 | DOS-PORT charreuse DOSAGS_CHAR_REUSE=(default) mode=2 | DOS-PORT guictrlmark DOSAGS_GUI_CTRL_MARK=(default) mode=1 | DOS-PORT routeprewarm DOSAGS_ROUTE_PREWARM=(default) mode=0; BLASTER.TXT [] != [A220 I7 D3 P330 T3]; no scale2 line; render dest is not render dest (0, 0, 639, 479 : 640 x 480); stick: DRIVE-WALK.LOG / witness/card-state.log / START.UTC missing
+   start-up (information): preloop_ms ? loop_ms ? tail_ms ?
+READ RY8B2-2026-11-21 B8: VOID
+DEPTH B16 on S2NR f42436aadd7b (overlay build, 640x480 2x): MET x1 -- not MET: RY16B2-2026-11-21 NOT MET (subject to the capture sheet CLEAN in each MET cell)
+DEPTH B32 on S2NR f42436aadd7b (overlay build, 640x480 2x): NOT MET -- not MET: RY32B1-2026-11-21 NOT MET, RY32B2-2026-11-21 NOT MET (subject to the capture sheet CLEAN in each MET cell)
+DEPTH B8 on S2NR f42436aadd7b (overlay build, 640x480 2x): MET x1 -- not MET: RY8B2-2026-11-21 VOID (subject to the capture sheet CLEAN in each MET cell)

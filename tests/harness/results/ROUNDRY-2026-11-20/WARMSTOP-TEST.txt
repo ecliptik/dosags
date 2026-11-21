@@ -1,0 +1,7 @@
+clean    want continue got continue poweroff 0  | WARMUP stick: clean
+card     want STOP     got STOP     poweroff 1  | WARMUP stick: STOP -- card-state: 1 bad sample(s): 110134.824 unavailable age 6.8
+kdrop    want STOP     got STOP     poweroff 1  | WARMUP stick: STOP -- kernel: 1 stick drop line(s), first 00:08:37 on 1-2
+notee    want STOP     got STOP     poweroff 1  | WARMUP stick: STOP -- kernel tee missing or unreadable
+stale    want STOP     got STOP     poweroff 1  | WARMUP stick: STOP -- kernel tee not alive (last ALIVE 2026-11-21 00:05:38+00:00, now 00:10:38)
+latetee  want STOP     got STOP     poweroff 1  | WARMUP stick: STOP -- kernel tee did not start before the warm-up (TEE-START 2026-11-21 00:09:38+00:00, START.UTC 2026-11-21 00:00:38+00:00)
+warm-up stop dry test: PASS

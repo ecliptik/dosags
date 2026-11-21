@@ -1,0 +1,29 @@
+# diag-2x-boxes.py summaries (S2DIAG.EXE 0138ff5c1479 = 0383 + apply-2x.py at FIX-UP 2 + diag-2x-boxes.py a66f85fa/dee730eb;
+# V arm, DOSAGS_SCALE2_VERIFY=1, DOSBox-X lane 398). diag3 = B8/B16 walk (2026-11-20 06:35-07:01Z, V and V2); diag4 = the other six
+# rows (15:3x-16:16Z, V only). 'would leave stale (presents)': per narrowed present, measured BEFORE the blit with the
+# window up to date, does the candidate control's skipped region hold a px that differs from scale2(src).
+# all = skip every box (FIX-UP 3's break=3), last = FIX-UP 2's break=2.
+== S16-2x (diag4)
+DOS-PORT s2diag sum presents=997 carry_presents=997 tot_chg_px=10069 last: tag U=959 G=1 N=37 b=0 carryhit=997 n1=573 chg>0=2 unc>0=2 contained=0 overlaps=0 area=227668 chg_px=750 unc_px=750 | would leave stale (presents): last=2 largest=48 isolated=47 (no isolated box 0) all=48 maxunc=48 | hist 1:573 2:423 3:1
+DOS-PORT scale2 on=1 break=0 verify=1 narrow=997 full=15 fullfast=15 pal=0 rects=1422 px_src=953436 skipcheck=0 rej geom=0 hint=0 fmt=0 nolatch=1 noscene=12 latched=2 norects=0 whole=0 latch_sets=15 latch_drops=0 vfy=1012 vfy_bad=0 vfy_bad_px=0 vfy_first=-1
+== S8-2x (diag4)
+DOS-PORT s2diag sum presents=999 carry_presents=998 tot_chg_px=22616 last: tag U=775 G=4 N=220 b=0 carryhit=998 n1=0 chg>0=5 unc>0=5 contained=0 overlaps=0 area=421452 chg_px=12978 unc_px=12978 | would leave stale (presents): last=5 largest=229 isolated=225 (no isolated box 0) all=229 maxunc=229 | hist 2:558 3:439 4:2
+DOS-PORT scale2 on=1 break=0 verify=1 narrow=999 full=4 fullfast=4 pal=12 rects=2441 px_src=860755 skipcheck=999 rej geom=0 hint=0 fmt=0 nolatch=1 noscene=12 latched=3 norects=0 whole=0 latch_sets=4 latch_drops=0 vfy=1015 vfy_bad=0 vfy_bad_px=0 vfy_first=-1
+== CLK-2x (diag4)
+DOS-PORT s2diag sum presents=997 carry_presents=997 tot_chg_px=67583 last: tag U=887 G=2 N=108 b=0 carryhit=996 n1=442 chg>0=14 unc>0=14 contained=0 overlaps=0 area=304283 chg_px=1869 unc_px=1869 | would leave stale (presents): last=14 largest=132 isolated=132 (no isolated box 0) all=137 maxunc=137 | hist 1:442 2:546 3:9
+DOS-PORT scale2 on=1 break=0 verify=1 narrow=997 full=15 fullfast=15 pal=0 rects=1561 px_src=1168336 skipcheck=0 rej geom=0 hint=0 fmt=0 nolatch=1 noscene=12 latched=2 norects=0 whole=0 latch_sets=15 latch_drops=0 vfy=1012 vfy_bad=0 vfy_bad_px=0 vfy_first=-1
+== B8-2x-walk (diag3)
+DOS-PORT s2diag sum presents=1040 carry_presents=1040 tot_chg_px=45198 last: tag U=849 G=10 N=181 b=0 carryhit=1040 n1=0 chg>0=1 unc>0=1 contained=0 overlaps=0 area=297820 chg_px=247 unc_px=247 | would leave stale (presents): last=1 largest=198 isolated=196 (no isolated box 0) all=198 maxunc=198 | hist 2:679 3:359 4:2
+DOS-PORT scale2 on=1 break=0 verify=1 narrow=1040 full=1 fullfast=1 pal=0 rects=2443 px_src=652760 skipcheck=1040 rej geom=0 hint=0 fmt=1 nolatch=0 noscene=0 latched=0 norects=0 whole=0 latch_sets=1 latch_drops=0 vfy=1041 vfy_bad=0 vfy_bad_px=0 vfy_first=-1
+== B8-2x-anim12 (diag4)
+DOS-PORT s2diag sum presents=1040 carry_presents=1040 tot_chg_px=1098590 last: tag U=1040 G=0 N=0 b=0 carryhit=1039 n1=0 chg>0=502 unc>0=502 contained=0 overlaps=0 area=704800 chg_px=96650 unc_px=96650 | would leave stale (presents): last=502 largest=501 isolated=501 (no isolated box 0) all=502 maxunc=502 | hist 8:1040
+DOS-PORT scale2 on=1 break=0 verify=1 narrow=1040 full=1 fullfast=1 pal=0 rects=8320 px_src=13207004 skipcheck=1040 rej geom=0 hint=0 fmt=1 nolatch=0 noscene=0 latched=0 norects=0 whole=0 latch_sets=1 latch_drops=0 vfy=1041 vfy_bad=0 vfy_bad_px=0 vfy_first=-1
+== B8-2x-full (diag4)
+DOS-PORT s2diag sum presents=120 carry_presents=120 tot_chg_px=8392 last: tag U=114 G=3 N=3 b=0 carryhit=120 n1=78 chg>0=1 unc>0=1 contained=0 overlaps=0 area=45631 chg_px=3234 unc_px=3234 | would leave stale (presents): last=1 largest=2 isolated=3 (no isolated box 0) all=4 maxunc=4 | hist 1:78 2:40 3:2
+DOS-PORT scale2 on=1 break=0 verify=1 narrow=120 full=4 fullfast=4 pal=0 rects=164 px_src=59306 skipcheck=120 rej geom=0 hint=0 fmt=1 nolatch=0 noscene=0 latched=3 norects=0 whole=0 latch_sets=4 latch_drops=0 vfy=124 vfy_bad=0 vfy_bad_px=0 vfy_first=-1
+== B16-2x-walk (diag3)
+DOS-PORT s2diag sum presents=1039 carry_presents=1039 tot_chg_px=44678 last: tag U=852 G=7 N=180 b=0 carryhit=1039 n1=0 chg>0=0 unc>0=0 contained=3 overlaps=3 area=294847 chg_px=0 unc_px=0 | would leave stale (presents): last=0 largest=177 isolated=190 (no isolated box 0) all=197 maxunc=197 | hist 4:679 5:359 6:1
+DOS-PORT scale2 on=1 break=0 verify=1 narrow=1039 full=1 fullfast=1 pal=0 rects=4517 px_src=1962754 skipcheck=0 rej geom=0 hint=0 fmt=1 nolatch=0 noscene=0 latched=0 norects=0 whole=0 latch_sets=1 latch_drops=0 vfy=1040 vfy_bad=0 vfy_bad_px=0 vfy_first=-1
+== B16-2x-anim12 (diag4)
+DOS-PORT s2diag sum presents=1039 carry_presents=1039 tot_chg_px=1093997 last: tag U=1038 G=1 N=0 b=0 carryhit=1039 n1=0 chg>0=501 unc>0=501 contained=0 overlaps=0 area=2133375 chg_px=96247 unc_px=96247 | would leave stale (presents): last=501 largest=500 isolated=500 (no isolated box 0) all=501 maxunc=501 | hist 8:1039
+DOS-PORT scale2 on=1 break=0 verify=1 narrow=1039 full=1 fullfast=1 pal=0 rects=8312 px_src=18925936 skipcheck=0 rej geom=0 hint=0 fmt=1 nolatch=0 noscene=0 latched=0 norects=0 whole=0 latch_sets=1 latch_drops=0 vfy=1040 vfy_bad=0 vfy_bad_px=0 vfy_first=-1

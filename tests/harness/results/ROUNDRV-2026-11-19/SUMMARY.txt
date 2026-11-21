@@ -1,0 +1,36 @@
+round RV start 16:24:20
+distv11.exe: OK
+l308.exe: OK
+dosags-v0.1.1.zip: OK
+S32P-ACSETUP-ON.CFG: OK
+pre-power-on: lock unheld; activity: {   "daemon_start_t": 1794467128.021475,   "inflight": [],   "last_event_age_s": 0.084,   "lock": {     "held_s": null,     "owner": null   },   "ok": true,   "seq": 3784060 } 
+capture pre-flight: device_present=True state=frozen last_frame_age_s=0.022
+relay-on 16:24:21, cap 18:24:21 (CAP_MIN=120)
+powerguard + daemongap started 16:24:22
+vcctrld daemon_start_t at round start: 1794467128.021475
+WARMUPRV start 16:25:37 --timeout 1500
+WARMUPRV: run-hw exit=0 pre=425c1609f50a post=425c1609f50a staged_has_pre=1 binary_sha12=bc9c3704a839 build_dirty=0 tick_rate=30.28 tick_rate_steady=33.17  recover=0 inputlog=ok:6 fw=OK xcheck=ok capture=STALE rooms=Now in room 50, 16:35:39
+WARMUPRV: stamp OK bc9c3704a839
+WARMUPRV BLASTER.TXT: [A220 I7 D3 P330 T3]
+after WARMUPRV: capture True locked
+RVDST start 16:35:39 --timeout 1800
+RVDST: run-hw exit=0 pre=c68241073cb0 post=c68241073cb0 staged_has_pre=1 binary_sha12=f2e183845d2f build_dirty=0 tick_rate=39.40 tick_rate_steady=40.16  recover=0 inputlog=ok:268 fw=OK xcheck=ok capture=STALE rooms=Now in room 3, 16:46:02
+RVDST: stamp OK f2e183845d2f
+RV16A start 16:46:02 --timeout 1800
+RV16A: run-hw exit=0 pre=c68241073cb0 post=c68241073cb0 staged_has_pre=1 binary_sha12=f2e183845d2f build_dirty=0 tick_rate=39.40 tick_rate_steady=40.16  recover=0 inputlog=ok:262 fw=OK xcheck=ok capture=STALE rooms=Now in room 3, 16:56:13
+RV16A: stamp OK f2e183845d2f
+RV32A start 16:56:13 --timeout 1800
+RV32A: run-hw exit=0 pre=c68241073cb0 post=c68241073cb0 staged_has_pre=1 binary_sha12=f2e183845d2f build_dirty=0 tick_rate=39.38 tick_rate_steady=40.15  recover=0 inputlog=ok:264 fw=OK xcheck=ok capture=ok rooms=Now in room 3, 17:06:22
+RV32A: stamp OK f2e183845d2f
+RV8A start 17:06:22 --timeout 1800
+RV8A: run-hw exit=0 pre=c68241073cb0 post=c68241073cb0 staged_has_pre=1 binary_sha12=f2e183845d2f build_dirty=0 tick_rate=39.33 tick_rate_steady=40.20  recover=0 inputlog=ok:254 fw=OK xcheck=ok capture=STALE rooms=Now in room 35, 17:16:47
+RV8A: stamp OK f2e183845d2f
+RV16B start 17:16:47 --timeout 1800
+RV16B: run-hw exit=0 pre=c68241073cb0 post=c68241073cb0 staged_has_pre=1 binary_sha12=f2e183845d2f build_dirty=0 tick_rate=39.43 tick_rate_steady=40.11  recover=1 inputlog=ok:251 fw=OK xcheck=ok capture=STALE rooms=Now in room 3, 17:30:27
+RV16B: stamp OK f2e183845d2f
+RV16B: TAINTED -- a foreign input-lock owner during the cell: 17:19:15 FOREIGN LOCK hw-guard-RV16B
+STOP after RV16B: foreign lock
+poweroff() fired DURING cell: RV16B 17:16:47
+power OFF 17:30:32: on=False mW=0
+driver exit 1 17:30:33
+17:30:35 guard fired DURING cell: RV16B 17:16:47

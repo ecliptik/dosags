@@ -1,0 +1,482 @@
+diff -ru orig/Engine/gfx/ali3dsw.cpp ags/Engine/gfx/ali3dsw.cpp
+--- orig/Engine/gfx/ali3dsw.cpp	2026-11-19 12:20:47.985068742 -0800
++++ ags/Engine/gfx/ali3dsw.cpp	2026-11-19 16:38:59.749641233 -0800
+@@ -132,6 +132,74 @@
+         dos_gc_latch_events, dos_gc_latch_alias, dos_gc_latch_buffer, dos_gc_latch_tint, dos_gc_latch_fullrestore,
+         dos_gc_boxed, dos_gc_boxes, dos_gc_fb_coarse, dos_gc_fb_whole, dos_gc_span_stretch, dos_gc_coarse_restores);
+ }
++// ---- SCALE2-NARROW (lab overlay apply-2x.py; DOSAGS_SCALE2_NARROW=1, default off): its switches, counters, latch
++// and exit line. Global scope so quit.cpp's block-scope extern finds dos_scale2_summary.
++struct DosScale2Stats
++{
++    long narrow = 0, full = 0, fullfast = 0, pal = 0, rects = 0, skipcheck = 0;
++    long long px_src = 0;
++    long rej_geom = 0, rej_hint = 0, rej_fmt = 0, rej_nolatch = 0, rej_noscene = 0, rej_latched = 0;
++    long rej_norects = 0, rej_whole = 0;
++    long latch_sets = 0, latch_drops = 0;
++    long vfy = 0, vfy_bad = 0, vfy_first = -1, vfy_logged = 0;
++    long long vfy_bad_px = 0;
++};
++static DosScale2Stats dos_s2;
++static int dos_s2_mode = -1, dos_s2_break = 0, dos_s2_verify_on = 0, dos_s2_hint = 1;
++static bool dos_s2_full_done = false;   // the full replicator ran in this present (set in TryFast, read in Present)
++static void dos_s2_init()
++{
++    if (dos_s2_mode >= 0) return;
++    const char *e = getenv("DOSAGS_SCALE2_NARROW");
++    dos_s2_mode = (e && e[0] == '1' && e[1] == 0) ? 1 : 0;
++    e = getenv("DOSAGS_SCALE2_BREAK");
++    dos_s2_break = (e && (e[0] == '1' || e[0] == '2') && e[1] == 0) ? e[0] - '0' : 0;   // FIX-UP 2: 2 = skip a box
++    e = getenv("DOSAGS_SCALE2_VERIFY");
++    dos_s2_verify_on = (e && e[0] == '1') ? 1 : 0;
++    e = getenv("DOSAGS_DIRTY_PRESENT");   // read exactly as 0124 reads it
++    dos_s2_hint = !(e && e[0] == '0');
++}
++static inline bool dos_s2_on() { if (dos_s2_mode < 0) dos_s2_init(); return dos_s2_mode == 1; }
++// The latch: the window surface holds scale2(virtual screen) inside dst, at exactly this geometry.
++struct DosScale2Latch
++{
++    bool valid = false;
++    SDL_Surface *win = nullptr; void *win_px = nullptr; int ww = 0, wh = 0, wp = 0;
++    SDL_Surface *src = nullptr; void *src_px = nullptr; int sw = 0, sh = 0;
++    SDL_Rect dst = { 0, 0, 0, 0 };
++};
++static DosScale2Latch dos_s2_latch;
++static bool dos_s2_latch_ok(SDL_Surface *win, SDL_Surface *src, const SDL_Rect &dst)
++{
++    const DosScale2Latch &l = dos_s2_latch;
++    return l.valid && l.win == win && l.win_px == win->pixels && l.ww == win->w && l.wh == win->h && l.wp == win->pitch &&
++        l.src == src && l.src_px == src->pixels && l.sw == src->w && l.sh == src->h &&
++        l.dst.x == dst.x && l.dst.y == dst.y && l.dst.w == dst.w && l.dst.h == dst.h;
++}
++static void dos_s2_latch_set(SDL_Surface *win, SDL_Surface *src, const SDL_Rect &dst)
++{
++    DosScale2Latch &l = dos_s2_latch;
++    l.win = win; l.win_px = win->pixels; l.ww = win->w; l.wh = win->h; l.wp = win->pitch;
++    l.src = src; l.src_px = src->pixels; l.sw = src->w; l.sh = src->h;
++    l.dst = dst;
++    l.valid = true;
++    dos_s2.latch_sets++;
++}
++static void dos_s2_latch_drop()
++{
++    if (dos_s2_latch.valid) { dos_s2_latch.valid = false; dos_s2.latch_drops++; }
++}
++void dos_scale2_summary(FILE *log)
++{
++    if (!log || !dos_s2_on()) return;
++    const DosScale2Stats &s = dos_s2;
++    fprintf(log, "DOS-PORT scale2 on=1 break=%d verify=%d narrow=%ld full=%ld fullfast=%ld pal=%ld rects=%ld px_src=%lld"
++        " skipcheck=%ld rej geom=%ld hint=%ld fmt=%ld nolatch=%ld noscene=%ld latched=%ld norects=%ld whole=%ld"
++        " latch_sets=%ld latch_drops=%ld vfy=%ld vfy_bad=%ld vfy_bad_px=%lld vfy_first=%ld\n",
++        dos_s2_break, dos_s2_verify_on, s.narrow, s.full, s.fullfast, s.pal, s.rects, s.px_src,
++        s.skipcheck, s.rej_geom, s.rej_hint, s.rej_fmt, s.rej_nolatch, s.rej_noscene, s.rej_latched, s.rej_norects,
++        s.rej_whole, s.latch_sets, s.latch_drops, s.vfy, s.vfy_bad, s.vfy_bad_px, s.vfy_first);
++}
+ #endif
+ 
+ 
+@@ -227,6 +295,9 @@
+ 
+ bool SDLRendererGraphicsDriver::SetDisplayMode(const DisplayMode &mode)
+ {
++#ifdef __DJGPP__
++  dos_s2_latch_drop();   // SCALE2-NARROW
++#endif
+   ReleaseDisplayMode();
+ 
+   if (_initGfxCallback != nullptr)
+@@ -418,6 +489,9 @@
+   if (!IsNativeSizeValid())
+     return;
+   DestroyVirtualScreen();
++#ifdef __DJGPP__
++  dos_s2_latch_drop();   // SCALE2-NARROW
++#endif
+   // Initialize virtual screen; size is equal to native resolution
+   const int vscreen_w = _srcRect.GetWidth();
+   const int vscreen_h = _srcRect.GetHeight();
+@@ -1259,6 +1333,180 @@
+ }
+ 
+ #ifdef __DJGPP__
++// ---- SCALE2-NARROW (apply-2x.py): exact 2x nearest replication of one SOURCE rect (x, y, w, h) of sp into dp, where
++// dp is the window surface at dst's top-left. Both output rows are written directly with dword stores: 8 bit, four
++// source px -> two Uint32 (a,a,b,b)(c,c,d,d) per row, a 16-bit store for a 2-byte-aligned head and for the tail;
++// 16 bit, one px -> one Uint32 (p | p << 16); 32 bit, one px -> two Uint32. Shifts only (no multiply: imul is 13-42
++// clocks on the 486). Every output pixel belongs to exactly one source pixel, so there is no rounding.
++typedef Uint16 __attribute__((__may_alias__)) dos_s2_u16;
++typedef Uint32 __attribute__((__may_alias__)) dos_s2_u32;
++static void dos_s2_blit_rect(const Uint8 *sp, int spitch, Uint8 *dp, int dpitch, int bpp, int x, int y, int w, int h)
++{
++    if (w <= 0 || h <= 0)
++        return;
++    for (int j = 0; j < h; ++j)
++    {
++        const Uint8 *s = sp + (size_t)(y + j) * (size_t)spitch + (size_t)x * (size_t)bpp;
++        Uint8 *d0 = dp + (size_t)(2 * (y + j)) * (size_t)dpitch + (size_t)(2 * x) * (size_t)bpp;
++        Uint8 *d1 = d0 + dpitch;
++        int n = w;
++        if (bpp == 1)
++        {
++            if ((((size_t)d0) & 2) != 0)
++            {
++                const Uint16 v = (Uint16)(s[0] | (s[0] << 8));
++                *(dos_s2_u16 *)d0 = v; *(dos_s2_u16 *)d1 = v;
++                ++s; d0 += 2; d1 += 2; --n;
++            }
++            for (; n >= 4; n -= 4)
++            {
++                const Uint32 q = *(const dos_s2_u32 *)s;                         // bytes a b c d
++                const Uint32 lo = (q & 0xffu) | ((q & 0xff00u) << 8);            // a at byte 0, b at byte 2
++                const Uint32 hi = ((q >> 16) & 0xffu) | ((q >> 8) & 0xff0000u);  // c at byte 0, d at byte 2
++                const Uint32 v0 = lo | (lo << 8), v1 = hi | (hi << 8);          // a a b b, c c d d
++                ((dos_s2_u32 *)d0)[0] = v0; ((dos_s2_u32 *)d0)[1] = v1;
++                ((dos_s2_u32 *)d1)[0] = v0; ((dos_s2_u32 *)d1)[1] = v1;
++                s += 4; d0 += 8; d1 += 8;
++            }
++            for (; n > 0; --n)
++            {
++                const Uint16 v = (Uint16)(s[0] | (s[0] << 8));
++                *(dos_s2_u16 *)d0 = v; *(dos_s2_u16 *)d1 = v;
++                ++s; d0 += 2; d1 += 2;
++            }
++        }
++        else if (bpp == 2)
++        {
++            const dos_s2_u16 *s16 = (const dos_s2_u16 *)s;
++            dos_s2_u32 *o0 = (dos_s2_u32 *)d0, *o1 = (dos_s2_u32 *)d1;
++            for (int i = 0; i < n; ++i)
++            {
++                const Uint32 p = s16[i];
++                const Uint32 v = p | (p << 16);
++                o0[i] = v; o1[i] = v;
++            }
++        }
++        else
++        {
++            const dos_s2_u32 *s32 = (const dos_s2_u32 *)s;
++            dos_s2_u32 *o0 = (dos_s2_u32 *)d0, *o1 = (dos_s2_u32 *)d1;
++            for (int i = 0; i < n; ++i)
++            {
++                const Uint32 p = s32[i];
++                o0[2 * i] = p; o0[2 * i + 1] = p;
++                o1[2 * i] = p; o1[2 * i + 1] = p;
++            }
++        }
++    }
++}
++
++// The box set this present narrows to, in GAME coordinates clamped to the virtual screen (gw x gh) -- not to dst, which
++// is the game size only at 1x (0131's clamps). Returns 0 when neither the set nor the bbox is smaller than the screen.
++static int dos_s2_boxes(int gw, int gh, DosPortDirtyBox *out)
++{
++    long long area = 0;
++    int n = 0;
++    for (int i = 0; i < dos_port_dirty.nbox; ++i)
++    {
++        int x1 = dos_port_dirty.box[i].x1, y1 = dos_port_dirty.box[i].y1;
++        int x2 = dos_port_dirty.box[i].x2, y2 = dos_port_dirty.box[i].y2;
++        if (x1 < 0) x1 = 0;
++        if (y1 < 0) y1 = 0;
++        if (x2 > gw - 1) x2 = gw - 1;
++        if (y2 > gh - 1) y2 = gh - 1;
++        if (x2 < x1 || y2 < y1)
++            continue;   // wholly off the virtual screen
++        out[n].x1 = x1; out[n].y1 = y1; out[n].x2 = x2; out[n].y2 = y2;
++        ++n;
++        area += (long long)(x2 - x1 + 1) * (y2 - y1 + 1);
++    }
++    if (n > 0 && area < (long long)gw * gh)
++        return n;
++    int x1 = dos_port_dirty.x1, y1 = dos_port_dirty.y1, x2 = dos_port_dirty.x2, y2 = dos_port_dirty.y2;
++    if (x1 < 0) x1 = 0;
++    if (y1 < 0) y1 = 0;
++    if (x2 > gw - 1) x2 = gw - 1;
++    if (y2 > gh - 1) y2 = gh - 1;
++    if (x2 >= x1 && y2 >= y1 && (long long)(x2 - x1 + 1) * (y2 - y1 + 1) < (long long)gw * gh)
++    {
++        out[0].x1 = x1; out[0].y1 = y1; out[0].x2 = x2; out[0].y2 = y2;
++        return 1;
++    }
++    return 0;
++}
++
++static bool dos_s2_blit_boxes(SDL_Surface *src, SDL_Surface *win, const SDL_Rect &dst, const DosPortDirtyBox *box, int n)
++{
++    const int bpp = SDL_BYTESPERPIXEL(src->format);
++    if (bpp != 1 && bpp != 2 && bpp != 4)
++        return false;
++    const bool src_lock = SDL_MUSTLOCK(src);
++    const bool dst_lock = SDL_MUSTLOCK(win);
++    if (src_lock && !SDL_LockSurface(src))
++        return false;
++    if (dst_lock && !SDL_LockSurface(win))
++    {
++        if (src_lock) SDL_UnlockSurface(src);
++        return false;
++    }
++    const uclock_t _ts = dos_port_fine_uclock();
++    Uint8 *dp = (Uint8 *)win->pixels + (size_t)dst.y * (size_t)win->pitch + (size_t)dst.x * (size_t)bpp;
++    for (int i = 0; i < n; ++i)
++    {
++        int w = box[i].x2 - box[i].x1 + 1, h = box[i].y2 - box[i].y1 + 1;
++        if (dos_s2_break == 1) { if (w > 1) --w; if (h > 1) --h; }   // CONTROL ONLY (DOSAGS_SCALE2_BREAK=1)
++        if (dos_s2_break == 2 && i == n - 1) continue;   // CONTROL ONLY (DOSAGS_SCALE2_BREAK=2): last box not blitted
++        dos_s2_blit_rect((const Uint8 *)src->pixels, src->pitch, dp, win->pitch, bpp, box[i].x1, box[i].y1, w, h);
++    }
++    dos_port_tick_record_us(dos_port_tick_timing.fastblit_hreplicate, dos_port_fine_elapsed_us(_ts));
++    dos_port_tick_record_us(dos_port_tick_timing.fastblit_vmemcpy, 0);
++    if (dst_lock) SDL_UnlockSurface(win);
++    if (src_lock) SDL_UnlockSurface(src);
++    return true;
++}
++
++// DOSAGS_SCALE2_VERIFY=1: the whole dst against scale2(src), every one of the four window px of every source px.
++static void dos_s2_verify(SDL_Surface *src, SDL_Surface *win, const SDL_Rect &dst)
++{
++    const int bpp = SDL_BYTESPERPIXEL(src->format);
++    long bad = 0;
++    int bx1 = 1 << 30, by1 = 1 << 30, bx2 = -1, by2 = -1;
++    const Uint8 *base = (const Uint8 *)win->pixels + (size_t)dst.y * (size_t)win->pitch + (size_t)dst.x * (size_t)bpp;
++    for (int y = 0; y < src->h; ++y)
++    {
++        const Uint8 *s = (const Uint8 *)src->pixels + (size_t)y * (size_t)src->pitch;
++        const Uint8 *d0 = base + (size_t)(2 * y) * (size_t)win->pitch;
++        const Uint8 *d1 = d0 + win->pitch;
++        for (int x = 0; x < src->w; ++x)
++        {
++            const Uint8 *p = s + (size_t)x * (size_t)bpp;
++            const size_t o = (size_t)(2 * x) * (size_t)bpp;
++            if (std::memcmp(p, d0 + o, bpp) != 0 || std::memcmp(p, d0 + o + bpp, bpp) != 0 ||
++                std::memcmp(p, d1 + o, bpp) != 0 || std::memcmp(p, d1 + o + bpp, bpp) != 0)
++            {
++                bad++;
++                if (x < bx1) bx1 = x;
++                if (x > bx2) bx2 = x;
++                if (y < by1) by1 = y;
++                if (y > by2) by2 = y;
++            }
++        }
++    }
++    dos_s2.vfy++;
++    if (bad > 0)
++    {
++        dos_s2.vfy_bad++;
++        dos_s2.vfy_bad_px += bad;
++        if (dos_s2.vfy_first < 0) dos_s2.vfy_first = dos_s2.vfy;
++        if (dos_s2.vfy_logged < 12)
++        {
++            dos_s2.vfy_logged++;
++            Debug::Printf("DOS-PORT scale2verify BAD check=%ld bad_px=%ld src_bbox=%d,%d..%d,%d",
++                dos_s2.vfy, bad, bx1, by1, bx2, by2);
++        }
++    }
++}
++
+ // DOS-PORT patch 0087 (8-bit optimization pass, step C): fast integer
+ // nearest-neighbor upscale, replacing SDL_BlitSurfaceScaled's generic
+ // per-destination-pixel fixed-point path for the common case this port
+@@ -1354,6 +1602,20 @@
+     Uint8 *dst_pixels = (Uint8 *)dst->pixels + (size_t)dst_rect.y * (size_t)dst->pitch + (size_t)dst_rect.x * bpp;
+     const size_t dst_row_bytes = (size_t)src->w * (size_t)scale_x * bpp;
+ 
++    if (scale_x == 2 && dos_s2_on() && (bpp == 1 || bpp == 2 || bpp == 4))
++    {   // SCALE2-NARROW (apply-2x.py): the full-frame 2x through the same dword-store replicator as the boxes.
++        // Accounted as one fastblit_hreplicate sample (replicate + both row writes); fastblit_vmemcpy 0.
++        const uclock_t _ts = dos_port_fine_uclock();
++        dos_s2_blit_rect(src_pixels, src->pitch, dst_pixels, dst->pitch, (int)bpp, 0, 0, src->w, src->h);
++        dos_port_tick_record_us(dos_port_tick_timing.fastblit_hreplicate, dos_port_fine_elapsed_us(_ts));
++        dos_port_tick_record_us(dos_port_tick_timing.fastblit_vmemcpy, 0);
++        if (dst_lock) SDL_UnlockSurface(dst);
++        if (src_lock) SDL_UnlockSurface(src);
++        dos_s2.fullfast++;
++        dos_s2_full_done = true;
++        return true;
++    }
++
+     if (scale_x == 1)
+     {
+         // patch 0100: unscaled. SDL_BlitSurfaceScaled() at 1:1 still goes
+@@ -1808,9 +2070,56 @@
+     // 100,000 bytes are presented without the check, as before 0091; the
+     // real answer for big frames is the engine's own knowledge of what
+     // it drew (the 40/40 plan's P2.4), not a byte compare.
++    // ---- SCALE2-NARROW (apply-2x.py; DOSAGS_SCALE2_NARROW=1, default off): does this present narrow at 2x?
++    // Decided BEFORE the unchanged-frame check, which a narrowing present skips (the dirty set says what changed).
++    bool _s2_narrow = false;   // outside the guard: clean_case below reads it
++#ifdef __DJGPP__
++    bool _s2_cand = false;     // switch on and dst exactly 2x the presented surface
++    bool _s2_merged = false;   // 0193's carry merged here; the 0124 block must not merge again
++    int _s2_n = 0;             // boxes in _s2_box (GAME coordinates)
++    DosPortDirtyBox _s2_box[DOS_PORT_DIRTY_MAX_BOXES];
++    if (dos_s2_on())
++    {
++        dos_s2_full_done = false;
++        _s2_cand = blit_src && dst.w == 2 * blit_src->w && dst.h == 2 * blit_src->h;
++        if (!_s2_cand)
++            dos_s2.rej_geom++;
++        else
++        {
++            dos_port_dirty_merge_carry();   // patch 0193's merge, moved ahead of the check on 2x presents
++            _s2_merged = true;
++            const int _s2_bpp = SDL_BYTESPERPIXEL(blit_src->format);
++            if (!dos_s2_hint)
++                dos_s2.rej_hint++;
++            else if (blit_src != _vscreenSurface || flip != kFlip_None || blit_src->format != win_surface->format ||
++                     (_s2_bpp != 1 && _s2_bpp != 2 && _s2_bpp != 4) || !dst_inside || !margins_clean)
++                dos_s2.rej_fmt++;
++            else if (!dos_s2_latch_ok(win_surface, blit_src, dst))
++                dos_s2.rej_nolatch++;
++            else if (!dos_port_dirty.scene_path)
++                dos_s2.rej_noscene++;
++            else if (dos_port_dirty.is_full)
++                dos_s2.rej_latched++;
++            else if (!dos_port_dirty.valid || dos_port_dirty.nbox <= 0)
++                dos_s2.rej_norects++;
++            else
++            {
++                _s2_n = dos_s2_boxes(blit_src->w, blit_src->h, _s2_box);
++                if (_s2_n > 0)
++                {
++                    _s2_narrow = true;
++                    if (skip_allowed && (size_t)blit_src->pitch * (size_t)blit_src->h <= 100000u)
++                        dos_s2.skipcheck++;   // 0102 would have run the check on this present
++                }
++                else
++                    dos_s2.rej_whole++;
++            }
++        }
++    }
++#endif
+     const size_t frame_bytes_for_skip = (size_t)blit_src->pitch * (size_t)blit_src->h;
+     const bool small_enough_to_check = frame_bytes_for_skip <= 100000u;
+-    const bool clean_case = skip_allowed && small_enough_to_check && (flip == kFlip_None) &&
++    const bool clean_case = !_s2_narrow && skip_allowed && small_enough_to_check && (flip == kFlip_None) &&   // SCALE2
+         (blit_src->format == win_surface->format) && dst_inside && margins_clean;
+     // DOS-PORT patch 0104: a palette-only present. On an 8-bit game a
+     // screen fade changes the DAC and nothing else -- ScreenFadeSoftware
+@@ -1948,7 +2257,8 @@
+         if (_aliasActive)
+             DosPortAliasDeactivate();
+         DosPortTickScope _dos_port_blit_scope(dos_port_tick_timing.present_blit);
+-        blitted = TryFastIntegerNearestBlit(blit_src, win_surface, dst);
++        blitted = _s2_narrow ? dos_s2_blit_boxes(blit_src, win_surface, dst, _s2_box, _s2_n)   // SCALE2-NARROW
++                             : TryFastIntegerNearestBlit(blit_src, win_surface, dst);
+         // patch 0093: which path, and at what source depth.
+         if (blitted) dos_port_tick_timing.blits_fast++;
+         else         dos_port_tick_timing.blits_generic++;
+@@ -1964,7 +2274,14 @@
+ #ifdef __DJGPP__
+         {   // patch 0230: the present-time RAM->RAM copy, dst bytes, 1:1 vs scaled
+             const SDL_PixelFormatDetails *_wf = SDL_GetPixelFormatDetails(win_surface->format);
+-            const long long _db = (long long)dst.w * dst.h * (_wf ? _wf->bytes_per_pixel : 0);
++            long long _db = (long long)dst.w * dst.h * (_wf ? _wf->bytes_per_pixel : 0);
++            if (_s2_narrow && blitted)   // SCALE2-NARROW: only the boxes were scale-blitted, 4 window px per source px
++            {
++                long long _sp = 0;
++                for (int _i = 0; _i < _s2_n; ++_i)
++                    _sp += (long long)(_s2_box[_i].x2 - _s2_box[_i].x1 + 1) * (_s2_box[_i].y2 - _s2_box[_i].y1 + 1);
++                _db = 4 * _sp * (_wf ? _wf->bytes_per_pixel : 0);
++            }
+             if (dst.w == blit_src->w && dst.h == blit_src->h)
+                 dos_port_work[kDW_Blit1xBytes] += _db;
+             else
+@@ -1974,6 +2291,29 @@
+     }
+ 
+ #ifdef __DJGPP__
++    if (dos_s2_on())   // SCALE2-NARROW: does the window surface still hold scale2(virtual screen) at this geometry?
++    {
++        if (palette_only_present)
++            dos_s2.pal++;              // nothing written: the latch stands
++        else if (_s2_narrow)
++        {
++            if (!blitted)              // the box blit failed and the generic blit ran in full: trust nothing
++                dos_s2_latch_drop();
++        }
++        else
++        {
++            if (_s2_cand)
++                dos_s2.full++;
++            if (_s2_cand && dos_s2_full_done && blitted && blit_src == _vscreenSurface && flip == kFlip_None && dst_inside)
++                dos_s2_latch_set(win_surface, blit_src, dst);
++            else
++                dos_s2_latch_drop();
++        }
++        if (dos_s2_verify_on && _s2_cand && dos_s2_latch_ok(win_surface, blit_src, dst))
++            dos_s2_verify(blit_src, win_surface, dst);
++    }
++#endif
++#ifdef __DJGPP__
+     // Adopt for the NEXT frame once a frame has presented with steady 1x
+     // geometry -- after the fact, never predicted: we alias only geometry
+     // we have actually just seen.
+@@ -1987,6 +2327,7 @@
+     // DOSAGS_DIRTY_PRESENT=0 disables -- fastest by default, tunable off.
+     SDL_Rect _dp_push = dst;
+     bool _dp_narrowed = false;
++    if (!_s2_merged)   // SCALE2-NARROW: already merged ahead of the unchanged-frame check
+     dos_port_dirty_merge_carry();   // patch 0193: last interval's marks are repainted by THIS frame's restore
+     SDL_Rect _dp_rects[DOS_PORT_DIRTY_MAX_BOXES];   // patch 0129
+     int _dp_nrects = 0;
+@@ -2006,7 +2347,8 @@
+         // Translate first, and only when the mapping is a pure offset.
+         const bool _dp_one_to_one =
+             blit_src && dst.w == blit_src->w && dst.h == blit_src->h;
+-        if (!_dp_one_to_one) dos_port_dirty.rej_scaled++;
++        if (_s2_narrow) { /* SCALE2-NARROW: narrowed below, not a rejection */ }
++        else if (!_dp_one_to_one) dos_port_dirty.rej_scaled++;
+         else if (!hint_on) { /* switched off, not a rejection */ }
+         else if (!dos_port_dirty.scene_path) dos_port_dirty.rej_no_scene++;
+         else if (dos_port_dirty.is_full) dos_port_dirty.rej_latched_full++;
+@@ -2161,6 +2503,27 @@
+                 }
+             }
+         }
++        if (_s2_narrow)
++        {   // SCALE2-NARROW: push exactly what was scale-blitted, doubled, in WINDOW coordinates
++            long long _a = 0;
++            for (int _i = 0; _i < _s2_n; ++_i)
++            {
++                SDL_Rect &_r = _dp_rects[_i];
++                _r.x = dst.x + 2 * _s2_box[_i].x1;
++                _r.y = dst.y + 2 * _s2_box[_i].y1;
++                _r.w = 2 * (_s2_box[_i].x2 - _s2_box[_i].x1 + 1);
++                _r.h = 2 * (_s2_box[_i].y2 - _s2_box[_i].y1 + 1);
++                _a += (long long)(_r.w / 2) * (_r.h / 2);
++            }
++            _dp_nrects = _s2_n;
++            _dp_push = _dp_rects[0];
++            _dp_narrowed = true;
++            dos_port_dirty.frames_narrow++;
++            dos_port_dirty.px_narrow += _a;   // game px, as at 1x
++            dos_s2.narrow++;
++            dos_s2.rects += _s2_n;
++            dos_s2.px_src += _a;
++        }
+         if (!_dp_narrowed)
+         {
+             dos_port_dirty.frames_full++;
+diff -ru orig/Engine/main/quit.cpp ags/Engine/main/quit.cpp
+--- orig/Engine/main/quit.cpp	2026-11-19 12:20:47.985068742 -0800
++++ ags/Engine/main/quit.cpp	2026-11-19 16:38:59.753641178 -0800
+@@ -422,6 +422,9 @@
+             "DOSAGS_PRESENT_NO_SKIP", // patch 0099: forces real presents -- changes every fps figure
+             "DOSAGS_PRESENT_VERIFY",  // patch 0192: reads the surface twice per present -- a diagnostic, never a timed cell
+             "DOSAGS_ROUTE_PREWARM",   // patch 0371: route-cache pre-warm in the room-load / restore stall (off by default)
++            "DOSAGS_SCALE2_BREAK",    // SCALE2-NARROW (apply-2x.py): control only -- 1: boxes 1 px short; 2: last box unblitted
++            "DOSAGS_SCALE2_NARROW",   // SCALE2-NARROW: the narrowed integer-2x present + full 2x replicator (off by default)
++            "DOSAGS_SCALE2_VERIFY",   // SCALE2-NARROW: whole-frame scale2 compare per present -- a diagnostic, never timed
+             "DOSAGS_TAS_AUTO_EXIT_TICK",
+             "DOSAGS_VM",              // patch 0359: script VM mode (fast by default; legacy = upstream's Run())
+             "DOSAGS_VM_FUSE",         // superinstruction mask (all six by default)
+@@ -593,6 +596,8 @@
+                 dos_guiclip_summary(run_manifest_log);
+                 extern void dos_char_reuse_summary(FILE *);   // patch 0369 R2, both flavours
+                 dos_char_reuse_summary(run_manifest_log);
++                extern void dos_scale2_summary(FILE *);   // SCALE2-NARROW (apply-2x.py): prints only when switched on
++                dos_scale2_summary(run_manifest_log);
+             }
+ #ifdef DOSAGS_RELEASE
+             // DOS-PORT patch 0351: the release flavour times nothing, so it has no phase aggregates and none of

@@ -1,0 +1,104 @@
+=== V1's own reading (gatebar.py on the originals, stamp c754df64babd)
+== V1S16-2026-11-06
+   stamp c754df64babd exit 0 build_dirty 0 room 3
+   whole-run 39.21 / steady 40.13 (as recorded)  fps_p50 40.00  frames_skipped 30  ticks 4999  stall_ms 1040
+   completeness: presents_real/render_passes 4982/4970 = 100.24%; 1 - frames_skipped/ticks = 99.40%
+   audio: pcm_irqs 909 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 909 + inflight 19 = 928 vs mixed 928 (diff 0)
+   cell: MET (subject to camera CLEAN)
+S16: MET x1 (subject to camera CLEAN in the cell)
+== V1S32-2026-11-06
+   stamp c754df64babd exit 0 build_dirty 0 room 3
+   whole-run 39.18 / steady 40.12 (as recorded)  fps_p50 40.00  frames_skipped 18  ticks 4999  stall_ms 1378
+   completeness: presents_real/render_passes 4994/4982 = 100.24%; 1 - frames_skipped/ticks = 99.64%
+   audio: pcm_irqs 644 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 644 + inflight 19 = 663 vs mixed 663 (diff 0)
+   cell: NOT MET: whole-run 39.18 outside 39.2-40.8
+S32: NOT MET
+== V1S8-2026-11-06
+   stamp c754df64babd exit 0 build_dirty 0 room 35 msgskip 1: DOS-PORT msgskip n=1 lc=101
+   whole-run 39.13 / steady 40.25 (as recorded)  fps_p50 40.00  frames_skipped 28  ticks 5002  stall_ms 1538
+   completeness: presents_real/render_passes 4986/4972 = 100.28%; 1 - frames_skipped/ticks = 99.44%
+   audio: pcm_irqs 2107 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 2107 + inflight 19 = 2126 vs mixed 2126 (diff 0)
+   cell: NOT MET: whole-run 39.13 outside 39.2-40.8
+S8: NOT MET
+== DIST2-2026-11-06
+   stamp c754df64babd exit 0 build_dirty 0 room 3
+   whole-run 39.22 / steady 40.17 (as recorded)  fps_p50 40.00  frames_skipped 29  ticks 4999  stall_ms 1383
+   completeness: presents_real/render_passes 4983/4971 = 100.24%; 1 - frames_skipped/ticks = 99.42%
+   audio: pcm_irqs 1558 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 1558 + inflight 0 = 1558 vs mixed 1558 (diff 0)
+   cell: MET (subject to camera CLEAN)
+S16: MET x1 (subject to camera CLEAN in the cell)
+=== sim1: rv-read.py on the re-stamped copies
+== RV16A-2026-11-19
+   stamp f2e183845d2f exit 0 build_dirty 0 room 3
+   whole-run 39.21 / steady 40.13 (as recorded)  fps_p50 40.00  frames_skipped 30  ticks 4999  stall_ms 1040
+   completeness: presents_real/render_passes 4982/4970 = 100.24%; 1 - frames_skipped/ticks = 99.40%
+   audio: pcm_irqs 909 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 909 + inflight 19 = 928 vs mixed 928 (diff 0)
+   cell: MET (subject to camera CLEAN)
+   witness: six default lines + BLASTER OK
+   start-up (information): preloop_ms 926 loop_ms 125573 tail_ms 1056
+   REGRESSION: none
+READ RV16A-2026-11-19 S16: MET
+== RV32A-2026-11-19
+   stamp f2e183845d2f exit 0 build_dirty 0 room 3
+   whole-run 39.18 / steady 40.12 (as recorded)  fps_p50 40.00  frames_skipped 18  ticks 4999  stall_ms 1378
+   completeness: presents_real/render_passes 4994/4982 = 100.24%; 1 - frames_skipped/ticks = 99.64%
+   audio: pcm_irqs 644 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 644 + inflight 19 = 663 vs mixed 663 (diff 0)
+   cell: NOT MET: whole-run 39.18 outside 39.2-40.8
+   witness: six default lines + BLASTER OK
+   start-up (information): preloop_ms 1004 loop_ms 125936 tail_ms 710
+   REGRESSION: none
+READ RV32A-2026-11-19 S32: NOT MET
+== RV8A-2026-11-19
+   stamp f2e183845d2f exit 0 build_dirty 0 room 35 msgskip 1: DOS-PORT msgskip n=1 lc=101
+   whole-run 39.13 / steady 40.25 (as recorded)  fps_p50 40.00  frames_skipped 28  ticks 5002  stall_ms 1538
+   completeness: presents_real/render_passes 4986/4972 = 100.28%; 1 - frames_skipped/ticks = 99.44%
+   audio: pcm_irqs 2107 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 2107 + inflight 19 = 2126 vs mixed 2126 (diff 0)
+   cell: NOT MET: whole-run 39.13 outside 39.2-40.8
+   witness: six default lines + BLASTER OK
+   start-up (information): preloop_ms 971 loop_ms 125773 tail_ms 1058
+   REGRESSION: none
+READ RV8A-2026-11-19 S8: NOT MET
+== RVDST-2026-11-19
+   stamp f2e183845d2f exit 0 build_dirty 0 room 3
+   whole-run 39.22 / steady 40.17 (as recorded)  fps_p50 40.00  frames_skipped 29  ticks 4999  stall_ms 1383
+   completeness: presents_real/render_passes 4983/4971 = 100.24%; 1 - frames_skipped/ticks = 99.42%
+   audio: pcm_irqs 1558 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 1558 + inflight 0 = 1558 vs mixed 1558 (diff 0)
+   cell: MET (subject to camera CLEAN)
+   witness: six default lines + BLASTER OK
+   start-up (information): preloop_ms 952 loop_ms 125745 tail_ms 839
+   REGRESSION: none
+READ RVDST-2026-11-19 S16: MET
+   fixed timestep on: yes
+   OPL3 detected: yes
+   music 0: yes
+   >= 1 Playing sound: yes
+   gatebar S16 MET + witness: yes
+RVDST-TERM RVDST-2026-11-19: PASS (subject to the camera sheet CLEAN)
+=== sim2: one default line missing
+== RV16B-2026-11-19
+   stamp f2e183845d2f exit 0 build_dirty 0 room 3
+   whole-run 39.21 / steady 40.13 (as recorded)  fps_p50 40.00  frames_skipped 30  ticks 4999  stall_ms 1040
+   completeness: presents_real/render_passes 4982/4970 = 100.24%; 1 - frames_skipped/ticks = 99.40%
+   audio: pcm_irqs 909 (as recorded) silent_irqs 0 start_latency_irqs 0 overwrites 0 underruns 0 late_writes 0
+   accounting (reported, not scored): pcm_irqs 909 + inflight 19 = 928 vs mixed 928 (diff 0)
+   cell: MET (subject to camera CLEAN)
+   witness: FAIL -- witness line(s) missing: DOS-PORT guictrlmark DOSAGS_GUI_CTRL_MARK=(default) mode=1
+   start-up (information): preloop_ms 926 loop_ms 125573 tail_ms 1056
+READ RV16B-2026-11-19 S16: VOID
+=== sim3: v0.1's stamp
+== RV16X-2026-11-19
+   stamp c754df64babd exit 0 build_dirty 0 room 3
+   VOID: stamp c754df64babd != f2e183845d2f
+   witness: six default lines + BLASTER OK
+   start-up (information): preloop_ms 926 loop_ms 125573 tail_ms 1056
+READ RV16X-2026-11-19 S16: VOID
+=== pair mode (sim1 S16 with sim2)
+DEPTH S16 on f2e183845d2f: MET x1 -- not MET: RV16B-2026-11-19 VOID (subject to the screen witness CLEAN in each MET cell)

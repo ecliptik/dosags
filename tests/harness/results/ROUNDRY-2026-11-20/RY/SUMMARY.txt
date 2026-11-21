@@ -1,0 +1,38 @@
+round RY start 01:01:52
+s2nr.exe: OK
+l308.exe: OK
+S32P-ACSETUP-ON.CFG: OK
+pre-power-on: lock unheld; activity: {   "daemon_start_t": 1794467128.021475,   "inflight": [],   "last_event_age_s": 0.039,   "lock": {     "held_s": null,     "owner": null   },   "ok": true,   "seq": 4489694 } 
+capture pre-flight: device_present=True state=frozen last_frame_age_s=0.02
+relay-on 01:01:53, cap 03:01:53 (CAP_MIN=120)
+powerguard + daemongap started 01:01:54
+vcctrld daemon_start_t at round start: 1794467128.021475
+WARMUPRY start 01:03:09 --timeout 1500
+WARMUPRY: run-hw exit=0 pre=425c1609f50a post=425c1609f50a staged_has_pre=1 binary_sha12=bc9c3704a839 build_dirty=0 tick_rate=30.54 tick_rate_steady=33.25  recover=0 inputlog=ok:6 fw=OK xcheck=ok capture=STALE rooms=Now in room 50, 01:13:36
+WARMUPRY: stamp OK bc9c3704a839
+WARMUPRY BLASTER.TXT: [A220 I7 D3 P330 T3]
+after WARMUPRY: capture True locked
+WARMUP stick: clean (card-state and kernel tee, 01:03:09 .. 01:13:36 UTC)
+RY16B1 start 01:13:36 --timeout 1800
+RY16B1: run-hw exit=0 pre=9599809419c8 post=9599809419c8 staged_has_pre=1 binary_sha12=f42436aadd7b build_dirty=1 tick_rate=39.32 tick_rate_steady=40.03  recover=0 inputlog=ok:245 fw=OK xcheck=ok capture=ok rooms=Now in room 3, 01:25:36
+RY16B1: stamp OK f42436aadd7b
+RY32B1 start 01:25:36 --timeout 1800
+RY32B1: run-hw exit=0 pre=9599809419c8 post=9599809419c8 staged_has_pre=1 binary_sha12=f42436aadd7b build_dirty=1 tick_rate=38.98 tick_rate_steady=40.10  recover=0 inputlog=ok:244 fw=OK xcheck=ok capture=ok rooms=Now in room 3, 01:37:43
+RY32B1: stamp OK f42436aadd7b
+RY8B1 start 01:37:44 --timeout 1800
+RY8B1: run-hw exit=0 pre=9599809419c8 post=9599809419c8 staged_has_pre=1 binary_sha12=f42436aadd7b build_dirty=1 tick_rate=39.44 tick_rate_steady=40.28  recover=0 inputlog=ok:250 fw=OK xcheck=ok capture=ok rooms=Now in room 35, 01:49:33
+RY8B1: stamp OK f42436aadd7b
+RY16B2 start 01:49:33 --timeout 1800
+RY16B2: run-hw exit=0 pre=9599809419c8 post=9599809419c8 staged_has_pre=1 binary_sha12=f42436aadd7b build_dirty=1 tick_rate=39.22 tick_rate_steady=40.00  recover=0 inputlog=ok:262 fw=OK xcheck=ok capture=ok rooms=Now in room 3, 01:59:50
+RY16B2: stamp OK f42436aadd7b
+RY32B2 start 01:59:50 --timeout 1800
+RY32B2: run-hw exit=0 pre=9599809419c8 post=9599809419c8 staged_has_pre=1 binary_sha12=f42436aadd7b build_dirty=1 tick_rate=37.72 tick_rate_steady=38.84  recover=0 inputlog=ok:252 fw=OK xcheck=ok capture=STALE rooms=Now in room 3, 02:14:45
+RY32B2: stamp OK f42436aadd7b
+RY8B2 start 02:14:45 --timeout 1800
+RY8B2: run-hw exit=1 pre=9599809419c8 post=9599809419c8 staged_has_pre=1  recover=0 inputlog=ok:252 fw=OK xcheck=ok capture=ok rooms= 02:51:09
+RY8B2: STAMP-VOID manifest , want f42436aadd7b (s2nr.exe)
+STOP after RY8B2
+poweroff() fired DURING cell: RY8B2 02:14:45
+power OFF 02:51:15: on=False mW=0
+driver exit 1 02:51:15
+02:51:21 guard fired DURING cell: RY8B2 02:14:45

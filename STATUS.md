@@ -2,8 +2,10 @@
 Machine-readable port summary. Keep in sync with the hub's ports.yaml
 entry for adventure-game-studio. The yaml and "Where it stands" were
 rewritten 2026-11-04 (PLAN-NEXT step 3) from the gate evidence of
-fdbaf461; the cell tables further down are the historical record and
-are not rewritten. PLAN.md holds the chronological record.
+fdbaf461; "Where it stands (2026-11-19)" was added above the 2026-11-04
+one, which stays as written. The cell tables further down are the
+historical record and are not rewritten. PLAN.md holds the chronological
+record.
 -->
 
 # dosags -- status
@@ -72,6 +74,10 @@ release: v0.1 (2026-11-06, tag on f0f9275c) -- dosags-v0.1.zip sha256
   (N7M1/M2) -- the idle screen only: MMD IN PLAY (room 1 -> 2, real
   clicks) reads 67.6% x2, fps_p50 ~28 (round P9, 2026-11-06); 7 Days in
   play 99.50%; AGS Quest 93.04% (N7AQ). GUS documented as not yet right.
+  v0.1.1 RELEASED 2026-11-19 (operator: "Publish v0.1.1"): Forgejo tag
+  v0.1.1 -> 55d2b2fa; https://github.com/ecliptik/dosags/releases/tag/v0.1.1;
+  dosags-v0.1.1.zip sha256 e36ef5f9...; AGS.EXE release f2e183845d2f
+  (sha256 c6824107...); see "Where it stands (2026-11-19)".
 copyrighted_assets: none -- no AGS game data is shipped or tracked. Test
   games are pinned by hash in tests/games/*/PIN and
   tests/harness/packages/*/PIN.
@@ -101,6 +107,111 @@ RELEASE_READY
 
 Difficulty score (also tracked in the hub's `ports.yaml`): **5** (major
 engine-port effort).
+
+## Where it stands (2026-11-19)
+
+Every figure is the Gateway 486 (HW-486-66, ATI Mach64, PicoGUS as a
+Sound Blaster, sound on, fixed timestep) and names its record under
+tests/harness/results/ unless it says otherwise. "Displayed" is
+1 - frames_skipped / ticks.
+
+**Releases.**
+- v0.1 (2026-11-06): tag on f0f9275c, AGS.EXE release c754df64babd. Its
+  486 record is in PLAN-NEXT.md 5a: DIST2 PASS; S16 MET x2; S32P and S8
+  MET 1 of 2 each; MMD character select 99.90% x2 (N7).
+- v0.1.1 (2026-11-19, operator: "Publish v0.1.1"): Forgejo tag v0.1.1
+  -> 55d2b2fa; GitHub release
+  https://github.com/ecliptik/dosags/releases/tag/v0.1.1 (the zip only,
+  as v0.1). dosags-v0.1.1.zip sha256 e36ef5f9... (two builds identical,
+  check-dist --release PASS, DOSBox-X smoke equal to RM0383's). AGS.EXE
+  release f2e183845d2f (sha256 c68241073cb0...) is the binary rounds RS
+  and RT measured as their A cells.
+- **S8 / S16 / S32P MET x2 on v0.1.1's exe** (round RV, 2026-11-19;
+  ROUNDRV-2026-11-19 section 11). The pairs are RV16A+C, RV32A+C and
+  RV8A+C, and RVDST (the zip run with README.TXT's settings) PASSes.
+  Across those cells: whole-run 39.32-39.43, steady 40.11-40.22,
+  displayed 99.32-99.56%, fps_p50 40.00, audio clean, and start-up
+  604-665 ms (V1's whole-run misses were start-up, at 926-1,004 ms).
+  Information: RV8B read late_writes 3 (NOT MET) and the repeat RV8C read
+  0. It is unexplained, because the log carries the total only.
+
+**Gameplay since v0.1.**
+- **MMD in play (fixture P9M1: save 7, room 1 -> 2, 17 clicks).**
+  - v0.1 read 67.63% x2 (ROUNDP9-2026-11-06).
+  - With the redraw levers on by default, 98.81-99.03%
+    (ROUNDRG-2026-11-09, release 8c123c770d0b; A cells 98.81-98.89%,
+    B cells with 0373's control marks 98.90-99.03%).
+  - The levers are ags 0366 / 0368 (DOSAGS_GUI_CLIP), 0369 / 0370
+    (DOSAGS_CHAR_REUSE) and 0372 / 0373 (DOSAGS_GUI_CTRL_MARK). An
+    unchanged GUI or character is not redrawn.
+- **MS3, the moving campaign fixture** (from 2026-11-11; the kid walks
+  for most of the run, 114 clicks, rooms 1 -> 2). There is no v0.1
+  figure on it.
+  - First 486 baseline, on release 942ad0260d36 (ags 0001-0373): 90.68%
+    (ROUNDRL-2026-11-12).
+  - **ags 0377** bounds the mixer's per-voice ring. That ends the
+    machine-wide 0.2-1.5 s freezes in MMD's room 2 (ROUNDRO-2026-11-12:
+    SUPPORTED). Its audio check passed (ROUNDRP-2026-11-13).
+  - **ags 0382 / 0383** speed up the legacy route finder; routes are
+    unchanged, per the identity gate (RM0383-2026-11-17). Skipped frames
+    fell 578 -> 364 per run, 91.7% -> 94.8% displayed (ROUNDRR-2026-11-17).
+  - On the 0383 release (c68241073cb0): 94.57 / 93.39 / 94.59%
+    (ROUNDRS-2026-11-19), 95.33 / 94.79% (ROUNDRT-2026-11-19, A cells).
+- **The MS3 target.** 99% displayed (operator 2026-11-13) is PARKED,
+  not met (operator 2026-11-19, "Park MS3 at ~95%"; PLAN.md 55d2b2fa).
+  The last attempt was a 45 ms long-tick pacer rule (ROUNDRT-2026-11-19):
+  97.04 / 97.04 / 96.97% displayed at +2.37 to +2.42% game time. That
+  is over the operator's 2.0% limit (TIME-OVER). The shipped pacer is
+  unchanged. MS3 rounds have stopped and the 486 is off; reopening is
+  the operator's call.
+- **Closed lab lines** (records in PLAN.md):
+  - the route pre-warm 0371 stays off by default;
+  - the heap lock switches 0380 were reverted by 0381;
+  - the VM fusions S read small;
+  - the interpreter / native-compilation line is closed (ee16011b).
+
+**Lab: the narrowed integer 2x present (2026-11-20; not shipped).**
+- What it is: a 2x present for 320-wide games at 640x480 that blits and
+  pushes only the dirty boxes. The switch is DOSAGS_SCALE2_NARROW=1,
+  default off. It is the overlay tests/harness/apply-2x.py, not yet a
+  numbered patch. Today's 2x reads 27% displayed on S8 (C364044).
+- **DOSBox-X screen-equality gate PASSED** on its third run (gate3,
+  tests/harness/results/LAB2X-2026-11-19/gate3, sdlports' ruling):
+  - the narrowed path equals the full-2x reference at every freeze in
+    every row;
+  - both break controls have power, and 1x is inert.
+  - Gates 1 and 2 were NOT PASSED on controls without power; FIX-UP 3
+    fixed that. These are emulator results, not performance claims.
+- **486 round RY (2026-11-21): NOT MET at every depth** (sdlports' ruling;
+  tests/harness/results/ROUNDRY-2026-11-20 sec. 10, a2952449). It used the
+  same bar at the 640x480 2x rung, on the overlay build S2NR.
+  - 16-bit: MET x1. RY16B2 lost on one sound dropout.
+  - 32-bit: NOT MET, too slow (whole-run 38.98; 37.72).
+  - 8-bit: one cell MET on its figures; the other's logs were not
+    collected.
+  - fps_p50 is 40.00 in every cell. Displayed is 99.16-99.52%, except one
+    32-bit cell at 95.24%; today's 2x read 26.99%.
+  - The capture stick did not drop once. The 32-bit screen is CLEAN.
+  - The registered exit anchor did not hold at 2x. A future round
+    re-registers it first.
+- **PARKED** (the owner, 2026-11-21, via sdlports; bus decision-draft
+  01M7Y1B8GJSNGWWFEYM8M8HW5D): 2x stays an opt-in lab overlay, default off,
+  with no more 486 time this week.
+  - RY8B2's logs, fetched afterwards: NOT MET on its figures (31.69 / 32.21,
+    88% displayed, 323 silent IRQs late in the run). Both second-block
+    cells degraded late in their runs; the cause is not established
+    (ROUNDRY-2026-11-20 sec. 11).
+  - A future 2x round re-registers the exit anchor first.
+
+**Open, unchanged since v0.1:**
+- GUS is not right yet (gaps, missing effects, pitch).
+- D2's cold-start sound latency failed as registered (4.30 ms).
+- V1's whole-run misses (start-up ~100-200 ms longer than N7 on the
+  same exe) have no established cause.
+- ViRGE / Cirrus and tracker music stay parked (PLAN-NEXT.md 6). That
+  list's "MMD sound on" (step 9.3's MMD gate repeated with SB sound on)
+  is superseded: every MMD in-play cell since round P9, P9M1 and MS3
+  alike, ran with SB sound on.
 
 ## Where it stands (2026-11-04)
 

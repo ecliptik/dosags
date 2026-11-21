@@ -86,7 +86,9 @@ def cell(d, args):
         void.append("stamp %s != %s" % (stamp, args.stamp))
     if exitc is not None and exitc != "0":
         void.append("exit_code " + exitc)
-    if dirty is not None and dirty != "0":
+    # Amendment 2026-11-20 (round RY, before any data): a caller may accept one build_dirty value (args.allow_dirty),
+    # and only after it has witnessed the exe by sha256 itself (ry-read.py). The CLI never sets it: default unchanged.
+    if dirty is not None and dirty != "0" and dirty != getattr(args, "allow_dirty", None):
         void.append("build_dirty " + dirty)
     if room is not None and room != str(args.room):
         void.append("room %s != %d" % (room, args.room))

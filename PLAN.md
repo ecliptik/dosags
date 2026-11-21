@@ -491,6 +491,36 @@ completeness beside it.
   MS3 rounds stop; the 486 stays off. The shipped pacer is unchanged; rtpace / tests/harness/apply-pace-rig.py stays a
   harness overlay and is never a patch. 99% displayed stays the stated target, parked and not met. Reopening is the
   operator's call. Push: "Push after my check" (sdlports pushes the stack once checked).
+- **v0.1.1 RELEASED, 2026-11-19 (operator: "Prepare v0.1.1", then "Publish v0.1.1", both via sdlports).**
+  - Built from main 55d2b2fa with v0.1's recipe (make dist DIST_VERSION=v0.1.1 DIST_REPO_URL=...): dosags-v0.1.1.zip
+    sha256 e36ef5f9d67af142c59a9a7293412ddf7d595eaa6328bc4df1754a0fb609eac5; AGS.EXE release f2e183845d2f, sha256
+    c68241073cb0... (the 0383 release of RM0383, rounds RS and RT's A binary).
+  - Checks: two clean builds byte-identical (exe and zip); check-dist --release PASS; the same 12 files as v0.1 (only
+    AGS.EXE, MANIFEST.TXT, README.TXT differ); no licence-input change since v0.1; DOSBox-X smoke on the zip's exe equal
+    to RM0383 section 4's cells.
+  - Content since v0.1: 0377 (the room-2 freezes; ROUNDRO, audio ROUNDRP), 0382 / 0383 (the route finder; ROUNDRR,
+    RS, RT), the redraw levers 0366-0373 (MMD in play 67.63% x2 on v0.1 -> 98.81-99.03%; ROUNDP9, ROUNDRG).
+  - Published by sdlports: Forgejo tag v0.1.1 (annotated 5bd937e2) -> 55d2b2fa; GitHub main bf9de00d (public snapshot
+    of 55d2b2fa), tag v0.1.1 on it, release https://github.com/ecliptik/dosags/releases/tag/v0.1.1 (the zip only; the
+    downloaded zip's sha256 matches). Not re-measured on this exe: the S8 / S16 / S32P gates (last read on v0.1's).
+- **Round RV, 2026-11-19 (operator, directly: "plan and start 1"; then "fix and then do the followup power on"; and "One more
+  power-on, 3 runs" via sdlports' question tool): the S8 / S16 / S32P gates MET x2 on the v0.1.1 exe f2e183845d2f**
+  (tests/harness/results/ROUNDRV-2026-11-19 sections 9 and 11; accepted from raw by sdlports).
+  - Registered pairs: RV16A + RV16C, RV32A + RV32C, RV8A + RV8C. RVDST (the zip run with README.TXT's settings) PASS.
+  - Figures: whole-run 39.32-39.43, steady 40.11-40.22, displayed 99.32-99.56%, fps_p50 40.00, audio clean in every pair
+    cell. Start-up (preloop) 604-665 ms; round V1's whole-run misses were start-up, at 926-1,004 ms. That fits V1's
+    package-dir lead (the dir now holds 278 entries); it was not tested.
+  - It took three power-ons:
+    - The first stopped after RV16B on a false positive in the lock watch: run-hw's own recovery owner, hw-guard-RV16B, was
+      not on the allow-list. Fixed in 5f7706c6; such an owner is now logged as GUARD LOCK, not foreign. RV16B is TAINTED by
+      the rule written before the data and is not counted.
+    - In the second, RV32B's registered capture witness was missing (the stick was dead), so it is not confirmed. RV8B read
+      late_writes 3 and is NOT MET; it did not repeat in RV8C (0) and is unexplained, because the log carries the total only.
+  - The rig: the capture stick (usb 1-2) dropped 10 times in the second power-on and 46 times in the third, with the kernel
+    saying "Maybe the USB cable is bad?". A port cycle helped only for a while. A physical fix (cable / port / stick) is
+    with the operator. The input path stayed clean throughout (ev_in = pkt_ok in every play window).
+  - Next (open, the operator's): the 2x display scope (scratch SCOPE-2X.md, by a subagent), whose step 0 is a 1x
+    render-delay probe on the 486.
 
 ## The numbers to plan against
 
@@ -6709,7 +6739,8 @@ title; CAPS16 / CAPS32 5 Days room 3 with the walker; black after exit); capture
       in ms, and estimate the whole-run gain against the 39.2 floor. Pre-register first.
    4. S16 fixes toward Gate S16 (5 Days, sound on), then the hardware rounds for S8/S16/S32 as the
       lab slices land.
-   5. The Vibra lane, pending the operator (card not detected, SBCAP1). Step 9 (Maniac Mansion
+   5. ~~The Vibra lane, pending the operator (card not detected, SBCAP1).~~ RETIRED 2026-11-04 (operator:
+      the Gateway 2000 has no Vibra16S fitted, only the PicoGUS; PLAN-NEXT.md 6). Step 9 (Maniac Mansion
       Deluxe) runs IN PARALLEL on dosags-lab-mmd (operator decision 2026-09-23), starting at 9.1.
    Step 7 (ViRGE and Cirrus) stays deferred behind all of these. Rate cells at 512x384 have a blind
    audio capture until the standalone USB audio input exists.
